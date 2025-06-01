@@ -86,15 +86,15 @@ window.forgotPassword = function () {
     .catch(err => alert(err.message));
 };
 
-// Auth state listener
 auth.onAuthStateChanged(function (user) {
-  if (splash) splash.classList.add('hidden');
-  if (user) {
-    // Already logged in
-    window.location.replace("dashboard.html");
-  } else {
-    showLoginUI();
-  }
+  setTimeout(() => {
+    if (splash) splash.classList.add('hidden');
+    if (user) {
+      window.location.replace("dashboard.html");
+    } else {
+      showLoginUI();
+    }
+  }, 2000); // <- 2000 ms = 2 seconds (change as you like)
 });
 
 // Splash fade-out after short timeout (if Firebase is slow to load)
