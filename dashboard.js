@@ -1,6 +1,16 @@
-// dashboard.js
+// DASHBOARD.JS
 
-// Firebase references (already initialized in index.html login)
+// ====== Firebase Setup (replace with your config if needed) ======
+const firebaseConfig = {
+  apiKey: "AIzaSyAszVhWXUUOYLQ7VimKmPKf1yEu_CI9RCE",
+  authDomain: "stpatricks-questionbank.firebaseapp.com",
+  projectId: "stpatricks-questionbank",
+  storageBucket: "stpatricks-questionbank.appspot.com",
+  messagingSenderId: "917615322861",
+  appId: "1:917615322861:web:c6c890aa2184dd395b8ee4"
+};
+if (typeof firebase === "undefined") alert("Firebase not loaded!");
+firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
 const db = firebase.firestore();
 
@@ -9,7 +19,6 @@ let user = null;
 let userDisplayName = "";
 
 // DOM references
-const welcomeMessage = document.getElementById("welcome-message");
 const displayNameSpan = document.getElementById("display-name");
 const settingsBtn = document.getElementById("settings-btn");
 const settingsPopup = document.getElementById("settings-popup");
@@ -37,7 +46,6 @@ auth.onAuthStateChanged(async (u) => {
     return;
   }
   user = u;
-
   // Try Firestore first, then fallback to Firebase displayName
   const doc = await db.collection("users").doc(user.uid).get();
   userDisplayName = doc.exists ? (doc.data().displayName || "") : (user.displayName || "");
@@ -54,7 +62,6 @@ auth.onAuthStateChanged(async (u) => {
     } else {
       fasaBtn.classList.remove("locked");
       fasaBtn.onclick = () => {
-        // TODO: Open FA/SA builder function/page
         alert("FA/SA Builder coming soon!");
       };
     }
@@ -95,7 +102,7 @@ settingsPopup.addEventListener("click", (e) => {
   if (e.target === settingsPopup) hideSettingsPopup();
 });
 
-// Hook up main dashboard buttons (add as needed)
+// HOOK UP DASHBOARD BUTTONS — Placeholder actions!
 document.getElementById("gen-ai-btn").onclick = function() {
   alert("AI Question Generation coming soon!");
 };
