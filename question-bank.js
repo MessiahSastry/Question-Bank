@@ -46,11 +46,12 @@ auth.onAuthStateChanged(async (user) => {
   // Optionally, extract unique classes/subjects/chapters from data for dropdowns
   setFilterOptions();
 
-  filteredQuestions = [...questions];
+  // Don't show anything until class is selected
+  filteredQuestions = [];
   renderQuestions(filteredQuestions);
 });
 
-// Set filter options if you want dynamic dropdowns (optional, can be customized)
+// Set filter options dynamically
 function setFilterOptions() {
   let classes = new Set(), subjects = new Set(), chapters = new Set();
   questions.forEach(q => {
@@ -74,6 +75,10 @@ function setFilterOptions() {
 // Filtering logic
 function filterQuestions() {
   let classVal = classFilter.value.trim();
+  if (!classVal) {
+    renderQuestions([]); // Show nothing if class not selected
+    return;
+  }
   let subjectVal = subjectFilter.value.trim();
   let chapterVal = chapterFilter.value.trim();
   let diffVal = difficultyFilter.value.trim();
