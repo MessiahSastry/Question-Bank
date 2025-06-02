@@ -104,7 +104,7 @@ settingsPopup.addEventListener("click", (e) => {
 
 // HOOK UP DASHBOARD BUTTONS
 document.getElementById("gen-ai-btn").onclick = function() {
-  window.open("https://22f773db-8a2d-4142-9ba1-88c12864daa0-00-1civ713u5lhhg.pike.replit.dev/ai-question-generator.html", "_blank");
+  window.open("ai-question-generator.html", "_blank");
 };
 document.getElementById("manual-add-btn").onclick = function() {
   alert("Manual Question Entry coming soon!");
