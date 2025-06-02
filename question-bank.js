@@ -14,158 +14,116 @@ firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
 const db = firebase.firestore();
 
-// DOM references
-const qbOutput = document.getElementById("qb-output");
+// DOM References
 const classFilter = document.getElementById("class-filter");
 const subjectFilter = document.getElementById("subject-filter");
 const chapterFilter = document.getElementById("chapter-filter");
 const difficultyFilter = document.getElementById("difficulty-filter");
 const marksFilter = document.getElementById("marks-filter");
+const outputDiv = document.getElementById("qb-output");
 
-// State
-let allQuestions = [];
+let questions = [];
 let filteredQuestions = [];
-let filterOptions = {
-  class: "",
-  subject: "",
-  chapter: "",
-  difficulty: "",
-  marks: ""
-};
 
-// Utility: Parse info from text if fields not present
-function extractInfo(q) {
-  // If explicit fields exist, use them
-  if (q.class && q.subject && q.chapter && q.difficulty && q.marks) return q;
-  // Otherwise, parse from text: "Question 1: (Easy, 2 Marks)\n..."
-  let info = { ...q };
-  let m = q.text.match(/\((Easy|Medium|Difficult),\s*(\d+)\s*Marks?\)/i);
-  if (m) {
-    info.difficulty = m[1];
-    info.marks = m[2];
-  }
-  // Try to get class, subject, chapter if present
-  if (q.class) info.class = q.class;
-  if (q.subject) info.subject = q.subject;
-  if (q.chapter) info.chapter = q.chapter;
-  return info;
-}
-
-// Populate filter dropdowns
-function populateFilters(questions) {
-  function uniqueSorted(arr) {
-    return [...new Set(arr)].sort((a, b) => (isNaN(a) ? a.localeCompare(b) : a - b));
-  }
-  // Collect all values for dropdowns
-  const classes = uniqueSorted(questions.map(q => q.class).filter(Boolean));
-  const subjects = uniqueSorted(questions.map(q => q.subject).filter(Boolean));
-  const chapters = uniqueSorted(questions.map(q => q.chapter).filter(Boolean));
-  const marks = uniqueSorted(questions.map(q => q.marks).filter(Boolean));
-
-  // Helper to populate select options
-  function setOptions(select, arr, label) {
-    select.innerHTML = `<option value="">${label}</option>` +
-      arr.map(v => `<option value="${v}">${v}</option>`).join('');
-  }
-  setOptions(classFilter, classes, "Class");
-  setOptions(subjectFilter, subjects, "Subject");
-  setOptions(chapterFilter, chapters, "Chapter");
-  setOptions(marksFilter, marks, "Marks");
-}
-
-// Filter questions by selected options
-function applyFilters() {
-  filteredQuestions = allQuestions.filter(q => {
-    if (filterOptions.class && q.class !== filterOptions.class) return false;
-    if (filterOptions.subject && q.subject !== filterOptions.subject) return false;
-    if (filterOptions.chapter && q.chapter !== filterOptions.chapter) return false;
-    if (filterOptions.difficulty && q.difficulty !== filterOptions.difficulty) return false;
-    if (filterOptions.marks && String(q.marks) !== String(filterOptions.marks)) return false;
-    return true;
-  });
-  renderQuestions();
-}
-
-// Render questions as cards
-function renderQuestions() {
-  qbOutput.innerHTML = "";
-  if (filteredQuestions.length === 0) {
-    qbOutput.innerHTML = `<div style="text-align:center;color:#b92736;margin-top:30px;">No questions found for selected filters.</div>`;
-    return;
-  }
-  filteredQuestions.forEach((q, idx) => {
-    const card = document.createElement("div");
-    card.className = "question-card";
-    // Show meta if available
-    card.innerHTML = `
-      <div class="question-text">
-        <span class="q-meta">
-          ${q.class || ""} ${q.subject ? " | " + q.subject : ""} ${q.chapter ? " | " + q.chapter : ""}<br>
-          ${q.difficulty ? q.difficulty : ""}${q.marks ? " | " + q.marks + " Marks" : ""}
-        </span><br>
-        <span class="q-body">${q.text.replace(/^Question \d+:(.*?)\n?/,'')}</span>
-      </div>
-      <div class="btn-group">
-        <button class="btn-small copy-btn">Copy</button>
-        <button class="btn-small delete-btn">Delete</button>
-      </div>
-    `;
-    // Copy button
-    card.querySelector('.copy-btn').onclick = () => {
-      navigator.clipboard.writeText(q.text);
-      alert("Question copied!");
-    };
-    // Delete button
-    card.querySelector('.delete-btn').onclick = async () => {
-      if (!confirm("Delete this question?")) return;
-      try {
-        await db.collection("questions").doc(q.id).delete();
-        allQuestions = allQuestions.filter(qq => qq.id !== q.id);
-        applyFilters();
-      } catch (e) {
-        alert("Failed to delete: " + e.message);
-      }
-    };
-    qbOutput.appendChild(card);
-  });
-}
-
-// Update filterOptions and re-filter on change
-[classFilter, subjectFilter, chapterFilter, difficultyFilter, marksFilter].forEach((sel, idx) => {
-  sel.onchange = function () {
-    filterOptions = {
-      ...filterOptions,
-      class: classFilter.value,
-      subject: subjectFilter.value,
-      chapter: chapterFilter.value,
-      difficulty: difficultyFilter.value,
-      marks: marksFilter.value
-    };
-    applyFilters();
-  };
-});
-
-// ==== MAIN ====
-// Get user and fetch questions uploaded by this user only
+// Fetch questions for logged-in user and populate filters
 auth.onAuthStateChanged(async (user) => {
   if (!user) {
     window.location.replace("index.html");
     return;
   }
-  // Fetch questions
-  const qs = await db.collection("questions")
+  let snapshot = await db.collection("questions")
     .where("createdBy", "==", user.uid)
     .orderBy("timestamp", "desc")
     .get();
 
-  allQuestions = qs.docs.map(doc => {
-    let data = doc.data();
-    data.id = doc.id;
-    return extractInfo(data);
+  questions = [];
+  snapshot.forEach(doc => {
+    let q = doc.data();
+    q.id = doc.id;
+    questions.push(q);
   });
 
-  // Populate dropdowns & render
-  populateFilters(allQuestions);
-  filteredQuestions = allQuestions;
-  renderQuestions();
+  // Optionally, extract unique classes/subjects/chapters from data for dropdowns
+  setFilterOptions();
+
+  filteredQuestions = [...questions];
+  renderQuestions(filteredQuestions);
+});
+
+// Set filter options if you want dynamic dropdowns (optional, can be customized)
+function setFilterOptions() {
+  let classes = new Set(), subjects = new Set(), chapters = new Set();
+  questions.forEach(q => {
+    if (q.class) classes.add(q.class);
+    if (q.subject) subjects.add(q.subject);
+    if (q.chapter) chapters.add(q.chapter);
+  });
+
+  // Helper to add options
+  function setOptions(select, items, label) {
+    select.innerHTML = `<option value="">${label}</option>`;
+    Array.from(items).sort().forEach(val => {
+      select.innerHTML += `<option value="${val}">${val}</option>`;
+    });
+  }
+  setOptions(classFilter, classes, "Class");
+  setOptions(subjectFilter, subjects, "Subject");
+  setOptions(chapterFilter, chapters, "Chapter");
+}
+
+// Filtering logic
+function filterQuestions() {
+  let classVal = classFilter.value.trim();
+  let subjectVal = subjectFilter.value.trim();
+  let chapterVal = chapterFilter.value.trim();
+  let diffVal = difficultyFilter.value.trim();
+  let marksVal = marksFilter.value.trim();
+
+  filteredQuestions = questions.filter(q => {
+    // Try to extract difficulty and marks from text
+    let diff = "", marks = "";
+    let match = q.text.match(/\(([^,]+),\s*([\d]+)\s*Mark/i);
+    if (match) {
+      diff = match[1].trim();
+      marks = match[2].trim();
+    }
+    let matches = true;
+    if (classVal && (!q.class || q.class != classVal)) matches = false;
+    if (subjectVal && (!q.subject || q.subject != subjectVal)) matches = false;
+    if (chapterVal && (!q.chapter || q.chapter != chapterVal)) matches = false;
+    if (diffVal && (!diff || diff.toLowerCase() !== diffVal.toLowerCase())) matches = false;
+    if (marksVal && (!marks || marks !== marksVal)) matches = false;
+    return matches;
+  });
+
+  renderQuestions(filteredQuestions);
+}
+
+// Render questions in the format: Q1. <question> (Difficulty, Marks)
+function renderQuestions(list) {
+  outputDiv.innerHTML = "";
+  list.forEach((q, idx) => {
+    // Extract in format "Question X: (Difficulty, Y Marks) actual question"
+    let match = q.text.match(/^Question\s*(\d+):\s*\(([^)]+)\)\s*([\s\S]+)/i);
+    let displayText = "";
+    if (match) {
+      displayText = `Q${match[1]}. ${match[3].trim()} (${match[2].trim()})`;
+    } else {
+      displayText = `Q${idx + 1}. ${q.text}`;
+    }
+    const div = document.createElement("div");
+    div.style.marginBottom = "18px";
+    div.style.fontSize = "1.14em";
+    div.style.background = "#f7fafd";
+    div.style.borderRadius = "8px";
+    div.style.padding = "14px 16px";
+    div.style.boxShadow = "0 2px 8px #0f3d6b09";
+    div.textContent = displayText;
+    outputDiv.appendChild(div);
+  });
+}
+
+// Hook up filters
+[classFilter, subjectFilter, chapterFilter, difficultyFilter, marksFilter].forEach(sel => {
+  sel.addEventListener("change", filterQuestions);
 });
