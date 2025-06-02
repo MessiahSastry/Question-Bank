@@ -341,43 +341,55 @@
     };
 
     saveAllBtn.onclick = async () => {
-      if (!auth.currentUser) {
-        alert("Please login to save questions.");
-        return;
-      }
-      saveAllBtn.disabled = true;
-      saveAllBtn.textContent = "Saving...";
+  if (!auth.currentUser) {
+    alert("Please login to save questions.");
+    return;
+  }
+  saveAllBtn.disabled = true;
+  saveAllBtn.textContent = "Saving...";
 
-      // Read current class/subject/chapter from form fields
-      const form = document.getElementById("genForm");
-      const classVal = form.class.value;
-      const subjectVal = form.subject.value;
-      const chapterVal = form.chapter.value;
+  const form = document.getElementById("genForm");
+  const classVal = form.class.value;
+  const subjectVal = form.subject.value;
+  const chapterVal = form.chapter.value;
+  const userId = auth.currentUser.uid;
 
-      const userId = auth.currentUser.uid;
-      const batch = db.batch();
-      questions.forEach((q) => {
-        const docRef = db.collection("questions").doc();
-        batch.set(docRef, {
-          text: q.text,
-          createdBy: userId,
-          class: classVal,
-          subject: subjectVal,
-          chapter: chapterVal,
-          timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-        });
-      });
-      try {
-        await batch.commit();
-        alert("All questions saved successfully!");
-        saveAllBtn.textContent = "Save All Questions";
-        saveAllBtn.disabled = false;
-      } catch (err) {
-        alert("Failed to save questions: " + err.message);
-        saveAllBtn.textContent = "Save All Questions";
-        saveAllBtn.disabled = false;
-      }
-    };
+  let savedCount = 0, skippedCount = 0;
+
+  for (const q of questions) {
+    // Check for existing question with same text/class/subject/chapter
+    const querySnapshot = await db.collection("questions")
+      .where("createdBy", "==", userId)
+      .where("class", "==", classVal)
+      .where("subject", "==", subjectVal)
+      .where("chapter", "==", chapterVal)
+      .where("text", "==", q.text)
+      .get();
+
+    if (!querySnapshot.empty) {
+      skippedCount++;
+      continue; // Duplicate found, skip saving
+    }
+    // Save unique question
+    await db.collection("questions").add({
+      text: q.text,
+      createdBy: userId,
+      class: classVal,
+      subject: subjectVal,
+      chapter: chapterVal,
+      timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+    });
+    savedCount++;
+  }
+
+  alert(
+    `Saved ${savedCount} new question${savedCount !== 1 ? 's' : ''}.`
+    + (skippedCount > 0 ? ` Skipped ${skippedCount} duplicate${skippedCount !== 1 ? 's' : ''}.` : "")
+  );
+  saveAllBtn.textContent = "Save All Questions";
+  saveAllBtn.disabled = false;
+};
+
 
     // ===== CONTEXT MENU FOR QUESTIONS =====
     // ... (context menu code as before, optional for long-press etc.)
