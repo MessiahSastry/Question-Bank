@@ -110,7 +110,7 @@ document.getElementById("manual-add-btn").onclick = function() {
   alert("Manual Question Entry coming soon!");
 };
 document.getElementById("qbank-btn").onclick = function() {
-  alert("Question Bank View coming soon!");
+  window.open("question-bank.html", "_blank");
 };
 document.getElementById("sliptest-btn").onclick = function() {
   alert("Slip Test Paper Builder coming soon!");
