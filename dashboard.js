@@ -104,7 +104,7 @@ settingsPopup.addEventListener("click", (e) => {
 
 // HOOK UP DASHBOARD BUTTONS — Placeholder actions!
 document.getElementById("gen-ai-btn").onclick = function() {
-  window.location.href = "gen-ai.html";
+  window.open("gen-ai.html", "_blank");
 };
 document.getElementById("manual-add-btn").onclick = function() {
   alert("Manual Question Entry coming soon!");
