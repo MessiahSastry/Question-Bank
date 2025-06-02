@@ -304,6 +304,110 @@ body: JSON.stringify({ prompt: fullPrompt }),
         saveAllBtn.disabled = false;
       }
     };
-  </script>
+// ===== CONTEXT MENU FOR QUESTIONS =====
+
+// Utility to detect long press
+function longPress(element, callback) {
+  let timer = null;
+  element.addEventListener("touchstart", start, false);
+  element.addEventListener("mousedown", start, false);
+  element.addEventListener("touchend", cancel, false);
+  element.addEventListener("mouseup", cancel, false);
+  element.addEventListener("mouseleave", cancel, false);
+
+  function start(e) {
+    e.stopPropagation();
+    timer = setTimeout(() => callback(e), 500); // 500ms = long press
+  }
+  function cancel(e) {
+    clearTimeout(timer);
+  }
+}
+
+// Context menu element
+const contextMenu = document.getElementById("context-menu");
+let lastQuestionIdx = null;
+
+// Build menu
+function showMenu(x, y, idx) {
+  lastQuestionIdx = idx;
+  contextMenu.innerHTML = `
+    <div class="menu-item" data-action="select">Select</div>
+    <div class="menu-item" data-action="selectall">Select All</div>
+    <div class="menu-item" data-action="copy">Copy</div>
+    <div class="menu-item" data-action="edit">Edit</div>
+    <div class="menu-item" data-action="delete">Delete</div>
+  `;
+  contextMenu.style.display = "block";
+  contextMenu.style.left = x + "px";
+  contextMenu.style.top = y + "px";
+}
+function hideMenu() {
+  contextMenu.style.display = "none";
+}
+
+// Attach to each question card after rendering
+function attachLongPressToCards() {
+  const cards = document.querySelectorAll(".question-card");
+  cards.forEach((card, idx) => {
+    card.oncontextmenu = e => { e.preventDefault(); }; // Prevent default right-click
+    longPress(card, function (e) {
+      e.preventDefault();
+      let touch = e.touches ? e.touches[0] : e;
+      showMenu(touch.clientX || 100, touch.clientY || 100, idx);
+    });
+  });
+}
+attachLongPressToCards(); // Initial
+
+// Whenever questions are rendered, re-attach
+const oldRenderQuestions = window.renderQuestions;
+window.renderQuestions = function() {
+  oldRenderQuestions();
+  attachLongPressToCards();
+};
+
+// Handle menu actions
+contextMenu.onclick = function(e) {
+  if (!e.target.classList.contains("menu-item")) return;
+  const action = e.target.getAttribute("data-action");
+  if (lastQuestionIdx == null) return;
+  const card = document.querySelectorAll(".question-card")[lastQuestionIdx];
+  const q = questions[lastQuestionIdx];
+  switch(action) {
+    case "select":
+      window.getSelection().selectAllChildren(card.querySelector(".question-text"));
+      break;
+    case "selectall":
+      let txt = questions.map(q => q.text).join("\n\n");
+      navigator.clipboard.writeText(txt);
+      alert("All questions copied!");
+      break;
+    case "copy":
+      navigator.clipboard.writeText(q.text);
+      alert("Question copied!");
+      break;
+    case "edit":
+      let qText = card.querySelector(".question-text");
+      qText.contentEditable = true;
+      qText.focus();
+      qText.onblur = () => {
+        qText.contentEditable = false;
+        questions[lastQuestionIdx].text = qText.innerText.trim();
+      };
+      break;
+    case "delete":
+      if (confirm("Delete this question?")) {
+        questions.splice(lastQuestionIdx, 1);
+        renderQuestions();
+      }
+      break;
+  }
+  hideMenu();
+};
+window.addEventListener("click", hideMenu);
+window.addEventListener("scroll", hideMenu);
+window.addEventListener("resize", hideMenu);
+</script>
 </body>
 </html>
