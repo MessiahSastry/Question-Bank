@@ -182,8 +182,9 @@ function loadDashboard() {
 
   // Logout
   logoutBtn.onclick = () => {
-    auth.signOut().then(() => {
-      showSection('login-section');
+   auth.signOut().then(() => {
+  showSection('login-section');
+  history.replaceState({ section: 'login-section' }, '', '');
     });
   };
 
