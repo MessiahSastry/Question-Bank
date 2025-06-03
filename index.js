@@ -608,3 +608,9 @@ document.addEventListener("DOMContentLoaded", function () {
     });
   });
 });
+// Handle Mobile/Browser Back Button Navigation
+window.addEventListener("popstate", function (event) {
+  // Fallback to login if no section data
+  let section = event.state && event.state.section ? event.state.section : "login-section";
+  showSection(section, false);
+});
