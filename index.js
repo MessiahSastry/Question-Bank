@@ -392,8 +392,6 @@ function loadQuestionBank() {
   const classFilter = document.getElementById("class-filter");
   const subjectFilter = document.getElementById("subject-filter");
   const chapterFilter = document.getElementById("chapter-filter");
-  const difficultyFilter = document.getElementById("difficulty-filter");
-  const marksFilter = document.getElementById("marks-filter");
   const outputDiv = document.getElementById("qb-output");
 
   let qbQuestions = [];
