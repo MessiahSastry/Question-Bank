@@ -17,7 +17,7 @@ function showSection(id, pushState = true) {
   document.querySelectorAll('.app-section').forEach(sec => sec.style.display = 'none');
   document.getElementById(id).style.display = 'block';
   if (pushState) {
-    history.pushState({ section: id }, '', '#' + id);
+    history.pushState({ section: id }, '', '');
   }
 }
 
