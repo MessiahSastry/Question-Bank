@@ -511,8 +511,8 @@ window.onpopstate = function(event) {
   }
 };
 document.addEventListener("DOMContentLoaded", function() {
-   } // End of classDropdown if block
-
+  // CLASS DROPDOWN LOGIC
+  // (your classDropdown, classSelected, ... code here)
   // SUBJECT DROPDOWN LOGIC
   const subjectDropdown = document.getElementById('subject-dropdown');
   const subjectSelected = document.getElementById('subject-selected');
@@ -534,7 +534,6 @@ document.addEventListener("DOMContentLoaded", function() {
         this.classList.add('selected');
       }
     });
-
     document.addEventListener('click', function(e) {
       if (!subjectDropdown.contains(e.target)) {
         subjectOptions.style.display = "none";
@@ -542,3 +541,4 @@ document.addEventListener("DOMContentLoaded", function() {
       }
     });
   }
+});
