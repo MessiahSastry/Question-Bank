@@ -32,11 +32,10 @@ function hideSplashAndShowLogin() {
 function showLoginUI() {
   loginSection.innerHTML = `
     <div class="login-box">
-      <header class="dashboard-header">
-        <div class="school-title">ST. PATRICK'S SCHOOL</div>
-        <div class="subtitle-row">
-          <div class="subtitle">IIT & NEET FOUNDATION</div>
-        </div>
+     <div class="login-header">
+      <div class="login-title">ST. PATRICK'S SCHOOL</div>
+      <div class="login-subtitle">IIT & NEET FOUNDATION</div>
+      </div>
       </header>
       <input type="email" id="email" placeholder="Email" autocomplete="username" />
       <input type="password" id="password" placeholder="Password" autocomplete="current-password" />
