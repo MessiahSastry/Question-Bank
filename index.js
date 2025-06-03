@@ -532,6 +532,7 @@ document.addEventListener("DOMContentLoaded", function() {
         classSelected.textContent = this.textContent;
         classInput.value = this.dataset.value;
         classOptions.style.display = "none";
+        classDropdown.classList.remove('open');
         // Mark selected visually
         [...classOptions.children].forEach(d => d.classList.remove('selected'));
         this.classList.add('selected');
@@ -541,6 +542,7 @@ document.addEventListener("DOMContentLoaded", function() {
     document.addEventListener('click', function(e) {
       if (!classDropdown.contains(e.target)) {
         classOptions.style.display = "none";
+        classDropdown.classList.remove('open');
       }
     });
   }
