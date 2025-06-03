@@ -31,23 +31,27 @@ app.post("/generate", async (req, res) => {
   }
 });
 
-// AI-Assisted Tagging endpoint
+// AI-Assisted Tagging endpoint using GPT-4 Turbo
 app.post("/tag-question", async (req, res) => {
   const { question } = req.body;
   try {
     const tagPrompt = `
-      Analyze the following question and reply with a JSON like {"difficulty":"Easy/Medium/Difficult","marks":2/4/8}.\n
+      Analyze the following question and reply with a JSON like {"difficulty":"Easy/Medium/Difficult","marks":2/4/8}.
       Question: ${question}
     `;
     const response = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo", // cheaper model for tagging
+      model: "gpt-4-turbo",
       messages: [{ role: "user", content: tagPrompt }],
       max_tokens: 60,
       temperature: 0,
     });
     const code = response.choices[0].message.content;
     let tag;
-    try { tag = JSON.parse(code); } catch { tag = null; }
+    try { 
+      tag = JSON.parse(code); 
+    } catch { 
+      tag = null; 
+    }
     res.json(tag || { difficulty: "Medium", marks: 4 });
   } catch (error) {
     res.status(500).json({ error: error.message || error.toString() });
