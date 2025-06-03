@@ -463,24 +463,22 @@ chapterFilter.onchange = function () {
   filterQuestions();
 };
 }
-  function filterQuestions() {
+ function filterQuestions() {
   let classVal = classFilter.value.trim();
-  if (!classVal) {
-    renderQuestions([]);
-    return;
-  }
   let subjectVal = subjectFilter.value.trim();
   let chapterVal = chapterFilter.value.trim();
 
+  // Filter step by step: if blank, don't filter by that field
   filteredQuestions = qbQuestions.filter(q => {
-  let matches = true;
-  if (classVal && (!q.class || q.class.trim() !== classVal.trim())) matches = false;
-  if (subjectVal && (!q.subject || q.subject.trim() !== subjectVal.trim())) matches = false;
-  if (chapterVal && (!q.chapter || q.chapter.trim() !== chapterVal.trim())) matches = false;
-  return matches;
-});
+    if (classVal && (!q.class || q.class.trim() !== classVal)) return false;
+    if (subjectVal && (!q.subject || q.subject.trim() !== subjectVal)) return false;
+    if (chapterVal && (!q.chapter || q.chapter.trim() !== chapterVal)) return false;
+    return true;
+  });
+
   renderQuestions(filteredQuestions);
 }
+
   function renderQuestions(list) {
     outputDiv.innerHTML = "";
     list.forEach((q, idx) => {
