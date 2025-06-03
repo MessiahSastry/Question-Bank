@@ -519,7 +519,6 @@ function loadQuestionBank() {
     if (!file) return;
     const fileType = file.type;
     if (fileType === "application/pdf") {
-      // Render PDF
       const fileReader = new FileReader();
       fileReader.onload = async function () {
         const typedarray = new Uint8Array(this.result);
@@ -530,7 +529,6 @@ function loadQuestionBank() {
       };
       fileReader.readAsArrayBuffer(file);
     } else if (fileType.startsWith("image/")) {
-      // Show image preview
       const imgURL = URL.createObjectURL(file);
       manualFilePreview.innerHTML = `<img id="manual-img-preview" src="${imgURL}" style="max-width:100%; max-height:360px; border-radius:8px;"/>`;
       currentImageDataUrl = imgURL;
@@ -548,40 +546,10 @@ function loadQuestionBank() {
     const viewport = page.getViewport({ scale: 1.5 });
     canvas.height = viewport.height;
     canvas.width = viewport.width;
-    manualFilePreview.innerHTML = ""; // Clear previous
+    manualFilePreview.innerHTML = "";
     manualFilePreview.appendChild(canvas);
-
     await page.render({ canvasContext: ctx, viewport: viewport }).promise;
     currentImageDataUrl = canvas.toDataURL();
-  }
-
-  // Add navigation buttons if PDF
-  function addPdfNavigation() {
-    if (!pdfDoc) return;
-    const navDiv = document.createElement('div');
-    navDiv.style.margin = "12px 0";
-    navDiv.style.textAlign = "center";
-    navDiv.innerHTML = `
-      <button id="pdf-prev-btn" class="btn-small" style="margin-right:12px;">&lt; Prev Page</button>
-      <span>Page <span id="pdf-page-num">${currentPageNumber}</span> / ${pdfDoc.numPages}</span>
-      <button id="pdf-next-btn" class="btn-small" style="margin-left:12px;">Next Page &gt;</button>
-    `;
-    manualFilePreview.appendChild(navDiv);
-
-    document.getElementById('pdf-prev-btn').onclick = () => {
-      if (currentPageNumber <= 1) return;
-      currentPageNumber--;
-      renderPdfPage(currentPageNumber).then(() => {
-        document.getElementById('pdf-page-num').textContent = currentPageNumber;
-      });
-    };
-    document.getElementById('pdf-next-btn').onclick = () => {
-      if (currentPageNumber >= pdfDoc.numPages) return;
-      currentPageNumber++;
-      renderPdfPage(currentPageNumber).then(() => {
-        document.getElementById('pdf-page-num').textContent = currentPageNumber;
-      });
-    };
   }
 
   manualExtractBtn.onclick = async () => {
@@ -599,10 +567,9 @@ function loadQuestionBank() {
       const result = await Tesseract.recognize(
         currentImageDataUrl,
         'eng',
-        { logger: m => {/* Optional: console.log(m) */} }
+        { logger: m => {/* Optional logging */} }
       );
       let text = result.data.text;
-      // Split text into questions by pattern (numbers followed by dot or "Q")
       const questionRegex = /(?:^|\n)(?:Q(?:uestion)?\s*\d+|[0-9]{1,2}[.)])\s*/gi;
       let splitIndices = [];
       let match;
@@ -612,15 +579,28 @@ function loadQuestionBank() {
       splitIndices.push(text.length);
       for (let i = 0; i < splitIndices.length - 1; i++) {
         let questionText = text.substring(splitIndices[i], splitIndices[i + 1]).trim();
-        // Remove answers if any (simple heuristic: remove lines starting with "Answer", "Ans", or lines after certain keywords)
         questionText = questionText.replace(/Answer[s]?:[\s\S]*$/i, "").trim();
         questionText = questionText.replace(/Ans[:.]?[\s\S]*$/i, "").trim();
-        if (questionText) detectedQuestions.push({
-          text: questionText,
-          difficulty: "Medium",
-          marks: 4,
-          selected: true,
-        });
+
+        if (questionText) {
+          let tag = { difficulty: "Medium", marks: 4 };
+          try {
+            const response = await fetch("/tag-question", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ question: questionText }),
+            });
+            if (response.ok) tag = await response.json();
+          } catch {
+            console.warn("Tagging API failed, using defaults");
+          }
+          detectedQuestions.push({
+            text: questionText,
+            difficulty: tag.difficulty || "Medium",
+            marks: tag.marks || 4,
+            selected: true,
+          });
+        }
       }
       if (detectedQuestions.length === 0) {
         alert("No questions detected. Please check the image or PDF page.");
@@ -640,7 +620,7 @@ function loadQuestionBank() {
 
   function renderManualQuestions() {
     manualQuestionsList.innerHTML = "";
-    detectedQuestions.forEach((q, idx) => {
+    detectedQuestions.forEach(q => {
       const div = document.createElement('div');
       div.className = 'manual-question-card';
       div.style.border = '1.5px solid #1762a7';
@@ -651,7 +631,6 @@ function loadQuestionBank() {
       div.style.fontSize = '1.03em';
       div.style.position = 'relative';
 
-      // Checkbox
       const checkbox = document.createElement('input');
       checkbox.type = 'checkbox';
       checkbox.checked = q.selected;
@@ -661,7 +640,6 @@ function loadQuestionBank() {
       checkbox.onchange = () => { q.selected = checkbox.checked; };
       div.appendChild(checkbox);
 
-      // Textarea for question text
       const textarea = document.createElement('textarea');
       textarea.value = q.text;
       textarea.style.width = 'calc(100% - 40px)';
@@ -670,7 +648,6 @@ function loadQuestionBank() {
       textarea.oninput = () => { q.text = textarea.value; };
       div.appendChild(textarea);
 
-      // Difficulty dropdown
       const diffLabel = document.createElement('label');
       diffLabel.textContent = "Difficulty:";
       diffLabel.style.marginRight = "8px";
@@ -688,8 +665,9 @@ function loadQuestionBank() {
       });
       diffSelect.style.marginRight = "20px";
       diffSelect.onchange = () => { q.difficulty = diffSelect.value; };
+      div.appendChild(diffLabel);
+      div.appendChild(diffSelect);
 
-      // Marks dropdown
       const marksLabel = document.createElement('label');
       marksLabel.textContent = "Marks:";
       marksLabel.style.fontWeight = "600";
@@ -704,28 +682,19 @@ function loadQuestionBank() {
         marksSelect.appendChild(opt);
       });
       marksSelect.onchange = () => { q.marks = parseInt(marksSelect.value); };
-
-      const controlsDiv = document.createElement('div');
-      controlsDiv.style.marginTop = "8px";
-      controlsDiv.style.marginLeft = "40px";
-      controlsDiv.appendChild(diffLabel);
-      controlsDiv.appendChild(diffSelect);
-      controlsDiv.appendChild(marksLabel);
-      controlsDiv.appendChild(marksSelect);
-
-      div.appendChild(controlsDiv);
+      div.appendChild(marksLabel);
+      div.appendChild(marksSelect);
 
       manualQuestionsList.appendChild(div);
     });
   }
 
-  manualReviewForm.onsubmit = async (e) => {
+  manualReviewForm.onsubmit = async e => {
     e.preventDefault();
     if (!auth.currentUser) {
       alert("Please login to save questions.");
       return;
     }
-
     const classVal = manualClass.value.trim();
     const subjectVal = manualSubject.value.trim();
     const chapterVal = manualChapter.value.trim();
@@ -777,7 +746,6 @@ function loadQuestionBank() {
     }
   };
 
-  // Reset UI when manual-question-section is shown
   const manualSection = document.getElementById('manual-question-section');
   new MutationObserver(() => {
     if (manualSection.style.display === "block") {
