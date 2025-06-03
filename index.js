@@ -452,11 +452,16 @@ function loadQuestionBank() {
 
   // Update chapter dropdown based on subject selection
   subjectFilter.onchange = function () {
-    let subj = subjectFilter.value;
-    let chapterSet = subj && subjectToChapters[subj] ? subjectToChapters[subj] : initialChapters;
-    setOptions(chapterFilter, chapterSet, "Chapter");
-    filterQuestions();
-  };
+  let subj = subjectFilter.value;
+  // Update chapter dropdown to only chapters for selected subject
+  let chapterSet = subj && subjectToChapters[subj] ? subjectToChapters[subj] : [];
+  setOptions(chapterFilter, chapterSet, "Chapter");
+  filterQuestions();
+};
+// Also, update chapterFilter to filter questions on change:
+chapterFilter.onchange = function () {
+  filterQuestions();
+};
 }
   function filterQuestions() {
   let classVal = classFilter.value.trim();
