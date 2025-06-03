@@ -503,3 +503,11 @@ function loadQuestionBank() {
     sel.addEventListener("change", filterQuestions);
   });
 }
+window.onpopstate = function(event) {
+  if (event.state && event.state.section) {
+    showSection(event.state.section, false);
+  } else {
+    // If no state, default to login-section
+    showSection('login-section', false);
+  }
+};
