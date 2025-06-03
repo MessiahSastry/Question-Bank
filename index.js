@@ -473,13 +473,12 @@ chapterFilter.onchange = function () {
   let chapterVal = chapterFilter.value.trim();
 
   filteredQuestions = qbQuestions.filter(q => {
-    let matches = true;
-    if (classVal && (!q.class || q.class != classVal)) matches = false;
-    if (subjectVal && (!q.subject || q.subject != subjectVal)) matches = false;
-    if (chapterVal && (!q.chapter || q.chapter != chapterVal)) matches = false;
-    return matches;
-  });
-
+  let matches = true;
+  if (classVal && (!q.class || q.class.trim() !== classVal.trim())) matches = false;
+  if (subjectVal && (!q.subject || q.subject.trim() !== subjectVal.trim())) matches = false;
+  if (chapterVal && (!q.chapter || q.chapter.trim() !== chapterVal.trim())) matches = false;
+  return matches;
+});
   renderQuestions(filteredQuestions);
 }
   function renderQuestions(list) {
