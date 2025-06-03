@@ -515,3 +515,33 @@ window.onpopstate = function(event) {
     showSection('login-section', false);
   }
 };
+document.addEventListener("DOMContentLoaded", function() {
+  const classDropdown = document.getElementById('class-dropdown');
+  const classSelected = document.getElementById('class-selected');
+  const classOptions = document.getElementById('class-options');
+  const classInput = document.getElementById('class-input-custom');
+
+  if (classDropdown && classSelected && classOptions && classInput) {
+    classDropdown.onclick = function(e) {
+      classOptions.style.display = (classOptions.style.display === "block") ? "none" : "block";
+    };
+
+    [...classOptions.children].forEach(opt => {
+      opt.onclick = function(event) {
+        event.stopPropagation();
+        classSelected.textContent = this.textContent;
+        classInput.value = this.dataset.value;
+        classOptions.style.display = "none";
+        // Mark selected visually
+        [...classOptions.children].forEach(d => d.classList.remove('selected'));
+        this.classList.add('selected');
+      }
+    });
+
+    document.addEventListener('click', function(e) {
+      if (!classDropdown.contains(e.target)) {
+        classOptions.style.display = "none";
+      }
+    });
+  }
+});
