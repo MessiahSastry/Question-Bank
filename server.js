@@ -15,9 +15,9 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
+// ========== AI Question Generation ==========
 app.post("/generate", async (req, res) => {
   const { prompt } = req.body;
-
   try {
     const response = await openai.chat.completions.create({
       model: "gpt-4-turbo",
@@ -31,12 +31,13 @@ app.post("/generate", async (req, res) => {
   }
 });
 
-// AI-Assisted Tagging endpoint using GPT-4 Turbo
+// ========== AI-Assisted Tagging ==========
 app.post("/tag-question", async (req, res) => {
   const { question } = req.body;
   try {
     const tagPrompt = `
-      Analyze the following question and reply with a JSON like {"difficulty":"Easy/Medium/Difficult","marks":2/4/8}.
+      Analyze the following question and reply with a JSON like {"difficulty":"Easy/Medium/Difficult","marks":1/2/4/6/8/10}.
+      Only use marks: 1, 2, 4, 6, 8, or 10.
       Question: ${question}
     `;
     const response = await openai.chat.completions.create({
@@ -45,19 +46,20 @@ app.post("/tag-question", async (req, res) => {
       max_tokens: 60,
       temperature: 0,
     });
-    const code = response.choices[0].message.content;
     let tag;
-    try { 
-      tag = JSON.parse(code); 
-    } catch { 
-      tag = null; 
+    try {
+      tag = JSON.parse(response.choices[0].message.content);
+    } catch {
+      tag = null;
     }
+    // Safe fallback
     res.json(tag || { difficulty: "Medium", marks: 4 });
   } catch (error) {
     res.status(500).json({ error: error.message || error.toString() });
   }
 });
 
+// ========== Static & Health Endpoints ==========
 app.get("/question-generator", (req, res) => {
   res.sendFile(path.join(__dirname, "ai-question-generator.html"));
 });
@@ -66,5 +68,6 @@ app.get("/", (req, res) => {
   res.send("Backend running!");
 });
 
+// ========== Start Server ==========
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
