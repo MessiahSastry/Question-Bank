@@ -11,7 +11,6 @@ firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
 const db = firebase.firestore();
 
-
 // ====== SECTION NAVIGATION ======
 function showSection(id, pushState = true) {
   document.querySelectorAll('.app-section').forEach(sec => sec.style.display = 'none');
@@ -114,10 +113,8 @@ window.onload = function () {
   }, 2000);
 };
 
-
 // ====== DASHBOARD LOGIC ======
 function loadDashboard() {
-  // DOM references
   const displayNameSpan = document.getElementById("display-name");
   const settingsBtn = document.getElementById("settings-btn");
   const settingsPopup = document.getElementById("settings-popup");
@@ -130,12 +127,10 @@ function loadDashboard() {
   let user = auth.currentUser;
   let userDisplayName = "";
 
-  // Load user info and personalize dashboard
   db.collection("users").doc(user.uid).get().then(doc => {
     userDisplayName = doc.exists ? (doc.data().displayName || "") : (user.displayName || "");
     displayNameSpan.textContent = userDisplayName || user.email;
 
-    // Role-based lock for FA/SA builder
     if (fasaBtn) {
       const isAdmin = doc.exists ? !!doc.data().admin : false;
       if (!isAdmin) {
@@ -152,17 +147,15 @@ function loadDashboard() {
     }
   });
 
-  // Settings button opens popup
-  settingsBtn.onclick = function() {
+  settingsBtn.onclick = function () {
     settingsPopup.style.display = "flex";
     editNameInput.value = userDisplayName || "";
     editNameInput.focus();
   };
-  closeSettingsBtn.onclick = function() {
+  closeSettingsBtn.onclick = function () {
     settingsPopup.style.display = "none";
   };
 
-  // Save display name
   saveNameBtn.onclick = async () => {
     const newName = editNameInput.value.trim();
     if (!newName) return alert("Please enter your name.");
@@ -180,34 +173,31 @@ function loadDashboard() {
     }
   };
 
-  // Logout
   logoutBtn.onclick = () => {
-   auth.signOut().then(() => {
-  showSection('login-section');
-  history.replaceState({ section: 'login-section' }, '', '');
+    auth.signOut().then(() => {
+      showSection('login-section');
+      history.replaceState({ section: 'login-section' }, '', '');
     });
   };
 
-  // Optional: Close popup if user clicks outside modal
   settingsPopup.addEventListener("click", (e) => {
     if (e.target === settingsPopup) settingsPopup.style.display = "none";
   });
 
-  // HOOK UP DASHBOARD BUTTONS
-  document.getElementById("gen-ai-btn").onclick = function() {
+  document.getElementById("gen-ai-btn").onclick = function () {
     showSection('ai-question-section');
   };
-  document.getElementById("manual-add-btn").onclick = function() {
-    alert("Manual Question Entry coming soon!");
+  document.getElementById("manual-add-btn").onclick = function () {
+    showSection('manual-question-section');
   };
-  document.getElementById("qbank-btn").onclick = function() {
+  document.getElementById("qbank-btn").onclick = function () {
     showSection('qbank-section');
     loadQuestionBank();
   };
-  document.getElementById("sliptest-btn").onclick = function() {
+  document.getElementById("sliptest-btn").onclick = function () {
     alert("Slip Test Paper Builder coming soon!");
   };
-  document.getElementById("textbooks-btn").onclick = function() {
+  document.getElementById("textbooks-btn").onclick = function () {
     alert("AP Textbook Viewer coming soon!");
   };
 }
@@ -218,7 +208,7 @@ const saveAllBtn = document.getElementById("saveAllBtn");
 let questions = [];
 
 if (document.getElementById("genForm")) {
-  document.getElementById("genForm").onsubmit = async function(e) {
+  document.getElementById("genForm").onsubmit = async function (e) {
     e.preventDefault();
     outputDiv.innerHTML = "Generating questions, please wait...";
     saveAllBtn.style.display = "none";
@@ -252,7 +242,6 @@ if (document.getElementById("genForm")) {
         outputDiv.innerHTML = "Error: " + result.error;
         return;
       }
-      // Split questions by pattern
       const items = result.result.split(/(?=Question \d+:)/g).filter(q => q.trim());
       questions = items.map(q => ({ text: q.trim() }));
       renderQuestions();
@@ -285,7 +274,6 @@ if (document.getElementById("genForm")) {
       const btnGroup = document.createElement("div");
       btnGroup.className = "btn-group";
 
-      // Edit button
       const editBtn = document.createElement("button");
       editBtn.textContent = "Edit";
       editBtn.className = "btn-small edit-btn";
@@ -303,7 +291,6 @@ if (document.getElementById("genForm")) {
       };
       btnGroup.appendChild(editBtn);
 
-      // Copy button
       const copyBtn = document.createElement("button");
       copyBtn.textContent = "Copy";
       copyBtn.className = "btn-small copy-btn";
@@ -314,7 +301,6 @@ if (document.getElementById("genForm")) {
       };
       btnGroup.appendChild(copyBtn);
 
-      // Delete button
       const deleteBtn = document.createElement("button");
       deleteBtn.textContent = "Delete";
       deleteBtn.className = "btn-small delete-btn";
@@ -420,61 +406,56 @@ function loadQuestionBank() {
   });
 
   function setFilterOptions() {
-  let classes = new Set(), subjects = new Set();
-  let subjectToChapters = {};
+    let classes = new Set(), subjects = new Set();
+    let subjectToChapters = {};
 
-  qbQuestions.forEach(q => {
-    if (q.class) classes.add(q.class);
-    if (q.subject) subjects.add(q.subject);
-    if (q.chapter) {
-      if (!subjectToChapters[q.subject]) subjectToChapters[q.subject] = new Set();
-      subjectToChapters[q.subject].add(q.chapter);
-    }
-  });
-
-  function setOptions(select, items, label) {
-    select.innerHTML = `<option value="">${label}</option>`;
-    Array.from(items).sort().forEach(val => {
-      select.innerHTML += `<option value="${val}">${val}</option>`;
+    qbQuestions.forEach(q => {
+      if (q.class) classes.add(q.class);
+      if (q.subject) subjects.add(q.subject);
+      if (q.chapter) {
+        if (!subjectToChapters[q.subject]) subjectToChapters[q.subject] = new Set();
+        subjectToChapters[q.subject].add(q.chapter);
+      }
     });
+
+    function setOptions(select, items, label) {
+      select.innerHTML = `<option value="">${label}</option>`;
+      Array.from(items).sort().forEach(val => {
+        select.innerHTML += `<option value="${val}">${val}</option>`;
+      });
+    }
+    setOptions(classFilter, classes, "Class");
+    setOptions(subjectFilter, subjects, "Subject");
+
+    let initialChapters = new Set();
+    Object.values(subjectToChapters).forEach(chapSet => {
+      chapSet.forEach(c => initialChapters.add(c));
+    });
+    setOptions(chapterFilter, initialChapters, "Chapter");
+
+    subjectFilter.onchange = function () {
+      let subj = subjectFilter.value;
+      let chapterSet = subj && subjectToChapters[subj] ? subjectToChapters[subj] : [];
+      setOptions(chapterFilter, chapterSet, "Chapter");
+      filterQuestions();
+    };
+    chapterFilter.onchange = function () {
+      filterQuestions();
+    };
   }
-  setOptions(classFilter, classes, "Class");
-  setOptions(subjectFilter, subjects, "Subject");
+  function filterQuestions() {
+    let classVal = classFilter.value.trim();
+    let subjectVal = subjectFilter.value.trim();
+    let chapterVal = chapterFilter.value.trim();
 
-  // Show all chapters if no subject selected
-  let initialChapters = new Set();
-  Object.values(subjectToChapters).forEach(chapSet => {
-    chapSet.forEach(c => initialChapters.add(c));
-  });
-  setOptions(chapterFilter, initialChapters, "Chapter");
-
-  // Update chapter dropdown based on subject selection
-  subjectFilter.onchange = function () {
-  let subj = subjectFilter.value;
-  // Update chapter dropdown to only chapters for selected subject
-  let chapterSet = subj && subjectToChapters[subj] ? subjectToChapters[subj] : [];
-  setOptions(chapterFilter, chapterSet, "Chapter");
-  filterQuestions();
-};
-// Also, update chapterFilter to filter questions on change:
-chapterFilter.onchange = function () {
-  filterQuestions();
-};
-}
- function filterQuestions() {
-  let classVal = classFilter.value.trim();
-  let subjectVal = subjectFilter.value.trim();
-  let chapterVal = chapterFilter.value.trim();
-
-  // Filter step by step: if blank, don't filter by that field
-  filteredQuestions = qbQuestions.filter(q => {
-    if (classVal && (!q.class || q.class.trim() !== classVal)) return false;
-    if (subjectVal && (!q.subject || q.subject.trim() !== subjectVal)) return false;
-    if (chapterVal && (!q.chapter || q.chapter.trim() !== chapterVal)) return false;
-    return true;
-  });
-  renderQuestions(filteredQuestions);
-}
+    filteredQuestions = qbQuestions.filter(q => {
+      if (classVal && (!q.class || q.class.trim() !== classVal)) return false;
+      if (subjectVal && (!q.subject || q.subject.trim() !== subjectVal)) return false;
+      if (chapterVal && (!q.chapter || q.chapter.trim() !== chapterVal)) return false;
+      return true;
+    });
+    renderQuestions(filteredQuestions);
+  }
   function renderQuestions(list) {
     outputDiv.innerHTML = "";
     list.forEach((q, idx) => {
@@ -497,46 +478,315 @@ chapterFilter.onchange = function () {
     });
   }
   [classFilter, subjectFilter, chapterFilter].forEach(sel => {
-  sel.addEventListener("change", filterQuestions);
-});
+    sel.addEventListener("change", filterQuestions);
+  });
 }
-window.onpopstate = function(event) {
-  if (event.state && event.state.section) {
-    showSection(event.state.section, false);
-  } else {
-    // If no state, default to login-section
-    showSection('login-section', false);
+
+// ====== MANUAL QUESTION ENTRY LOGIC ======
+(() => {
+  const manualClass = document.getElementById('manual-class');
+  const manualSubject = document.getElementById('manual-subject');
+  const manualChapter = document.getElementById('manual-chapter');
+  const manualFile = document.getElementById('manual-file');
+  const manualFilePreview = document.getElementById('manual-file-preview');
+  const manualExtractBtn = document.getElementById('manual-extract-btn');
+  const ocrLoading = document.getElementById('ocr-loading');
+  const manualReviewForm = document.getElementById('manual-review-form');
+  const manualQuestionsList = document.getElementById('manual-questions-list');
+  const manualSuccessMsg = document.getElementById('manual-success-msg');
+
+  let currentPageNumber = 1;
+  let pdfDoc = null;
+  let currentImageDataUrl = null;
+  let detectedQuestions = [];
+
+  function resetManualUI() {
+    manualFilePreview.innerHTML = "";
+    manualExtractBtn.style.display = "none";
+    ocrLoading.style.display = "none";
+    manualReviewForm.style.display = "none";
+    manualQuestionsList.innerHTML = "";
+    manualSuccessMsg.style.display = "none";
+    detectedQuestions = [];
+    pdfDoc = null;
+    currentPageNumber = 1;
+    currentImageDataUrl = null;
   }
-};
-document.addEventListener("DOMContentLoaded", function() {
-  // CLASS DROPDOWN LOGIC
-  // (your classDropdown, classSelected, ... code here)
-  // SUBJECT DROPDOWN LOGIC
-  const subjectDropdown = document.getElementById('subject-dropdown');
-  const subjectSelected = document.getElementById('subject-selected');
-  const subjectOptions = document.getElementById('subject-options');
-  const subjectInput = document.getElementById('subject-input-custom');
-  if (subjectDropdown && subjectSelected && subjectOptions && subjectInput) {
-    subjectDropdown.onclick = function(e) {
-      subjectOptions.style.display = (subjectOptions.style.display === "block") ? "none" : "block";
-      subjectDropdown.classList.toggle('open', subjectOptions.style.display === "block");
+
+  manualFile.addEventListener('change', async () => {
+    resetManualUI();
+    const file = manualFile.files[0];
+    if (!file) return;
+    const fileType = file.type;
+    if (fileType === "application/pdf") {
+      // Render PDF
+      const fileReader = new FileReader();
+      fileReader.onload = async function () {
+        const typedarray = new Uint8Array(this.result);
+        pdfDoc = await pdfjsLib.getDocument(typedarray).promise;
+        currentPageNumber = 1;
+        renderPdfPage(currentPageNumber);
+        manualExtractBtn.style.display = "inline-block";
+      };
+      fileReader.readAsArrayBuffer(file);
+    } else if (fileType.startsWith("image/")) {
+      // Show image preview
+      const imgURL = URL.createObjectURL(file);
+      manualFilePreview.innerHTML = `<img id="manual-img-preview" src="${imgURL}" style="max-width:100%; max-height:360px; border-radius:8px;"/>`;
+      currentImageDataUrl = imgURL;
+      manualExtractBtn.style.display = "inline-block";
+    } else {
+      alert("Unsupported file type. Please upload an image or PDF.");
+      manualFile.value = "";
+    }
+  });
+
+  async function renderPdfPage(num) {
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    const page = await pdfDoc.getPage(num);
+    const viewport = page.getViewport({ scale: 1.5 });
+    canvas.height = viewport.height;
+    canvas.width = viewport.width;
+    manualFilePreview.innerHTML = ""; // Clear previous
+    manualFilePreview.appendChild(canvas);
+
+    await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+    currentImageDataUrl = canvas.toDataURL();
+  }
+
+  // Add navigation buttons if PDF
+  function addPdfNavigation() {
+    if (!pdfDoc) return;
+    const navDiv = document.createElement('div');
+    navDiv.style.margin = "12px 0";
+    navDiv.style.textAlign = "center";
+    navDiv.innerHTML = `
+      <button id="pdf-prev-btn" class="btn-small" style="margin-right:12px;">&lt; Prev Page</button>
+      <span>Page <span id="pdf-page-num">${currentPageNumber}</span> / ${pdfDoc.numPages}</span>
+      <button id="pdf-next-btn" class="btn-small" style="margin-left:12px;">Next Page &gt;</button>
+    `;
+    manualFilePreview.appendChild(navDiv);
+
+    document.getElementById('pdf-prev-btn').onclick = () => {
+      if (currentPageNumber <= 1) return;
+      currentPageNumber--;
+      renderPdfPage(currentPageNumber).then(() => {
+        document.getElementById('pdf-page-num').textContent = currentPageNumber;
+      });
     };
-    [...subjectOptions.children].forEach(opt => {
-      opt.onclick = function(event) {
-        event.stopPropagation();
-        subjectSelected.textContent = this.textContent;
-        subjectInput.value = this.dataset.value;
-        subjectOptions.style.display = "none";
-        subjectDropdown.classList.remove('open');
-        [...subjectOptions.children].forEach(d => d.classList.remove('selected'));
-        this.classList.add('selected');
+    document.getElementById('pdf-next-btn').onclick = () => {
+      if (currentPageNumber >= pdfDoc.numPages) return;
+      currentPageNumber++;
+      renderPdfPage(currentPageNumber).then(() => {
+        document.getElementById('pdf-page-num').textContent = currentPageNumber;
+      });
+    };
+  }
+
+  manualExtractBtn.onclick = async () => {
+    if (!currentImageDataUrl) {
+      alert("No file or page to extract from.");
+      return;
+    }
+    manualExtractBtn.disabled = true;
+    ocrLoading.style.display = "block";
+    manualReviewForm.style.display = "none";
+    manualQuestionsList.innerHTML = "";
+    detectedQuestions = [];
+
+    try {
+      const result = await Tesseract.recognize(
+        currentImageDataUrl,
+        'eng',
+        { logger: m => {/* Optional: console.log(m) */} }
+      );
+      let text = result.data.text;
+      // Split text into questions by pattern (numbers followed by dot or "Q")
+      const questionRegex = /(?:^|\n)(?:Q(?:uestion)?\s*\d+|[0-9]{1,2}[.)])\s*/gi;
+      let splitIndices = [];
+      let match;
+      while ((match = questionRegex.exec(text)) !== null) {
+        splitIndices.push(match.index);
       }
-    });
-    document.addEventListener('click', function(e) {
-      if (!subjectDropdown.contains(e.target)) {
-        subjectOptions.style.display = "none";
-        subjectDropdown.classList.remove('open');
+      splitIndices.push(text.length);
+      for (let i = 0; i < splitIndices.length - 1; i++) {
+        let questionText = text.substring(splitIndices[i], splitIndices[i + 1]).trim();
+        // Remove answers if any (simple heuristic: remove lines starting with "Answer", "Ans", or lines after certain keywords)
+        questionText = questionText.replace(/Answer[s]?:[\s\S]*$/i, "").trim();
+        questionText = questionText.replace(/Ans[:.]?[\s\S]*$/i, "").trim();
+        if (questionText) detectedQuestions.push({
+          text: questionText,
+          difficulty: "Medium",
+          marks: 4,
+          selected: true,
+        });
       }
+      if (detectedQuestions.length === 0) {
+        alert("No questions detected. Please check the image or PDF page.");
+        manualExtractBtn.disabled = false;
+        ocrLoading.style.display = "none";
+        return;
+      }
+      renderManualQuestions();
+      manualReviewForm.style.display = "block";
+    } catch (e) {
+      alert("OCR failed: " + e.message);
+    } finally {
+      ocrLoading.style.display = "none";
+      manualExtractBtn.disabled = false;
+    }
+  };
+
+  function renderManualQuestions() {
+    manualQuestionsList.innerHTML = "";
+    detectedQuestions.forEach((q, idx) => {
+      const div = document.createElement('div');
+      div.className = 'manual-question-card';
+      div.style.border = '1.5px solid #1762a7';
+      div.style.borderRadius = '12px';
+      div.style.padding = '14px 16px';
+      div.style.marginBottom = '14px';
+      div.style.background = '#f7fafd';
+      div.style.fontSize = '1.03em';
+      div.style.position = 'relative';
+
+      // Checkbox
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.checked = q.selected;
+      checkbox.style.position = 'absolute';
+      checkbox.style.top = '12px';
+      checkbox.style.left = '12px';
+      checkbox.onchange = () => { q.selected = checkbox.checked; };
+      div.appendChild(checkbox);
+
+      // Textarea for question text
+      const textarea = document.createElement('textarea');
+      textarea.value = q.text;
+      textarea.style.width = 'calc(100% - 40px)';
+      textarea.style.marginLeft = '40px';
+      textarea.rows = 3;
+      textarea.oninput = () => { q.text = textarea.value; };
+      div.appendChild(textarea);
+
+      // Difficulty dropdown
+      const diffLabel = document.createElement('label');
+      diffLabel.textContent = "Difficulty:";
+      diffLabel.style.marginRight = "8px";
+      diffLabel.style.marginLeft = "40px";
+      diffLabel.style.fontWeight = "600";
+      diffLabel.style.fontSize = "0.95em";
+
+      const diffSelect = document.createElement('select');
+      ['Easy', 'Medium', 'Difficult'].forEach(level => {
+        const opt = document.createElement('option');
+        opt.value = level;
+        opt.textContent = level;
+        if (level === q.difficulty) opt.selected = true;
+        diffSelect.appendChild(opt);
+      });
+      diffSelect.style.marginRight = "20px";
+      diffSelect.onchange = () => { q.difficulty = diffSelect.value; };
+
+      // Marks dropdown
+      const marksLabel = document.createElement('label');
+      marksLabel.textContent = "Marks:";
+      marksLabel.style.fontWeight = "600";
+      marksLabel.style.fontSize = "0.95em";
+
+      const marksSelect = document.createElement('select');
+      [1, 2, 4, 6, 8, 10].forEach(mark => {
+        const opt = document.createElement('option');
+        opt.value = mark;
+        opt.textContent = mark;
+        if (mark === q.marks) opt.selected = true;
+        marksSelect.appendChild(opt);
+      });
+      marksSelect.onchange = () => { q.marks = parseInt(marksSelect.value); };
+
+      const controlsDiv = document.createElement('div');
+      controlsDiv.style.marginTop = "8px";
+      controlsDiv.style.marginLeft = "40px";
+      controlsDiv.appendChild(diffLabel);
+      controlsDiv.appendChild(diffSelect);
+      controlsDiv.appendChild(marksLabel);
+      controlsDiv.appendChild(marksSelect);
+
+      div.appendChild(controlsDiv);
+
+      manualQuestionsList.appendChild(div);
     });
   }
-});
+
+  manualReviewForm.onsubmit = async (e) => {
+    e.preventDefault();
+    if (!auth.currentUser) {
+      alert("Please login to save questions.");
+      return;
+    }
+
+    const classVal = manualClass.value.trim();
+    const subjectVal = manualSubject.value.trim();
+    const chapterVal = manualChapter.value.trim();
+    const userId = auth.currentUser.uid;
+
+    const questionsToSave = detectedQuestions.filter(q => q.selected && q.text.trim().length > 3);
+    if (questionsToSave.length === 0) {
+      alert("Please select at least one valid question to save.");
+      return;
+    }
+
+    try {
+      let savedCount = 0, skippedCount = 0;
+      for (const q of questionsToSave) {
+        const existingQuery = await db.collection("questions")
+          .where("createdBy", "==", userId)
+          .where("class", "==", classVal)
+          .where("subject", "==", subjectVal)
+          .where("chapter", "==", chapterVal)
+          .where("text", "==", q.text.trim())
+          .get();
+
+        if (!existingQuery.empty) {
+          skippedCount++;
+          continue;
+        }
+
+        await db.collection("questions").add({
+          text: q.text.trim(),
+          createdBy: userId,
+          class: classVal,
+          subject: subjectVal,
+          chapter: chapterVal,
+          difficulty: q.difficulty,
+          marks: q.marks,
+          timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+        });
+        savedCount++;
+      }
+      manualReviewForm.style.display = "none";
+      manualSuccessMsg.style.display = "block";
+      manualFile.value = "";
+      resetManualUI();
+
+      alert(`Saved ${savedCount} new question${savedCount !== 1 ? 's' : ''}.` +
+        (skippedCount > 0 ? ` Skipped ${skippedCount} duplicate${skippedCount !== 1 ? 's' : ''}.` : ""));
+    } catch (err) {
+      alert("Failed to save questions: " + err.message);
+    }
+  };
+
+  // Reset UI when manual-question-section is shown
+  const manualSection = document.getElementById('manual-question-section');
+  new MutationObserver(() => {
+    if (manualSection.style.display === "block") {
+      resetManualUI();
+      manualClass.value = "";
+      manualSubject.value = "";
+      manualChapter.value = "";
+      manualFile.value = "";
+    }
+  }).observe(manualSection, { attributes: true, attributeFilter: ['style'] });
+
+})();
