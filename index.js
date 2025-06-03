@@ -496,9 +496,9 @@ chapterFilter.onchange = function () {
       outputDiv.appendChild(div);
     });
   }
-  [classFilter, subjectFilter, chapterFilter, difficultyFilter, marksFilter].forEach(sel => {
-    sel.addEventListener("change", filterQuestions);
-  });
+  [classFilter, subjectFilter, chapterFilter].forEach(sel => {
+  sel.addEventListener("change", filterQuestions);
+});
 }
 window.onpopstate = function(event) {
   if (event.state && event.state.section) {
