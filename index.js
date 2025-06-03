@@ -33,11 +33,11 @@ function showLoginUI() {
   loginSection.innerHTML = `
     <div class="login-box">
       <header class="dashboard-header">
-  <div class="school-title">ST. PATRICK'S SCHOOL</div>
-  <div class="subtitle-row">
-    <div class="subtitle">IIT & NEET FOUNDATION</div>
-  </div>
-</header>
+        <div class="school-title">ST. PATRICK'S SCHOOL</div>
+        <div class="subtitle-row">
+          <div class="subtitle">IIT & NEET FOUNDATION</div>
+        </div>
+      </header>
       <input type="email" id="email" placeholder="Email" autocomplete="username" />
       <input type="password" id="password" placeholder="Password" autocomplete="current-password" />
       <div class="forgot-row">
@@ -482,214 +482,21 @@ function loadQuestionBank() {
   });
 }
 
-// ====== MANUAL QUESTION ENTRY LOGIC ======
+// ====== MANUAL QUESTION ENTRY LOGIC (REVISED) ======
 (() => {
+  const manualForm = document.getElementById('manualMetaForm');
   const manualClass = document.getElementById('manual-class');
   const manualSubject = document.getElementById('manual-subject');
   const manualChapter = document.getElementById('manual-chapter');
   const manualFile = document.getElementById('manual-file');
-  const manualFilePreview = document.getElementById('manual-file-preview');
-  const manualExtractBtn = document.getElementById('manual-extract-btn');
-  const ocrLoading = document.getElementById('ocr-loading');
-  const manualReviewForm = document.getElementById('manual-review-form');
-  const manualQuestionsList = document.getElementById('manual-questions-list');
+  const manualQuestionText = document.getElementById('manual-question-text');
+  const manualDifficulty = document.getElementById('manual-difficulty');
+  const manualMarks = document.getElementById('manual-marks');
   const manualSuccessMsg = document.getElementById('manual-success-msg');
 
-  let currentPageNumber = 1;
-  let pdfDoc = null;
-  let currentImageDataUrl = null;
-  let detectedQuestions = [];
+  if (!manualForm) return;
 
-  function resetManualUI() {
-    manualFilePreview.innerHTML = "";
-    manualExtractBtn.style.display = "none";
-    ocrLoading.style.display = "none";
-    manualReviewForm.style.display = "none";
-    manualQuestionsList.innerHTML = "";
-    manualSuccessMsg.style.display = "none";
-    detectedQuestions = [];
-    pdfDoc = null;
-    currentPageNumber = 1;
-    currentImageDataUrl = null;
-  }
-
-  manualFile.addEventListener('change', async () => {
-    resetManualUI();
-    const file = manualFile.files[0];
-    if (!file) return;
-    const fileType = file.type;
-    if (fileType === "application/pdf") {
-      const fileReader = new FileReader();
-      fileReader.onload = async function () {
-        const typedarray = new Uint8Array(this.result);
-        pdfDoc = await pdfjsLib.getDocument(typedarray).promise;
-        currentPageNumber = 1;
-        renderPdfPage(currentPageNumber);
-        manualExtractBtn.style.display = "inline-block";
-      };
-      fileReader.readAsArrayBuffer(file);
-    } else if (fileType.startsWith("image/")) {
-      const imgURL = URL.createObjectURL(file);
-      manualFilePreview.innerHTML = `<img id="manual-img-preview" src="${imgURL}" style="max-width:100%; max-height:360px; border-radius:8px;"/>`;
-      currentImageDataUrl = imgURL;
-      manualExtractBtn.style.display = "inline-block";
-    } else {
-      alert("Unsupported file type. Please upload an image or PDF.");
-      manualFile.value = "";
-    }
-  });
-
-  async function renderPdfPage(num) {
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
-    const page = await pdfDoc.getPage(num);
-    const viewport = page.getViewport({ scale: 1.5 });
-    canvas.height = viewport.height;
-    canvas.width = viewport.width;
-    manualFilePreview.innerHTML = "";
-    manualFilePreview.appendChild(canvas);
-    await page.render({ canvasContext: ctx, viewport: viewport }).promise;
-    currentImageDataUrl = canvas.toDataURL();
-  }
-
-  manualExtractBtn.onclick = async () => {
-    if (!currentImageDataUrl) {
-      alert("No file or page to extract from.");
-      return;
-    }
-    manualExtractBtn.disabled = true;
-    ocrLoading.style.display = "block";
-    manualReviewForm.style.display = "none";
-    manualQuestionsList.innerHTML = "";
-    detectedQuestions = [];
-
-    try {
-      const result = await Tesseract.recognize(
-        currentImageDataUrl,
-        'eng',
-        { logger: m => {/* Optional logging */} }
-      );
-      let text = result.data.text;
-      const questionRegex = /(?:^|\n)(?:Q(?:uestion)?\s*\d+|[0-9]{1,2}[.)])\s*/gi;
-      let splitIndices = [];
-      let match;
-      while ((match = questionRegex.exec(text)) !== null) {
-        splitIndices.push(match.index);
-      }
-      splitIndices.push(text.length);
-      for (let i = 0; i < splitIndices.length - 1; i++) {
-        let questionText = text.substring(splitIndices[i], splitIndices[i + 1]).trim();
-        questionText = questionText.replace(/Answer[s]?:[\s\S]*$/i, "").trim();
-        questionText = questionText.replace(/Ans[:.]?[\s\S]*$/i, "").trim();
-
-        if (questionText) {
-          let tag = { difficulty: "Medium", marks: 4 };
-          try {
-            const response = await fetch("/tag-question", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ question: questionText }),
-            });
-            if (response.ok) tag = await response.json();
-          } catch {
-            console.warn("Tagging API failed, using defaults");
-          }
-          detectedQuestions.push({
-            text: questionText,
-            difficulty: tag.difficulty || "Medium",
-            marks: tag.marks || 4,
-            selected: true,
-          });
-        }
-      }
-      if (detectedQuestions.length === 0) {
-        alert("No questions detected. Please check the image or PDF page.");
-        manualExtractBtn.disabled = false;
-        ocrLoading.style.display = "none";
-        return;
-      }
-      renderManualQuestions();
-      manualReviewForm.style.display = "block";
-    } catch (e) {
-      alert("OCR failed: " + e.message);
-    } finally {
-      ocrLoading.style.display = "none";
-      manualExtractBtn.disabled = false;
-    }
-  };
-
-  function renderManualQuestions() {
-    manualQuestionsList.innerHTML = "";
-    detectedQuestions.forEach(q => {
-      const div = document.createElement('div');
-      div.className = 'manual-question-card';
-      div.style.border = '1.5px solid #1762a7';
-      div.style.borderRadius = '12px';
-      div.style.padding = '14px 16px';
-      div.style.marginBottom = '14px';
-      div.style.background = '#f7fafd';
-      div.style.fontSize = '1.03em';
-      div.style.position = 'relative';
-
-      const checkbox = document.createElement('input');
-      checkbox.type = 'checkbox';
-      checkbox.checked = q.selected;
-      checkbox.style.position = 'absolute';
-      checkbox.style.top = '12px';
-      checkbox.style.left = '12px';
-      checkbox.onchange = () => { q.selected = checkbox.checked; };
-      div.appendChild(checkbox);
-
-      const textarea = document.createElement('textarea');
-      textarea.value = q.text;
-      textarea.style.width = 'calc(100% - 40px)';
-      textarea.style.marginLeft = '40px';
-      textarea.rows = 3;
-      textarea.oninput = () => { q.text = textarea.value; };
-      div.appendChild(textarea);
-
-      const diffLabel = document.createElement('label');
-      diffLabel.textContent = "Difficulty:";
-      diffLabel.style.marginRight = "8px";
-      diffLabel.style.marginLeft = "40px";
-      diffLabel.style.fontWeight = "600";
-      diffLabel.style.fontSize = "0.95em";
-
-      const diffSelect = document.createElement('select');
-      ['Easy', 'Medium', 'Difficult'].forEach(level => {
-        const opt = document.createElement('option');
-        opt.value = level;
-        opt.textContent = level;
-        if (level === q.difficulty) opt.selected = true;
-        diffSelect.appendChild(opt);
-      });
-      diffSelect.style.marginRight = "20px";
-      diffSelect.onchange = () => { q.difficulty = diffSelect.value; };
-      div.appendChild(diffLabel);
-      div.appendChild(diffSelect);
-
-      const marksLabel = document.createElement('label');
-      marksLabel.textContent = "Marks:";
-      marksLabel.style.fontWeight = "600";
-      marksLabel.style.fontSize = "0.95em";
-
-      const marksSelect = document.createElement('select');
-      [1, 2, 4, 6, 8, 10].forEach(mark => {
-        const opt = document.createElement('option');
-        opt.value = mark;
-        opt.textContent = mark;
-        if (mark === q.marks) opt.selected = true;
-        marksSelect.appendChild(opt);
-      });
-      marksSelect.onchange = () => { q.marks = parseInt(marksSelect.value); };
-      div.appendChild(marksLabel);
-      div.appendChild(marksSelect);
-
-      manualQuestionsList.appendChild(div);
-    });
-  }
-
-  manualReviewForm.onsubmit = async e => {
+  manualForm.onsubmit = async (e) => {
     e.preventDefault();
     if (!auth.currentUser) {
       alert("Please login to save questions.");
@@ -698,63 +505,74 @@ function loadQuestionBank() {
     const classVal = manualClass.value.trim();
     const subjectVal = manualSubject.value.trim();
     const chapterVal = manualChapter.value.trim();
+    const questionText = manualQuestionText.value.trim();
+    const difficultyVal = manualDifficulty.value.trim();
+    const marksVal = manualMarks.value.trim();
     const userId = auth.currentUser.uid;
 
-    const questionsToSave = detectedQuestions.filter(q => q.selected && q.text.trim().length > 3);
-    if (questionsToSave.length === 0) {
-      alert("Please select at least one valid question to save.");
+    if (!classVal || !subjectVal || !questionText || !difficultyVal || !marksVal) {
+      alert("Please fill all required fields.");
       return;
     }
 
-    try {
-      let savedCount = 0, skippedCount = 0;
-      for (const q of questionsToSave) {
-        const existingQuery = await db.collection("questions")
-          .where("createdBy", "==", userId)
-          .where("class", "==", classVal)
-          .where("subject", "==", subjectVal)
-          .where("chapter", "==", chapterVal)
-          .where("text", "==", q.text.trim())
-          .get();
-
-        if (!existingQuery.empty) {
-          skippedCount++;
-          continue;
-        }
-
-        await db.collection("questions").add({
-          text: q.text.trim(),
-          createdBy: userId,
-          class: classVal,
-          subject: subjectVal,
-          chapter: chapterVal,
-          difficulty: q.difficulty,
-          marks: q.marks,
-          timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-        });
-        savedCount++;
+    // Optional: Upload image to storage and save the URL with the question
+    let imageUrl = "";
+    if (manualFile.files.length > 0) {
+      try {
+        const file = manualFile.files[0];
+        const storageRef = firebase.storage().ref();
+        const fileRef = storageRef.child(`question-images/${userId}/${Date.now()}_${file.name}`);
+        await fileRef.put(file);
+        imageUrl = await fileRef.getDownloadURL();
+      } catch (err) {
+        alert("Image upload failed, saving question without image.");
       }
-      manualReviewForm.style.display = "none";
-      manualSuccessMsg.style.display = "block";
-      manualFile.value = "";
-      resetManualUI();
+    }
 
-      alert(`Saved ${savedCount} new question${savedCount !== 1 ? 's' : ''}.` +
-        (skippedCount > 0 ? ` Skipped ${skippedCount} duplicate${skippedCount !== 1 ? 's' : ''}.` : ""));
+    try {
+      // Prevent duplicate: Only check text + class + subject + chapter
+      const existingQuery = await db.collection("questions")
+        .where("createdBy", "==", userId)
+        .where("class", "==", classVal)
+        .where("subject", "==", subjectVal)
+        .where("chapter", "==", chapterVal)
+        .where("text", "==", questionText)
+        .get();
+
+      if (!existingQuery.empty) {
+        alert("Duplicate: This question already exists.");
+        return;
+      }
+
+      await db.collection("questions").add({
+        text: questionText,
+        createdBy: userId,
+        class: classVal,
+        subject: subjectVal,
+        chapter: chapterVal,
+        difficulty: difficultyVal,
+        marks: Number(marksVal),
+        imageUrl: imageUrl,
+        timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+      });
+
+      manualForm.reset();
+      manualSuccessMsg.style.display = "block";
+      setTimeout(() => {
+        manualSuccessMsg.style.display = "none";
+      }, 2000);
+      alert("Question saved!");
     } catch (err) {
-      alert("Failed to save questions: " + err.message);
+      alert("Failed to save question: " + err.message);
     }
   };
 
+  // Reset success message and form on section open
   const manualSection = document.getElementById('manual-question-section');
   new MutationObserver(() => {
     if (manualSection.style.display === "block") {
-      resetManualUI();
-      manualClass.value = "";
-      manualSubject.value = "";
-      manualChapter.value = "";
-      manualFile.value = "";
+      manualSuccessMsg.style.display = "none";
+      manualForm.reset();
     }
   }).observe(manualSection, { attributes: true, attributeFilter: ['style'] });
-
 })();
