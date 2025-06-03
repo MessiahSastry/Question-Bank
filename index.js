@@ -97,6 +97,7 @@ auth.onAuthStateChanged(function (user) {
     if (splash) splash.classList.add('hidden');
     if (user) {
       showSection('dashboard-section');
+      history.replaceState({ section: 'dashboard-section' }, '', '');
       loadDashboard();
     } else {
       showLoginUI();
