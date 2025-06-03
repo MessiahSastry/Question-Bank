@@ -417,23 +417,43 @@ function loadQuestionBank() {
   });
 
   function setFilterOptions() {
-    let classes = new Set(), subjects = new Set(), chapters = new Set();
-    qbQuestions.forEach(q => {
-      if (q.class) classes.add(q.class);
-      if (q.subject) subjects.add(q.subject);
-      if (q.chapter) chapters.add(q.chapter);
-    });
+  let classes = new Set(), subjects = new Set();
+  let subjectToChapters = {};
 
-    function setOptions(select, items, label) {
-      select.innerHTML = `<option value="">${label}</option>`;
-      Array.from(items).sort().forEach(val => {
-        select.innerHTML += `<option value="${val}">${val}</option>`;
-      });
+  qbQuestions.forEach(q => {
+    if (q.class) classes.add(q.class);
+    if (q.subject) subjects.add(q.subject);
+    if (q.chapter) {
+      if (!subjectToChapters[q.subject]) subjectToChapters[q.subject] = new Set();
+      subjectToChapters[q.subject].add(q.chapter);
     }
-    setOptions(classFilter, classes, "Class");
-    setOptions(subjectFilter, subjects, "Subject");
-    setOptions(chapterFilter, chapters, "Chapter");
+  });
+
+  function setOptions(select, items, label) {
+    select.innerHTML = `<option value="">${label}</option>`;
+    Array.from(items).sort().forEach(val => {
+      select.innerHTML += `<option value="${val}">${val}</option>`;
+    });
   }
+  setOptions(classFilter, classes, "Class");
+  setOptions(subjectFilter, subjects, "Subject");
+
+  // Show all chapters if no subject selected
+  let initialChapters = new Set();
+  Object.values(subjectToChapters).forEach(chapSet => {
+    chapSet.forEach(c => initialChapters.add(c));
+  });
+  setOptions(chapterFilter, initialChapters, "Chapter");
+
+  // Update chapter dropdown based on subject selection
+  subjectFilter.onchange = function () {
+    let subj = subjectFilter.value;
+    let chapterSet = subj && subjectToChapters[subj] ? subjectToChapters[subj] : initialChapters;
+    setOptions(chapterFilter, chapterSet, "Chapter");
+    filterQuestions();
+  };
+}
+
 
   function filterQuestions() {
     let classVal = classFilter.value.trim();
