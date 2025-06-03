@@ -574,3 +574,37 @@ function loadQuestionBank() {
     }
   }).observe(manualSection, { attributes: true, attributeFilter: ['style'] });
 })();
+// Custom Dropdown Logic for Class & Subject (AI Question Generator)
+document.addEventListener("DOMContentLoaded", function () {
+  ["class", "subject"].forEach(function (type) {
+    const dropdown = document.getElementById(type + "-dropdown");
+    if (!dropdown) return;
+    const selected = dropdown.querySelector(".selected-option");
+    const options = dropdown.querySelector(".dropdown-options");
+    const hiddenInput = dropdown.querySelector("input[type='hidden']");
+
+    // Toggle dropdown
+    selected.onclick = function () {
+      dropdown.classList.toggle("open");
+      options.style.display = dropdown.classList.contains("open") ? "block" : "none";
+    };
+
+    // Select option
+    options.querySelectorAll("div").forEach(opt => {
+      opt.onclick = function () {
+        selected.textContent = opt.textContent;
+        hiddenInput.value = opt.dataset.value;
+        dropdown.classList.remove("open");
+        options.style.display = "none";
+      };
+    });
+
+    // Close on outside click
+    document.addEventListener("click", function (e) {
+      if (!dropdown.contains(e.target)) {
+        dropdown.classList.remove("open");
+        options.style.display = "none";
+      }
+    });
+  });
+});
