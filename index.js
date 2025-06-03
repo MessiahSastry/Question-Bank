@@ -475,10 +475,8 @@ chapterFilter.onchange = function () {
     if (chapterVal && (!q.chapter || q.chapter.trim() !== chapterVal)) return false;
     return true;
   });
-
   renderQuestions(filteredQuestions);
 }
-
   function renderQuestions(list) {
     outputDiv.innerHTML = "";
     list.forEach((q, idx) => {
@@ -500,7 +498,6 @@ chapterFilter.onchange = function () {
       outputDiv.appendChild(div);
     });
   }
-
   [classFilter, subjectFilter, chapterFilter, difficultyFilter, marksFilter].forEach(sel => {
     sel.addEventListener("change", filterQuestions);
   });
@@ -514,34 +511,34 @@ window.onpopstate = function(event) {
   }
 };
 document.addEventListener("DOMContentLoaded", function() {
-  const classDropdown = document.getElementById('class-dropdown');
-  const classSelected = document.getElementById('class-selected');
-  const classOptions = document.getElementById('class-options');
-  const classInput = document.getElementById('class-input-custom');
+   } // End of classDropdown if block
 
-  if (classDropdown && classSelected && classOptions && classInput) {
-   classDropdown.onclick = function(e) {
-  classOptions.style.display = (classOptions.style.display === "block") ? "none" : "block";
-  classDropdown.classList.toggle('open', classOptions.style.display === "block");
-};
-    [...classOptions.children].forEach(opt => {
+  // SUBJECT DROPDOWN LOGIC
+  const subjectDropdown = document.getElementById('subject-dropdown');
+  const subjectSelected = document.getElementById('subject-selected');
+  const subjectOptions = document.getElementById('subject-options');
+  const subjectInput = document.getElementById('subject-input-custom');
+  if (subjectDropdown && subjectSelected && subjectOptions && subjectInput) {
+    subjectDropdown.onclick = function(e) {
+      subjectOptions.style.display = (subjectOptions.style.display === "block") ? "none" : "block";
+      subjectDropdown.classList.toggle('open', subjectOptions.style.display === "block");
+    };
+    [...subjectOptions.children].forEach(opt => {
       opt.onclick = function(event) {
         event.stopPropagation();
-        classSelected.textContent = this.textContent;
-        classInput.value = this.dataset.value;
-        classOptions.style.display = "none";
-        classDropdown.classList.remove('open');
-        // Mark selected visually
-        [...classOptions.children].forEach(d => d.classList.remove('selected'));
+        subjectSelected.textContent = this.textContent;
+        subjectInput.value = this.dataset.value;
+        subjectOptions.style.display = "none";
+        subjectDropdown.classList.remove('open');
+        [...subjectOptions.children].forEach(d => d.classList.remove('selected'));
         this.classList.add('selected');
       }
     });
 
     document.addEventListener('click', function(e) {
-      if (!classDropdown.contains(e.target)) {
-        classOptions.style.display = "none";
-        classDropdown.classList.remove('open');
+      if (!subjectDropdown.contains(e.target)) {
+        subjectOptions.style.display = "none";
+        subjectDropdown.classList.remove('open');
       }
     });
   }
-});
