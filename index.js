@@ -522,10 +522,10 @@ document.addEventListener("DOMContentLoaded", function() {
   const classInput = document.getElementById('class-input-custom');
 
   if (classDropdown && classSelected && classOptions && classInput) {
-    classDropdown.onclick = function(e) {
-      classOptions.style.display = (classOptions.style.display === "block") ? "none" : "block";
-    };
-
+   classDropdown.onclick = function(e) {
+  classOptions.style.display = (classOptions.style.display === "block") ? "none" : "block";
+  classDropdown.classList.toggle('open', classOptions.style.display === "block");
+};
     [...classOptions.children].forEach(opt => {
       opt.onclick = function(event) {
         event.stopPropagation();
