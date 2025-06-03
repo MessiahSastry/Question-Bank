@@ -36,8 +36,7 @@ function showLoginUI() {
       <div class="login-title">ST. PATRICK'S SCHOOL</div>
       <div class="login-subtitle">IIT & NEET FOUNDATION</div>
       </div>
-      </header>
-      <input type="email" id="email" placeholder="Email" autocomplete="username" />
+     <input type="email" id="email" placeholder="Email" autocomplete="username" />
       <input type="password" id="password" placeholder="Password" autocomplete="current-password" />
       <div class="forgot-row">
         <button type="button" onclick="forgotPassword()">Forgot Password?</button>
