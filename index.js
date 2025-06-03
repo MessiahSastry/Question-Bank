@@ -453,38 +453,25 @@ function loadQuestionBank() {
     filterQuestions();
   };
 }
-
-
   function filterQuestions() {
-    let classVal = classFilter.value.trim();
-    if (!classVal) {
-      renderQuestions([]);
-      return;
-    }
-    let subjectVal = subjectFilter.value.trim();
-    let chapterVal = chapterFilter.value.trim();
-    let diffVal = difficultyFilter.value.trim();
-    let marksVal = marksFilter.value.trim();
-
-    filteredQuestions = qbQuestions.filter(q => {
-      let diff = "", marks = "";
-      let match = q.text.match(/\(([^,]+),\s*([\d]+)\s*Mark/i);
-      if (match) {
-        diff = match[1].trim();
-        marks = match[2].trim();
-      }
-      let matches = true;
-      if (classVal && (!q.class || q.class != classVal)) matches = false;
-      if (subjectVal && (!q.subject || q.subject != subjectVal)) matches = false;
-      if (chapterVal && (!q.chapter || q.chapter != chapterVal)) matches = false;
-      if (diffVal && (!diff || diff.toLowerCase() !== diffVal.toLowerCase())) matches = false;
-      if (marksVal && (!marks || marks !== marksVal)) matches = false;
-      return matches;
-    });
-
-    renderQuestions(filteredQuestions);
+  let classVal = classFilter.value.trim();
+  if (!classVal) {
+    renderQuestions([]);
+    return;
   }
+  let subjectVal = subjectFilter.value.trim();
+  let chapterVal = chapterFilter.value.trim();
 
+  filteredQuestions = qbQuestions.filter(q => {
+    let matches = true;
+    if (classVal && (!q.class || q.class != classVal)) matches = false;
+    if (subjectVal && (!q.subject || q.subject != subjectVal)) matches = false;
+    if (chapterVal && (!q.chapter || q.chapter != chapterVal)) matches = false;
+    return matches;
+  });
+
+  renderQuestions(filteredQuestions);
+}
   function renderQuestions(list) {
     outputDiv.innerHTML = "";
     list.forEach((q, idx) => {
