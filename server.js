@@ -60,10 +60,6 @@ app.post("/tag-question", async (req, res) => {
 });
 
 // ========== Static & Health Endpoints ==========
-app.get("/question-generator", (req, res) => {
-  res.sendFile(path.join(__dirname, "ai-question-generator.html"));
-});
-
 app.get("/", (req, res) => {
   res.send("Backend running!");
 });
