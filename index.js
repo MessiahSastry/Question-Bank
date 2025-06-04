@@ -471,9 +471,10 @@ function loadQuestionBank() {
       div.style.borderRadius = "8px";
       div.style.padding = "14px 16px";
       div.style.boxShadow = "0 2px 8px #0f3d6b09";
-      div.textContent = displayText;
+      div.innerHTML = displayText;
       outputDiv.appendChild(div);
     });
+    if (window.MathJax) window.MathJax.typesetPromise();
   }
   [classFilter, subjectFilter, chapterFilter].forEach(sel => {
     sel.addEventListener("change", filterQuestions);
