@@ -689,11 +689,11 @@ document.addEventListener("DOMContentLoaded", function () {
         error.style.display = "none";
 
         try {
-            const res = await fetch("/convert-math", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ text: plainText })
-            });
+            const res = await fetch("https://question-bank-lqsu.onrender.com/convert-math", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: plainText })
+        });
             const data = await res.json();
             if (data.latex) {
                 // Set to Mathlive input
