@@ -639,3 +639,21 @@ window.addEventListener("popstate", function (event) {
   let section = event.state && event.state.section ? event.state.section : "login-section";
   showSection(section, false);
 });
+// ---- Math Pasting Bridge ----
+document.addEventListener("DOMContentLoaded", function () {
+  const pasteBox = document.getElementById("plain-math-paste");
+  const mathField = document.getElementById("manual-question-mathfield");
+  if (!pasteBox || !mathField) return;
+
+  pasteBox.addEventListener("paste", function (e) {
+    setTimeout(() => {
+      mathField.value = pasteBox.value;
+      if (mathField.setValue) mathField.setValue(pasteBox.value);
+    }, 50);
+  });
+
+  pasteBox.addEventListener("input", function () {
+    mathField.value = pasteBox.value;
+    if (mathField.setValue) mathField.setValue(pasteBox.value);
+  });
+});
