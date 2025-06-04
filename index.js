@@ -487,7 +487,6 @@ function loadQuestionBank() {
   const manualClass = document.getElementById('manual-class');
   const manualSubject = document.getElementById('manual-subject');
   const manualChapter = document.getElementById('manual-chapter');
-  const manualQuestionText = document.getElementById('manual-question-text');
   const manualSuccessMsg = document.getElementById('manual-success-msg');
 
   if (!manualForm) return;
