@@ -712,3 +712,38 @@ document.addEventListener("DOMContentLoaded", function () {
         loader.style.display = "none";
     };
 });
+document.addEventListener("DOMContentLoaded", function () {
+  const convertBtn = document.getElementById("ai-convert-btn");
+  const questionInput = document.getElementById("manual-question-input");
+
+  if (convertBtn && questionInput) {
+    convertBtn.onclick = async function () {
+      const plainText = questionInput.value.trim();
+      if (!plainText) {
+        alert("Please enter a question or math to convert.");
+        return;
+      }
+      convertBtn.disabled = true;
+      convertBtn.textContent = "Converting...";
+      try {
+        // Call your backend API
+        const res = await fetch("/convert-math", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: plainText })
+        });
+        const data = await res.json();
+        if (data.latex) {
+          // Show result (for now, just alert, later you can show below)
+          alert("Math LaTeX:\n" + data.latex);
+        } else {
+          alert("Conversion failed. Try again.");
+        }
+      } catch (e) {
+        alert("Error connecting to AI service.");
+      }
+      convertBtn.disabled = false;
+      convertBtn.textContent = "Convert to Math";
+    };
+  }
+});
