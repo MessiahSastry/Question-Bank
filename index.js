@@ -497,9 +497,9 @@ function loadQuestionBank() {
   const classVal = manualClass.value.trim();
   const subjectVal = manualSubject.value.trim();
   const chapterVal = manualChapter.value.trim();
-  const questionText = manualQuestionText.value.trim();
-
-  // Show preview instead of saving immediately
+  const mathfield = document.getElementById('manual-question-mathfield');
+  const questionText = mathfield.getValue('latex-expanded').trim();
+// Show preview instead of saving immediately
   showManualPreview({
     classVal,
     subjectVal,
