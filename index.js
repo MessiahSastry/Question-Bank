@@ -715,8 +715,9 @@ document.addEventListener("DOMContentLoaded", function () {
 document.addEventListener("DOMContentLoaded", function () {
   const convertBtn = document.getElementById("ai-convert-btn");
   const questionInput = document.getElementById("manual-question-input");
+  const mathOutput = document.getElementById("math-output");
 
-  if (convertBtn && questionInput) {
+  if (convertBtn && questionInput && mathOutput) {
     convertBtn.onclick = async function () {
       const plainText = questionInput.value.trim();
       if (!plainText) {
@@ -725,6 +726,7 @@ document.addEventListener("DOMContentLoaded", function () {
       }
       convertBtn.disabled = true;
       convertBtn.textContent = "Converting...";
+      mathOutput.textContent = "";
       try {
         // Call your backend API
         const res = await fetch("/convert-math", {
@@ -734,8 +736,8 @@ document.addEventListener("DOMContentLoaded", function () {
         });
         const data = await res.json();
         if (data.latex) {
-          // Show result (for now, just alert, later you can show below)
-          alert("Math LaTeX:\n" + data.latex);
+          // Show result below the input box
+          mathOutput.textContent = data.latex;
         } else {
           alert("Conversion failed. Try again.");
         }
@@ -747,3 +749,5 @@ document.addEventListener("DOMContentLoaded", function () {
     };
   }
 });
+
+  
