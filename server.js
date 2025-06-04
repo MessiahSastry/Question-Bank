@@ -7,7 +7,6 @@ const path = require("path");
 
 const app = express();
 app.use(cors({ origin: "*" }));
-app.use(cors());
 app.use(express.static(path.join(__dirname, "public")));
 app.use(bodyParser.json());
 
@@ -20,7 +19,7 @@ app.post("/generate", async (req, res) => {
   const { prompt } = req.body;
   try {
     const response = await openai.chat.completions.create({
-      model: "gpt-4-turbo",
+      model: "gpt-4o",
       messages: [{ role: "user", content: prompt }],
       max_tokens: 900,
       temperature: 0.7,
@@ -41,7 +40,7 @@ app.post("/tag-question", async (req, res) => {
       Question: ${question}
     `;
     const response = await openai.chat.completions.create({
-      model: "gpt-4-turbo",
+      model: "gpt-4o",
       messages: [{ role: "user", content: tagPrompt }],
       max_tokens: 60,
       temperature: 0,
@@ -52,14 +51,39 @@ app.post("/tag-question", async (req, res) => {
     } catch {
       tag = null;
     }
-    // Safe fallback
     res.json(tag || { difficulty: "Medium", marks: 4 });
   } catch (error) {
     res.status(500).json({ error: error.message || error.toString() });
   }
 });
 
-// ========== Static & Health Endpoints ==========
+// ========== AI Math Conversion ==========
+app.post("/convert-math", async (req, res) => {
+  const { text } = req.body;
+  if (!text) return res.json({ error: "No input" });
+  const prompt = `
+Convert the following math problem/expression from plain text to LaTeX format.
+Reply with ONLY the LaTeX code between $$, no explanation.
+
+Text: ${text}
+`;
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o",
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: 128,
+      temperature: 0,
+    });
+    const content = response.choices[0].message.content || "";
+    const match = content.match(/\$\$(.*?)\$\$/s);
+    const latex = match ? match[1].trim() : content.trim();
+    res.json({ latex });
+  } catch (e) {
+    res.json({ error: e.message || "AI error" });
+  }
+});
+
+// ========== Health Check ==========
 app.get("/", (req, res) => {
   res.send("Backend running!");
 });
@@ -67,35 +91,3 @@ app.get("/", (req, res) => {
 // ========== Start Server ==========
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-// ========== AI Math Conversion Endpoint ==========
-app.post("/convert-math", async (req, res) => {
-  const { text } = req.body;
-  if (!text) return res.json({ error: "No input" });
-
-  // Prompt: Convert plain text math to LaTeX, ONLY reply with LaTeX between $$
-  const prompt = `
-Convert the following math problem/expression from plain text to LaTeX format.
-Reply with ONLY the LaTeX code between $$, no explanation.
-
-Text: ${text}
-`;
-
-  try {
-    const response = await openai.chat.completions.create({
-      model: "gpt-4-turbo",
-      messages: [{ role: "user", content: prompt }],
-      max_tokens: 128,
-      temperature: 0,
-    });
-
-    // Extract LaTeX (should be between $$)
-    const content = response.choices[0].message.content || "";
-    const match = content.match(/\$\$(.*?)\$\$/s);
-    const latex = match ? match[1].trim() : content.trim();
-
-    res.json({ latex });
-  } catch (e) {
-    res.json({ error: e.message || "AI error" });
-  }
-});
-
