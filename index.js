@@ -491,25 +491,71 @@ function loadQuestionBank() {
   const manualSuccessMsg = document.getElementById('manual-success-msg');
 
   if (!manualForm) return;
-  manualForm.onsubmit = async (e) => {
+  manualForm.onsubmit = (e) => {
   e.preventDefault();
-  if (!auth.currentUser) {
-    alert("Please login to save questions.");
-    return;
-  }
+
+  // Gather input values
   const classVal = manualClass.value.trim();
   const subjectVal = manualSubject.value.trim();
   const chapterVal = manualChapter.value.trim();
   const questionText = manualQuestionText.value.trim();
-  const userId = auth.currentUser.uid;
 
-  if (!classVal || !subjectVal || !questionText) {
-    alert("Please fill all required fields.");
-    return;
-  }
+  // Show preview instead of saving immediately
+  showManualPreview({
+    classVal,
+    subjectVal,
+    chapterVal,
+    questionText
+  });
+};
 
-  try {
-    // Prevent duplicate: Only check text + class + subject + chapter
+// Add this helper function (also inside your IIFE, just after the submit handler)
+function showManualPreview({ classVal, subjectVal, chapterVal, questionText }) {
+  // Create preview box
+  let previewBox = document.createElement("div");
+  previewBox.style.position = "fixed";
+  previewBox.style.left = "0"; previewBox.style.top = "0";
+  previewBox.style.width = "100vw"; previewBox.style.height = "100vh";
+  previewBox.style.background = "rgba(18,34,50,0.14)";
+  previewBox.style.display = "flex";
+  previewBox.style.alignItems = "center";
+  previewBox.style.justifyContent = "center";
+  previewBox.style.zIndex = "99999";
+
+  let inner = document.createElement("div");
+  inner.style.background = "#fff";
+  inner.style.borderRadius = "16px";
+  inner.style.padding = "30px 26px";
+  inner.style.boxShadow = "0 6px 32px #0f3d6b2c";
+  inner.style.minWidth = "320px";
+  inner.style.maxWidth = "98vw";
+  inner.style.textAlign = "left";
+
+  inner.innerHTML = `
+    <h2 style="text-align:center; margin-bottom:20px;">Preview Question</h2>
+    <div id="manual-question-preview" style="font-size:1.18em; color:#12416c; margin-bottom:22px;">
+      ${questionText}
+    </div>
+    <button id="manual-confirm-btn" class="btn" style="width:100%;margin-bottom:7px;">Confirm Save</button>
+    <button id="manual-edit-btn" class="btn" style="background:#bcd6ef; color:#185496;width:100%;">Edit</button>
+  `;
+
+  previewBox.appendChild(inner);
+  document.body.appendChild(previewBox);
+
+  // Render MathJax in preview
+  if (window.MathJax) window.MathJax.typesetPromise([inner.querySelector("#manual-question-preview")]);
+
+  // Handle Confirm/Cancel
+  inner.querySelector("#manual-confirm-btn").onclick = async () => {
+    // Save to Firestore as before
+    if (!auth.currentUser) {
+      alert("Please login to save questions.");
+      return;
+    }
+    const userId = auth.currentUser.uid;
+
+    // Duplicate check
     const existingQuery = await db.collection("questions")
       .where("createdBy", "==", userId)
       .where("class", "==", classVal)
@@ -517,8 +563,10 @@ function loadQuestionBank() {
       .where("chapter", "==", chapterVal)
       .where("text", "==", questionText)
       .get();
+
     if (!existingQuery.empty) {
       alert("Duplicate: This question already exists.");
+      document.body.removeChild(previewBox);
       return;
     }
     await db.collection("questions").add({
@@ -529,17 +577,20 @@ function loadQuestionBank() {
       chapter: chapterVal,
       timestamp: firebase.firestore.FieldValue.serverTimestamp(),
     });
-
     manualForm.reset();
     manualSuccessMsg.style.display = "block";
     setTimeout(() => {
       manualSuccessMsg.style.display = "none";
     }, 2000);
+
     alert("Question saved!");
-  } catch (err) {
-    alert("Failed to save question: " + err.message);
-  }
-};
+    document.body.removeChild(previewBox);
+  };
+  inner.querySelector("#manual-edit-btn").onclick = () => {
+    // Just close preview, return to editing
+    document.body.removeChild(previewBox);
+  };
+}
 // Reset success message and form on section open
   const manualSection = document.getElementById('manual-question-section');
   new MutationObserver(() => {
