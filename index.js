@@ -669,5 +669,4 @@ document.addEventListener("DOMContentLoaded", function () {
   } catch (e) {
     mathOutput.innerHTML = "<span style='color:#b92736'>Error connecting to AI service.</span>";
   }
-};
-
+})();
