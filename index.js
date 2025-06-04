@@ -638,3 +638,36 @@ window.addEventListener("popstate", function (event) {
   let section = event.state && event.state.section ? event.state.section : "login-section";
   showSection(section, false);
 });
+document.addEventListener("DOMContentLoaded", function () {
+  const aiBtn = document.getElementById("ai-convert-btn");
+  const textarea = document.getElementById("manual-question-input");
+  const mathOutput = document.getElementById("math-output");
+
+  if (!aiBtn || !textarea) return;
+
+  aiBtn.onclick = async function () {
+    const plainText = textarea.value.trim();
+    if (!plainText) {
+      mathOutput.innerHTML = "<span style='color:#b92736'>Please enter some text.</span>";
+      return;
+    }
+    mathOutput.innerHTML = "Converting…";
+    try {
+      const res = await fetch("https://question-bank-lqsu.onrender.com/convert-math", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: plainText })
+      });
+      const data = await res.json();
+      if (data.latex) {
+        // Replace textarea with LaTeX code
+        textarea.value = data.latex;
+        mathOutput.innerHTML = `<span style="color:#1db954">Converted to LaTeX!</span>`;
+      } else {
+        mathOutput.innerHTML = `<span style="color:#b92736">${data.error || "Conversion failed."}</span>`;
+      }
+    } catch (e) {
+      mathOutput.innerHTML = "<span style='color:#b92736'>Error connecting to AI service.</span>";
+    }
+  };
+});
