@@ -713,41 +713,67 @@ document.addEventListener("DOMContentLoaded", function () {
     };
 });
 document.addEventListener("DOMContentLoaded", function () {
-  const convertBtn = document.getElementById("ai-convert-btn");
-  const questionInput = document.getElementById("manual-question-input");
-  const mathOutput = document.getElementById("math-output");
+    const aiBtn = document.getElementById("ai-convert-btn");
+    const modal = document.getElementById("ai-convert-modal");
+    const plainInput = document.getElementById("plain-text-ai");
+    const cancelBtn = document.getElementById("ai-convert-cancel");
+    const doBtn = document.getElementById("ai-convert-do");
+    const loader = document.getElementById("ai-convert-loader");
+    const error = document.getElementById("ai-convert-error");
+    const mathField = document.getElementById("manual-question-mathfield");
 
-  if (convertBtn && questionInput && mathOutput) {
-    convertBtn.onclick = async function () {
-      const plainText = questionInput.value.trim();
-      if (!plainText) {
-        alert("Please enter a question or math to convert.");
-        return;
-      }
-      convertBtn.disabled = true;
-      convertBtn.textContent = "Converting...";
-      mathOutput.textContent = "";
-      try {
-        // Call your backend API
-        const res = await fetch("/convert-math", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: plainText })
-        });
-        const data = await res.json();
-        if (data.latex) {
-          // Show result below the input box
-          mathOutput.textContent = data.latex;
-        } else {
-          alert("Conversion failed. Try again.");
-        }
-      } catch (e) {
-        alert("Error connecting to AI service.");
-      }
-      convertBtn.disabled = false;
-      convertBtn.textContent = "Convert to Math";
+    if (!aiBtn || !modal) return; // Exit if critical elements are missing
+
+    aiBtn.onclick = function () {
+        modal.style.display = "flex"; // Show the modal
+        plainInput.value = ""; // Clear input
+        loader.style.display = "none"; // Hide loader
+        error.style.display = "none"; // Hide error message
     };
-  }
+
+    cancelBtn.onclick = function () {
+        modal.style.display = "none"; // Hide the modal
+        loader.style.display = "none"; // Hide loader
+        error.style.display = "none"; // Hide error message
+    };
+
+    doBtn.onclick = async function () {
+        const plainText = plainInput.value.trim();
+        if (!plainText) return; // Do nothing if input is empty
+
+        loader.style.display = "block"; // Show loader
+        error.style.display = "none"; // Hide any previous error
+
+        try {
+            // *** THIS IS THE CORRECT FETCH CALL WITH ABSOLUTE URL ***
+            const res = await fetch("https://question-bank-lqsu.onrender.com/convert-math", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ text: plainText })
+            });
+
+            const data = await res.json(); // Parse the JSON response
+
+            if (data.latex) {
+                // If LaTeX is returned, set it to the MathLive input field
+                if (mathField.setValue) {
+                    mathField.setValue(data.latex);
+                }
+                modal.style.display = "none"; // Close the modal on success
+            } else {
+                // If no LaTeX or conversion failed (but no network error)
+                error.style.display = "block";
+                error.textContent = data.error || "Conversion failed. Please try again.";
+            }
+        } catch (e) {
+            // Handle network errors or other exceptions
+            error.style.display = "block";
+            error.textContent = "Error connecting to AI service. Check network or backend server.";
+            console.error("Fetch error:", e); // Log error for debugging
+        } finally {
+            loader.style.display = "none"; // Always hide loader regardless of success/failure
+        }
+    };
 });
 
   
