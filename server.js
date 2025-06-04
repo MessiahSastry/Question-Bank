@@ -67,3 +67,35 @@ app.get("/", (req, res) => {
 // ========== Start Server ==========
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+// ========== AI Math Conversion Endpoint ==========
+app.post("/convert-math", async (req, res) => {
+  const { text } = req.body;
+  if (!text) return res.json({ error: "No input" });
+
+  // Prompt: Convert plain text math to LaTeX, ONLY reply with LaTeX between $$
+  const prompt = `
+Convert the following math problem/expression from plain text to LaTeX format.
+Reply with ONLY the LaTeX code between $$, no explanation.
+
+Text: ${text}
+`;
+
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-4-turbo",
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: 128,
+      temperature: 0,
+    });
+
+    // Extract LaTeX (should be between $$)
+    const content = response.choices[0].message.content || "";
+    const match = content.match(/\$\$(.*?)\$\$/s);
+    const latex = match ? match[1].trim() : content.trim();
+
+    res.json({ latex });
+  } catch (e) {
+    res.json({ error: e.message || "AI error" });
+  }
+});
+
