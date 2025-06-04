@@ -657,3 +657,58 @@ document.addEventListener("DOMContentLoaded", function () {
     if (mathField.setValue) mathField.setValue(pasteBox.value);
   });
 });
+// --- AI Convert Modal Logic ---
+document.addEventListener("DOMContentLoaded", function () {
+    const aiBtn = document.getElementById("ai-convert-btn");
+    const modal = document.getElementById("ai-convert-modal");
+    const plainInput = document.getElementById("plain-text-ai");
+    const cancelBtn = document.getElementById("ai-convert-cancel");
+    const doBtn = document.getElementById("ai-convert-do");
+    const loader = document.getElementById("ai-convert-loader");
+    const error = document.getElementById("ai-convert-error");
+    const mathField = document.getElementById("manual-question-mathfield");
+
+    if (!aiBtn || !modal) return;
+
+    aiBtn.onclick = function () {
+        modal.style.display = "flex";
+        plainInput.value = "";
+        loader.style.display = "none";
+        error.style.display = "none";
+    };
+    cancelBtn.onclick = function () {
+        modal.style.display = "none";
+        loader.style.display = "none";
+        error.style.display = "none";
+    };
+
+    doBtn.onclick = async function () {
+        const plainText = plainInput.value.trim();
+        if (!plainText) return;
+        loader.style.display = "block";
+        error.style.display = "none";
+
+        try {
+            const res = await fetch("/convert-math", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ text: plainText })
+            });
+            const data = await res.json();
+            if (data.latex) {
+                // Set to Mathlive input
+                if (mathField.setValue) {
+                    mathField.setValue(data.latex);
+                }
+                modal.style.display = "none";
+            } else {
+                error.style.display = "block";
+                error.textContent = "Conversion failed. Please try again.";
+            }
+        } catch (e) {
+            error.style.display = "block";
+            error.textContent = "Error connecting to AI service.";
+        }
+        loader.style.display = "none";
+    };
+});
