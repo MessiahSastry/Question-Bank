@@ -32,26 +32,27 @@ function hideSplashAndShowLogin() {
 
 function showLoginUI() {
   loginSection.innerHTML = `
-    <div class="login-box">
-     <div class="login-header">
-      <div class="login-title">ST. PATRICK'S SCHOOL</div>
-      <div class="login-subtitle">IIT & NEET FOUNDATION</div>
+    <div id="login-root">
+      <div class="login-box">
+        <div class="login-header">
+          <div class="login-title">ST. PATRICK'S SCHOOL</div>
+          <div class="login-subtitle">IIT & NEET FOUNDATION</div>
+        </div>
+        <input type="email" id="email" placeholder="Email" autocomplete="username" />
+        <input type="password" id="password" placeholder="Password" autocomplete="current-password" />
+        <div class="forgot-row">
+          <button type="button" onclick="forgotPassword()">Forgot Password?</button>
+        </div>
+        <button class="btn-email" onclick="emailSignIn()">Sign in with Email</button>
+        <button class="btn-register" onclick="emailRegister()">Register (New User)</button>
+        <button class="btn-google" onclick="googleSignIn()">
+          <i class="fab fa-google"></i> Sign in with Google
+        </button>
       </div>
-     <input type="email" id="email" placeholder="Email" autocomplete="username" />
-      <input type="password" id="password" placeholder="Password" autocomplete="current-password" />
-      <div class="forgot-row">
-        <button type="button" onclick="forgotPassword()">Forgot Password?</button>
-      </div>
-      <button class="btn-email" onclick="emailSignIn()">Sign in with Email</button>
-      <button class="btn-register" onclick="emailRegister()">Register (New User)</button>
-      <button class="btn-google" onclick="googleSignIn()">
-        <i class="fab fa-google"></i> Sign in with Google
-      </button>
     </div>
   `;
   showSection('login-section');
 }
-
 // ====== AUTH FUNCTIONS ======
 window.emailSignIn = function () {
   const email = document.getElementById('email').value.trim();
