@@ -646,28 +646,28 @@ document.addEventListener("DOMContentLoaded", function () {
   if (!aiBtn || !textarea) return;
 
   aiBtn.onclick = async function () {
-    const plainText = textarea.value.trim();
-    if (!plainText) {
-      mathOutput.innerHTML = "<span style='color:#b92736'>Please enter some text.</span>";
-      return;
+  const plainText = textarea.value.trim();
+  if (!plainText) {
+    mathOutput.innerHTML = "<span style='color:#b92736'>Please enter some text.</span>";
+    return;
+  }
+  mathOutput.innerHTML = "Converting…";
+  try {
+    const res = await fetch("https://question-bank-lqsu.onrender.com/convert-math", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: plainText })
+    });
+    const data = await res.json();
+    if (data.latex) {
+      textarea.value = data.latex;
+      mathOutput.innerHTML = `$$${data.latex}$$`;
+      if (window.MathJax) MathJax.typesetPromise([mathOutput]);
+    } else {
+      mathOutput.innerHTML = `<span style="color:#b92736">${data.error || "Conversion failed."}</span>`;
     }
-    mathOutput.innerHTML = "Converting…";
-    try {
-      const res = await fetch("https://question-bank-lqsu.onrender.com/convert-math", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: plainText })
-      });
-      const data = await res.json();
-      if (data.latex) {
-        // Replace textarea with LaTeX code
-        textarea.value = data.latex;
-        mathOutput.innerHTML = `<span style="color:#1db954">Converted to LaTeX!</span>`;
-      } else {
-        mathOutput.innerHTML = `<span style="color:#b92736">${data.error || "Conversion failed."}</span>`;
-      }
-    } catch (e) {
-      mathOutput.innerHTML = "<span style='color:#b92736'>Error connecting to AI service.</span>";
-    }
-  };
-});
+  } catch (e) {
+    mathOutput.innerHTML = "<span style='color:#b92736'>Error connecting to AI service.</span>";
+  }
+};
+
