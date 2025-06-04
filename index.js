@@ -490,79 +490,56 @@ function loadQuestionBank() {
   const manualSuccessMsg = document.getElementById('manual-success-msg');
 
   if (!manualForm) return;
-
   manualForm.onsubmit = async (e) => {
-    e.preventDefault();
-    if (!auth.currentUser) {
-      alert("Please login to save questions.");
+  e.preventDefault();
+  if (!auth.currentUser) {
+    alert("Please login to save questions.");
+    return;
+  }
+  const classVal = manualClass.value.trim();
+  const subjectVal = manualSubject.value.trim();
+  const chapterVal = manualChapter.value.trim();
+  const questionText = manualQuestionText.value.trim();
+  const userId = auth.currentUser.uid;
+
+  if (!classVal || !subjectVal || !questionText) {
+    alert("Please fill all required fields.");
+    return;
+  }
+
+  try {
+    // Prevent duplicate: Only check text + class + subject + chapter
+    const existingQuery = await db.collection("questions")
+      .where("createdBy", "==", userId)
+      .where("class", "==", classVal)
+      .where("subject", "==", subjectVal)
+      .where("chapter", "==", chapterVal)
+      .where("text", "==", questionText)
+      .get();
+    if (!existingQuery.empty) {
+      alert("Duplicate: This question already exists.");
       return;
     }
-    const classVal = manualClass.value.trim();
-    const subjectVal = manualSubject.value.trim();
-    const chapterVal = manualChapter.value.trim();
-    const questionText = manualQuestionText.value.trim();
-    const difficultyVal = manualDifficulty.value.trim();
-    const marksVal = manualMarks.value.trim();
-    const userId = auth.currentUser.uid;
+    await db.collection("questions").add({
+      text: questionText,
+      createdBy: userId,
+      class: classVal,
+      subject: subjectVal,
+      chapter: chapterVal,
+      timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+    });
 
-    if (!classVal || !subjectVal || !questionText || !difficultyVal || !marksVal) {
-      alert("Please fill all required fields.");
-      return;
-    }
-
-    // Optional: Upload image to storage and save the URL with the question
-    let imageUrl = "";
-    if (manualFile.files.length > 0) {
-      try {
-        const file = manualFile.files[0];
-        const storageRef = firebase.storage().ref();
-        const fileRef = storageRef.child(`question-images/${userId}/${Date.now()}_${file.name}`);
-        await fileRef.put(file);
-        imageUrl = await fileRef.getDownloadURL();
-      } catch (err) {
-        alert("Image upload failed, saving question without image.");
-      }
-    }
-
-    try {
-      // Prevent duplicate: Only check text + class + subject + chapter
-      const existingQuery = await db.collection("questions")
-        .where("createdBy", "==", userId)
-        .where("class", "==", classVal)
-        .where("subject", "==", subjectVal)
-        .where("chapter", "==", chapterVal)
-        .where("text", "==", questionText)
-        .get();
-
-      if (!existingQuery.empty) {
-        alert("Duplicate: This question already exists.");
-        return;
-      }
-
-      await db.collection("questions").add({
-        text: questionText,
-        createdBy: userId,
-        class: classVal,
-        subject: subjectVal,
-        chapter: chapterVal,
-        difficulty: difficultyVal,
-        marks: Number(marksVal),
-        imageUrl: imageUrl,
-        timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-      });
-
-      manualForm.reset();
-      manualSuccessMsg.style.display = "block";
-      setTimeout(() => {
-        manualSuccessMsg.style.display = "none";
-      }, 2000);
-      alert("Question saved!");
-    } catch (err) {
-      alert("Failed to save question: " + err.message);
-    }
-  };
-
-  // Reset success message and form on section open
+    manualForm.reset();
+    manualSuccessMsg.style.display = "block";
+    setTimeout(() => {
+      manualSuccessMsg.style.display = "none";
+    }, 2000);
+    alert("Question saved!");
+  } catch (err) {
+    alert("Failed to save question: " + err.message);
+  }
+};
+// Reset success message and form on section open
   const manualSection = document.getElementById('manual-question-section');
   new MutationObserver(() => {
     if (manualSection.style.display === "block") {
