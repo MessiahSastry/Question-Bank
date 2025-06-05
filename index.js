@@ -128,7 +128,14 @@ window.emailSignIn = () => { 
   const email = document.getElementById('email').value.trim();
   const password = document.getElementById('password').value.trim();
   if (!email || !password) return alert('Enter email and password!');
-  auth.signInWithEmailAndPassword(email, password).catch(err => alert(err.message));
+  auth.signInWithEmailAndPassword(email, password)
+    .then(() => {
+      // Immediately show dashboard after successful login
+      showSection('dashboard-section');
+      loadDashboard && loadDashboard(); // If you want to immediately load dashboard
+      history.replaceState({ section: 'dashboard-section' }, '', '#dashboard-section');
+    })
+    .catch(err => alert(err.message));
 };
 
 window.emailRegister = async () => { 
@@ -159,11 +166,14 @@ window.googleSignIn = () => { 
           const defaultDisplayName = user.displayName || user.email.split('@')[0];
           await userDocRef.set({ displayName: defaultDisplayName, email: user.email, role: 'teacher', createdAt: firebase.firestore.FieldValue.serverTimestamp() });
         }
+        // Add this block to immediately show dashboard after Google sign in
+        showSection('dashboard-section');
+        loadDashboard && loadDashboard();
+        history.replaceState({ section: 'dashboard-section' }, '', '#dashboard-section');
       }
     })
     .catch(err => alert(err.message));
 };
-
 window.forgotPassword = () => { 
   const email = document.getElementById('email').value.trim();
   if (!email) return alert('Enter your email to reset password.');
