@@ -52,7 +52,32 @@ let examSectionsData = []; // For Exam Builder sections
 // ====== UTILITY & HELPER FUNCTIONS ======
 // (Currently, specific utility functions are co-located or simple enough not to be grouped here)
 // (If complex shared utilities arise, they can be placed here)
+function showToast(message, type = 'info', duration = 3000) {
+    const toastId = 'toast-popup-message';
+    let toast = document.getElementById(toastId);
 
+    if (!toast) {
+        toast = document.createElement('div');
+        toast.id = toastId;
+        document.body.appendChild(toast);
+    }
+
+    toast.textContent = message;
+    toast.className = `toast-popup show ${type}`; // 'info', 'success', 'error'
+
+    // Clear existing timer if any
+    if (toast.timer) {
+        clearTimeout(toast.timer);
+    }
+
+    toast.timer = setTimeout(() => {
+        toast.classList.remove('show');
+        // Optionally remove the toast element from DOM after hiding if you prefer
+        // if (toast.parentNode) {
+        //     toast.parentNode.removeChild(toast);
+        // }
+    }, duration);
+}
 // ====== SECTION NAVIGATION & HISTORY ======
 function showSection(id, pushState = true) {
   document.querySelectorAll('.app-section').forEach(sec => sec.style.display = 'none');
