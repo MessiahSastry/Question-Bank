@@ -919,58 +919,106 @@ async function loadQuestionBank() {
 }
 
 // ====== QUESTION BANK - FILTERING & DISPLAY ======
+
+// Helper function to update chapter filter options based on selected class and subject
+function updateQbChapterFilterOptions() {
+    const classVal = document.getElementById('class-filter-qb').value;
+    const subjectVal = document.getElementById('subject-filter-qb').value;
+    const chapterFilterDropdown = document.getElementById('chapter-filter-qb-dropdown');
+
+    if (!chapterFilterDropdown) {
+        console.warn("Chapter filter dropdown element not found for QB.");
+        return;
+    }
+
+    const chapterOptionsContainer = chapterFilterDropdown.querySelector('.dropdown-options');
+    const chapterHiddenInput = document.getElementById('chapter-filter-qb');
+    const chapterSelectedDisplay = chapterFilterDropdown.querySelector('.selected-option');
+
+    if (!chapterOptionsContainer || !chapterHiddenInput || !chapterSelectedDisplay) {
+        console.warn("Essential parts missing for QB chapter filter dropdown.");
+        return;
+    }
+
+    let relevantQuestions = qbQuestionsCache; // Start with all cached questions
+
+    // Filter questions by selected class (if any)
+    if (classVal) {
+        relevantQuestions = relevantQuestions.filter(q => q.class === classVal);
+    }
+    // Filter questions by selected subject (if any)
+    if (subjectVal) {
+        relevantQuestions = relevantQuestions.filter(q => q.subject === subjectVal);
+    }
+
+    // Get unique, non-empty, sorted chapter names from the relevant questions
+    const distinctChapters = [...new Set(relevantQuestions.map(q => q.chapter).filter(ch => ch && ch.trim() !== ''))].sort();
+
+    // Rebuild chapter options
+    chapterOptionsContainer.innerHTML = `<div data-value="">All Chapters</div>`; // Always have "All Chapters"
+    distinctChapters.forEach(chapter => {
+        chapterOptionsContainer.innerHTML += `<div data-value="${chapter}">${chapter}</div>`;
+    });
+
+    // Check if the currently selected chapter is still valid with the new options.
+    // If not, reset to "All Chapters".
+    const currentSelectedChapter = chapterHiddenInput.value;
+    if (currentSelectedChapter && !distinctChapters.includes(currentSelectedChapter)) {
+        chapterHiddenInput.value = ""; // Reset hidden input
+        chapterSelectedDisplay.textContent = "All Chapters"; // Reset display
+    }
+    // If currentSelectedChapter is "" (All Chapters) or is in distinctChapters, no change needed to selection here.
+
+    // Re-initialize the custom dropdown for chapters to ensure new options have listeners.
+    // The changeCallback for the chapter dropdown itself remains filterAndDisplayQbQuestions.
+    setupCustomDropdown('chapter-filter-qb-dropdown', 'chapter-filter-qb', filterAndDisplayQbQuestions);
+}
+
 function setupQuestionBankFilters() {
-    // Populate Class dropdown (already static in HTML via JS, but could be dynamic if classes change)
-    const classFilterDropdown = document.getElementById('class-filter-qb-dropdown');
-    if (classFilterDropdown) {
-        const classOptionsContainer = classFilterDropdown.querySelector('.dropdown-options');
+    const classFilterDropdownEl = document.getElementById('class-filter-qb-dropdown');
+    if (classFilterDropdownEl) {
+        const classOptionsContainer = classFilterDropdownEl.querySelector('.dropdown-options');
         if (classOptionsContainer) {
             classOptionsContainer.innerHTML = `<div data-value="">All Classes</div>` +
                 aiGeneratorConfig.classes.map(c => `<div data-value="${c}">${c}</div>`).join('');
-            setupCustomDropdown('class-filter-qb-dropdown', 'class-filter-qb', filterAndDisplayQbQuestions);
+            // When class changes, update chapters and then filter all questions
+            setupCustomDropdown('class-filter-qb-dropdown', 'class-filter-qb', () => {
+                updateQbChapterFilterOptions();
+                filterAndDisplayQbQuestions();
+            });
         }
     }
 
-    // Populate Subject dropdown
-    const subjectFilterDropdown = document.getElementById('subject-filter-qb-dropdown');
-    if (subjectFilterDropdown) {
-        const subjectOptionsContainer = subjectFilterDropdown.querySelector('.dropdown-options');
+    const subjectFilterDropdownEl = document.getElementById('subject-filter-qb-dropdown');
+    if (subjectFilterDropdownEl) {
+        const subjectOptionsContainer = subjectFilterDropdownEl.querySelector('.dropdown-options');
         if (subjectOptionsContainer) {
             subjectOptionsContainer.innerHTML = `<div data-value="">All Subjects</div>` +
                 aiGeneratorConfig.subjectsBase.map(s => `<div data-value="${s}">${s}</div>`).join('');
-            setupCustomDropdown('subject-filter-qb-dropdown', 'subject-filter-qb', filterAndDisplayQbQuestions);
+            // When subject changes, update chapters and then filter all questions
+            setupCustomDropdown('subject-filter-qb-dropdown', 'subject-filter-qb', () => {
+                updateQbChapterFilterOptions();
+                filterAndDisplayQbQuestions();
+            });
         }
     }
 
-    // Populate Chapter dropdown (Initially "All Chapters", dynamically updated if needed)
-    // For true dynamic update based on selected class/subject from actual questions:
-    // 1. Get unique chapters from qbQuestionsCache for current class/subject filters.
-    // 2. Re-populate the chapter dropdown options.
-    // This part is simplified here; a more robust solution would query distinct chapters.
-    const chapterFilterDropdown = document.getElementById('chapter-filter-qb-dropdown');
-    if (chapterFilterDropdown) {
-        const chapterOptionsContainer = chapterFilterDropdown.querySelector('.dropdown-options');
-        if (chapterOptionsContainer) {
-            // Placeholder: Ideally, populate with distinct chapters from current filter scope
-            chapterOptionsContainer.innerHTML = `<div data-value="">All Chapters</div>`;
-            // Add logic here to fetch and populate actual distinct chapters from qbQuestionsCache
-            // Example: let distinctChapters = [...new Set(qbQuestionsCache.map(q => q.chapter))];
-            // distinctChapters.forEach(ch => chapterOptionsContainer.innerHTML += `<div data-value="${ch}">${ch}</div>`);
-        }
+    // Setup for the chapter dropdown (it will be populated by updateQbChapterFilterOptions)
+    const chapterFilterDropdownEl = document.getElementById('chapter-filter-qb-dropdown');
+    if (chapterFilterDropdownEl) {
+        // Initial setup (options will be added by updateQbChapterFilterOptions)
         setupCustomDropdown('chapter-filter-qb-dropdown', 'chapter-filter-qb', filterAndDisplayQbQuestions);
     }
 
+    // Initial population of chapter options based on default/no class/subject selection
+    updateQbChapterFilterOptions();
 
-    // Marks filter is a standard multi-select, attach change listener
+    // Marks filter is a standard multi-select, attach its change listener
     const marksFilter = document.getElementById("marks-filter-qb");
     if (marksFilter) {
         marksFilter.onchange = filterAndDisplayQbQuestions;
     }
 }
-
-// populateCustomDropdownOptions is part of setupCustomDropdown or specific setup functions like setupQuestionBankFilters
-// function populateCustomDropdownOptions(dropdownId, optionsArray, defaultOptionText) { /* ... as needed ... */ }
-
 
 function filterAndDisplayQbQuestions() { 
     const classVal = document.getElementById('class-filter-qb').value;
@@ -980,18 +1028,21 @@ function filterAndDisplayQbQuestions() { 
     const selectedMarks = Array.from(marksSelect.selectedOptions).map(opt => opt.value).filter(Boolean);
     const qbOutputDiv = document.getElementById("qb-output");
 
+    if (!qbOutputDiv) {
+        console.error("Question Bank output div not found for filtering.");
+        return;
+    }
+    qbOutputDiv.innerHTML = "<em>Filtering questions...</em>"; // Temporary message
+
     const filtered = qbQuestionsCache.filter(q => {
         if (classVal && q.class !== classVal) return false;
         if (subjectVal && q.subject !== subjectVal) return false;
-        if (chapterVal && q.chapter !== chapterVal) return false; // Assumes exact match for chapter
+        if (chapterVal && q.chapter !== chapterVal) return false;
         if (selectedMarks.length > 0) {
-            // Ensure q.marks is treated as a string for comparison if selectedMarks values are strings
             const qMarksStr = q.marks ? q.marks.toString() : "";
             if (!selectedMarks.includes(qMarksStr)) {
-                // Fallback: check metaLine if structured marks field doesn't match
-                // This is a basic fallback, could be improved with regex if metaLine is consistent
                 const metaLine = q.metaLine || "";
-                const marksInMeta = selectedMarks.some(sm => metaLine.includes(`, ${sm} Mark`)); // e.g. ", 2 Marks"
+                const marksInMeta = selectedMarks.some(sm => metaLine.includes(`, ${sm} Mark`) || metaLine.includes(`, ${sm} Marks`));
                 if (!marksInMeta) return false;
             }
         }
@@ -1001,7 +1052,7 @@ function filterAndDisplayQbQuestions() { 
 }
 
 function renderQbQuestions(listToRender, outputDiv) { 
-    outputDiv.innerHTML = ""; // Clear previous results
+    outputDiv.innerHTML = ""; // Clear previous results or "Filtering..." message
     if (listToRender.length === 0) {
         outputDiv.innerHTML = "<p>No questions found matching your criteria.</p>";
         return;
@@ -1009,15 +1060,14 @@ function renderQbQuestions(listToRender, outputDiv) { 
 
     listToRender.forEach((qData) => { 
         const card = document.createElement("div");
-        card.className = "question-card qb-item"; // question-card for base style, qb-item for specific QB logic
-        card.dataset.questionDbId = qData.id; // Firestore document ID
-        const cacheIndex = qbQuestionsCache.findIndex(q => q.id === qData.id); // For direct access if needed
+        card.className = "question-card qb-item";
+        card.dataset.questionDbId = qData.id;
+        const cacheIndex = qbQuestionsCache.findIndex(q => q.id === qData.id);
         card.dataset.qbQuestionCacheIndex = cacheIndex;
 
         const qTextContainer = document.createElement("div");
         qTextContainer.className = "qb-item-text-container"; 
 
-        // Use metaLine if present, otherwise try to construct from structured fields
         const metaText = qData.metaLine ||
                          (qData.difficulty && qData.marks ?
                             `Q: ${qData.difficulty}${qData.level ? '/Level '+qData.level : ''}, ${qData.marks} Marks` :
@@ -1025,28 +1075,25 @@ function renderQbQuestions(listToRender, outputDiv) { 
         const bodyText = qData.body || qData.text || "Question text not available.";
 
         const metaDiv = document.createElement('div');
-        metaDiv.className = 'question-meta-ai'; // Styled Red (shared with AI gen)
+        metaDiv.className = 'question-meta-ai';
         metaDiv.textContent = metaText;
 
         const bodyDiv = document.createElement('div');
-        bodyDiv.className = 'question-text-ai'; // Styled Blue (shared with AI gen)
+        bodyDiv.className = 'question-text-ai';
         bodyDiv.textContent = bodyText; 
         
         qTextContainer.appendChild(metaDiv);
         qTextContainer.appendChild(bodyDiv);
 
-        // Display other details like class, subject, chapter if they exist
         let otherMetaInfoHtml = '<small class="qb-item-details">';
         let hasOtherMeta = false;
         if(qData.class) { otherMetaInfoHtml += `<strong>Cl:</strong> ${qData.class} `; hasOtherMeta = true; }
         if(qData.subject) { otherMetaInfoHtml += `<strong>Sub:</strong> ${qData.subject} `; hasOtherMeta = true; }
         if(qData.chapter) { otherMetaInfoHtml += `<strong>Ch:</strong> ${qData.chapter} `; hasOtherMeta = true; }
-        // Add marks/difficulty again only if NOT part of the main metaText already shown (i.e., no metaLine)
         if (!qData.metaLine && qData.marks) { otherMetaInfoHtml += `<strong>Marks:</strong> ${qData.marks} `; hasOtherMeta = true; }
         if (!qData.metaLine && qData.difficulty) { otherMetaInfoHtml += `<strong>Diff:</strong> ${qData.difficulty} ${qData.level ? '/L'+qData.level : ''} `; hasOtherMeta = true; }
         otherMetaInfoHtml += '</small>';
         if(hasOtherMeta) qTextContainer.innerHTML += otherMetaInfoHtml;
-
 
         card.appendChild(qTextContainer);
         outputDiv.appendChild(card);
