@@ -1520,16 +1520,17 @@ function loadExamBuilderForm() {
 }
 
 // ====== EXAM BUILDER - SECTION MANAGEMENT LOGIC ======
+
 function createSectionUI(section, index) {
     const sectionId = `eb-section-${index}`; 
     const sectionDiv = document.createElement('div');
     sectionDiv.className = 'exam-section-item';
     sectionDiv.id = sectionId;
     sectionDiv.dataset.sectionIndex = index;
+    sectionDiv.setAttribute('draggable', 'true'); // Make it draggable
 
     let sectionQTypeDropdownHTML = examBuilderFormConfig.sectionQuestionTypeOptions.map(qt => `<div data-value="${qt}">${qt}</div>`).join('');
     let sectionMcqLevelDropdownHTML = examBuilderFormConfig.mcqLevelOptions.map(lvl => `<div data-value="${lvl}">${lvl}</div>`).join('');
-    
     const showMcqLevelInitially = (section.questionType === 'MCQs');
 
     sectionDiv.innerHTML = `
@@ -1570,7 +1571,25 @@ function createSectionUI(section, index) {
             </div>
         </div>
     `;
-    // Add event listeners for input changes to update examSectionsData
+
+    sectionDiv.addEventListener('dragstart', (event) => {
+        // Check if the drag started on the section item itself, not an input field within it
+        if (event.target.classList.contains('exam-section-item')) {
+            event.target.classList.add('is-dragging');
+            event.dataTransfer.setData('text/plain', event.target.dataset.sectionIndex);
+            event.dataTransfer.effectAllowed = 'move';
+        } else {
+            // If drag started on an input, prevent dragging the whole section
+            event.preventDefault();
+        }
+    });
+
+    sectionDiv.addEventListener('dragend', (event) => {
+        if (event.target.classList.contains('exam-section-item')) {
+            event.target.classList.remove('is-dragging');
+        }
+    });
+
     sectionDiv.querySelectorAll('input, textarea').forEach(input => {
         input.addEventListener('input', () => updateSectionDataFromUI(index));
     });
@@ -1584,18 +1603,18 @@ function initializeSectionDropdowns(sectionIndex) {
         if (mcqLevelGroupInSection) {
             mcqLevelGroupInSection.style.display = (selectedQType === 'MCQs') ? 'block' : 'none';
         }
-        updateSectionDataFromUI(sectionIndex); // Update data on change
+        updateSectionDataFromUI(sectionIndex);
     });
     setupCustomDropdown(`${sectionId}-mcq-level-dropdown`, `${sectionId}-mcq-level-value`, () => {
-        updateSectionDataFromUI(sectionIndex); // Update data on change
+        updateSectionDataFromUI(sectionIndex);
     });
 }
-
 
 function addNewExamSection() {
     const defaultSectionQType = examBuilderFormConfig.sectionQuestionTypeOptions[0];
     const newSectionData = {
         title: `Section ${examSectionsData.length + 1}`,
+        _isDefaultTitle: true, // Mark that this title is default for re-numbering logic
         instructions: "",
         questionType: defaultSectionQType, 
         mcqLevel: examBuilderFormConfig.mcqLevelOptions[0],
@@ -1604,6 +1623,10 @@ function addNewExamSection() {
     };
     examSectionsData.push(newSectionData);
     
+    // Instead of just appending, call renderAllExamSections to rebuild the list
+    // This ensures all drag/drop and other listeners are correctly applied.
+    // However, for adding a single new section, direct append and setup might be more performant.
+    // Let's stick to direct append and setup for addNewExamSection.
     const sectionsListDiv = document.getElementById('eb-sections-list');
     const sectionIndex = examSectionsData.length - 1;
     const sectionElement = createSectionUI(newSectionData, sectionIndex);
@@ -1619,39 +1642,89 @@ function addNewExamSection() {
 function removeExamSection(indexToRemove) {
     if (indexToRemove < 0 || indexToRemove >= examSectionsData.length) return;
     examSectionsData.splice(indexToRemove, 1); 
-    // Re-render all sections to update indices and button data attributes
-    const sectionsListDiv = document.getElementById('eb-sections-list');
-    sectionsListDiv.innerHTML = ''; 
-    examSectionsData.forEach((sectionData, newIndex) => {
-        // Update section title if it was default "Section X"
-        if (sectionData.title === `Section ${indexToRemove + 1}` || sectionData.title === `Section ${newIndex + 2}`) { // Adjust for old/new default names
-            sectionData.title = `Section ${newIndex + 1}`;
-        }
-        const sectionElement = createSectionUI(sectionData, newIndex);
-        sectionsListDiv.appendChild(sectionElement);
-        initializeSectionDropdowns(newIndex);
-        sectionElement.querySelector('.btn-remove-section').onclick = function() {
-            removeExamSection(newIndex); 
-        };
-    });
+    renderAllExamSections(); // Re-render all sections to update indices and UI
 }
 
 function updateSectionDataFromUI(sectionIndex) {
     const sectionElement = document.getElementById(`eb-section-${sectionIndex}`);
     if (!sectionElement || !examSectionsData[sectionIndex]) return;
 
-    examSectionsData[sectionIndex].title = sectionElement.querySelector(`input[name="sectionTitle[${sectionIndex}]"]`).value;
+    const newTitle = sectionElement.querySelector(`input[name="sectionTitle[${sectionIndex}]"]`).value;
+    // Check if the title was changed from its default "Section X" format or from its previous value
+    if (examSectionsData[sectionIndex]._isDefaultTitle && newTitle !== `Section ${sectionIndex + 1}`) {
+        examSectionsData[sectionIndex]._isDefaultTitle = false;
+    } else if (!examSectionsData[sectionIndex]._isDefaultTitle && examSectionsData[sectionIndex].title !== newTitle) {
+        // If it wasn't default and changed, it's still not default. No change to _isDefaultTitle needed.
+    }
+    examSectionsData[sectionIndex].title = newTitle;
+
     examSectionsData[sectionIndex].instructions = sectionElement.querySelector(`textarea[name="sectionInstructions[${sectionIndex}]"]`).value;
     examSectionsData[sectionIndex].questionType = sectionElement.querySelector(`input[id="eb-section-${sectionIndex}-qtype-value"]`).value;
     if (examSectionsData[sectionIndex].questionType === 'MCQs') {
         examSectionsData[sectionIndex].mcqLevel = sectionElement.querySelector(`input[id="eb-section-${sectionIndex}-mcq-level-value"]`).value;
     } else {
-        examSectionsData[sectionIndex].mcqLevel = null; // Clear if not MCQs
+        examSectionsData[sectionIndex].mcqLevel = null;
     }
     examSectionsData[sectionIndex].numQuestions = sectionElement.querySelector(`input[name="sectionNumQuestions[${sectionIndex}]"]`).value;
     examSectionsData[sectionIndex].marksPerQuestion = sectionElement.querySelector(`input[name="sectionMarksPerQuestion[${sectionIndex}]"]`).value;
 }
 
+function renderAllExamSections() {
+    const sectionsListDiv = document.getElementById('eb-sections-list');
+    if (!sectionsListDiv) {
+        console.error("Sections list container #eb-sections-list not found for rendering.");
+        return;
+    }
+
+    sectionsListDiv.innerHTML = ''; // Clear existing sections from DOM
+
+    examSectionsData.forEach((sectionData, newIndex) => {
+        // Update default titles to reflect new order
+        if (sectionData._isDefaultTitle) {
+            sectionData.title = `Section ${newIndex + 1}`;
+        }
+        // Or, if title was "Section X" and X is not newIndex+1, and it was a default title, update it
+        else if (sectionData.title && sectionData.title.startsWith("Section ")) {
+            const currentNumMatch = sectionData.title.match(/^Section (\d+)$/);
+            if (currentNumMatch && parseInt(currentNumMatch[1], 10) !== (newIndex + 1) && (sectionData._wasPreviouslyDefault === undefined || sectionData._wasPreviouslyDefault)) {
+                // This condition helps if _isDefaultTitle was missed but it looks like a default title.
+                // For safety, only re-number if we are sure it was a default title that needs updating due to reorder.
+                // The _isDefaultTitle flag is more reliable.
+            }
+        }
+
+
+        const sectionElement = createSectionUI(sectionData, newIndex);
+        sectionsListDiv.appendChild(sectionElement);
+        initializeSectionDropdowns(newIndex); // Re-initialize dropdowns
+
+        // Re-attach remove button listener using the newIndex
+        const removeButton = sectionElement.querySelector('.btn-remove-section');
+        if (removeButton) {
+            removeButton.onclick = function() {
+                removeExamSection(newIndex);
+            };
+        }
+    });
+}
+
+// Helper function for drag-and-drop to find element to insert before
+function getDragAfterElement(container, y) {
+    const draggableElements = [...container.querySelectorAll('.exam-section-item:not(.is-dragging)')];
+
+    return draggableElements.reduce((closest, child) => {
+        const box = child.getBoundingClientRect();
+        // Offset from the center of the element
+        const offset = y - box.top - box.height / 2;
+        // We are looking for the element whose center is *below* the cursor (negative offset)
+        // and is the closest one (largest negative offset, i.e., smallest absolute offset).
+        if (offset < 0 && offset > closest.offset) {
+            return { offset: offset, element: child };
+        } else {
+            return closest;
+        }
+    }, { offset: Number.NEGATIVE_INFINITY }).element; // .element will be undefined if no suitable element found (i.e. drop at end)
+}
 
 // ====== EXAM BUILDER - FORM SUBMISSION & DATA HANDLING ======
 function handleExamBuilderFormSubmit(e) {
