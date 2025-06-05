@@ -122,7 +122,7 @@ window.onload = () => {
   setTimeout(() => { if (splash && !splash.classList.contains('hidden') && !auth.currentUser) { hideSplashAndShowLogin(); } }, 2000);
 };
 
-/ ====== DASHBOARD LOGIC ======
+// ====== DASHBOARD LOGIC ======
 function loadDashboard() { 
   const displayNameSpan = document.getElementById("display-name");
   const settingsBtn = document.getElementById("settings-btn");
