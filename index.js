@@ -1899,6 +1899,118 @@ function handleExamBuilderFormSubmit(e) {
     // This function will handle fetching questions, AI optimization, etc.
     initiateExamQuestionSelection(examData);
 }
+// ====== EXAM BUILDER - QUESTION SELECTION PROCESS ======
+
+async function fetchQuestionsForSection(sectionDetails, examCommonCriteria) {
+    if (!currentUserProfile) {
+        showToast("User not logged in. Cannot fetch questions.", "error");
+        return []; // Return empty array if no user
+    }
+
+    let query = db.collection("questions")
+        .where("createdBy", "==", currentUserProfile.uid)
+        .where("class", "==", examCommonCriteria.ebClass)
+        .where("subject", "==", examCommonCriteria.ebSubject);
+
+    // Handle chapters: Firestore 'in' queries are limited (currently to 30 values in an array).
+    // If more chapters are selected, multiple queries might be needed or a different strategy.
+    // For now, assuming selectedChapters is an array.
+    if (examCommonCriteria.ebChapters && examCommonCriteria.ebChapters.length > 0) {
+        if (examCommonCriteria.ebChapters.length <= 30) {
+            query = query.where("chapter", "in", examCommonCriteria.ebChapters);
+        } else {
+            // Handle cases with more than 30 chapters if necessary (e.g., multiple queries and merge)
+            // For this step, we'll just log a warning and proceed with the first 30.
+            showToast("More than 30 chapters selected, fetching from first 30 due to query limits.", "info", 4000);
+            query = query.where("chapter", "in", examCommonCriteria.ebChapters.slice(0, 30));
+        }
+    } else {
+        // No chapters selected, this case should be handled by form validation earlier.
+        // If it reaches here, it means fetching questions from any chapter for the class/subject.
+        // Depending on requirements, you might want to prevent this or allow it.
+        // For now, let's assume validation ensures chapters are selected.
+    }
+
+    // Placeholder for more specific filtering based on sectionDetails:
+    // - sectionDetails.questionType (MCQs/Descriptive) - needs a 'type' field in Firestore or inference
+    // - sectionDetails.marksPerQuestion - needs a 'marks' field to match
+    // - sectionDetails.mcqLevel (if MCQs) - needs 'level' field
+    // - examCommonCriteria.ebDifficulty or section-specific difficulty - needs 'difficulty' field
+
+    // For now, we fetch broadly and log what we would filter by.
+    console.log(`Fetching for Section: ${sectionDetails.title}`);
+    console.log(`  Targeting ${sectionDetails.numQuestions} questions.`);
+    console.log(`  Type: ${sectionDetails.questionType}, Marks/Q: ${sectionDetails.marksPerQuestion}`);
+    if (sectionDetails.questionType === 'MCQs') {
+        console.log(`  MCQ Level: ${sectionDetails.mcqLevel}`);
+    }
+    // Add overall difficulty from examCommonCriteria.ebDifficulty or a section-specific one later.
+
+    try {
+        const snapshot = await query.get();
+        const questions = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        console.log(`  Fetched ${questions.length} potential questions for section "${sectionDetails.title}" based on class, subject, chapters.`);
+        return questions; // Returns all matching questions for now
+    } catch (error) {
+        console.error(`Error fetching questions for section "${sectionDetails.title}":`, error);
+        showToast(`Error fetching questions for section "${sectionDetails.title}".`, "error");
+        return []; // Return empty on error for this section
+    }
+}
+
+async function initiateExamQuestionSelection(examData) {
+    console.log("Initiating Exam Question Selection Process with data:", examData);
+    const allFetchedQuestionsPerSection = [];
+    let allFetchesSuccessful = true;
+
+    for (let i = 0; i < examData.sections.length; i++) {
+        const section = examData.sections[i];
+        showToast(`Fetching questions for ${section.title || `Section ${i+1}`}...`, 'info', 2000);
+        const fetchedQuestions = await fetchQuestionsForSection(section, examData);
+        if (fetchedQuestions) { // fetchQuestionsForSection returns [] on error now
+            allFetchedQuestionsPerSection.push({
+                sectionTitle: section.title || `Section ${i+1}`,
+                sectionCriteria: section,
+                availableQuestions: fetchedQuestions
+            });
+            if (fetchedQuestions.length < parseInt(section.numQuestions, 10)) {
+                showToast(`Warning: Not enough questions found for ${section.title || `Section ${i+1}`} (found ${fetchedQuestions.length}, need ${section.numQuestions}). Manual selection or broader criteria may be needed.`, 'error', 5000);
+                // We can still proceed and let user/AI handle selection from what's available
+            }
+        } else {
+            // This 'else' might not be reached if fetchQuestionsForSection always returns an array.
+            // Error handling is done within fetchQuestionsForSection.
+            allFetchesSuccessful = false; // Mark if any section fetch failed critically, though it returns []
+        }
+    }
+
+    console.log("All fetched questions (pre-selection/optimization):", allFetchedQuestionsPerSection);
+
+    if (allFetchedQuestionsPerSection.length === examData.sections.length) { // Check if we have an entry for each section
+        showToast("Initial question fetching complete. Next steps: AI optimization, selection, and preview.", 'success', 4000);
+        // TODO:
+        // 1. Implement client-side filtering to narrow down availableQuestions based on marks, type, difficulty, level
+        //    OR prepare this data to be sent to the backend AI optimization endpoint.
+        // 2. Call the AI optimization endpoint (if backend approach is chosen).
+        // 3. Handle the AI's response (list of selected question IDs per section).
+        // 4. Store the final selected questions.
+        // 5. Transition to the "Visual Preview" UI.
+
+        // For now, let's just log and re-enable the button.
+    } else {
+        showToast("Some errors occurred during question fetching. Please check console.", 'error');
+    }
+
+    // Re-enable the submit button
+    const form = document.getElementById('exam-builder-form');
+    if (form) {
+        const submitButton = form.querySelector('button[type="submit"]');
+        if (submitButton) {
+            submitButton.disabled = false;
+            submitButton.textContent = "Proceed to Select Questions";
+        }
+    }
+}
 // ====== CUSTOM DROPDOWN WIDGET LOGIC ======
 
 // HELPER: Updates the display text for a multi-select dropdown
