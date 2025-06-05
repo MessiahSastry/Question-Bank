@@ -1837,8 +1837,8 @@ function handleExamBuilderFormSubmit(e) {
         const easyP = examData['ebDiffEasyPerc'] || 0;
         const medP = examData['ebDiffMediumPerc'] || 0;
         const hardP = examData['ebDiffHardPerc'] || 0;
-        if (easyP + medP + hardP !== 100) {
-            alert("Difficulty percentages must total 100%."); // TODO: Toast
+        if (Math.round(easyP + medP + hardP) !== 100) { // Use Math.round for float comparisons
+            showToast("Difficulty percentages must total 100%.", 'error');
             return;
         }
     }
@@ -1847,24 +1847,58 @@ function handleExamBuilderFormSubmit(e) {
     examSectionsData.forEach((_, index) => updateSectionDataFromUI(index));
     examData.sections = JSON.parse(JSON.stringify(examSectionsData)); // Deep copy
 
-    // Validate that each section has numQuestions and marksPerQuestion
+    // Basic Validations
+    if (!examData.ebChapters || examData.ebChapters.length === 0) {
+        showToast("Please select at least one chapter.", 'error');
+        return;
+    }
+    if (!examData.sections || examData.sections.length === 0) {
+        showToast("Please add at least one section to the exam.", 'error');
+        return;
+    }
+
+    let totalExamMarksFromSections = 0;
     for (let i = 0; i < examData.sections.length; i++) {
         const section = examData.sections[i];
-        if (!section.numQuestions || parseInt(section.numQuestions) <= 0) {
-            alert(`Please specify a valid number of questions for Section ${i + 1}.`); // TODO: Toast
+        const numQuestions = parseInt(section.numQuestions, 10);
+        const marksPerQuestion = parseFloat(section.marksPerQuestion);
+
+        if (isNaN(numQuestions) || numQuestions <= 0) {
+            showToast(`Please specify a valid number of questions for Section ${i + 1}.`, 'error');
             return;
         }
-        if (!section.marksPerQuestion || parseFloat(section.marksPerQuestion) <= 0) {
-            alert(`Please specify valid marks per question for Section ${i + 1}.`); // TODO: Toast
+        if (isNaN(marksPerQuestion) || marksPerQuestion <= 0) {
+            showToast(`Please specify valid marks per question for Section ${i + 1}.`, 'error');
             return;
         }
+        totalExamMarksFromSections += numQuestions * marksPerQuestion;
+    }
+
+    const maxMarksSelected = parseInt(examData.ebMaxMarks, 10);
+    if (isNaN(maxMarksSelected) || maxMarksSelected <= 0) {
+        showToast("Please select a valid maximum mark for the exam.", 'error');
+        return;
+    }
+
+    if (totalExamMarksFromSections !== maxMarksSelected) {
+        showToast(`The total marks from all sections (${totalExamMarksFromSections}) does not match the selected Max Marks for the exam (${maxMarksSelected}). Please adjust.`, 'error', 5000);
+        return;
     }
     
-    console.log("Exam Builder Form Data Collected:", examData);
-    alert("Form submission initiated. Next step is fetching questions (pending implementation)."); // TODO: Toast & proceed
-    // TODO: Transition to the next phase: Question selection UI based on examData
-};
+    console.log("Exam Builder Form Data Collected & Validated:", examData);
+    showToast("Processing exam setup... Please wait.", 'info', 2000); // Placeholder for loading state
 
+    // Disable the submit button to prevent multiple submissions
+    const submitButton = form.querySelector('button[type="submit"]');
+    if (submitButton) {
+        submitButton.disabled = true;
+        submitButton.textContent = "Processing...";
+    }
+
+    // Call the next function in the process (to be defined in a later step)
+    // This function will handle fetching questions, AI optimization, etc.
+    initiateExamQuestionSelection(examData);
+}
 // ====== CUSTOM DROPDOWN WIDGET LOGIC ======
 
 // HELPER: Updates the display text for a multi-select dropdown
