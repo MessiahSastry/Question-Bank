@@ -16,9 +16,22 @@ let currentUserProfile = null;
 
 const aiGeneratorConfig = {
     classes: ["3rd Class", "4th Class", "5th Class", "6th Class", "7th Class", "8th Class", "9th Class", "10th Class"],
-    subjectsBase: ["Telugu", "Hindi", "English 1", "English 2", "Math 1", "Math 1 IIT", "Math 2", "Math IIT", "Physics", "Physics IIT & NEET", "Chemistry", "Chemistry IIT & NEET", "Biology", "Biology NEET", "Social"],
+    // Define subject mappings for each class
+    subjectMappings: {
+        "3rd Class": ["Telugu", "Hindi", "English 1", "Math 1", "EVS (Social/Science)"],
+        "4th Class": ["Telugu", "Hindi", "English 1", "Math 1", "EVS (Social/Science)"],
+        "5th Class": ["Telugu", "Hindi", "English 1", "English 2", "Math 1", "EVS (Social/Science)"],
+        "6th Class": ["Telugu", "Hindi", "English 1", "English 2", "Math 1", "Math 2", "General Science (Physics, Chemistry, Biology)", "Social"],
+        "7th Class": ["Telugu", "Hindi", "English 1", "English 2", "Math 1", "Math 1 IIT", "Math 2", "Physics", "Chemistry", "Biology", "Social"],
+        "8th Class": ["Telugu", "Hindi", "English 1", "English 2", "Math 1", "Math 1 IIT", "Math 2", "Math IIT", "Physics", "Physics IIT & NEET", "Chemistry", "Chemistry IIT & NEET", "Biology", "Biology NEET", "Social"],
+        "9th Class": ["Telugu", "Hindi", "English 1", "English 2", "Math 1", "Math 1 IIT", "Math 2", "Math IIT", "Physics", "Physics IIT & NEET", "Chemistry", "Chemistry IIT & NEET", "Biology", "Biology NEET", "Social"],
+        "10th Class": ["Telugu", "Hindi", "English 1", "English 2", "Math 1", "Math 1 IIT", "Math 2", "Math IIT", "Physics", "Physics IIT & NEET", "Chemistry", "Chemistry IIT & NEET", "Biology", "Biology NEET", "Social"]
+    },
     questionTypes: ["MCQs", "Descriptive"],
-    getSubjectsForClass: function(className) { return this.subjectsBase; } // Needs update for class-specific subjects as per requirements
+    // Updated function to get subjects based on the mapping
+    getSubjectsForClass: function(className) {
+        return this.subjectMappings[className] || []; // Return mapped subjects or an empty array if class not found
+    }
 };
 
 // Configuration for Exam Builder dropdowns (example structure, populate as needed)
@@ -36,7 +49,6 @@ let qbQuestionsCache = []; // For Question Bank
 let activeQuestionEditControls = null; // For AI Generator edit state
 let activeQbEditControls = null; // For QB edit state
 let examSectionsData = []; // For Exam Builder sections
-
 // ====== UTILITY & HELPER FUNCTIONS ======
 // (Currently, specific utility functions are co-located or simple enough not to be grouped here)
 // (If complex shared utilities arise, they can be placed here)
