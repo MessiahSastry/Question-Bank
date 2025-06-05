@@ -1726,6 +1726,41 @@ function handleExamBuilderFormSubmit(e) {
 };
 
 // ====== CUSTOM DROPDOWN WIDGET LOGIC ======
+
+// HELPER: Updates the display text for a multi-select dropdown
+function updateMultiSelectDisplayText(selectedDisplay, selectedValues, optionsContainer, defaultText = "Select options") {
+    if (!selectedValues || selectedValues.length === 0 || (selectedValues.length === 1 && selectedValues[0] === "")) {
+        selectedDisplay.textContent = defaultText;
+    } else {
+        const selectedTexts = [];
+        selectedValues.forEach(val => {
+            const optionElement = optionsContainer.querySelector(`div[data-value="${val}"]`);
+            if (optionElement) {
+                // Attempt to get text content without the checkbox span
+                let textContent = '';
+                optionElement.childNodes.forEach(node => {
+                    if (node.nodeType === Node.TEXT_NODE) {
+                        textContent += node.textContent.trim();
+                    } else if (node.nodeType === Node.ELEMENT_NODE && !node.classList.contains('option-checkbox')) {
+                        textContent += node.textContent.trim();
+                    }
+                });
+                if (textContent) selectedTexts.push(textContent);
+                else selectedTexts.push(val); // Fallback to value
+            } else {
+                selectedTexts.push(val); // Fallback
+            }
+        });
+
+        if (selectedTexts.length > 2) { // Or any number you prefer
+            selectedDisplay.textContent = `${selectedTexts.length} selected`;
+        } else {
+            selectedDisplay.textContent = selectedTexts.join(', ');
+        }
+    }
+}
+
+// LISTENER FOR OPTIONS: Handles clicks on individual dropdown options
 function optionsContainerListener(optionsContainer, selectedDisplay, hiddenInput, dropdownElement, changeCallback) {
     if (!optionsContainer) return;
     const newOptionsContainer = optionsContainer.cloneNode(true); 
@@ -1737,7 +1772,8 @@ function optionsContainerListener(optionsContainer, selectedDisplay, hiddenInput
         opt.onclick = function (event) {
             event.stopPropagation();
             const optValue = opt.dataset.value;
-            const optText = opt.textContent.trim(); // Or a more specific way to get text if checkbox span is complex
+            // For single select, opt.textContent is fine. For multi, need to be careful with checkbox span.
+            // The updateMultiSelectDisplayText handles getting clean text.
 
             if (isMultiSelect) {
                 let selectedValues = hiddenInput.value ? hiddenInput.value.split(',') : [];
@@ -1750,46 +1786,138 @@ function optionsContainerListener(optionsContainer, selectedDisplay, hiddenInput
                     if (checkboxSpan) checkboxSpan.classList.remove('checked');
                 } else {
                     // Select
-                    if (optValue === "") { // If "All Marks" is clicked
-                        selectedValues = [""]; // Select only "All"
+                    if (optValue === "") { // If "All Marks" or similar "select all/none" option is clicked
+                        selectedValues = [""]; // Select only this "All" option
                         // Deselect all other options visually
                         newOptionsContainer.querySelectorAll("div[data-value].selected-dd-option").forEach(o => {
-                            o.classList.remove('selected-dd-option');
-                            const cb = o.querySelector('.option-checkbox');
-                            if (cb) cb.classList.remove('checked');
+                            if (o.dataset.value !== "") { // Don't deselect itself if it's the "All"
+                                o.classList.remove('selected-dd-option');
+                                const cb = o.querySelector('.option-checkbox');
+                                if (cb) cb.classList.remove('checked');
+                            }
                         });
-                    } else {
+                        // Ensure the "All" option itself is marked selected
+                         opt.classList.add('selected-dd-option');
+                         if (checkboxSpan) checkboxSpan.classList.add('checked');
+
+                    } else { // A specific option is chosen
                         selectedValues.push(optValue);
                         selectedValues = selectedValues.filter(v => v !== ""); // Remove "All" if a specific option is chosen
-                         // Ensure "All Marks" option is visually deselected
+                         // Ensure "All Marks" option is visually deselected if it was selected
                         const allOption = newOptionsContainer.querySelector("div[data-value='']");
                         if (allOption) {
                             allOption.classList.remove('selected-dd-option');
                             const cbAll = allOption.querySelector('.option-checkbox');
                              if (cbAll) cbAll.classList.remove('checked');
                         }
+                        opt.classList.add('selected-dd-option');
+                        if (checkboxSpan) checkboxSpan.classList.add('checked');
                     }
-                    opt.classList.add('selected-dd-option');
-                    if (checkboxSpan) checkboxSpan.classList.add('checked');
                 }
                 hiddenInput.value = selectedValues.join(',');
+                // Use the defaultText for the specific marks dropdown
                 updateMultiSelectDisplayText(selectedDisplay, selectedValues, newOptionsContainer, "All Marks");
 
+
             } else { // Single select logic (original behavior)
-                selectedDisplay.textContent = optText; // Use opt.textContent to avoid checkbox span text
+                selectedDisplay.textContent = opt.textContent.trim(); 
                 hiddenInput.value = optValue;
                 dropdownElement.classList.remove("open");
                 newOptionsContainer.style.display = "none";
             }
             
             if (changeCallback) {
-                changeCallback(hiddenInput.value); // Pass the new value(s)
+                changeCallback(hiddenInput.value);
             }
             hiddenInput.dispatchEvent(new Event('change', { bubbles: true })); 
         };
     });
 }
 
+// SETUP FUNCTION: Initializes a custom dropdown
+function setupCustomDropdown(dropdownId, hiddenInputId, changeCallback = null) {
+    const dropdown = document.getElementById(dropdownId);
+    if (!dropdown) { console.warn(`Dropdown with ID '${dropdownId}' not found.`); return; }
+
+    const selectedDisplay = dropdown.querySelector(".selected-option");
+    const optionsContainer = dropdown.querySelector(".dropdown-options");
+    const hiddenInput = document.getElementById(hiddenInputId); 
+
+    if (!selectedDisplay || !optionsContainer || !hiddenInput) {
+        console.warn(`Essential parts missing for custom dropdown '${dropdownId}'. Check .selected-option, .dropdown-options, or hidden input '${hiddenInputId}'.`);
+        return;
+    }
+
+    const isMultiSelect = dropdown.classList.contains('custom-multiselect-dropdown');
+
+    // Initialize display text for multi-select
+    if (isMultiSelect) {
+        const initialValues = hiddenInput.value ? hiddenInput.value.split(',') : [""]; // Default to "All Marks" (value "")
+        if (hiddenInput.value === "" && selectedDisplay.textContent === "All Marks") { // Ensure "All Marks" hidden input is set if display implies it
+             // This logic is tricky if hiddenInput starts empty.
+             // Let's assume "All Marks" display means hidden input should be "" or contain only "".
+        }
+
+        updateMultiSelectDisplayText(selectedDisplay, initialValues, optionsContainer, "All Marks");
+
+        // Also set initial visual state for options
+        optionsContainer.querySelectorAll("div[data-value]").forEach(opt => {
+            const checkboxSpan = opt.querySelector('.option-checkbox');
+            if (initialValues.includes(opt.dataset.value)) {
+                opt.classList.add('selected-dd-option');
+                if (checkboxSpan) checkboxSpan.classList.add('checked');
+            } else {
+                opt.classList.remove('selected-dd-option');
+                if (checkboxSpan) checkboxSpan.classList.remove('checked');
+            }
+        });
+    }
+
+
+    selectedDisplay.onclick = function (event) {
+        event.stopPropagation();
+        const isOpenCurrently = dropdown.classList.contains("open");
+      closeAllDropdowns(dropdownId);
+      if (!isOpenCurrently) {
+        dropdown.classList.add("open");
+        optionsContainer.style.display = "block";
+      } else { // If it was open (and not closed by closeAllDropdowns because it was excluded, or it's a multiselect)
+          // For single-select, this click would have been on an option or outside, handled already.
+          // For multi-select, clicking the main display when open should close it.
+          // For single-select, if it remains open (was excluded from closeAll), then toggle.
+          dropdown.classList.remove("open");
+          optionsContainer.style.display = "none";
+      }
+    };
+    optionsContainerListener(optionsContainer, selectedDisplay, hiddenInput, dropdown, changeCallback);
+}
+
+// HELPER: Closes all other open custom dropdowns
+function closeAllDropdowns(excludeDropdownId = null) {
+    document.querySelectorAll(".custom-dropdown.open").forEach(dropdown => {
+        if (dropdown.id !== excludeDropdownId) {
+            dropdown.classList.remove("open");
+            const options = dropdown.querySelector(".dropdown-options");
+            if (options) options.style.display = "none";
+        }
+    });
+}
+
+// Global click listener to close dropdowns and popups
+document.addEventListener("click", function (e) { 
+    if (!e.target.closest('.custom-dropdown')) {
+        closeAllDropdowns();
+    }
+    if (!e.target.closest('.ai-question-popup') &&
+        !e.target.closest('.ai-question-item') &&
+        !e.target.closest('.qb-item')) {
+        const popupsToClose = ['ai-question-editor-popup', 'qb-item-action-popup'];
+        popupsToClose.forEach(popupId => {
+            const existingPopup = document.getElementById(popupId);
+            if (existingPopup) existingPopup.remove();
+        });
+    }
+});
 // ====== APPLICATION INITIALIZATION (ONLOAD/DOMCONTENTLOADED) ======
 window.onload = () => { 
   // Fallback: if after 2 seconds, splash is still visible and no user is logged in, force login UI
