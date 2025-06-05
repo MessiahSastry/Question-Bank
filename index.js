@@ -365,7 +365,7 @@ function loadAiChatInterface(sessionParams) {
             <div class="message system-message">Hello! Enter your prompt below or upload an image to extract text.</div>
         </div>
         <div id="chat-input-bar" class="chat-input-bar">
-            <button id="chat-upload-btn" title="Upload Image to Extract Text"><i class="fas fa-paperclip"></i></button>
+            <button id="chat-upload-btn" title="Upload Image to Extract Text"><i class="fas fa-plus"></i></button>
             <textarea id="chat-prompt-input" placeholder="Enter your prompt..."></textarea>
             <button id="chat-send-btn" title="Send Prompt"><i class="fas fa-paper-plane"></i></button>
         </div>`;
