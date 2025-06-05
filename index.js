@@ -426,7 +426,7 @@ function loadAiChatInterface(sessionParams) {
                 // Optionally, provide feedback for individual save failures if needed
             }
         }
-        alert(`${savedCount} question(s) saved successfully. ${skippedCount} question(s) skipped (missing data or duplicate).`); // TODO: Change to toast
+        showToast(`${savedCount} question(s) saved successfully. ${skippedCount} question(s) skipped.`, 'success'); // TODO: Change to toast
         saveAllBtnChat.disabled = false; saveAllBtnChat.textContent = "Save All";
     };
 
