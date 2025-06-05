@@ -134,13 +134,7 @@ window.emailSignIn = () => { 
   const password = document.getElementById('password').value.trim();
   if (!email || !password) return alert('Enter email and password!');
   auth.signInWithEmailAndPassword(email, password)
-    .then(() => {
-      // Immediately show dashboard after successful login
-      showSection('dashboard-section');
-      loadDashboard && loadDashboard(); // If you want to immediately load dashboard
-      history.replaceState({ section: 'dashboard-section' }, '', '#dashboard-section');
-    })
-    .catch(err => alert(err.message));
+  .catch(err => alert(err.message));
 };
 
 window.emailRegister = async () => { 
@@ -162,22 +156,7 @@ window.emailRegister = async () => { 
 window.googleSignIn = () => { 
   const provider = new firebase.auth.GoogleAuthProvider();
   auth.signInWithPopup(provider)
-    .then(async (result) => {
-      const user = result.user;
-      if (user) { 
-        const userDocRef = db.collection("users").doc(user.uid);
-        const doc = await userDocRef.get();
-        if (!doc.exists) {
-          const defaultDisplayName = user.displayName || user.email.split('@')[0];
-          await userDocRef.set({ displayName: defaultDisplayName, email: user.email, role: 'teacher', createdAt: firebase.firestore.FieldValue.serverTimestamp() });
-        }
-        // Add this block to immediately show dashboard after Google sign in
-        showSection('dashboard-section');
-        loadDashboard && loadDashboard();
-        history.replaceState({ section: 'dashboard-section' }, '', '#dashboard-section');
-      }
-    })
-    .catch(err => alert(err.message));
+  .catch(err => alert(err.message));
 };
 window.forgotPassword = () => { 
   const email = document.getElementById('email').value.trim();
