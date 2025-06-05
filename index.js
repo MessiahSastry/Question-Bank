@@ -1354,13 +1354,13 @@ async function updateEbChapterOptions() {
             if (chapters.size === 0) {
                 chaptersSelect.innerHTML = '<option value="" disabled>No chapters found for this class/subject</option>';
             } else {
+                chaptersSelect.disabled = false; // Enable before adding options
                 chapters.forEach(chapter => {
                     const option = document.createElement('option');
                     option.value = chapter;
                     option.textContent = chapter;
                     chaptersSelect.appendChild(option);
                 });
-                chaptersSelect.disabled = false;
             }
         } catch (error) {
             console.error("Error fetching chapters for Exam Builder:", error);
@@ -1376,10 +1376,13 @@ function loadExamBuilderForm() {
     const examBuilderContainer = document.getElementById('exam-builder-container');
     if (!examBuilderContainer) { console.error("Exam Builder container not found!"); return; }
 
-    examSectionsData = []; // Reset sections data when form is loaded
+    // Reset sections data ONLY if navigating fresh to this form,
+    // not if just re-rendering due to internal changes like drag-drop.
+    // However, for simplicity and to ensure clean state on each load of this function:
+    examSectionsData = [];
 
     let classDropdownHTML = aiGeneratorConfig.classes.map(c => `<div data-value="${c}">${c}</div>`).join('');
-    let subjectDropdownHTML = aiGeneratorConfig.subjectsBase.map(s => `<div data-value="${s}">${s}</div>`).join(''); // Use base, specific filtering later if needed
+    let subjectDropdownHTML = aiGeneratorConfig.subjectsBase.map(s => `<div data-value="${s}">${s}</div>`).join('');
     let examNameDropdownHTML = examBuilderFormConfig.examNameOptions.map(e => `<div data-value="${e}">${e}</div>`).join('');
     let examTypeDropdownHTML = examBuilderFormConfig.examTypeOptions.map(e => `<div data-value="${e}">${e}</div>`).join('');
     let mcqLevelDropdownHTML = examBuilderFormConfig.mcqLevelOptions.map(lvl => `<div data-value="${lvl}">${lvl}</div>`).join('');
@@ -1503,22 +1506,86 @@ function loadExamBuilderForm() {
     });
 
     document.getElementById('eb-add-section-btn').onclick = addNewExamSection;
-    document.getElementById('exam-builder-form').onsubmit = handleExamBuilderFormSubmit; // Changed to call a new handler
+    document.getElementById('exam-builder-form').onsubmit = handleExamBuilderFormSubmit;
 
-    updateEbChapterOptions(); // Initial call to populate chapters if class/subject are pre-selected
-    if (examSectionsData.length === 0) { // Add one default section if none exist
+    updateEbChapterOptions();
+    if (examSectionsData.length === 0) {
         addNewExamSection();
-    } else { // Re-render existing sections if navigating back (data might be stale in DOM)
-        const sectionsListDiv = document.getElementById('eb-sections-list');
-        sectionsListDiv.innerHTML = '';
-        examSectionsData.forEach((sectionData, index) => {
-            const sectionElement = createSectionUI(sectionData, index);
-            sectionsListDiv.appendChild(sectionElement);
-            initializeSectionDropdowns(index); // Re-initialize dropdowns for this section
+    } else {
+        renderAllExamSections(); // This will set up draggable items correctly
+    }
+
+    // Attach drag-and-drop listeners to the sections list container
+    const sectionsListDiv = document.getElementById('eb-sections-list');
+    if (sectionsListDiv) {
+        sectionsListDiv.addEventListener('dragover', (event) => {
+            event.preventDefault(); 
+            event.dataTransfer.dropEffect = 'move';
+        });
+
+        sectionsListDiv.addEventListener('drop', (event) => {
+            event.preventDefault();
+            const draggingElement = sectionsListDiv.querySelector('.is-dragging');
+            if (!draggingElement) return;
+
+            const draggedItemOriginalDataIndex = parseInt(event.dataTransfer.getData('text/plain'), 10);
+            if (isNaN(draggedItemOriginalDataIndex) || draggedItemOriginalDataIndex < 0 || draggedItemOriginalDataIndex >= examSectionsData.length) {
+                console.error("Invalid dragged item index from dataTransfer:", event.dataTransfer.getData('text/plain'));
+                draggingElement.classList.remove('is-dragging'); // Clean up
+                return;
+            }
+
+            const draggedItemData = examSectionsData[draggedItemOriginalDataIndex]; // Get data before splicing
+
+            // Determine the DOM element we are dropping before
+            const afterElement = getDragAfterElement(sectionsListDiv, event.clientY);
+
+            // Create a temporary array for reordering
+            let tempExamSectionsData = [...examSectionsData];
+            tempExamSectionsData.splice(draggedItemOriginalDataIndex, 1); // Remove from old position
+
+            if (afterElement === null) {
+                // Dropped at the end of the list
+                tempExamSectionsData.push(draggedItemData);
+            } else {
+                // Find the index of the data object that corresponds to 'afterElement' in the *temporary* array
+                // This requires a way to map `afterElement` (a DOM node) back to an item in `tempExamSectionsData`.
+                // The `dataset.sectionIndex` on `afterElement` refers to its index *before* any reordering in this drop operation.
+                // So, we find the `data-section-index` of `afterElement`, which is its *original* index in `examSectionsData`.
+                const afterElementOriginalIndex = parseInt(afterElement.dataset.sectionIndex, 10);
+                
+                // Find where the 'afterElement' currently is in the `tempExamSectionsData` array
+                // This is needed because 'afterElement' itself might have shifted if the dragged item was before it.
+                let insertionPointInTempData = -1;
+                let currentDataIndex = 0;
+                for(let i=0; i < examSectionsData.length; i++){ // Iterate original length before splice
+                    if(i === draggedItemOriginalDataIndex) continue; // Skip the one we removed for temp array
+                    if(i === afterElementOriginalIndex){
+                        insertionPointInTempData = currentDataIndex;
+                        break;
+                    }
+                    currentDataIndex++;
+                }
+                
+                if (insertionPointInTempData !== -1) {
+                    tempExamSectionsData.splice(insertionPointInTempData, 0, draggedItemData);
+                } else {
+                     // Fallback: if afterElement's corresponding data not found in temp array (should not happen if logic is sound)
+                    console.warn("Could not determine insertion point accurately, adding to end.");
+                    tempExamSectionsData.push(draggedItemData);
+                }
+            }
+            
+            examSectionsData = tempExamSectionsData; // Assign the reordered array back
+            
+            // The 'is-dragging' class should ideally be removed by the 'dragend' event listener
+            // on the section item itself to ensure it's always cleared.
+            // draggingElement.classList.remove('is-dragging'); 
+
+            renderAllExamSections(); // Re-render UI from updated and reordered examSectionsData
         });
     }
 }
-
 // ====== EXAM BUILDER - SECTION MANAGEMENT LOGIC ======
 
 function createSectionUI(section, index) {
