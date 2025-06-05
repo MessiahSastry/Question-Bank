@@ -1728,80 +1728,67 @@ function handleExamBuilderFormSubmit(e) {
 // ====== CUSTOM DROPDOWN WIDGET LOGIC ======
 function optionsContainerListener(optionsContainer, selectedDisplay, hiddenInput, dropdownElement, changeCallback) {
     if (!optionsContainer) return;
-    // Clone and replace to effectively remove old listeners before adding new ones
     const newOptionsContainer = optionsContainer.cloneNode(true); 
     optionsContainer.parentNode.replaceChild(newOptionsContainer, optionsContainer);
+
+    const isMultiSelect = dropdownElement.classList.contains('custom-multiselect-dropdown');
     
     newOptionsContainer.querySelectorAll("div[data-value]").forEach(opt => {
         opt.onclick = function (event) {
-            event.stopPropagation(); // Prevent click from bubbling to parent dropdown
-            selectedDisplay.textContent = opt.textContent;
-            hiddenInput.value = opt.dataset.value;
-            dropdownElement.classList.remove("open"); // Close this dropdown
-            newOptionsContainer.style.display = "none"; // Hide options
+            event.stopPropagation();
+            const optValue = opt.dataset.value;
+            const optText = opt.textContent.trim(); // Or a more specific way to get text if checkbox span is complex
+
+            if (isMultiSelect) {
+                let selectedValues = hiddenInput.value ? hiddenInput.value.split(',') : [];
+                const checkboxSpan = opt.querySelector('.option-checkbox');
+
+                if (selectedValues.includes(optValue)) {
+                    // Deselect
+                    selectedValues = selectedValues.filter(v => v !== optValue);
+                    opt.classList.remove('selected-dd-option');
+                    if (checkboxSpan) checkboxSpan.classList.remove('checked');
+                } else {
+                    // Select
+                    if (optValue === "") { // If "All Marks" is clicked
+                        selectedValues = [""]; // Select only "All"
+                        // Deselect all other options visually
+                        newOptionsContainer.querySelectorAll("div[data-value].selected-dd-option").forEach(o => {
+                            o.classList.remove('selected-dd-option');
+                            const cb = o.querySelector('.option-checkbox');
+                            if (cb) cb.classList.remove('checked');
+                        });
+                    } else {
+                        selectedValues.push(optValue);
+                        selectedValues = selectedValues.filter(v => v !== ""); // Remove "All" if a specific option is chosen
+                         // Ensure "All Marks" option is visually deselected
+                        const allOption = newOptionsContainer.querySelector("div[data-value='']");
+                        if (allOption) {
+                            allOption.classList.remove('selected-dd-option');
+                            const cbAll = allOption.querySelector('.option-checkbox');
+                             if (cbAll) cbAll.classList.remove('checked');
+                        }
+                    }
+                    opt.classList.add('selected-dd-option');
+                    if (checkboxSpan) checkboxSpan.classList.add('checked');
+                }
+                hiddenInput.value = selectedValues.join(',');
+                updateMultiSelectDisplayText(selectedDisplay, selectedValues, newOptionsContainer, "All Marks");
+
+            } else { // Single select logic (original behavior)
+                selectedDisplay.textContent = optText; // Use opt.textContent to avoid checkbox span text
+                hiddenInput.value = optValue;
+                dropdownElement.classList.remove("open");
+                newOptionsContainer.style.display = "none";
+            }
+            
             if (changeCallback) {
-                changeCallback(opt.dataset.value); // Execute callback with new value
+                changeCallback(hiddenInput.value); // Pass the new value(s)
             }
-            // Dispatch a change event on the hidden input for any other listeners
             hiddenInput.dispatchEvent(new Event('change', { bubbles: true })); 
         };
     });
 }
-
-function setupCustomDropdown(dropdownId, hiddenInputId, changeCallback = null) {
-    const dropdown = document.getElementById(dropdownId);
-    if (!dropdown) { console.warn(`Dropdown with ID '${dropdownId}' not found.`); return; }
-
-    const selectedDisplay = dropdown.querySelector(".selected-option");
-    const optionsContainer = dropdown.querySelector(".dropdown-options");
-    const hiddenInput = document.getElementById(hiddenInputId); 
-
-    if (!selectedDisplay || !optionsContainer || !hiddenInput) {
-        console.warn(`Essential parts missing for custom dropdown '${dropdownId}'. Check .selected-option, .dropdown-options, or hidden input '${hiddenInputId}'.`);
-        return;
-    }
-
-    selectedDisplay.onclick = function (event) {
-        event.stopPropagation(); // Prevent global click listener from closing it immediately
-        const isOpenCurrently = dropdown.classList.contains("open");
-      closeAllDropdowns(dropdownId); // Close others before toggling this one
-      if (!isOpenCurrently) { // If it was closed, now open it
-        dropdown.classList.add("open");
-        optionsContainer.style.display = "block";
-      } // If it was open, closeAllDropdowns already handled it (or it's the one excluded)
-    };
-    optionsContainerListener(optionsContainer, selectedDisplay, hiddenInput, dropdown, changeCallback);
-}
-
-function closeAllDropdowns(excludeDropdownId = null) {
-    document.querySelectorAll(".custom-dropdown.open").forEach(dropdown => {
-        if (dropdown.id !== excludeDropdownId) {
-            dropdown.classList.remove("open");
-            const options = dropdown.querySelector(".dropdown-options");
-            if (options) options.style.display = "none";
-        }
-    });
-}
-
-// Global click listener to close dropdowns and popups
-document.addEventListener("click", function (e) { 
-    // Close custom dropdowns if click is outside
-    if (!e.target.closest('.custom-dropdown')) {
-        closeAllDropdowns();
-    }
-
-    // Close AI/QB action popups if click is outside relevant areas
-    if (!e.target.closest('.ai-question-popup') &&
-        !e.target.closest('.ai-question-item') && // Clicking on item itself should open popup, not close it
-        !e.target.closest('.qb-item')) { // Same for QB items
-        const popupsToClose = ['ai-question-editor-popup', 'qb-item-action-popup'];
-        popupsToClose.forEach(popupId => {
-            const existingPopup = document.getElementById(popupId);
-            if (existingPopup) existingPopup.remove();
-        });
-    }
-});
-
 
 // ====== APPLICATION INITIALIZATION (ONLOAD/DOMCONTENTLOADED) ======
 window.onload = () => { 
