@@ -977,19 +977,20 @@ async function updateEbChapterOptions() { /* ... as before ... */ }
 
 // NEW: Function to create the UI for a single section
 function createSectionUI(section, index) {
-    const sectionId = `eb-section-${index}`; // Unique ID for the section's DOM element
+    const sectionId = `eb-section-${index}`; 
     const sectionDiv = document.createElement('div');
     sectionDiv.className = 'exam-section-item';
     sectionDiv.id = sectionId;
     sectionDiv.dataset.sectionIndex = index;
 
-    // Question type options for sections (can be same as overall exam type options)
-    const sectionQuestionTypeOptions = ["MCQs", "Descriptive", "Fill in the Blanks", "True/False", "Match the Following"]; // Example list
-    let sectionQTypeDropdownHTML = sectionQuestionTypeOptions.map(qt => `<div data-value="${qt}">${qt}</div>`).join('');
-
+    let sectionQTypeDropdownHTML = examBuilderFormConfig.sectionQuestionTypeOptions.map(qt => `<div data-value="${qt}">${qt}</div>`).join('');
+    let sectionMcqLevelDropdownHTML = examBuilderFormConfig.mcqLevelOptions.map(lvl => `<div data-value="${lvl}">${lvl}</div>`).join('');
+    
+    // Determine initial visibility of MCQ level for this section
+    const showMcqLevelInitially = (section.questionType === 'MCQs');
 
     sectionDiv.innerHTML = `
-        <h4>Section ${index + 1}: <input type="text" name="sectionTitle[${index}]" class="eb-section-title-input" placeholder="Section Title (e.g., Section A)" value="${section.title || ''}"></h4>
+        <h4>Section ${index + 1}: <input type="text" name="sectionTitle[${index}]" class="eb-section-title-input" placeholder="Section Title (e.g., Section A)" value="${section.title || `Section ${index + 1}`}"></h4>
         <div class="form-grid section-grid">
             <div class="form-group form-group-span-2">
                 <label for="${sectionId}-instructions">Instructions (Optional):</label>
@@ -998,9 +999,18 @@ function createSectionUI(section, index) {
             <div class="form-group">
                 <label for="${sectionId}-qtype">Question Type:</label>
                 <div id="${sectionId}-qtype-dropdown" class="custom-dropdown">
-                    <input type="hidden" id="${sectionId}-qtype" name="sectionQuestionType[${index}]" value="${section.questionType || sectionQuestionTypeOptions[0]}">
-                    <div class="selected-option">${section.questionType || sectionQuestionTypeOptions[0]}</div>
+                    <input type="hidden" id="${sectionId}-qtype-value" name="sectionQuestionType[${index}]" value="${section.questionType || examBuilderFormConfig.sectionQuestionTypeOptions[0]}">
+                    <div class="selected-option">${section.questionType || examBuilderFormConfig.sectionQuestionTypeOptions[0]}</div>
                     <div class="dropdown-options">${sectionQTypeDropdownHTML}</div>
+                </div>
+            </div>
+            {/* Conditional MCQ Level for the section */}
+            <div class="form-group" id="${sectionId}-mcq-level-group" style="display: ${showMcqLevelInitially ? 'block' : 'none'};">
+                <label for="${sectionId}-mcq-level">MCQ Level (Section):</label>
+                <div id="${sectionId}-mcq-level-dropdown" class="custom-dropdown">
+                    <input type="hidden" id="${sectionId}-mcq-level-value" name="sectionMcqLevel[${index}]" value="${section.mcqLevel || examBuilderFormConfig.mcqLevelOptions[0]}">
+                    <div class="selected-option">${section.mcqLevel || examBuilderFormConfig.mcqLevelOptions[0]}</div>
+                    <div class="dropdown-options">${sectionMcqLevelDropdownHTML}</div>
                 </div>
             </div>
             <div class="form-group">
@@ -1018,21 +1028,16 @@ function createSectionUI(section, index) {
             </div>
         </div>
     `;
-
-    // Initialize custom dropdown for this section's question type
-    // Need to ensure setupCustomDropdown is called *after* sectionDiv is in the DOM, or pass the element.
-    // For now, let's assume it will be called after appending.
-
     return sectionDiv;
 }
 
-// NEW: Function to handle adding a new section
 function addNewExamSection() {
+    const defaultSectionQType = examBuilderFormConfig.sectionQuestionTypeOptions[0];
     const newSectionData = {
-        // id: `section_${Date.now()}`, // Or generate when saving if needed
         title: `Section ${examSectionsData.length + 1}`,
         instructions: "",
-        questionType: "MCQs", // Default
+        questionType: defaultSectionQType, 
+        mcqLevel: examBuilderFormConfig.mcqLevelOptions[0], // Default MCQ level
         numQuestions: "",
         marksPerQuestion: ""
     };
@@ -1043,32 +1048,64 @@ function addNewExamSection() {
     const sectionElement = createSectionUI(newSectionData, sectionIndex);
     sectionsListDiv.appendChild(sectionElement);
 
-    // Setup the custom dropdown for the newly added section
-    setupCustomDropdown(`${sectionElement.id}-qtype-dropdown`, `${sectionElement.id}-qtype`);
+    const sectionId = `eb-section-${sectionIndex}`;
+    // Setup custom dropdown for this section's question type with callback
+    setupCustomDropdown(`${sectionId}-qtype-dropdown`, `${sectionId}-qtype-value`, (selectedQType) => {
+        const mcqLevelGroupInSection = document.getElementById(`${sectionId}-mcq-level-group`);
+        if (mcqLevelGroupInSection) {
+            // Show MCQ level dropdown if section type is MCQs
+            mcqLevelGroupInSection.style.display = (selectedQType === 'MCQs') ? 'block' : 'none';
+        }
+        // Update data array
+        examSectionsData[sectionIndex].questionType = selectedQType;
+        if(selectedQType !== 'MCQs') {
+            examSectionsData[sectionIndex].mcqLevel = null; // Clear mcqLevel if not MCQs
+        } else {
+             // Set default or retain existing if any
+            const mcqLevelInput = document.getElementById(`${sectionId}-mcq-level-value`);
+            examSectionsData[sectionIndex].mcqLevel = mcqLevelInput ? mcqLevelInput.value : examBuilderFormConfig.mcqLevelOptions[0];
+        }
+    });
+    // Setup custom dropdown for this section's MCQ Level
+    setupCustomDropdown(`${sectionId}-mcq-level-dropdown`, `${sectionId}-mcq-level-value`, (selectedMcqLevel) => {
+        examSectionsData[sectionIndex].mcqLevel = selectedMcqLevel;
+    });
 
-    // Attach listener to the new remove button
+
     sectionElement.querySelector('.btn-remove-section').onclick = function() {
         const indexToRemove = parseInt(this.dataset.removeIndex, 10);
         removeExamSection(indexToRemove);
     };
 }
 
-// NEW: Function to handle removing a section
 function removeExamSection(indexToRemove) {
     if (indexToRemove < 0 || indexToRemove >= examSectionsData.length) return;
-
-    examSectionsData.splice(indexToRemove, 1); // Remove from data array
-    
-    // Re-render all sections to update indices and UI correctly
+    examSectionsData.splice(indexToRemove, 1); 
     const sectionsListDiv = document.getElementById('eb-sections-list');
-    sectionsListDiv.innerHTML = ''; // Clear existing sections UI
+    sectionsListDiv.innerHTML = ''; 
     examSectionsData.forEach((sectionData, newIndex) => {
-        // Update original data index if it was stored, though sectionData itself is fine
         const sectionElement = createSectionUI(sectionData, newIndex);
         sectionsListDiv.appendChild(sectionElement);
-        setupCustomDropdown(`${sectionElement.id}-qtype-dropdown`, `${sectionElement.id}-qtype`);
+        
+        const sectionId = `eb-section-${newIndex}`;
+        setupCustomDropdown(`${sectionId}-qtype-dropdown`, `${sectionId}-qtype-value`, (selectedQType) => {
+            const mcqLevelGroupInSection = document.getElementById(`${sectionId}-mcq-level-group`);
+            if (mcqLevelGroupInSection) {
+                mcqLevelGroupInSection.style.display = (selectedQType === 'MCQs') ? 'block' : 'none';
+            }
+            examSectionsData[newIndex].questionType = selectedQType;
+             if(selectedQType !== 'MCQs') {
+                examSectionsData[newIndex].mcqLevel = null;
+            } else {
+                const mcqLevelInput = document.getElementById(`${sectionId}-mcq-level-value`);
+                examSectionsData[newIndex].mcqLevel = mcqLevelInput ? mcqLevelInput.value : examBuilderFormConfig.mcqLevelOptions[0];
+            }
+        });
+        setupCustomDropdown(`${sectionId}-mcq-level-dropdown`, `${sectionId}-mcq-level-value`, (selectedMcqLevel) => {
+             examSectionsData[newIndex].mcqLevel = selectedMcqLevel;
+        });
         sectionElement.querySelector('.btn-remove-section').onclick = function() {
-            removeExamSection(newIndex); // Pass new index
+            removeExamSection(newIndex); 
         };
     });
 }
@@ -1078,20 +1115,20 @@ function loadExamBuilderForm() {
     const examBuilderContainer = document.getElementById('exam-builder-container');
     if (!examBuilderContainer) { console.error("Exam Builder container not found!"); return; }
 
-    examSectionsData = []; // Reset sections data when form loads
-
-    // ... (config options and HTML structure for the main form as before) ...
-    const examNameOptions = ["Slip Test", "Fortnight Exam", "Formative Assessment", "Summative Assessment", "Unit Test", "Custom"];
-    // ... (other options arrays)
+    examSectionsData = []; 
 
     let classDropdownHTML = aiGeneratorConfig.classes.map(c => `<div data-value="${c}">${c}</div>`).join('');
-    // ... (other dropdown HTML generations)
+    let subjectDropdownHTML = aiGeneratorConfig.subjectsBase.map(s => `<div data-value="${s}">${s}</div>`).join('');
+    let examNameDropdownHTML = examBuilderFormConfig.examNameOptions.map(e => `<div data-value="${e}">${e}</div>`).join('');
+    let examTypeDropdownHTML = examBuilderFormConfig.examTypeOptions.map(e => `<div data-value="${e}">${e}</div>`).join('');
+    let mcqLevelDropdownHTML = examBuilderFormConfig.mcqLevelOptions.map(lvl => `<div data-value="${lvl}">${lvl}</div>`).join('');
+    let maxMarksDropdownHTML = examBuilderFormConfig.maxMarksOptions.map(m => `<div data-value="${m}">${m}</div>`).join('');
+    let difficultyDropdownHTML = examBuilderFormConfig.difficultyOptions.map(d => `<div data-value="${d}">${d}</div>`).join('');
 
     examBuilderContainer.innerHTML = `
         <h2>Create New Exam Paper</h2>
         <form id="exam-builder-form">
             <div class="form-grid">
-                {/* ... (Class, Subject, Chapters, Exam Name, Exam Type, MCQ Level, Max Marks, Difficulty, Time, Date, Instructions - as before) ... */}
                 <div class="form-group">
                     <label for="eb-class">Class:</label>
                     <div id="eb-class-dropdown" class="custom-dropdown">
@@ -1100,14 +1137,81 @@ function loadExamBuilderForm() {
                         <div class="dropdown-options">${classDropdownHTML}</div>
                     </div>
                 </div>
-                {/* ... other main form fields ... */}
+                <div class="form-group">
+                    <label for="eb-subject">Subject:</label>
+                    <div id="eb-subject-dropdown" class="custom-dropdown">
+                        <input type="hidden" id="eb-subject" name="ebSubject" value="${aiGeneratorConfig.subjectsBase[0]}">
+                        <div class="selected-option">${aiGeneratorConfig.subjectsBase[0]}</div>
+                        <div class="dropdown-options">${subjectDropdownHTML}</div>
+                    </div>
+                </div>
                 <div class="form-group form-group-span-2">
                     <label for="eb-chapters">Chapters (Ctrl/Cmd + Click to select multiple):</label>
                     <select id="eb-chapters" name="ebChapters" multiple class="qb-standard-select-multiple" style="min-height: 100px;" disabled>
                         <option value="" disabled>Select Class and Subject first</option>
                     </select>
                 </div>
-                {/* ... more main form fields ... */}
+                <div class="form-group">
+                    <label for="eb-exam-name">Exam Name:</label>
+                    <div id="eb-exam-name-dropdown" class="custom-dropdown">
+                        <input type="hidden" id="eb-exam-name" name="ebExamName" value="${examBuilderFormConfig.examNameOptions[0]}">
+                        <div class="selected-option">${examBuilderFormConfig.examNameOptions[0]}</div>
+                        <div class="dropdown-options">${examNameDropdownHTML}</div>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="eb-exam-type">Exam Type:</label>
+                    <div id="eb-exam-type-dropdown" class="custom-dropdown">
+                        <input type="hidden" id="eb-exam-type" name="ebExamType" value="${examBuilderFormConfig.examTypeOptions[0]}">
+                        <div class="selected-option">${examBuilderFormConfig.examTypeOptions[0]}</div>
+                        <div class="dropdown-options">${examTypeDropdownHTML}</div>
+                    </div>
+                </div>
+                <div class="form-group" id="eb-mcq-level-group" style="display: ${(examBuilderFormConfig.examTypeOptions[0] === 'MCQs' || examBuilderFormConfig.examTypeOptions[0] === 'Both') ? 'block' : 'none'};">
+                    <label for="eb-mcq-level">MCQ Level (Overall):</label>
+                    <div id="eb-mcq-level-dropdown" class="custom-dropdown">
+                        <input type="hidden" id="eb-mcq-level" name="ebMcqLevel" value="${examBuilderFormConfig.mcqLevelOptions[0]}">
+                        <div class="selected-option">${examBuilderFormConfig.mcqLevelOptions[0]}</div>
+                        <div class="dropdown-options">${mcqLevelDropdownHTML}</div>
+                    </div>
+                </div>
+                <div class="form-group">
+                     <label for="eb-max-marks">Max Marks:</label>
+                    <div id="eb-max-marks-dropdown" class="custom-dropdown">
+                        <input type="hidden" id="eb-max-marks" name="ebMaxMarks" value="${examBuilderFormConfig.maxMarksOptions[0]}">
+                        <div class="selected-option">${examBuilderFormConfig.maxMarksOptions[0]}</div>
+                        <div class="dropdown-options">${maxMarksDropdownHTML}</div>
+                    </div>
+                </div>
+                 <div class="form-group">
+                    <label for="eb-difficulty">Overall Difficulty:</label>
+                    <div id="eb-difficulty-dropdown" class="custom-dropdown">
+                        <input type="hidden" id="eb-difficulty" name="ebDifficulty" value="${examBuilderFormConfig.difficultyOptions[0]}">
+                        <div class="selected-option">${examBuilderFormConfig.difficultyOptions[0]}</div>
+                        <div class="dropdown-options">${difficultyDropdownHTML}</div>
+                    </div>
+                </div>
+                <div class="form-group" id="eb-difficulty-percentages-group" style="display: ${(examBuilderFormConfig.difficultyOptions[0] === 'Mixed By Percentage') ? 'block' : 'none'};">
+                    <label>Difficulty Mix (%):</label>
+                    <div class="difficulty-mix-inputs">
+                        <div><label for="eb-diff-easy-perc">Easy:</label><input type="number" id="eb-diff-easy-perc" name="ebDiffEasyPerc" min="0" max="100" placeholder="%"></div>
+                        <div><label for="eb-diff-medium-perc">Medium:</label><input type="number" id="eb-diff-medium-perc" name="ebDiffMediumPerc" min="0" max="100" placeholder="%"></div>
+                        <div><label for="eb-diff-hard-perc">Difficult:</label><input type="number" id="eb-diff-hard-perc" name="ebDiffHardPerc" min="0" max="100" placeholder="%"></div>
+                    </div>
+                    <small>Percentages must total 100%.</small>
+                </div>
+                <div class="form-group">
+                    <label for="eb-time">Time Allowed:</label>
+                    <input type="text" id="eb-time" name="ebTime" placeholder="e.g., 2 hours, 90 minutes">
+                </div>
+                <div class="form-group">
+                    <label for="eb-date">Date of Exam:</label>
+                    <input type="date" id="eb-date" name="ebDate">
+                </div>
+                <div class="form-group form-group-span-2">
+                    <label for="eb-instructions">Instructions (Optional):</label>
+                    <textarea id="eb-instructions" name="ebInstructions" rows="3" placeholder="Enter general instructions for the exam..."></textarea>
+                </div>
             </div>
 
             <div id="eb-sections-container" class="sections-container">
@@ -1124,59 +1228,109 @@ function loadExamBuilderForm() {
         </form>
     `;
 
-    // Initialize custom dropdowns for the Main Exam Builder form
     setupCustomDropdown('eb-class-dropdown', 'eb-class', updateEbChapterOptions);
     setupCustomDropdown('eb-subject-dropdown', 'eb-subject', updateEbChapterOptions);
-    // ... (setup for other main form dropdowns as before, including conditional visibility callbacks) ...
-    setupCustomDropdown('eb-exam-type-dropdown', 'eb-exam-type', (value) => { /* ... conditional logic ... */ });
-    setupCustomDropdown('eb-difficulty-dropdown', 'eb-difficulty', (value) => { /* ... conditional logic ... */ });
+    setupCustomDropdown('eb-exam-name-dropdown', 'eb-exam-name');
+    setupCustomDropdown('eb-exam-type-dropdown', 'eb-exam-type', (value) => {
+        const mcqLevelGroup = document.getElementById('eb-mcq-level-group');
+        if (mcqLevelGroup) mcqLevelGroup.style.display = (value === 'MCQs' || value === 'Both') ? 'block' : 'none';
+    });
+    setupCustomDropdown('eb-mcq-level-dropdown', 'eb-mcq-level');
+    setupCustomDropdown('eb-max-marks-dropdown', 'eb-max-marks');
+    setupCustomDropdown('eb-difficulty-dropdown', 'eb-difficulty', (value) => {
+        const difficultyPercGroup = document.getElementById('eb-difficulty-percentages-group');
+        if (difficultyPercGroup) difficultyPercGroup.style.display = (value === 'Mixed By Percentage') ? 'block' : 'none';
+    });
 
-
-    // Attach event listener to the "Add Section" button
     document.getElementById('eb-add-section-btn').onclick = addNewExamSection;
     
     document.getElementById('exam-builder-form').onsubmit = function(e) {
         e.preventDefault();
-        const formData = new FormData(this);
-        const data = {};
-        // Basic form data
-        for (let [key, value] of formData.entries()) {
-            if (key.startsWith('section')) continue; // Skip section data for now from FormData
-            if (key === 'ebChapters') {
-                if (!data[key]) data[key] = []; data[key].push(value);
-            } else { data[key] = value; }
+        const mainFormData = new FormData(this);
+        const examData = {};
+        for (let [key, value] of mainFormData.entries()) {
+            if (key.startsWith('section')) continue; 
+            if (key === 'ebChapters') { // From standard multi-select
+                if (!examData[key]) examData[key] = [];
+                examData[key].push(value);
+            } else { examData[key] = value; }
         }
-        // Get values from hidden inputs of custom dropdowns
-        data['ebClass'] = document.getElementById('eb-class').value;
-        // ... (get other main form custom dropdown values) ...
-        data['ebSelectedChapters'] = Array.from(document.getElementById('eb-chapters').selectedOptions).map(opt => opt.value);
+        // Get values from hidden inputs of main form custom dropdowns
+        examData['ebClass'] = document.getElementById('eb-class').value;
+        examData['ebSubject'] = document.getElementById('eb-subject').value;
+        examData['ebExamName'] = document.getElementById('eb-exam-name').value;
+        examData['ebExamType'] = document.getElementById('eb-exam-type').value;
+        if (examData['ebExamType'] === 'MCQs' || examData['ebExamType'] === 'Both') {
+            examData['ebMcqLevel'] = document.getElementById('eb-mcq-level').value;
+        } else { examData['ebMcqLevel'] = null; }
+        examData['ebMaxMarks'] = document.getElementById('eb-max-marks').value;
+        examData['ebDifficulty'] = document.getElementById('eb-difficulty').value;
+        if (examData['ebDifficulty'] !== 'Mixed By Percentage') {
+            examData['ebDiffEasyPerc'] = null; examData['ebDiffMediumPerc'] = null; examData['ebDiffHardPerc'] = null;
+        } // Percentages are already captured by FormData if visible
 
-        // Collect section data from the examSectionsData array
-        data.sections = examSectionsData.map((section, index) => {
-            // Retrieve values from the dynamically created section inputs
-            const sectionElement = document.getElementById(`eb-section-${index}`);
-            if (!sectionElement) return null; // Should not happen if UI and data are in sync
-            return {
-                title: sectionElement.querySelector(`input[name="sectionTitle[${index}]"]`).value,
-                instructions: sectionElement.querySelector(`textarea[name="sectionInstructions[${index}]"]`).value,
-                questionType: sectionElement.querySelector(`input[name="sectionQuestionType[${index}]"]`).value, // From hidden input of custom dropdown
-                numQuestions: sectionElement.querySelector(`input[name="sectionNumQuestions[${index}]"]`).value,
-                marksPerQuestion: sectionElement.querySelector(`input[name="sectionMarksPerQuestion[${index}]"]`).value,
-            };
-        }).filter(s => s !== null);
-
-
-        console.log("Exam Builder Form Data (with sections):", data);
+        // Update data from examSectionsData array (which should be up-to-date)
+        examData.sections = examSectionsData.map(section => ({
+            title: section.title,
+            instructions: section.instructions,
+            questionType: section.questionType,
+            mcqLevel: section.mcqLevel, // This will be null if not MCQs type for the section
+            numQuestions: section.numQuestions,
+            marksPerQuestion: section.marksPerQuestion
+        }));
+        
+        console.log("Exam Builder Form Data (with sections):", examData);
         alert("Form submission initiated. Next step is fetching questions (pending).");
     };
-
     updateEbChapterOptions(); 
 }
 
-// ====== CUSTOM DROPDOWN LOGIC ======
-// ... (optionsContainerListener, setupCustomDropdown, closeAllDropdowns as previously defined) ...
-// Ensure the changeCallback in setupCustomDropdown and optionsContainerListener is correctly passing the value.
-
+/ ====== CUSTOM DROPDOWN LOGIC ======
+function optionsContainerListener(optionsContainer, selectedDisplay, hiddenInput, dropdownElement, changeCallback) {
+    if (!optionsContainer) return;
+    const newOptionsContainer = optionsContainer.cloneNode(true); 
+    optionsContainer.parentNode.replaceChild(newOptionsContainer, optionsContainer);
+    newOptionsContainer.querySelectorAll("div[data-value]").forEach(opt => {
+        opt.onclick = function (event) {
+            event.stopPropagation(); selectedDisplay.textContent = opt.textContent; hiddenInput.value = opt.dataset.value;
+            dropdownElement.classList.remove("open"); newOptionsContainer.style.display = "none";
+            if (changeCallback) { changeCallback(opt.dataset.value); }
+            hiddenInput.dispatchEvent(new Event('change', { bubbles: true })); 
+        };
+    });
+}
+function setupCustomDropdown(dropdownId, hiddenInputId, changeCallback = null) {
+    const dropdown = document.getElementById(dropdownId); if (!dropdown) { return; }
+    const selectedDisplay = dropdown.querySelector(".selected-option");
+    const optionsContainer = dropdown.querySelector(".dropdown-options");
+    const hiddenInput = document.getElementById(hiddenInputId); 
+    if (!selectedDisplay || !optionsContainer || !hiddenInput) { return; }
+    selectedDisplay.onclick = function (event) {
+        event.stopPropagation(); closeAllDropdowns(dropdownId); 
+        const isOpen = dropdown.classList.toggle("open");
+        optionsContainer.style.display = isOpen ? "block" : "none";
+    };
+    optionsContainerListener(optionsContainer, selectedDisplay, hiddenInput, dropdown, changeCallback);
+}
+function closeAllDropdowns(excludeDropdownId = null) {
+    document.querySelectorAll(".custom-dropdown.open").forEach(dropdown => {
+        if (dropdown.id !== excludeDropdownId) {
+            dropdown.classList.remove("open");
+            const options = dropdown.querySelector(".dropdown-options");
+            if (options) options.style.display = "none";
+        }
+    });
+}
+document.addEventListener("click", function (e) { 
+    if (!e.target.closest('.custom-dropdown')) { closeAllDropdowns(); }
+    if (!e.target.closest('.ai-question-popup') && !e.target.closest('.qb-item-action-popup') && !e.target.closest('.ai-question-item') && !e.target.closest('.qb-item')) {
+        const popupsToClose = ['ai-question-editor-popup', 'qb-item-action-popup'];
+        popupsToClose.forEach(popupId => {
+            const existingPopup = document.getElementById(popupId);
+            if (existingPopup) existingPopup.remove();
+        });
+    }
+});
 // ====== BROWSER HISTORY HANDLING ======
 window.addEventListener("popstate", function (event) {
   let sectionId = (event.state && event.state.section) ? event.state.section : (auth.currentUser ? "dashboard-section" : "login-section");
