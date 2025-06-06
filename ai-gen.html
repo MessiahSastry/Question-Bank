@@ -133,8 +133,38 @@
     align-self: flex-start;  /* This line is NEW */
 }
       .system-message { background-color: #e9edef; color: #54656f; text-align: center; font-size: 0.85em; max-width: 100%; border-radius: 5px; }
-      .question-meta-ai { color: #c82333; font-weight: 600; font-size: 0.9em; margin-bottom: 6px; }
-      .question-text-ai { color: #004085; font-size: 0.98em; }
+      /* Styling for AI-generated questions */
+.ai-question-item {
+    background-color: #f1f1f1; /* Light gray background, similar to AI chat bubbles */
+    color: #222; /* General text color for the question item */
+    float: left; /* Align to the left, like AI messages */
+    text-align: left;
+    max-width: 85%; /* Keep similar max-width as chat bubbles */
+    margin: 10px; /* Spacing between questions */
+    padding: 12px 16px; /* Slightly more padding for the question block */
+    border-radius: 14px; /* Rounded corners */
+    font-size: 0.95em; /* Base font size for the question block */
+    line-height: 1.5em; /* Improved readability */
+    clear: both; /* Clear floats to ensure proper stacking */
+    position: relative;
+    word-wrap: break-word;
+    box-shadow: 0 1px 1px rgba(0,0,0,0.05); /* Subtle shadow for depth */
+}
+
+.question-meta-ai {
+    color: #c82333; /* Red color as requested */
+    font-weight: 600;
+    font-size: 0.9em;
+    margin-bottom: 6px; /* Space between meta and question text */
+    display: block; /* Ensures it takes its own line */
+}
+
+.question-text-ai {
+    color: #004085; /* Blue color as requested */
+    font-size: 0.98em; /* Slightly larger than meta, keeping good hierarchy */
+    white-space: pre-wrap; /* Preserves whitespace and line breaks from AI response */
+    display: block; /* Ensures it takes its own line */
+}
 
       .selection-popup {
         position: absolute; background: #333; color: white; border-radius: 6px;
@@ -468,9 +498,6 @@
         document.getElementById('ai-change-setup-btn').onclick = () => history.back();
         document.getElementById('ai-save-all-btn').onclick = () => saveSessionQuestions(sessionParams);
         const chatPromptInput = document.getElementById('chat-prompt-input');
-        const sendBtn = document.getElementById('chat-send-btn');
-        sendBtn.disabled = true;
-        sendBtn.innerHTML = `<i class="fas fa-spinner fa-spin"></i>`;
         const fileUploadInput = document.getElementById('file-upload-input');
         document.getElementById('chat-upload-btn').onclick = () => fileUploadInput.click();
         fileUploadInput.onchange = (e) => handleFileUpload(e, sessionParams);
@@ -502,9 +529,41 @@
             chatPromptInput.style.height = scrollHeight + 'px';
             chatPromptInput.style.overflowY = 'hidden';
         }
+        // NEW: Check input content to enable/disable send button
+        updateSendButtonState(chatPromptInput, sendBtn);
     });
+
+    // NEW: Also update when a file is staged/unstaged
+    document.getElementById('file-upload-input').onchange = (e) => {
+        handleFileUpload(e, sessionParams);
+        updateSendButtonState(chatPromptInput, sendBtn);
+    };
+    document.getElementById('remove-file-btn').onclick = () => {
+        stagedFile = null;
+        document.getElementById('file-preview-box').style.display = 'none';
+        document.getElementById('file-preview-name').textContent = '';
+        document.getElementById('chat-prompt-input').placeholder = "e.g., Generate HOTS questions from Algebra...";
+        document.getElementById('chat-upload-btn').style.color = '#54656f';
+        updateSendButtonState(chatPromptInput, sendBtn); // NEW: Update state when file is removed
+    };
+
+    // NEW: Initial check on load
+    updateSendButtonState(chatPromptInput, sendBtn);
+
     document.addEventListener('selectionchange', handleSelectionChange);
+    } // End of loadAiChatInterface function
+
+// NEW Function: updateSendButtonState (add this function outside of loadAiChatInterface)
+function updateSendButtonState(chatPromptInput, sendBtn) {
+    // Only enable if there's text or a staged file
+    if (chatPromptInput.value.trim() !== '' || stagedFile) {
+        sendBtn.disabled = false;
+        sendBtn.innerHTML = `<i class="fas fa-paper-plane"></i>`;
+    } else {
+        sendBtn.disabled = true;
+        sendBtn.innerHTML = `<i class="fas fa-paper-plane"></i>`; // Keep icon, just disable
     }
+}
     function setupCustomDropdownsForForm() {
         setupCustomDropdown('class-dropdown-ai', 'class-value-ai', (selectedClass) => {
             const subjectDropdown = document.getElementById('subject-dropdown-ai');
@@ -553,18 +612,23 @@
         if(!currentlyOpen) currentDropdown.classList.add('open');
     }
 async function handleSendPrompt(sessionParams) {
-  const chatPromptInput = document.getElementById('chat-prompt-input');
-  const userPrompt = chatPromptInput.value.trim();
-  const messagesArea = document.getElementById('chat-messages-area');
-  const scrollBtn = document.getElementById('scroll-to-bottom');
+  const chatPromptInput = document.getElementById('chat-prompt-input');
+  const sendBtn = document.getElementById('chat-send-btn'); // Add this line to get the send button
+  const userPrompt = chatPromptInput.value.trim();
+  const messagesArea = document.getElementById('chat-messages-area');
+  const scrollBtn = document.getElementById('scroll-to-bottom');
 
-  if (!userPrompt && !stagedFile) return;
+  if (!userPrompt && !stagedFile) return;
 
-  appendChatMessage(userPrompt, 'user', messagesArea);
-  chatPromptInput.value = '';
+  // Disable button and show spinner before sending
+  sendBtn.disabled = true;
+  sendBtn.innerHTML = `<i class="fas fa-spinner fa-spin"></i>`;
 
-  const loadingMessage = appendChatMessage('Generating...', 'system-message');
-  const didSendFile = stagedFile !== null;
+  appendChatMessage(userPrompt, 'user', messagesArea);
+  chatPromptInput.value = '';
+
+  const loadingMessage = appendChatMessage('Generating...', 'system-message');
+  const didSendFile = stagedFile !== null;
 
   try {
     let result;
@@ -592,16 +656,18 @@ async function handleSendPrompt(sessionParams) {
     parseAndDisplayAiQuestions(result.result, messagesArea, sessionParams);
 
   } catch (err) {
-    appendChatMessage(`Error: ${err.message}`, 'system-message', messagesArea);
-  } finally {
-    loadingMessage.remove();
-    sendBtn.disabled = false;
-    sendBtn.innerHTML = `<i class="fas fa-paper-plane"></i>`;
-    if (didSendFile) {
-      stagedFile = null;
-      document.getElementById('chat-upload-btn').style.color = '#54656f';
-    }
-  }
+    appendChatMessage(`Error: ${err.message}`, 'system-message', messagesArea);
+  } finally {
+    loadingMessage.remove();
+    // NEW: Call updateSendButtonState to properly reset button based on current input/file state
+    updateSendButtonState(chatPromptInput, sendBtn);
+    if (didSendFile) {
+      stagedFile = null;
+      document.getElementById('chat-upload-btn').style.color = '#54656f';
+      // NEW: Re-call updateSendButtonState after clearing stagedFile
+      updateSendButtonState(chatPromptInput, sendBtn);
+    }
+  }
 }
 
 function handleFileUpload(event, sessionParams) {
@@ -742,14 +808,21 @@ function handleFileUpload(event, sessionParams) {
     messagesArea.querySelectorAll('.ai-question-item').forEach(item => item.remove());
     const fragment = document.createDocumentFragment();
 currentSessionQuestions.forEach((q, i) => {
-  const message = document.createElement('div');
-  message.className = 'message ai-message ai-question-item';
-  message.dataset.sessionQuestionIndex = i;
-  message.innerHTML = `
-    <div class="question-meta-ai">${q.parsedMeta}</div>
-    <div class="question-text-ai">${q.parsedBody}</div>
-  `;
-  fragment.appendChild(message);
+  // NEW: Re-generate the question number based on its new sequential position
+  // Ensure meta-line details (difficulty, marks) are preserved if they were there
+  const metaPartsMatch = q.parsedMeta.match(/Q\s*\d+:\s*(.*?),\s*(\d+\s*Marks)/i);
+  let difficultyLevel = "Difficulty/Level 0";
+  let marks = "0 Marks";
+  if (metaPartsMatch && metaPartsMatch[1]) {
+    difficultyLevel = metaPartsMatch[1].trim();
+  }
+  if (metaPartsMatch && metaPartsMatch[2]) {
+    marks = metaPartsMatch[2].trim();
+  }
+  q.parsedMeta = `Q ${i + 1}: ${difficultyLevel}, ${marks}`; // Update sequential number
+
+  const questionEl = createQuestionElement(q, i); // Use the dedicated createQuestionElement function
+  fragment.appendChild(questionEl);
 });
 messagesArea.appendChild(fragment);
 editor.remove();
@@ -761,16 +834,22 @@ if (window.MathJax) MathJax.typesetPromise([messagesArea]);
                 currentSessionQuestions.splice(questionIndex, 1);
                 const messagesArea = document.getElementById('chat-messages-area');
                 messagesArea.querySelectorAll('.ai-question-item').forEach(item => item.remove());
-                const fragment = document.createDocumentFragment();
+                const fragment = document.createDocumentFragment();
 currentSessionQuestions.forEach((q, i) => {
-  const message = document.createElement('div');
-  message.className = 'message ai-message ai-question-item';
-  message.dataset.sessionQuestionIndex = i;
-  message.innerHTML = `
-    <div class="question-meta-ai">${q.parsedMeta}</div>
-    <div class="question-text-ai">${q.parsedBody}</div>
-  `;
-  fragment.appendChild(message);
+  // NEW: Re-generate the question number based on its new sequential position
+  const metaPartsMatch = q.parsedMeta.match(/Q\s*\d+:\s*(.*?),\s*(\d+\s*Marks)/i);
+  let difficultyLevel = "Difficulty/Level 0";
+  let marks = "0 Marks";
+  if (metaPartsMatch && metaPartsMatch[1]) {
+    difficultyLevel = metaPartsMatch[1].trim();
+  }
+  if (metaPartsMatch && metaPartsMatch[2]) {
+    marks = metaPartsMatch[2].trim();
+  }
+  q.parsedMeta = `Q ${i + 1}: ${difficultyLevel}, ${marks}`; // Update sequential number
+
+  const questionEl = createQuestionElement(q, i); // Use the dedicated createQuestionElement function
+  fragment.appendChild(questionEl);
 });
         messagesArea.appendChild(fragment);
             newPopup.remove();
@@ -803,15 +882,30 @@ currentSessionQuestions.forEach((q, i) => {
         const questionBlocks = responseText.split(/\n(?=Q\s*\d+:)/g).map(q => q.trim()).filter(Boolean);
         if (questionBlocks.length === 0 && responseText) { appendChatMessage(responseText, 'ai', messagesArea); return; }
         const fragment = document.createDocumentFragment();
-        questionBlocks.forEach(qText => {
-            const questionData = { fullText: qText, class: sessionParams.class, subject: sessionParams.subject, chapter: sessionParams.chapter };
-            const metaMatch = qText.match(/^(Q\s*\d+:.*,\s*\d+\s*Marks)/);
-            questionData.parsedMeta = metaMatch ? metaMatch[1] : 'Q: Details missing';
-            questionData.parsedBody = metaMatch ? qText.substring(metaMatch[1].length).trim() : qText;
-            currentSessionQuestions.push(questionData);
-            const questionEl = createQuestionElement(questionData, currentSessionQuestions.length - 1);
-            fragment.appendChild(questionEl);
-        });
+        questionBlocks.forEach((qText, i) => { // Added 'i' for index
+            const questionData = { fullText: qText, class: sessionParams.class, subject: sessionParams.subject, chapter: sessionParams.chapter };
+            const metaMatch = qText.match(/^(Q\s*\d+:.*,\s*\d+\s*Marks)/);
+            let originalMeta = metaMatch ? metaMatch[1] : 'Q: Details missing';
+
+            // Extract the parts of the meta line
+            let difficultyLevel = "Difficulty/Level 0"; // Default
+            let marks = "0 Marks"; // Default
+
+            const partsMatch = originalMeta.match(/Q\s*\d+:\s*(.*?),\s*(\d+\s*Marks)/i);
+            if (partsMatch && partsMatch[1]) {
+                difficultyLevel = partsMatch[1].trim();
+            }
+            if (partsMatch && partsMatch[2]) {
+                marks = partsMatch[2].trim();
+            }
+
+            // Enforce sequential numbering and reconstruct meta line
+            questionData.parsedMeta = `Q ${currentSessionQuestions.length + 1}: ${difficultyLevel}, ${marks}`;
+            questionData.parsedBody = metaMatch ? qText.substring(metaMatch[1].length).trim() : qText;
+            currentSessionQuestions.push(questionData);
+            const questionEl = createQuestionElement(questionData, currentSessionQuestions.length - 1);
+            fragment.appendChild(questionEl);
+        });
         messagesArea.appendChild(fragment);
         if (window.MathJax) MathJax.typesetPromise([messagesArea]);
     }
