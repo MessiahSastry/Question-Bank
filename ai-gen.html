@@ -372,9 +372,167 @@
     }
 
     // Placeholder for other functions to be fully implemented
-    async function handleFileUpload(event, sessionParams) { alert("File upload connected."); }
-    async function saveSessionQuestions(sessionParams) { alert("Save All connected."); }
-    function handleSelectionChange() { /* Logic for selection popup */ }
+    async function handleSendPrompt(sessionParams) {
+        const chatPromptInput = document.getElementById('chat-prompt-input');
+        const userPrompt = chatPromptInput.value.trim();
+        if (!userPrompt) return;
+        const messagesArea = document.getElementById('chat-messages-area');
+        appendChatMessage(userPrompt, 'user', messagesArea);
+        chatPromptInput.value = '';
+        const fullPromptForAI = `Class: ${sessionParams.class}, Subject: ${sessionParams.subject}, Chapter: ${sessionParams.chapter}, Question Type: ${sessionParams.questionType}. User request: "${userPrompt}". Format each question strictly as: Q <num>: <Difficulty>/Level <Lvl>, <Marks> Marks\nThen the question text. Provide ONLY the questions.`;
+        appendChatMessage('Generating...', 'system is-loading', messagesArea);
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/v1/generate`, {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ prompt: fullPromptForAI })
+            });
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error || "API error");
+            messagesArea.querySelector('.system-message.is-loading')?.remove();
+            parseAndDisplayAiQuestions(result.result, messagesArea, sessionParams);
+        } catch (err) {
+            messagesArea.querySelector('.system-message.is-loading')?.remove();
+            appendChatMessage(`Error: ${err.message}`, 'system');
+        }
+    }
+
+    async function handleFileUpload(event, sessionParams) {
+        const file = event.target.files[0];
+        if (!file) return;
+        const messagesArea = document.getElementById('chat-messages-area');
+        appendChatMessage(`Processing file: ${file.name}...`, 'system is-loading', messagesArea);
+        const formData = new FormData();
+        formData.append('imageFile', file);
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/v1/extract-from-image`, { method: 'POST', body: formData });
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error || "File processing failed.");
+            messagesArea.querySelector('.system-message.is-loading')?.remove();
+            parseAndDisplayAiQuestions(result.result, messagesArea, sessionParams);
+        } catch (err) {
+            messagesArea.querySelector('.system-message.is-loading')?.remove();
+            appendChatMessage(`File Error: ${err.message}`, 'system');
+        } finally {
+            event.target.value = null;
+        }
+    }
+
+    async function saveSessionQuestions(sessionParams) {
+        if (!currentUserProfile || currentSessionQuestions.length === 0) {
+            alert("No new questions in this session to save.");
+            return;
+        }
+        const saveButton = document.getElementById('ai-save-all-btn');
+        saveButton.disabled = true;
+        saveButton.textContent = "Saving...";
+        let savedCount = 0, skippedCount = 0;
+        for (const qData of currentSessionQuestions) {
+            const snapshot = await db.collection("questions").where("body", "==", qData.parsedBody).where("class", "==", qData.class).where("subject", "==", qData.subject).where("chapter", "==", qData.chapter).where("createdBy", "==", currentUserProfile.uid).get();
+            if (!snapshot.empty) {
+                skippedCount++;
+                continue;
+            }
+            const meta = parseMetaLine(qData.parsedMeta);
+            await db.collection("questions").add({
+                text: qData.fullText, body: qData.parsedBody, metaLine: qData.parsedMeta,
+                difficulty: meta.difficulty, level: meta.level, marks: meta.marks,
+                class: qData.class, subject: qData.subject, chapter: qData.chapter,
+                createdBy: currentUserProfile.uid, timestamp: firebase.firestore.FieldValue.serverTimestamp()
+            });
+            savedCount++;
+        }
+        alert(`${savedCount} question(s) saved. ${skippedCount} duplicate(s) skipped.`);
+        saveButton.disabled = false;
+        saveButton.textContent = "Save All";
+    }
+
+    function handleSelectionChange() {
+        const selection = window.getSelection();
+        const popup = document.getElementById('selection-popup');
+        const targetElement = selection.anchorNode ? selection.anchorNode.parentElement.closest('.ai-question-item') : null;
+        if (!selection || selection.isCollapsed || !targetElement) {
+            if (popup) popup.remove();
+            return;
+        }
+        if (document.getElementById('selection-popup')) return;
+        const questionIndex = parseInt(targetElement.dataset.sessionQuestionIndex, 10);
+        const range = selection.getRangeAt(0);
+        const rect = range.getBoundingClientRect();
+        const newPopup = document.createElement('div');
+        newPopup.id = 'selection-popup';
+        newPopup.className = 'selection-popup';
+        newPopup.innerHTML = `<button id="popup-copy">Copy</button><button id="popup-edit">Edit</button><button id="popup-delete">Delete</button>`;
+        document.body.appendChild(newPopup);
+        newPopup.style.top = `${window.scrollY + rect.top - newPopup.offsetHeight - 8}px`;
+        newPopup.style.left = `${window.scrollX + rect.left + (rect.width / 2) - (newPopup.offsetWidth / 2)}px`;
+        newPopup.querySelector('#popup-copy').onclick = () => {
+            navigator.clipboard.writeText(selection.toString());
+            newPopup.remove();
+        };
+        newPopup.querySelector('#popup-edit').onclick = () => {
+            alert('Edit functionality is under development.');
+            newPopup.remove();
+        };
+        newPopup.querySelector('#popup-delete').onclick = () => {
+            if (confirm('Are you sure you want to delete this question from the session?')) {
+                currentSessionQuestions.splice(questionIndex, 1);
+                const messagesArea = document.getElementById('chat-messages-area');
+                messagesArea.querySelectorAll('.ai-question-item').forEach(item => item.remove());
+                const fragment = document.createDocumentFragment();
+                currentSessionQuestions.forEach((q, i) => {
+                    const el = createQuestionElement(q, i);
+                    fragment.appendChild(el);
+                });
+                messagesArea.appendChild(fragment);
+            }
+            newPopup.remove();
+        };
+    }
+    
+    function appendChatMessage(text, type, messagesArea) {
+      const messageDiv = document.createElement('div');
+      let className = `message ${type.includes('is-loading') ? 'system-message is-loading' : type + '-message'}`;
+      messageDiv.className = className;
+      messageDiv.textContent = text;
+      messagesArea.appendChild(messageDiv);
+      messagesArea.scrollTop = messagesArea.scrollHeight;
+    }
+
+    function parseAndDisplayAiQuestions(responseText, messagesArea, sessionParams) {
+        const questionBlocks = responseText.split(/\n(?=Q\s*\d+:)/g).map(q => q.trim()).filter(Boolean);
+        if (questionBlocks.length === 0 && responseText) { appendChatMessage(responseText, 'ai', messagesArea); return; }
+        const fragment = document.createDocumentFragment();
+        questionBlocks.forEach(qText => {
+            const questionData = { fullText: qText, class: sessionParams.class, subject: sessionParams.subject, chapter: sessionParams.chapter };
+            const metaMatch = qText.match(/^(Q\s*\d+:.*,\s*\d+\s*Marks)/);
+            questionData.parsedMeta = metaMatch ? metaMatch[1] : 'Q: Details missing';
+            questionData.parsedBody = metaMatch ? qText.substring(metaMatch[1].length).trim() : qText;
+            currentSessionQuestions.push(questionData);
+            const questionEl = createQuestionElement(questionData, currentSessionQuestions.length - 1);
+            fragment.appendChild(questionEl);
+        });
+        messagesArea.appendChild(fragment);
+        if (window.MathJax) MathJax.typesetPromise([messagesArea]);
+    }
+
+    function createQuestionElement(qData, index) {
+        const questionEl = document.createElement('div');
+        questionEl.className = 'message ai-message ai-question-item';
+        questionEl.dataset.sessionQuestionIndex = index;
+        questionEl.innerHTML = `<div class="question-meta-ai">${qData.parsedMeta}</div><div class="question-text-ai">${qData.parsedBody}</div>`;
+        return questionEl;
+    }
+    
+    function parseMetaLine(metaLine) {
+        const meta = { difficulty: null, level: null, marks: null };
+        const diffMatch = metaLine.match(/Q\s*\d+:\s*([^,/]+)/i);
+        const levelMatch = metaLine.match(/\/Level\s*(\d+)/i);
+        const marksMatch = metaLine.match(/,\s*(\d+)\s*Marks/i);
+        if (diffMatch) meta.difficulty = diffMatch[1].trim();
+        if (levelMatch) meta.level = parseInt(levelMatch[1], 10);
+        if (marksMatch) meta.marks = parseInt(marksMatch[1], 10);
+        return meta;
+    }
 
     </script>
 </body>
