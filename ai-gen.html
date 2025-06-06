@@ -430,8 +430,8 @@
   font-size: 0.9em;
   font-family: 'Segoe UI', sans-serif;
   border-bottom: 1px solid #ddd;
-  display: none;
 ">
+
   <span style="color: #1762a7;">📄</span>
   <span id="file-preview-name" style="font-weight: 600; color: #333;"></span>
   <button id="remove-file-btn" style="
@@ -541,63 +541,55 @@
         if(!currentlyOpen) currentDropdown.classList.add('open');
     }
 async function handleSendPrompt(sessionParams) {
-    const chatPromptInput = document.getElementById('chat-prompt-input');
-    const userPrompt = chatPromptInput.value.trim();
-    const messagesArea = document.getElementById('chat-messages-area');
-    const scrollBtn = document.getElementById('scroll-to-bottom');
+  const chatPromptInput = document.getElementById('chat-prompt-input');
+  const userPrompt = chatPromptInput.value.trim();
+  const messagesArea = document.getElementById('chat-messages-area');
+  const scrollBtn = document.getElementById('scroll-to-bottom');
 
-messagesArea.addEventListener('scroll', () => {
-  const atBottom = messagesArea.scrollHeight - messagesArea.scrollTop <= messagesArea.clientHeight + 50;
-  scrollBtn.style.display = atBottom ? 'none' : 'block';
-});
+  if (!userPrompt && !stagedFile) return;
 
-scrollBtn.onclick = () => {
-  messagesArea.scrollTop = messagesArea.scrollHeight;
-};
+  appendChatMessage(userPrompt, 'user', messagesArea);
+  chatPromptInput.value = '';
 
-    if (!userPrompt && !stagedFile) return;
-    appendChatMessage(text, 'user', messagesArea);
-    chatPromptInput.value = '';
-        const loadingMessage = appendChatMessage('Generating...', 'system-message');
-    // We add a flag to know if we sent a file
-    const didSendFile = stagedFile !== null;
-    try {
-        let result;
-        if (stagedFile) {
-            // If a file is staged, send it
-            const formData = new FormData();
-            formData.append('imageFile', stagedFile);
-            formData.append('prompt', userPrompt);
-            const response = await fetch(`${API_BASE_URL}/api/v1/extract-from-image`, {
-                method: 'POST',
-                body: formData
-            });
-            result = await response.json();
-            if (!response.ok) throw new Error(result.error || "File processing failed.");
+  const loadingMessage = appendChatMessage('Generating...', 'system-message');
+  const didSendFile = stagedFile !== null;
 
-        } else {
-            // If no file, send a normal text prompt
-            const fullPromptForAI = `Class: ${sessionParams.class}, Subject: ${sessionParams.subject}, Chapter: ${sessionParams.chapter}, Question Type: ${sessionParams.questionType}. User request: "${userPrompt}". Format each question strictly as: Q <num>: <Difficulty>/Level <Lvl>, <Marks> Marks\nThen the question text. Provide ONLY the questions.`;
-            const response = await fetch(`${API_BASE_URL}/api/v1/generate`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ prompt: fullPromptForAI })
-            });
-            result = await response.json();
-            if (!response.ok) throw new Error(result.error || "API error");
-        }
-        parseAndDisplayAiQuestions(result.result, messagesArea, sessionParams);
-
-    } catch (err) {
-       appendChatMessage(`Error: ${err.message}`, 'system-message');
-    } finally {
-        loadingMessage.remove(); 
-        if (didSendFile) {
-            stagedFile = null; 
-            document.getElementById('chat-upload-btn').style.color = '#54656f'; // and reset the icon color
-        }
+  try {
+    let result;
+    if (stagedFile) {
+      const formData = new FormData();
+      formData.append('imageFile', stagedFile);
+      formData.append('prompt', userPrompt);
+      const response = await fetch(`${API_BASE_URL}/api/v1/extract-from-image`, {
+        method: 'POST',
+        body: formData
+      });
+      result = await response.json();
+      if (!response.ok) throw new Error(result.error || "File processing failed.");
+    } else {
+      const fullPromptForAI = `Class: ${sessionParams.class}, Subject: ${sessionParams.subject}, Chapter: ${sessionParams.chapter}, Question Type: ${sessionParams.questionType}. User request: "${userPrompt}". Format each question strictly as: Q <num>: <Difficulty>/Level <Lvl>, <Marks> Marks\nThen the question text. Provide ONLY the questions.`;
+      const response = await fetch(`${API_BASE_URL}/api/v1/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: fullPromptForAI })
+      });
+      result = await response.json();
+      if (!response.ok) throw new Error(result.error || "API error");
     }
+
+    parseAndDisplayAiQuestions(result.result, messagesArea, sessionParams);
+
+  } catch (err) {
+    appendChatMessage(`Error: ${err.message}`, 'system-message', messagesArea);
+  } finally {
+    loadingMessage.remove();
+    if (didSendFile) {
+      stagedFile = null;
+      document.getElementById('chat-upload-btn').style.color = '#54656f';
+    }
+  }
 }
+
 function handleFileUpload(event, sessionParams) {
     const file = event.target.files[0];
     if (!file) return;
@@ -609,33 +601,62 @@ function handleFileUpload(event, sessionParams) {
     document.getElementById('chat-upload-btn').style.color = '#1762a7';
 }
   async function saveSessionQuestions(sessionParams) {
-        if (!currentUserProfile || currentSessionQuestions.length === 0) {
-            alert("No new questions in this session to save.");
-            return;
-        }
-        const saveButton = document.getElementById('ai-save-all-btn');
-        saveButton.disabled = true;
-        saveButton.textContent = "Saving...";
-        let savedCount = 0, skippedCount = 0;
-        for (const qData of currentSessionQuestions) {
-            const snapshot = await db.collection("questions").where("body", "==", qData.parsedBody).where("class", "==", qData.class).where("subject", "==", qData.subject).where("chapter", "==", qData.chapter).where("createdBy", "==", currentUserProfile.uid).get();
-            if (!snapshot.empty) {
-                skippedCount++;
-                continue;
-            }
-            const meta = parseMetaLine(qData.parsedMeta);
-            await db.collection("questions").add({
-                text: qData.fullText, body: qData.parsedBody, metaLine: qData.parsedMeta,
-                difficulty: meta.difficulty, level: meta.level, marks: meta.marks,
-                class: qData.class, subject: qData.subject, chapter: qData.chapter,
-                createdBy: currentUserProfile.uid, timestamp: firebase.firestore.FieldValue.serverTimestamp()
-            });
-            savedCount++;
-        }
-        alert(`${savedCount} question(s) saved. ${skippedCount} duplicate(s) skipped.`);
-        saveButton.disabled = false;
-        saveButton.textContent = "Save All";
+  const saveButton = document.getElementById('ai-save-all-btn');
+  if (saveButton.disabled) return;
+
+  if (!currentUserProfile || currentSessionQuestions.length === 0) {
+    alert("No new questions in this session to save.");
+    return;
+  }
+
+  saveButton.disabled = true;
+  saveButton.textContent = "Saving...";
+
+  let savedCount = 0, skippedCount = 0;
+
+  for (const qData of currentSessionQuestions) {
+    const snapshot = await db.collection("questions")
+      .where("subject", "==", qData.subject)
+      .where("chapter", "==", qData.chapter)
+      .get();
+
+    let isDuplicate = false;
+
+    snapshot.forEach(doc => {
+      const existing = doc.data();
+      const similarity = getTextSimilarity(qData.parsedBody, existing.body);
+      if (similarity >= 0.9) {
+        isDuplicate = true;
+      }
+    });
+
+    if (isDuplicate) {
+      skippedCount++;
+      continue;
     }
+
+    const meta = parseMetaLine(qData.parsedMeta);
+    await db.collection("questions").add({
+      text: qData.fullText,
+      body: qData.parsedBody,
+      metaLine: qData.parsedMeta,
+      difficulty: meta.difficulty,
+      level: meta.level,
+      marks: meta.marks,
+      class: qData.class,
+      subject: qData.subject,
+      chapter: qData.chapter,
+      createdBy: currentUserProfile.uid,
+      timestamp: firebase.firestore.FieldValue.serverTimestamp()
+    });
+
+    savedCount++;
+  }
+
+  alert(`${savedCount} question(s) saved. ${skippedCount} duplicate(s) skipped.`);
+  saveButton.disabled = false;
+  saveButton.textContent = "Save All";
+}
 
     function handleSelectionChange() {
         const selection = window.getSelection();
@@ -718,6 +739,7 @@ currentSessionQuestions.forEach((q, i) => {
 });
 messagesArea.appendChild(fragment);
 editor.remove();
+if (window.MathJax) MathJax.typesetPromise([messagesArea]);
   };
 };
         newPopup.querySelector('#popup-delete').onclick = () => {
@@ -736,25 +758,24 @@ currentSessionQuestions.forEach((q, i) => {
   `;
   fragment.appendChild(message);
 });
-messagesArea.appendChild(fragment);
-          }
+        messagesArea.appendChild(fragment);
             newPopup.remove();
+        if (window.MathJax) MathJax.typesetPromise([messagesArea]);
         };
     }
-    
-    function appendChatMessage(text, type, messagesArea) {
+      function appendChatMessage(text, type, messagesArea) {
       const messageDiv = document.createElement('div');
       let className = `message ${type.includes('is-loading') ? 'system-message is-loading' : type + '-message'}`;
       messageDiv.className = className;
-      messageDiv.textContent = text;
-      const userMessage = document.createElement('div');
-        userMessage.className = 'chat-bubble user-bubble';
-        userMessage.innerHTML = `<div class="bubble-text">${userPrompt}</div>`;
-        messagesArea.appendChild(userMessage);
-
+      function appendChatMessage(text, type, messagesArea) {
+      if (type === 'user') {
+    const userMessage = document.createElement('div');
+    userMessage.className = 'chat-bubble user-bubble';
+    userMessage.innerHTML = `<div class="bubble-text">${text}</div>`;
+    messagesArea.appendChild(userMessage);
+  }
       messagesArea.scrollTop = messagesArea.scrollHeight;
-    }
-
+}
     function parseAndDisplayAiQuestions(responseText, messagesArea, sessionParams) {
         const questionBlocks = responseText.split(/\n(?=Q\s*\d+:)/g).map(q => q.trim()).filter(Boolean);
         if (questionBlocks.length === 0 && responseText) { appendChatMessage(responseText, 'ai', messagesArea); return; }
@@ -790,7 +811,14 @@ messagesArea.appendChild(fragment);
         if (marksMatch) meta.marks = parseInt(marksMatch[1], 10);
         return meta;
     }
-
+function getTextSimilarity(a, b) {
+  a = a.toLowerCase().replace(/\s+/g, ' ').trim();
+  b = b.toLowerCase().replace(/\s+/g, ' ').trim();
+  const aWords = new Set(a.split(' '));
+  const bWords = new Set(b.split(' '));
+  const common = [...aWords].filter(w => bWords.has(w));
+  return common.length / Math.max(aWords.size, bWords.size);
+}
     </script>
 </body>
 </html>
