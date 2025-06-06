@@ -418,29 +418,54 @@
     }
 
     // Placeholder for other functions to be fully implemented
-    async function handleSendPrompt(sessionParams) {
-        const chatPromptInput = document.getElementById('chat-prompt-input');
-        const userPrompt = chatPromptInput.value.trim();
-        if (!userPrompt) return;
-        const messagesArea = document.getElementById('chat-messages-area');
-        appendChatMessage(userPrompt, 'user', messagesArea);
-        chatPromptInput.value = '';
-        const fullPromptForAI = `Class: ${sessionParams.class}, Subject: ${sessionParams.subject}, Chapter: ${sessionParams.chapter}, Question Type: ${sessionParams.questionType}. User request: "${userPrompt}". Format each question strictly as: Q <num>: <Difficulty>/Level <Lvl>, <Marks> Marks\nThen the question text. Provide ONLY the questions.`;
-        appendChatMessage('Generating...', 'system is-loading', messagesArea);
-        try {
+    // PASTE THIS NEW CODE IN ITS PLACE:
+async function handleSendPrompt(sessionParams) {
+    const chatPromptInput = document.getElementById('chat-prompt-input');
+    const userPrompt = chatPromptInput.value.trim();
+    const messagesArea = document.getElementById('chat-messages-area');
+
+    if (!userPrompt && !stagedFile) return;
+
+    appendChatMessage(userPrompt, 'user', messagesArea);
+    chatPromptInput.value = '';
+    
+    const loadingMessage = appendChatMessage('Generating...', 'system-message');
+
+    try {
+        let result;
+        if (stagedFile) {
+            const formData = new FormData();
+            formData.append('imageFile', stagedFile);
+            formData.append('prompt', userPrompt);
+
+            const response = await fetch(`${API_BASE_URL}/api/v1/extract-from-image`, {
+                method: 'POST',
+                body: formData
+            });
+            result = await response.json();
+            if (!response.ok) throw new Error(result.error || "File processing failed.");
+
+            stagedFile = null; 
+            document.getElementById('chat-upload-btn').style.color = '#54656f';
+
+        } else {
+            const fullPromptForAI = `Class: ${sessionParams.class}, Subject: ${sessionParams.subject}, Chapter: ${sessionParams.chapter}, Question Type: ${sessionParams.questionType}. User request: "${userPrompt}". Format each question strictly as: Q <num>: <Difficulty>/Level <Lvl>, <Marks> Marks\nThen the question text. Provide ONLY the questions.`;
             const response = await fetch(`${API_BASE_URL}/api/v1/generate`, {
-                method: "POST", headers: { "Content-Type": "application/json" },
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ prompt: fullPromptForAI })
             });
-            const result = await response.json();
+            result = await response.json();
             if (!response.ok) throw new Error(result.error || "API error");
-            messagesArea.querySelector('.system-message.is-loading')?.remove();
-            parseAndDisplayAiQuestions(result.result, messagesArea, sessionParams);
-        } catch (err) {
-            messagesArea.querySelector('.system-message.is-loading')?.remove();
-            appendChatMessage(`Error: ${err.message}`, 'system');
         }
+        loadingMessage.remove();
+        parseAndDisplayAiQuestions(result.result, messagesArea, sessionParams);
+
+    } catch (err) {
+        loadingMessage.remove();
+        appendChatMessage(`Error: ${err.message}`, 'system-message');
     }
+}
 
     // REPLACE the old handleFileUpload function with this one
 function handleFileUpload(event, sessionParams) {
