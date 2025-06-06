@@ -10,8 +10,9 @@ const app = express();
 // --- CONFIGURATION ---
 const API_VERSION = "/api/v1"; // Standard way to version APIs
 const ALLOWED_ORIGINS = [
-    'https://your-app-domain.com', // **TODO: Replace with your deployed GitHub Pages URL**
-    'http://127.0.0.1:5500'       // Example for local development with Live Server
+    'https://messiahsastry.github.io', // Your GitHub Pages site
+    'https://stpatricks-questionbank.firebaseapp.com', // Keep the Firebase one just in case
+    'http://127.0.0.1:5500' // For local testing
 ];
 
 // --- MIDDLEWARE ---
