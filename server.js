@@ -55,25 +55,34 @@ const openai = new OpenAI({
 // --- API ROUTES ---
 
 // ========== AI Question Generation ==========
-app.post(`${API_VERSION}/generate`, async (req, res) => {
-  const { prompt } = req.body;
-  if (!prompt) {
-    return res.status(400).json({ error: "Prompt is required." });
-  }
-  try {
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o",
-      messages: [{ role: "user", content: prompt }],
-      max_tokens: 2000,
-      temperature: 0.7,
-    });
-    res.json({ result: response.choices[0].message.content });
-  } catch (error) {
-    console.error(`Error in /generate:`, error);
-    res.status(500).json({ error: "Failed to generate questions from AI." });
-  }
-});
+app.post(`${API_VERSION}/extract-from-image`, upload.single("imageFile"), async (req, res) => {
+    if (!req.file) {
+        return res.status(400).json({ error: "No image file uploaded." });
+    }
+    try {
+        const imageBase64 = req.file.buffer.toString("base64");
+        // Use the prompt from the teacher, or use a default if it's empty
+        const userPrompt = req.body.prompt || 'Extract text and LaTeX from the image.'; 
 
+        const response = await openai.chat.completions.create({
+            model: "gpt-4o",
+            messages: [
+                {
+                    role: "user",
+                    content: [
+                        { type: "text", text: userPrompt }, // Use the teacher's prompt here
+                        { type: "image_url", image_url: { url: `data:${req.file.mimetype};base64,${imageBase64}` } },
+                    ],
+                },
+            ],
+            max_tokens: 3000,
+        });
+        res.json({ result: response.choices[0].message.content });
+    } catch (error) {
+        console.error(`Error in /extract-from-image:`, error);
+        res.status(500).json({ error: "Failed to extract text from image." });
+    }
+});
 // ========== AI Image Text Extraction ==========
 app.post(`${API_VERSION}/extract-from-image`, upload.single("imageFile"), async (req, res) => {
   if (!req.file) {
