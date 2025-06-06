@@ -419,6 +419,7 @@
 
     // Placeholder for other functions to be fully implemented
     // PASTE THIS NEW CODE IN ITS PLACE:
+// REPLACE your current handleSendPrompt function with this final, improved version
 async function handleSendPrompt(sessionParams) {
     const chatPromptInput = document.getElementById('chat-prompt-input');
     const userPrompt = chatPromptInput.value.trim();
@@ -430,10 +431,13 @@ async function handleSendPrompt(sessionParams) {
     chatPromptInput.value = '';
     
     const loadingMessage = appendChatMessage('Generating...', 'system-message');
+    // We add a flag to know if we sent a file
+    const didSendFile = stagedFile !== null;
 
     try {
         let result;
         if (stagedFile) {
+            // If a file is staged, send it
             const formData = new FormData();
             formData.append('imageFile', stagedFile);
             formData.append('prompt', userPrompt);
@@ -445,10 +449,8 @@ async function handleSendPrompt(sessionParams) {
             result = await response.json();
             if (!response.ok) throw new Error(result.error || "File processing failed.");
 
-            stagedFile = null; 
-            document.getElementById('chat-upload-btn').style.color = '#54656f';
-
         } else {
+            // If no file, send a normal text prompt
             const fullPromptForAI = `Class: ${sessionParams.class}, Subject: ${sessionParams.subject}, Chapter: ${sessionParams.chapter}, Question Type: ${sessionParams.questionType}. User request: "${userPrompt}". Format each question strictly as: Q <num>: <Difficulty>/Level <Lvl>, <Marks> Marks\nThen the question text. Provide ONLY the questions.`;
             const response = await fetch(`${API_BASE_URL}/api/v1/generate`, {
                 method: "POST",
@@ -458,15 +460,21 @@ async function handleSendPrompt(sessionParams) {
             result = await response.json();
             if (!response.ok) throw new Error(result.error || "API error");
         }
-        loadingMessage.remove();
+        // Display the result
         parseAndDisplayAiQuestions(result.result, messagesArea, sessionParams);
 
     } catch (err) {
-        loadingMessage.remove();
+        // Display any error
         appendChatMessage(`Error: ${err.message}`, 'system-message');
+    } finally {
+        // This block is GUARANTEED to run after the try/catch
+        loadingMessage.remove(); // Always remove the "Generating..." message
+        if (didSendFile) {
+            stagedFile = null; // If we sent a file, clear it
+            document.getElementById('chat-upload-btn').style.color = '#54656f'; // and reset the icon color
+        }
     }
 }
-
     // REPLACE the old handleFileUpload function with this one
 function handleFileUpload(event, sessionParams) {
     const file = event.target.files[0];
