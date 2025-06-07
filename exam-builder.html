@@ -272,7 +272,36 @@
         difficultyLevels: ["Easy/Level 1", "Medium/Level 2", "Difficult/Level 3", "Mixed"],
     };
         
-        const mockDb = { getChapters: (cl, sub) => Promise.resolve(['Algebra', 'Geometry', 'Trigonometry', 'Calculus', 'Statistics']) };
+        const db = {
+            getChapters: async (selectedClass, selectedSubject) => {
+         try {
+            const firestore = firebase.firestore();
+            const snapshot = await firestore.collection("questions")
+                .where("class", "==", selectedClass)
+                .where("subject", "==", selectedSubject)
+                .get();
+
+            if (snapshot.empty) {
+                return []; // No questions means no chapters
+            }
+
+            // Use a Set to automatically get unique chapter names
+            const chapterSet = new Set();
+            snapshot.forEach(doc => {
+                const data = doc.data();
+                if (data.chapter) {
+                    chapterSet.add(data.chapter);
+                }
+            });
+
+            return Array.from(chapterSet); // Return the final list
+
+        } catch (error) {
+            console.error("Error fetching chapters from Firestore:", error);
+            return []; // Return an empty list if there's an error
+        }
+    }
+};
 
         function createDropdown(containerId, options, placeholder) {
             const container = document.getElementById(containerId);
@@ -335,7 +364,7 @@
                 return;
             }
 
-            const chapters = await mockDb.getChapters(selectedClass, selectedSubject);
+            const chapters = await db.getChapters(selectedClass, selectedSubject);
             
             if (chapters.length > 0) {
                 optionsContainer.innerHTML = chapters.map(opt => `<div><label><input type="checkbox" value="${opt}"> ${opt}</label></div>`).join('');
