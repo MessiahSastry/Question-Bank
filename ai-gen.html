@@ -641,17 +641,48 @@ async function handleSendPrompt(sessionParams) {
       });
       result = await response.json();
       if (!response.ok) throw new Error(result.error || "File processing failed.");
-    } else {
-      const fullPromptForAI = `Class: ${sessionParams.class}, Subject: ${sessionParams.subject}, Chapter: ${sessionParams.chapter}, Question Type: ${sessionParams.questionType}. User request: "${userPrompt}". Format each question strictly as: Q <num>: <Difficulty>/Level <Lvl>, <Marks> Marks\nThen the question text. Provide ONLY the questions.`;
-      const response = await fetch(`${API_BASE_URL}/api/v1/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: fullPromptForAI })
-      });
-      result = await response.json();
-      if (!response.ok) throw new Error(result.error || "API error");
-    }
+    // REPLACE WITH THIS:
 
+    } else {
+        let fullPromptForAI;
+        const baseInfo = `Class: ${sessionParams.class}, Subject: ${sessionParams.subject}, Chapter: ${sessionParams.chapter}. User request: "${userPrompt}".`;
+
+        // Check if the requested type is MCQs and create a special, detailed prompt for it.
+        if (sessionParams.questionType === "MCQs") {
+            fullPromptForAI = `${baseInfo}
+            The user wants Multiple Choice Questions (MCQs).
+            Please generate questions based on the user's request. Each question MUST follow this strict format:
+            1.  Start with the question number, difficulty, level, and marks (e.g., "Q1: Easy/Level 1, 1 Mark").
+            2.  On the next line, write the question text.
+            3.  On the following lines, provide four options, each starting with "A)", "B)", "C)", and "D)".
+            4.  On the final line for that question, specify the correct answer using the format "Ans: C)".
+
+            Example of the required format:
+            Q1: Easy/Level 1, 1 Mark
+            What is the capital of France?
+            A) London
+            B) Berlin
+            C) Paris
+            D) Madrid
+            Ans: C)
+
+            Provide ONLY the questions in this exact format. Do not add any other text, explanation, or introduction.`;
+        } else {
+            // This is the original prompt for "Descriptive" questions.
+            fullPromptForAI = `${baseInfo}
+            The user wants Descriptive questions.
+            Format each question strictly as: Q <num>: <Difficulty>/Level <Lvl>, <Marks> Marks
+            Then the question text. Provide ONLY the questions.`;
+        }
+
+        const response = await fetch(`${API_BASE_URL}/api/v1/generate`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ prompt: fullPromptForAI })
+        });
+        result = await response.json();
+        if (!response.ok) throw new Error(result.error || "API error");
+    }
     parseAndDisplayAiQuestions(result.result, messagesArea, sessionParams);
 
   } catch (err) {
