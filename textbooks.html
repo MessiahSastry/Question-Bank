@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8" />
-    <title>CBSE Textbooks | St. Patrick's School</title>
+    <title>AP Textbooks | St. Patrick's School</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
     <style>
@@ -66,24 +66,39 @@
         .setup-form-container h2 { text-align: center; color: #0f3d6b; margin-top: 0; margin-bottom: 20px; }
         .setup-form-container .form-group { margin-bottom: 15px; }
         .setup-form-container label { font-weight: 600; margin-bottom: 5px; color: #185496; display: block; }
-
-        .setup-form-container select { 
-            width: 100%; 
+        
+        /* EXACT styles for the custom dropdown from ai-gen.html */
+        .custom-dropdown { position: relative; }
+        .selected-option { 
             padding: 10px 12px; 
+            color: #12416c; 
+            background: #f7fafd; 
             border-radius: 6px; 
             border: 1.3px solid #bcd6ef; 
-            font-size: 1em; 
-            background: #f7fafd; 
-            box-sizing: border-box;
-            -webkit-appearance: none;
-            appearance: none;
-            background-image: url('data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22292.4%22%20height%3D%22292.4%22%3E%3Cpath%20fill%3D%22%23185496%22%20d%3D%22M287%2069.4a17.6%2017.6%200%200%200-13-5.4H18.4c-5%200-9.3%201.8-12.9%205.4A17.6%2017.6%200%200%200%200%2082.2c0%205%201.8%209.3%205.4%2012.9l128%20127.9c3.6%203.6%207.8%205.4%2012.8%205.4s9.2-1.8%2012.8-5.4L287%2095c3.5-3.5%205.4-7.8%205.4-12.8%200-5-1.9-9.2-5.5-12.8z%22%2F%3E%3C%2Fsvg%3E');
-            background-repeat: no-repeat;
-            background-position: right 1rem center;
-            background-size: 0.65em auto;
-            padding-right: 2.5rem;
+            cursor: pointer; 
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
-        
+        .dropdown-options { 
+            display: none; 
+            position: absolute; 
+            top: 100%; 
+            left: 0; 
+            right: 0; 
+            background: #fff; 
+            border: 1.3px solid #bcd6ef; 
+            border-top: none; 
+            border-radius: 0 0 6px 6px; 
+            box-shadow: 0 6px 15px rgba(0, 27, 68, 0.1); 
+            z-index: 1000; 
+            max-height: 200px; 
+            overflow-y: auto; 
+        }
+        .custom-dropdown.open .dropdown-options { display: block; }
+        .dropdown-options div[data-value] { padding: 10px 15px; cursor: pointer; }
+        .dropdown-options div[data-value]:hover { background: #e0eaff; }
+
         .btn { 
             display: block;
             width: 100%;
@@ -123,22 +138,28 @@
                     <h2>CBSE Textbooks</h2>
                     <form id="textbook-form" onsubmit="return false;">
                         <div class="form-group">
-                            <label for="class-select">Class</label>
-                            <select id="class-select">
-                                <option value="">-- Select Class --</option>
-                            </select>
+                            <label for="class-value">Class</label>
+                            <div id="class-dropdown" class="custom-dropdown">
+                                <input type="hidden" id="class-value">
+                                <div class="selected-option">-- Select Class --</div>
+                                <div class="dropdown-options"></div>
+                            </div>
                         </div>
                         <div class="form-group">
-                            <label for="subject-select">Subject</label>
-                            <select id="subject-select" disabled>
-                                <option>-- Select Subject --</option>
-                            </select>
+                            <label for="subject-value">Subject</label>
+                            <div id="subject-dropdown" class="custom-dropdown">
+                                <input type="hidden" id="subject-value">
+                                <div class="selected-option">-- Select Subject --</div>
+                                <div class="dropdown-options"></div>
+                            </div>
                         </div>
                         <div class="form-group">
-                            <label for="chapter-select">Chapter</label>
-                            <select id="chapter-select" disabled>
-                                <option>-- Select Chapter --</option>
-                            </select>
+                            <label for="chapter-value">Chapter</label>
+                            <div id="chapter-dropdown" class="custom-dropdown">
+                                <input type="hidden" id="chapter-value">
+                                <div class="selected-option">-- Select Chapter --</div>
+                                <div class="dropdown-options"></div>
+                            </div>
                         </div>
                         <a id="view-pdf-btn" class="btn disabled" href="#" target="_blank">View Chapter PDF</a>
                     </form>
@@ -502,73 +523,109 @@
                     }
                 }
             };
+            
+            // --- Custom Dropdown Logic ---
 
-            // Get references to the HTML elements
-            const classSelect = document.getElementById('class-select');
-            const subjectSelect = document.getElementById('subject-select');
-            const chapterSelect = document.getElementById('chapter-select');
+            function setupCustomDropdown(dropdownId, onSelectCallback) {
+                const dropdown = document.getElementById(dropdownId);
+                const hiddenInput = dropdown.querySelector('input[type="hidden"]');
+                const selectedOption = dropdown.querySelector('.selected-option');
+                const optionsContainer = dropdown.querySelector('.dropdown-options');
+
+                selectedOption.addEventListener('click', (e) => {
+                    // Close all other dropdowns first
+                    document.querySelectorAll('.custom-dropdown').forEach(d => {
+                        if (d.id !== dropdownId) {
+                            d.classList.remove('open');
+                        }
+                    });
+                    // Toggle the current one
+                    dropdown.classList.toggle('open');
+                    e.stopPropagation();
+                });
+
+                optionsContainer.addEventListener('click', (e) => {
+                    const target = e.target;
+                    if (target.dataset.value) {
+                        hiddenInput.value = target.dataset.value;
+                        selectedOption.textContent = target.textContent;
+                        dropdown.classList.remove('open');
+                        if (onSelectCallback) {
+                            onSelectCallback(target.dataset.value, target.textContent);
+                        }
+                    }
+                });
+            }
+
+            // Close dropdowns if clicking outside
+            document.addEventListener('click', () => {
+                document.querySelectorAll('.custom-dropdown').forEach(d => d.classList.remove('open'));
+            });
+
+            // --- App Logic ---
+
+            const classDropdown = document.getElementById('class-dropdown');
+            const subjectDropdown = document.getElementById('subject-dropdown');
+            const chapterDropdown = document.getElementById('chapter-dropdown');
             const viewPdfBtn = document.getElementById('view-pdf-btn');
 
-            // Populate the Class dropdown from the textbookData object
+            // Populate Class Dropdown
+            const classOptionsContainer = classDropdown.querySelector('.dropdown-options');
             Object.keys(textbookData).forEach(className => {
-                const option = document.createElement('option');
-                option.value = className;
-                option.textContent = `Class ${className}`;
-                classSelect.appendChild(option);
+                const optionDiv = document.createElement('div');
+                optionDiv.dataset.value = className;
+                optionDiv.textContent = `Class ${className}`;
+                classOptionsContainer.appendChild(optionDiv);
             });
-
-            // This function runs when a user selects a Class
-            classSelect.addEventListener('change', () => {
-                const selectedClass = classSelect.value;
+            
+            // Reset and repopulate a dropdown
+            function populateDropdown(dropdown, placeholder, options) {
+                const optionsContainer = dropdown.querySelector('.dropdown-options');
+                const selectedOption = dropdown.querySelector('.selected-option');
+                const hiddenInput = dropdown.querySelector('input[type="hidden"]');
                 
-                subjectSelect.innerHTML = '<option value="">-- Select Subject --</option>';
-                chapterSelect.innerHTML = '<option value="">-- Select Chapter --</option>';
-                subjectSelect.disabled = true;
-                chapterSelect.disabled = true;
+                optionsContainer.innerHTML = ''; // Clear existing options
+                selectedOption.textContent = placeholder;
+                hiddenInput.value = '';
+
+                for (const [key, text] of Object.entries(options)) {
+                    const optionDiv = document.createElement('div');
+                    optionDiv.dataset.value = key;
+                    optionDiv.textContent = text;
+                    optionsContainer.appendChild(optionDiv);
+                }
+            }
+
+            // Setup callbacks
+            setupCustomDropdown('class-dropdown', (selectedValue) => {
+                // Reset subject and chapter
+                populateDropdown(subjectDropdown, '-- Select Subject --', {});
+                populateDropdown(chapterDropdown, '-- Select Chapter --', {});
                 viewPdfBtn.classList.add('disabled');
                 viewPdfBtn.removeAttribute('href');
 
-                if (selectedClass) {
-                    const subjects = Object.keys(textbookData[selectedClass]);
-                    subjects.forEach(subject => {
-                        const option = document.createElement('option');
-                        option.value = subject;
-                        option.textContent = subject;
-                        subjectSelect.appendChild(option);
-                    });
-                    subjectSelect.disabled = false;
-                }
+                const subjects = textbookData[selectedValue] || {};
+                const subjectOptions = Object.fromEntries(Object.keys(subjects).map(s => [s, s]));
+                populateDropdown(subjectDropdown, '-- Select Subject --', subjectOptions);
             });
 
-            // This function runs when a user selects a Subject
-            subjectSelect.addEventListener('change', () => {
-                const selectedClass = classSelect.value;
-                const selectedSubject = subjectSelect.value;
-
-                chapterSelect.innerHTML = '<option value="">-- Select Chapter --</option>';
-                chapterSelect.disabled = true;
+            setupCustomDropdown('subject-dropdown', (selectedValue) => {
+                const classVal = document.getElementById('class-value').value;
+                // Reset chapter
+                populateDropdown(chapterDropdown, '-- Select Chapter --', {});
                 viewPdfBtn.classList.add('disabled');
                 viewPdfBtn.removeAttribute('href');
 
-                if (selectedClass && selectedSubject) {
-                    const chapters = textbookData[selectedClass][selectedSubject];
-                    Object.entries(chapters).forEach(([chapterName, pdfLink]) => {
-                        const option = document.createElement('option');
-                        option.value = pdfLink;
-                        option.textContent = chapterName;
-                        chapterSelect.appendChild(option);
-                    });
-                    chapterSelect.disabled = false;
+                if (classVal) {
+                    const chapters = textbookData[classVal][selectedValue] || {};
+                    populateDropdown(chapterDropdown, '-- Select Chapter --', chapters);
                 }
             });
 
-            // This function runs when a user selects a Chapter
-            chapterSelect.addEventListener('change', () => {
-                const selectedPdf = chapterSelect.value;
-
-                if (selectedPdf) {
+            setupCustomDropdown('chapter-dropdown', (selectedValue) => {
+                if (selectedValue) {
                     viewPdfBtn.classList.remove('disabled');
-                    viewPdfBtn.href = selectedPdf;
+                    viewPdfBtn.href = selectedValue;
                 } else {
                     viewPdfBtn.classList.add('disabled');
                     viewPdfBtn.removeAttribute('href');
