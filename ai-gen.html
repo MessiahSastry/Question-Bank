@@ -382,6 +382,17 @@
 .actions-menu button:hover {
     background-color: #555;
 }
+    /* --- Style for Temporary Answer Display --- */
+.temp-answer {
+    background-color: #fff8e1; /* A light yellow background */
+    border-top: 2px solid #ffecb3;
+    padding: 10px 14px;
+    margin-top: 10px;
+    border-radius: 0 0 12px 12px; /* Rounded bottom corners */
+    font-style: italic;
+    color: #5d4037;
+    white-space: pre-wrap;
+}
     </style>
 </head>
 <body>
@@ -1033,7 +1044,7 @@ function parseAndDisplayAiQuestions(responseText, messagesArea, sessionParams) {
     messagesArea.appendChild(fragment);
     if (window.MathJax) MathJax.typesetPromise([messagesArea]);
 }
-    function createQuestionElement(qData, index) {
+   function createQuestionElement(qData, index) {
     const questionEl = document.createElement('div');
     questionEl.className = 'message ai-message ai-question-item';
     questionEl.dataset.sessionQuestionIndex = index;
@@ -1051,46 +1062,82 @@ function parseAndDisplayAiQuestions(responseText, messagesArea, sessionParams) {
 
     // Add logic to the new options button
     actionButton.addEventListener('click', (e) => {
-        e.stopPropagation(); // Stop the click from affecting other things
+        e.stopPropagation();
 
-        // Close any other open menus before opening a new one
         const existingMenu = document.querySelector('.actions-menu');
-        if(existingMenu) existingMenu.remove();
-        
-        // Create the Edit/Delete menu
+        if (existingMenu) existingMenu.remove();
+
         const menu = document.createElement('div');
         menu.className = 'actions-menu';
+        // Add the new "Show Answer" button to the menu
         menu.innerHTML = `
+            <button class="menu-show-answer-btn">Show Answer</button>
             <button class="menu-edit-btn">Edit</button>
             <button class="menu-delete-btn">Delete</button>
         `;
 
         questionEl.appendChild(menu);
 
-        // Make the Edit button work
+        // --- NEW "Show Answer" Logic ---
+        const showAnswerBtn = menu.querySelector('.menu-show-answer-btn');
+        showAnswerBtn.onclick = async (event) => {
+            event.stopPropagation();
+            const currentQuestionEl = event.target.closest('.ai-question-item');
+            const existingAnswerEl = currentQuestionEl.querySelector('.temp-answer');
+
+            if (existingAnswerEl) {
+                // If answer is already showing, hide it
+                existingAnswerEl.remove();
+                showAnswerBtn.textContent = 'Show Answer';
+            } else {
+                // If answer is hidden, show it
+                const questionData = currentSessionQuestions[index];
+                let answerText = "Generating answer...";
+
+                const answerEl = document.createElement('div');
+                answerEl.className = 'temp-answer';
+                answerEl.textContent = answerText;
+                currentQuestionEl.appendChild(answerEl);
+                showAnswerBtn.textContent = 'Hide Answer';
+
+                if (questionData.parsedAnswer) {
+                    // Case 1: It's an MCQ with a pre-existing answer
+                    answerEl.textContent = questionData.parsedAnswer;
+                } else {
+                    // Case 2: It's a Descriptive question, so we ask the AI for an answer
+                    const answerPrompt = `Based on the following question, please provide a model answer or the key points for a correct response. Keep the answer concise and clear.\n\nQuestion: "${questionData.parsedBody}"`;
+                    try {
+                        const response = await fetch(`${API_BASE_URL}/api/v1/generate`, {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ prompt: answerPrompt })
+                        });
+                        const result = await response.json();
+                        if (!response.ok) throw new Error(result.error || "API error");
+                        answerEl.textContent = result.result; // Display the AI's generated answer
+                    } catch (err) {
+                        answerEl.textContent = `Error: Could not generate answer. ${err.message}`;
+                    }
+                }
+            }
+            menu.remove();
+        };
+
+        // --- Existing Edit and Delete Logic ---
         menu.querySelector('.menu-edit-btn').onclick = () => {
-            // This is the same logic from your old popup, we just call it here.
             showEditPopupForQuestion(index);
             menu.remove();
         };
 
-        // Make the Delete button work
         menu.querySelector('.menu-delete-btn').onclick = () => {
             if (confirm('Are you sure you want to delete this question?')) {
                 currentSessionQuestions.splice(index, 1);
-                rerenderAllQuestions(); // We'll need a function for this
+                rerenderAllQuestions();
             }
             menu.remove();
         };
     });
-
-    // Close the menu if user clicks anywhere else on the page
-    document.body.addEventListener('click', () => {
-        const existingMenu = document.querySelector('.actions-menu');
-        if(existingMenu) existingMenu.remove();
-    }, true);
-
-
+    
     return questionEl;
 }
     // INSERT THIS CODE BETWEEN createQuestionElement AND parseMetaLine
