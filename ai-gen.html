@@ -1044,12 +1044,13 @@ function parseAndDisplayAiQuestions(responseText, messagesArea, sessionParams) {
     messagesArea.appendChild(fragment);
     if (window.MathJax) MathJax.typesetPromise([messagesArea]);
 }
-   function createQuestionElement(qData, index) {
+  // This new version correctly sets the Show/Hide Answer button text
+// This new version correctly sets the Show/Hide Answer button text
+function createQuestionElement(qData, index) {
     const questionEl = document.createElement('div');
     questionEl.className = 'message ai-message ai-question-item';
     questionEl.dataset.sessionQuestionIndex = index;
 
-    // Add the question text AND the new options button
     questionEl.innerHTML = `
         <div class="question-meta-ai">${qData.parsedMeta}</div>
         <div class="question-text-ai">${qData.parsedBody}</div>
@@ -1060,7 +1061,6 @@ function parseAndDisplayAiQuestions(responseText, messagesArea, sessionParams) {
 
     const actionButton = questionEl.querySelector('.q-action-btn');
 
-    // Add logic to the new options button
     actionButton.addEventListener('click', (e) => {
         e.stopPropagation();
 
@@ -1069,16 +1069,24 @@ function parseAndDisplayAiQuestions(responseText, messagesArea, sessionParams) {
 
         const menu = document.createElement('div');
         menu.className = 'actions-menu';
-        // Add the new "Show Answer" button to the menu
         menu.innerHTML = `
             <button class="menu-show-answer-btn">Show Answer</button>
             <button class="menu-edit-btn">Edit</button>
             <button class="menu-delete-btn">Delete</button>
         `;
+        
+        // --- THIS IS THE NEW FIX ---
+        // Before showing the menu, check if the answer is already visible
+        const isAnswerShowing = questionEl.querySelector('.temp-answer');
+        if (isAnswerShowing) {
+            // If it is, find the button in our new menu and update its text
+            const buttonInMenu = menu.querySelector('.menu-show-answer-btn');
+            buttonInMenu.textContent = 'Hide Answer';
+        }
+        // --- END OF FIX ---
 
         questionEl.appendChild(menu);
 
-        // --- NEW "Show Answer" Logic ---
         const showAnswerBtn = menu.querySelector('.menu-show-answer-btn');
         showAnswerBtn.onclick = async (event) => {
             event.stopPropagation();
@@ -1086,25 +1094,19 @@ function parseAndDisplayAiQuestions(responseText, messagesArea, sessionParams) {
             const existingAnswerEl = currentQuestionEl.querySelector('.temp-answer');
 
             if (existingAnswerEl) {
-                // If answer is already showing, hide it
                 existingAnswerEl.remove();
                 showAnswerBtn.textContent = 'Show Answer';
             } else {
-                // If answer is hidden, show it
                 const questionData = currentSessionQuestions[index];
-                let answerText = "Generating answer...";
-
                 const answerEl = document.createElement('div');
                 answerEl.className = 'temp-answer';
-                answerEl.textContent = answerText;
+                answerEl.textContent = 'Generating answer...';
                 currentQuestionEl.appendChild(answerEl);
                 showAnswerBtn.textContent = 'Hide Answer';
 
                 if (questionData.parsedAnswer) {
-                    // Case 1: It's an MCQ with a pre-existing answer
                     answerEl.textContent = questionData.parsedAnswer;
                 } else {
-                    // Case 2: It's a Descriptive question, so we ask the AI for an answer
                     const answerPrompt = `Based on the following question, please provide a model answer or the key points for a correct response. Keep the answer concise and clear.\n\nQuestion: "${questionData.parsedBody}"`;
                     try {
                         const response = await fetch(`${API_BASE_URL}/api/v1/generate`, {
@@ -1114,7 +1116,7 @@ function parseAndDisplayAiQuestions(responseText, messagesArea, sessionParams) {
                         });
                         const result = await response.json();
                         if (!response.ok) throw new Error(result.error || "API error");
-                        answerEl.textContent = result.result; // Display the AI's generated answer
+                        answerEl.textContent = result.result;
                     } catch (err) {
                         answerEl.textContent = `Error: Could not generate answer. ${err.message}`;
                     }
@@ -1123,7 +1125,6 @@ function parseAndDisplayAiQuestions(responseText, messagesArea, sessionParams) {
             menu.remove();
         };
 
-        // --- Existing Edit and Delete Logic ---
         menu.querySelector('.menu-edit-btn').onclick = () => {
             showEditPopupForQuestion(index);
             menu.remove();
