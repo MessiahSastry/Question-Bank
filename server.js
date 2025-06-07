@@ -54,15 +54,47 @@ const openai = new OpenAI({
 
 // --- API ROUTES ---
 
-// ========== AI Question Generation ==========
+// ========== 1. AI Text-Based Question Generation (NEWLY ADDED) ==========
+// This route handles requests from your frontend that do not include an image.
+app.post(`${API_VERSION}/generate`, async (req, res) => {
+    try {
+        const { prompt } = req.body; // Get the full prompt from the frontend
+
+        if (!prompt) {
+            return res.status(400).json({ error: "No prompt provided." });
+        }
+
+        const response = await openai.chat.completions.create({
+            model: "gpt-4o",
+            messages: [{ role: "user", content: prompt }],
+            max_tokens: 2000,
+        });
+
+        res.json({ result: response.choices[0].message.content });
+
+    } catch (error) {
+        console.error(`Error in /generate:`, error);
+        res.status(500).json({ error: "Failed to generate response." });
+    }
+});
+
+
+// ========== 2. AI Image-Based Text Extraction (FIXED DUPLICATE) ==========
+// This single route handles requests that include an image upload.
 app.post(`${API_VERSION}/extract-from-image`, upload.single("imageFile"), async (req, res) => {
     if (!req.file) {
         return res.status(400).json({ error: "No image file uploaded." });
     }
     try {
         const imageBase64 = req.file.buffer.toString("base64");
+        
         // Use the prompt from the teacher, or use a default if it's empty
-        const userPrompt = req.body.prompt || 'Extract text and LaTeX from the image.'; 
+        const userPrompt = req.body.prompt || `You are an expert academic assistant. Your task is to accurately transcribe the content from the provided image for a teacher who is digitizing their educational materials for a question bank. Follow these instructions carefully:
+        1.  **Transcribe Text:** Identify and write down all visible text from the image. Maintain the original structure, paragraphs, and line breaks as closely as possible.
+        2.  **Transcribe Math:** Identify all mathematical equations and formulas. Convert them into proper LaTeX format. Use $$...$$ for display equations and $...$ for inline equations.
+        3.  **Do Not Summarize:** Your role is to be a perfect transcriber. Do not summarize, explain, or add any new information that is not explicitly in the image.
+        4.  **Preserve Formatting:** If the image contains numbered questions (e.g., "1.", "2.", "Q1:"), preserve that numbering in your transcription.
+        The final output should be a clean, digital copy of the image's content with properly formatted mathematics for rendering with MathJax.`;
 
         const response = await openai.chat.completions.create({
             model: "gpt-4o",
@@ -70,7 +102,7 @@ app.post(`${API_VERSION}/extract-from-image`, upload.single("imageFile"), async 
                 {
                     role: "user",
                     content: [
-                        { type: "text", text: userPrompt }, // Use the teacher's prompt here
+                        { type: "text", text: userPrompt },
                         { type: "image_url", image_url: { url: `data:${req.file.mimetype};base64,${imageBase64}` } },
                     ],
                 },
@@ -83,50 +115,7 @@ app.post(`${API_VERSION}/extract-from-image`, upload.single("imageFile"), async 
         res.status(500).json({ error: "Failed to extract text from image." });
     }
 });
-// ========== AI Image Text Extraction ==========
-app.post(`${API_VERSION}/extract-from-image`, upload.single("imageFile"), async (req, res) => {
-  if (!req.file) {
-    return res.status(400).json({ error: "No image file uploaded." });
-  }
-  try {
-    const imageBase64 = req.file.buffer.toString("base64");
-    
-    // --- THIS IS THE UPDATED PROMPT ---
-    const autoPrompt = `You are an expert academic assistant. Your task is to accurately transcribe the content from the provided image for a teacher who is digitizing their educational materials for a question bank.
 
-    Follow these instructions carefully:
-    1.  **Transcribe Text:** Identify and write down all visible text from the image. Maintain the original structure, paragraphs, and line breaks as closely as possible.
-    2.  **Transcribe Math:** Identify all mathematical equations and formulas. Convert them into proper LaTeX format. Use $$...$$ for display equations (those on their own line) and $...$ for inline equations (those within a sentence).
-    3.  **Do Not Summarize:** Your role is to be a perfect transcriber. Do not summarize, explain, or add any new information that is not explicitly in the image.
-    4.  **Preserve Formatting:** If the image contains numbered questions (e.g., "1.", "2.", "Q1:"), preserve that numbering in your transcription.
-
-    The final output should be a clean, digital copy of the image's content with properly formatted mathematics for rendering with MathJax.`;
-
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o",
-      messages: [
-        {
-          role: "user",
-          content: [
-            { type: "text", text: autoPrompt },
-            { type: "image_url", image_url: { url: `data:${req.file.mimetype};base64,${imageBase64}` } },
-          ],
-        },
-      ],
-      max_tokens: 3000,
-    });
-    res.json({ result: response.choices[0].message.content });
-  } catch (error) {
-    console.error(`Error in /extract-from-image:`, error);
-    res.status(500).json({ error: "Failed to extract text from image." });
-  }
-});
-
-// ========== AI Exam Paper Optimization ==========
-app.post(`${API_VERSION}/optimize-exam-paper`, async (req, res) => {
-    // ... your existing logic for this endpoint ...
-    // Note: This endpoint is already well-designed. No changes needed here.
-});
 
 // ========== HEALTH & ROOT ENDPOINTS ==========
 app.get("/", (req, res) => {
