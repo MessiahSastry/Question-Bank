@@ -4,11 +4,12 @@ admin.initializeApp({
   credential: admin.credential.cert(serviceAccount)
 });
 const db = admin.firestore();
+
 const express = require("express");
 const cors = require("cors");
 const { OpenAI } = require("openai");
 const multer = require("multer");
-const pdfParse = require("pdf-parse"); // <-- ADDED for PDF processing
+const pdfParse = require("pdf-parse");
 require("dotenv").config();
 const path = require("path");
 
@@ -32,17 +33,15 @@ app.use(cors({
         }
     }
 }));
-
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
-// --- MULTER CONFIGURATION (UPDATED) ---
+// --- MULTER CONFIGURATION (FOR FILE UPLOADS) ---
 const storage = multer.memoryStorage();
 const upload = multer({
     storage: storage,
-    limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB file size limit
+    limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
     fileFilter: (req, file, cb) => {
-        // Updated to allow both images and PDFs
         if (file.mimetype.startsWith("image/") || file.mimetype === "application/pdf") {
             cb(null, true);
         } else {
@@ -57,8 +56,6 @@ app.use(express.static(path.join(__dirname, "public")));
 const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
 });
-
-// --- API ROUTES ---
 
 // ========== 1. AI Text-Based Question Generation ==========
 app.post(`${API_VERSION}/generate`, async (req, res) => {
@@ -79,7 +76,7 @@ app.post(`${API_VERSION}/generate`, async (req, res) => {
     }
 });
 
-// ========== 2. AI File-Based Question Extraction (FULLY UPDATED) ==========
+// ========== 2. AI File-Based Question Extraction ==========
 app.post(`${API_VERSION}/extract-from-image`, upload.single("imageFile"), async (req, res) => {
     if (!req.file) {
         return res.status(400).json({ error: "No file uploaded." });
@@ -88,7 +85,6 @@ app.post(`${API_VERSION}/extract-from-image`, upload.single("imageFile"), async 
         const teacherPrompt = req.body.prompt || "Please transcribe all questions from the document.";
         let aiResponse;
 
-        // --- A. IF THE FILE IS AN IMAGE ---
         if (req.file.mimetype.startsWith("image/")) {
             const imageBase64 = req.file.buffer.toString("base64");
             const masterPrompt = `
@@ -164,81 +160,107 @@ app.get(`${API_VERSION}/health`, (req, res) => {
     res.status(200).json({ status: "ok", timestamp: new Date() });
 });
 
-// ========== 3. EXAM BUILDER ENDPOINT (ADD THIS) ==========
+// ========== 3. EXAM BUILDER ENDPOINT ==========
+
 app.post(`${API_VERSION}/build-exam`, async (req, res) => {
     try {
-        // Step 1: Get the configuration from the frontend
         const examConfig = req.body;
         console.log("Received exam build request:", examConfig);
 
-        // Validate that we have the necessary information
+        // Validation
         if (!examConfig.class || !examConfig.subject || !examConfig.chapters || examConfig.chapters.length === 0) {
             return res.status(400).json({ error: "Class, Subject, and at least one Chapter are required." });
         }
 
-        // Step 2: Fetch all matching questions from your Firestore database
-        console.log("Fetching questions from Firestore...");
+        // Fetch relevant questions from Firestore
         const questionsQuery = await db.collection('questions')
             .where('class', '==', examConfig.class)
             .where('subject', '==', examConfig.subject)
             .where('chapter', 'in', examConfig.chapters)
             .get();
 
-        const availableQuestions = questionsQuery.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        const availableQuestions = questionsQuery.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+        }));
 
         if (availableQuestions.length === 0) {
-            return res.status(404).json({ error: "No questions found for the selected criteria in the database." });
+            return res.json({
+                sections: [],
+                warning: "No sufficient questions available in the question bank for the requested exam structure."
+            });
         }
-        console.log(`Found ${availableQuestions.length} questions.`);
 
-        // Step 3: Create a detailed prompt for GPT-4o to build the exam paper
+        // Compose the AI prompt
         const buildPrompt = `
-            You are an expert exam paper creator for St. Patrick's School. Your task is to create a complete exam paper from a provided list of questions based on a teacher's configuration.
-            **Teacher's Configuration:**
-            - Exam Name: ${examConfig.examName}
-            - Class: ${examConfig.class}
-            - Subject: ${examConfig.subject}
-            - Chapters: ${examConfig.chapters.join(', ')}
-            - Desired Difficulty: ${examConfig.difficulty}
-            - Total Marks: ${examConfig.maxMarks}
-            - Paper Sections: ${JSON.stringify(examConfig.sections)}
+You are an expert exam paper creator for St. Patrick's School.
+Your job: From ONLY the below "Available Questions", build an exam paper as per teacher's config.
+${examConfig.prompt ? "Additional Teacher Prompt: " + examConfig.prompt : ""}
+-----
+Exam Details:
+- Exam Name: ${examConfig.examName}
+- Class: ${examConfig.class}
+- Subject: ${examConfig.subject}
+- Chapters: ${examConfig.chapters.join(", ")}
+- Date: ${examConfig.date || ""}
+- Time: ${examConfig.time || ""}
 
-            **Your Instructions:**
-            1.  Select the most relevant questions from the "Available Questions" list below to match the teacher's configuration.
-            2.  Optimize for the desired difficulty and total marks. Ensure no repetitive questions.
-            3.  Organize the selected questions into the specified sections.
-            
-            **Available Questions (JSON format):**
-            ${JSON.stringify(availableQuestions)}
+Only use the below questions (JSON):
+${JSON.stringify(availableQuestions)}
 
-            **Final Output Format:**
-            Your response MUST be a single, valid JSON object. The JSON object should have one key: "sections". This key should hold an array of section objects. Each section object must have a "title" (string) and a "questions" (array of question objects). Each question object must have "id", "meta", and "text".
-        `;
-        // Step 4: Call the OpenAI API to get the structured exam paper
-        console.log("Sending request to OpenAI to build the paper...");
+Instructions:
+1. Use only these questions.
+2. Organize into sections if described in the prompt.
+3. If unable to fulfill (e.g., not enough questions for a section), include a clear warning in your JSON under "warning".
+4. Respond ONLY as a valid JSON object:
+{
+  "sections": [
+    { "title": "Section A", "questions": [ { "id": "...", "meta": "...", "text": "..." }, ... ] },
+    ...
+  ],
+  "warning": "..." // if any
+}
+        `.trim();
+
+        // Call OpenAI
         const response = await openai.chat.completions.create({
             model: "gpt-4o",
-            response_format: { "type": "json_object" }, // Ask for JSON output
             messages: [{ role: "user", content: buildPrompt }],
-            max_tokens: 4000,
+            response_format: { type: "json_object" },
+            max_tokens: 4000
         });
 
-        const examPaperJson = JSON.parse(response.choices[0].message.content);
+        // Parse AI output
+        let examPaper = {};
+        try {
+            examPaper = JSON.parse(response.choices[0].message.content);
+        } catch (e) {
+            // If AI output is not valid JSON, fallback
+            return res.json({
+                sections: [],
+                warning: "AI returned an unexpected response. Please try again or review your prompt."
+            });
+        }
 
-        // Step 5: Send the finished exam paper back to the frontend
-        console.log("Successfully built exam paper. Sending to frontend.");
-        res.json(examPaperJson);
+        // Ensure at least warning if no sections
+        if ((!examPaper.sections || examPaper.sections.length === 0) && !examPaper.warning) {
+            examPaper.warning = "No sufficient questions available in the question bank for the requested exam structure.";
+        }
+
+        res.json(examPaper);
 
     } catch (error) {
         console.error(`Error in /build-exam:`, error);
         res.status(500).json({ error: "An internal error occurred while building the exam paper." });
     }
 });
-// ========== ERROR HANDLING MIDDLEWARE ==========
+
+// ========== ERROR HANDLING ==========
 app.use((err, req, res, next) => {
     console.error(err.stack);
     res.status(500).send('Something broke!');
 });
+
 // ========== START SERVER ==========
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
