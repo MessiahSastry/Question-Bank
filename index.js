@@ -76,6 +76,43 @@ app.post(`${API_VERSION}/generate`, async (req, res) => {
     }
 });
 
+// ========== 4. SUMMARIZE EXAM PROMPT FOR CONFIRMATION ==========
+app.post(`${API_VERSION}/summarize-prompt`, async (req, res) => {
+    try {
+        const { prompt, class: examClass, subject, examName, chapters } = req.body;
+        // Compose a GPT-4o prompt for summarization/confirmation
+        const chatPrompt = `
+A teacher is trying to create an exam paper. Here are their instructions (may be incomplete or unclear):
+
+---
+Prompt: "${prompt}"
+Class: ${examClass || "Not specified"}
+Subject: ${subject || "Not specified"}
+Exam Name: ${examName || "Not specified"}
+Chapters: ${(chapters && chapters.length) ? chapters.join(", ") : "Not specified"}
+---
+
+Your job:
+1. Briefly restate what the teacher is asking for in clear, simple, friendly language, even if their instructions are incomplete.
+2. If anything is missing or unclear, make a best guess.
+3. Only respond with 2-3 clear sentences. Do NOT repeat the prompt, summarize what you understood.
+
+Example output:
+"You are about to generate a Science exam for Class 8 based mostly on chapters 1 and 2, with an emphasis on MCQs. Total marks: 50."
+        `.trim();
+
+        const response = await openai.chat.completions.create({
+            model: "gpt-4o",
+            messages: [{ role: "user", content: chatPrompt }],
+            max_tokens: 200,
+        });
+        res.json({ summary: response.choices[0].message.content.trim() });
+    } catch (error) {
+        console.error(`Error in /summarize-prompt:`, error);
+        res.status(500).json({ error: "Failed to summarize prompt." });
+    }
+});
+
 // ========== 2. AI File-Based Question Extraction ==========
 app.post(`${API_VERSION}/extract-from-image`, upload.single("imageFile"), async (req, res) => {
     if (!req.file) {
@@ -161,7 +198,6 @@ app.get(`${API_VERSION}/health`, (req, res) => {
 });
 
 // ========== 3. EXAM BUILDER ENDPOINT ==========
-
 app.post(`${API_VERSION}/build-exam`, async (req, res) => {
     try {
         const examConfig = req.body;
