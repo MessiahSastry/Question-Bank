@@ -14,9 +14,7 @@
             background: linear-gradient(90deg,#1762a7,#0f3d6b);
             color:#fff; border-bottom-left-radius:28px; border-bottom-right-radius:28px;
             padding:24px 10px 18px 10px; display:flex; flex-direction:column; align-items:center;
-            position: sticky;
-          top: 0;
-          z-index: 10;
+            position: sticky; top: 0; z-index: 10;
         }
         #main-header .school-title { font-size:2.2em; font-weight:bold; margin:0;}
         #main-header .subtitle { font-size:1.12em; color:#e0eaff; margin-top:4px;}
@@ -124,6 +122,19 @@
             </form>
         </div>
     </main>
+</div>
+<!-- Confirmation Modal for AI Prompt -->
+<div id="prompt-confirm-modal" style="display:none; position:fixed;z-index:9999;left:0;top:0;width:100vw;height:100vh; background:rgba(30,44,80,0.28);align-items:center;justify-content:center;">
+  <div style="background:#fff; border-radius:18px; max-width:94vw; width:360px; padding:32px 18px; box-shadow:0 8px 32px #0002;">
+    <div style="color:#0f3d6b; font-size:1.17em; font-weight:700; margin-bottom:18px;">
+      Are you sure you want to proceed with the following prompt?
+    </div>
+    <div id="modal-prompt-preview" style="background:#f7fafd; border-radius:8px; color:#185496; padding:15px 10px; margin-bottom:26px; font-size:1.08em; max-height:120px; overflow:auto;"></div>
+    <div style="display:flex; gap:16px; justify-content:flex-end;">
+      <button id="cancel-modal-btn" style="background:#e0eaff; color:#205c98; border:none; border-radius:8px; font-size:1em; padding:7px 18px; cursor:pointer;">Cancel</button>
+      <button id="confirm-modal-btn" style="background:#1762a7; color:#fff; border:none; border-radius:8px; font-size:1em; padding:7px 18px; font-weight:600; cursor:pointer;">Proceed</button>
+    </div>
+  </div>
 </div>
 <script>
     // --- FIREBASE CONFIG ---
@@ -247,65 +258,82 @@
         // Set today's date as default
         document.getElementById('date-input').valueAsDate = new Date();
     });
-       const aiPrompt = document.getElementById('ai-prompt');
+
+    // Auto-resize AI prompt textarea
+    const aiPrompt = document.getElementById('ai-prompt');
     if (aiPrompt) {
         aiPrompt.addEventListener('input', () => {
             aiPrompt.style.height = 'auto';
             aiPrompt.style.height = (aiPrompt.scrollHeight) + 'px';
         });
     }
-    document.getElementById('exam-setup-form').onsubmit = async function(e) {
-    e.preventDefault();
 
-    // Collect values
-    const classValue = document.getElementById('class-dropdown').dataset.value;
-    const subjectValue = document.getElementById('subject-dropdown').dataset.value;
-    const examNameValue = document.getElementById('exam-name-dropdown').dataset.value;
-    const dateValue = document.getElementById('date-input').value;
-    const timeValue = document.getElementById('time-input').value;
-    const promptValue = document.getElementById('ai-prompt').value.trim();
+    // FORM SUBMIT WITH MODAL
+    document.getElementById('exam-setup-form').onsubmit = function(e) {
+        e.preventDefault();
 
-    // Chapters (multi-select)
-    const checkedChapters = Array.from(document.querySelectorAll('#chapters-multiselect input[type="checkbox"]:checked')).map(cb => cb.value);
+        // Collect values
+        const classValue = document.getElementById('class-dropdown').dataset.value;
+        const subjectValue = document.getElementById('subject-dropdown').dataset.value;
+        const examNameValue = document.getElementById('exam-name-dropdown').dataset.value;
+        const dateValue = document.getElementById('date-input').value;
+        const timeValue = document.getElementById('time-input').value;
+        const promptValue = document.getElementById('ai-prompt').value.trim();
 
-    // Basic validation
-    if (!classValue || !subjectValue || checkedChapters.length === 0) {
-        alert("Please select class, subject, and at least one chapter.");
-        return;
-    }
+        // Chapters (multi-select)
+        const checkedChapters = Array.from(
+            document.querySelectorAll('#chapters-multiselect input[type="checkbox"]:checked')
+        ).map(cb => cb.value);
 
-    // Prepare payload
-    const payload = {
-        class: classValue,
-        subject: subjectValue,
-        chapters: checkedChapters,
-        examName: examNameValue,
-        date: dateValue,
-        time: timeValue,
-        aiPrompt: promptValue
+        // Basic validation
+        if (!classValue || !subjectValue || checkedChapters.length === 0) {
+            alert("Please select class, subject, and at least one chapter.");
+            return;
+        }
+
+        // Prepare payload
+        const payload = {
+            class: classValue,
+            subject: subjectValue,
+            chapters: checkedChapters,
+            examName: examNameValue,
+            date: dateValue,
+            time: timeValue,
+            aiPrompt: promptValue
+        };
+
+        // Show the confirmation modal
+        document.getElementById('modal-prompt-preview').textContent = promptValue;
+        document.getElementById('prompt-confirm-modal').style.display = 'flex';
+
+        // Cancel button
+        document.getElementById('cancel-modal-btn').onclick = function() {
+            document.getElementById('prompt-confirm-modal').style.display = 'none';
+        };
+
+        // Proceed button
+        document.getElementById('confirm-modal-btn').onclick = async function() {
+            document.getElementById('prompt-confirm-modal').style.display = 'none';
+
+            // Now send the fetch request
+            try {
+                const res = await fetch('https://question-bank-lqsu.onrender.com/api/v1/build-exam', {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload)
+                });
+                const data = await res.json();
+
+                if (!res.ok) throw new Error(data.error || "Failed to build exam.");
+
+                alert("Exam generated! (Display preview UI here)");
+                // sessionStorage.setItem('examPaper', JSON.stringify(data));
+                // window.location.href = 'exam-review.html';
+            } catch (err) {
+                alert("Error: " + err.message);
+            }
+        };
     };
-
-    // Optional: show loading indicator here
-
-    try {
-        const res = await fetch('https://question-bank-lqsu.onrender.com/api/v1/build-exam', {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload)
-        });
-        const data = await res.json();
-
-        if (!res.ok) throw new Error(data.error || "Failed to build exam.");
-
-        // Show the generated exam in a dialog or next section (customize as needed)
-        alert("Exam generated! (Display preview UI here)");
-        // Optionally: Store in sessionStorage and redirect to review page.
-        // sessionStorage.setItem('examPaper', JSON.stringify(data));
-        // window.location.href = 'exam-review.html';
-    } catch (err) {
-        alert("Error: " + err.message);
-    }
-};
 </script>
 </body>
 </html>
