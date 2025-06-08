@@ -164,14 +164,7 @@ app.get(`${API_VERSION}/health`, (req, res) => {
     res.status(200).json({ status: "ok", timestamp: new Date() });
 });
 
-// ========== ERROR HANDLING MIDDLEWARE ==========
-app.use((err, req, res, next) => {
-    console.error(err.stack);
-    res.status(500).send('Something broke!');
-});
-// ==========================================================
 // ========== 3. EXAM BUILDER ENDPOINT (ADD THIS) ==========
-// ==========================================================
 app.post(`${API_VERSION}/build-exam`, async (req, res) => {
     try {
         // Step 1: Get the configuration from the frontend
@@ -201,7 +194,6 @@ app.post(`${API_VERSION}/build-exam`, async (req, res) => {
         // Step 3: Create a detailed prompt for GPT-4o to build the exam paper
         const buildPrompt = `
             You are an expert exam paper creator for St. Patrick's School. Your task is to create a complete exam paper from a provided list of questions based on a teacher's configuration.
-
             **Teacher's Configuration:**
             - Exam Name: ${examConfig.examName}
             - Class: ${examConfig.class}
@@ -241,6 +233,11 @@ app.post(`${API_VERSION}/build-exam`, async (req, res) => {
         console.error(`Error in /build-exam:`, error);
         res.status(500).json({ error: "An internal error occurred while building the exam paper." });
     }
+});
+// ========== ERROR HANDLING MIDDLEWARE ==========
+app.use((err, req, res, next) => {
+    console.error(err.stack);
+    res.status(500).send('Something broke!');
 });
 // ========== START SERVER ==========
 const PORT = process.env.PORT || 3000;
