@@ -169,7 +169,79 @@ app.use((err, req, res, next) => {
     console.error(err.stack);
     res.status(500).send('Something broke!');
 });
+// ==========================================================
+// ========== 3. EXAM BUILDER ENDPOINT (ADD THIS) ==========
+// ==========================================================
+app.post(`${API_VERSION}/build-exam`, async (req, res) => {
+    try {
+        // Step 1: Get the configuration from the frontend
+        const examConfig = req.body;
+        console.log("Received exam build request:", examConfig);
 
+        // Validate that we have the necessary information
+        if (!examConfig.class || !examConfig.subject || !examConfig.chapters || examConfig.chapters.length === 0) {
+            return res.status(400).json({ error: "Class, Subject, and at least one Chapter are required." });
+        }
+
+        // Step 2: Fetch all matching questions from your Firestore database
+        console.log("Fetching questions from Firestore...");
+        const questionsQuery = await db.collection('questions')
+            .where('class', '==', examConfig.class)
+            .where('subject', '==', examConfig.subject)
+            .where('chapter', 'in', examConfig.chapters)
+            .get();
+
+        const availableQuestions = questionsQuery.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+        if (availableQuestions.length === 0) {
+            return res.status(404).json({ error: "No questions found for the selected criteria in the database." });
+        }
+        console.log(`Found ${availableQuestions.length} questions.`);
+
+        // Step 3: Create a detailed prompt for GPT-4o to build the exam paper
+        const buildPrompt = `
+            You are an expert exam paper creator for St. Patrick's School. Your task is to create a complete exam paper from a provided list of questions based on a teacher's configuration.
+
+            **Teacher's Configuration:**
+            - Exam Name: ${examConfig.examName}
+            - Class: ${examConfig.class}
+            - Subject: ${examConfig.subject}
+            - Chapters: ${examConfig.chapters.join(', ')}
+            - Desired Difficulty: ${examConfig.difficulty}
+            - Total Marks: ${examConfig.maxMarks}
+            - Paper Sections: ${JSON.stringify(examConfig.sections)}
+
+            **Your Instructions:**
+            1.  Select the most relevant questions from the "Available Questions" list below to match the teacher's configuration.
+            2.  Optimize for the desired difficulty and total marks. Ensure no repetitive questions.
+            3.  Organize the selected questions into the specified sections.
+            
+            **Available Questions (JSON format):**
+            ${JSON.stringify(availableQuestions)}
+
+            **Final Output Format:**
+            Your response MUST be a single, valid JSON object. The JSON object should have one key: "sections". This key should hold an array of section objects. Each section object must have a "title" (string) and a "questions" (array of question objects). Each question object must have "id", "meta", and "text".
+        `;
+        // Step 4: Call the OpenAI API to get the structured exam paper
+        console.log("Sending request to OpenAI to build the paper...");
+        const response = await openai.chat.completions.create({
+            model: "gpt-4o",
+            response_format: { "type": "json_object" }, // Ask for JSON output
+            messages: [{ role: "user", content: buildPrompt }],
+            max_tokens: 4000,
+        });
+
+        const examPaperJson = JSON.parse(response.choices[0].message.content);
+
+        // Step 5: Send the finished exam paper back to the frontend
+        console.log("Successfully built exam paper. Sending to frontend.");
+        res.json(examPaperJson);
+
+    } catch (error) {
+        console.error(`Error in /build-exam:`, error);
+        res.status(500).json({ error: "An internal error occurred while building the exam paper." });
+    }
+});
 // ========== START SERVER ==========
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
