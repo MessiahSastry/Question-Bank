@@ -452,30 +452,53 @@
       getSubjectsForClass: function(className) { return this.subjectMappings[className] || []; }
     };
     
-    document.addEventListener('DOMContentLoaded', () => {
-      auth.onAuthStateChanged(user => {
-        if (user) {
-          currentUserProfile = { uid: user.uid, email: user.email, displayName: user.displayName };
-          const state = history.state || {};
-          if (state.page === 'chat') {
-            loadAiChatInterface(state.sessionParams);
-          } else {
-            loadAiQuestionGeneratorForm();
-          }
+    function getModeFromUrl() {
+  const urlParams = new URLSearchParams(window.location.search);
+  return urlParams.get('mode') || 'generator'; // default to generator
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  const mode = getModeFromUrl();
+
+  auth.onAuthStateChanged(user => {
+    if (user) {
+      currentUserProfile = { uid: user.uid, email: user.email, displayName: user.displayName };
+      const state = history.state || {};
+      if (state.page === 'chat' && state.sessionParams) {
+        // Load chat UI with saved sessionParams
+        loadAiChatInterface(state.sessionParams, mode);
+      } else {
+        // Load form UI depending on mode
+        if (mode === 'generator') {
+          loadAiQuestionGeneratorForm();
+        } else if (mode === 'exam-builder') {
+          loadExamBuilderForm();
         } else {
-          window.location.href = 'login.html';
+          loadAiQuestionGeneratorForm();
         }
-      });
-      window.addEventListener('popstate', (event) => {
-        const state = event.state || {};
-        if (state.page === 'chat') {
-            loadAiChatInterface(state.sessionParams);
-        } else {
-            loadAiQuestionGeneratorForm();
-        }
-      });
-    });
-    
+      }
+    } else {
+      window.location.href = 'login.html';
+    }
+  });
+
+  window.addEventListener('popstate', (event) => {
+    const state = event.state || {};
+    const mode = getModeFromUrl();
+    if (state.page === 'chat' && state.sessionParams) {
+      loadAiChatInterface(state.sessionParams, mode);
+    } else {
+      if (mode === 'generator') {
+        loadAiQuestionGeneratorForm();
+      } else if (mode === 'exam-builder') {
+        loadExamBuilderForm();
+      } else {
+        loadAiQuestionGeneratorForm();
+      }
+    }
+  });
+});
+   
     function loadAiQuestionGeneratorForm() {
       document.getElementById('main-header').style.display = 'flex';
       const container = document.getElementById('ai-container');
