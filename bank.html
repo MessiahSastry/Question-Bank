@@ -234,7 +234,39 @@
             setupDropdowns();
             fetchAndDisplayQuestions();
         }
+        document.querySelectorAll('.question-img-btn').forEach((btn, idx) => {
+        btn.onclick = function() {
+            const container = btn.closest('.question-item');
+            const input = container.querySelector('.question-image-input');
+            input.click();
+        };
+    });
+        document.querySelectorAll('.question-image-input').forEach((input, idx) => {
+            input.onchange = async function() {
+                const file = input.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = async function(e) {
+                    // Show preview immediately
+                    let img = input.closest('.question-item').querySelector('img');
+                    if (!img) {
+                        img = document.createElement('img');
+                        img.style.maxWidth = '100%';
+                        img.style.marginTop = '8px';
+                        input.closest('.question-item').appendChild(img);
+                    }
+                    img.src = e.target.result;
         
+                    // Now save to Firestore
+                    const docId = input.closest('.question-item').getAttribute('data-id');
+                    await db.collection('questions').doc(docId).update({
+                        image: e.target.result   // base64 string (for production use storage and URL)
+                    });
+                    alert('Image saved!');
+                };
+                reader.readAsDataURL(file);
+            };
+        });
         function createDropdownHTML(id, options, defaultValueText = 'All') {
             const optionsHTML = options.map(opt => `<div data-value="${opt}">${opt}</div>`).join('');
             return `
@@ -406,9 +438,12 @@
 
                     questionCount++;
                     questionsHTML += `
-                        <div class="question-item">
+                        <div class="question-item" data-id="${doc.id}">
                             <div class="question-meta">${data.metaLine || `Q${questionCount}: ${data.difficulty || 'N/A'}, ${data.marks || 'N/A'} Mark(s)`}</div>
                             <div class="question-text">${data.body || data.text}</div>
+                            ${data.image ? `<img src="${data.image}" style="max-width:100%;margin-top:8px;">` : ''}
+                            <input type="file" accept="image/*" style="display:none;" class="question-image-input">
+                            <button type="button" class="question-img-btn">📷 Add/Edit Image</button>
                         </div>
                     `;
                 });
