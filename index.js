@@ -1,5 +1,5 @@
 const admin = require('firebase-admin');
-const serviceAccount = require('./your-service-account-file.json');
+const serviceAccount = require('./stpatricks-questionbank-firebase-adminsdk-fbsvc-91c6c1a11bjson');
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount)
 });
