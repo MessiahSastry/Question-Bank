@@ -411,76 +411,77 @@
         }
 
         async function fetchAndDisplayQuestions() {
-            if (!currentUser) return;
+    if (!currentUser) return;
 
-            const displayArea = document.getElementById('questions-display-area');
-            displayArea.innerHTML = '<p class="no-questions-message">Loading questions...</p>';
+    const displayArea = document.getElementById('questions-display-area');
+    displayArea.innerHTML = '<p class="no-questions-message">Loading questions...</p>';
 
-            try {
-                // Get filter values
-                const classVal = document.getElementById('class-value').value;
-                const subjectVal = document.getElementById('subject-value').value;
-                const qtypeVal = document.getElementById('qtype-value').value;
-                const chapterVal = document.getElementById('chapter-value').value;
-                const marksVal = document.getElementById('marks-value').value;
-                const numericMarks = parseInt(marksVal, 10);
+    try {
+        // Get filter values
+        const classVal = document.getElementById('class-value').value;
+        const subjectVal = document.getElementById('subject-value').value;
+        const qtypeVal = document.getElementById('qtype-value').value;
+        const chapterVal = document.getElementById('chapter-value').value;
+        const marksVal = document.getElementById('marks-value').value;
+        const numericMarks = parseInt(marksVal, 10);
 
-                // Build Firestore query
-                let query = db.collection('questions').where('createdBy', '==', currentUser.uid);
-                if (classVal && classVal !== 'Select Class') query = query.where('class', '==', classVal);
-                if (subjectVal && subjectVal !== 'Select Subject') query = query.where('subject', '==', subjectVal);
-                if (qtypeVal && qtypeVal !== 'All') {
-                    // Assuming you save a 'questionType' field. If not, this needs adjustment.
-                    // For now, let's assume it's saved in the 'metaLine' or a dedicated field.
-                    // This part might need client-side filtering if not indexed.
+        // Build Firestore query
+        let query = db.collection('questions').where('createdBy', '==', currentUser.uid);
+        if (classVal && classVal !== 'Select Class') query = query.where('class', '==', classVal);
+        if (subjectVal && subjectVal !== 'Select Subject') query = query.where('subject', '==', subjectVal);
+        if (qtypeVal && qtypeVal !== 'All') {
+            // Assuming you save a 'questionType' field. If not, this needs adjustment.
+            // This part might need client-side filtering if not indexed.
+        }
+        if (chapterVal && chapterVal !== 'All') query = query.where('chapter', '==', chapterVal);
+
+        const snapshot = await query.get();
+
+        if (snapshot.empty) {
+            displayArea.innerHTML = '<p class="no-questions-message">No questions found matching your criteria.</p>';
+            return;
+        }
+
+        let questionsHTML = '';
+        let questionCount = 0;
+
+        snapshot.forEach(doc => {
+            const data = doc.data();
+
+            // More robust client-side filtering for marks
+            if (marksVal !== 'All') { 
+                if (data.marks != numericMarks) {
+                    return; // Skip this question if marks do not match
                 }
-                if (chapterVal && chapterVal !== 'All') query = query.where('chapter', '==', chapterVal);
-                
-                const snapshot = await query.get();
+            }
+            // Client-side filtering for question type (example)
+            if (qtypeVal !== 'All') {
+                if (qtypeVal === 'MCQs' && !data.answer) return; // If it has an answer, it's MCQ
+                if (qtypeVal === 'Descriptive' && data.answer) return; // If it has an answer, it's not descriptive
+            }
 
-                if (snapshot.empty) {
-                    displayArea.innerHTML = '<p class="no-questions-message">No questions found matching your criteria.</p>';
-                    return;
-                }
-                
-                let questionsHTML = '';
-                let questionCount = 0;
-
-                snapshot.forEach(doc => {
-                    const data = doc.data();
-
-                    // More robust client-side filtering for marks
-                        if (marksVal !== 'All') { 
-                               if (data.marks != numericMarks) {
-                                return; // Skip this question if marks do not match
-                            }
+            questionCount++;
+            questionsHTML += `
+                <div class="question-item" data-id="${doc.id}">
+                    <div class="question-meta">${data.metaLine || `Q${questionCount}: ${data.difficulty || 'N/A'}, ${data.marks || 'N/A'} Mark(s)`}</div>
+                    <div class="question-text">
+                        ${data.body || data.text}
+                        ${data.image 
+                            ? `<img src="${data.image}">
+                               <button type="button" class="delete-img-btn" style="margin-left:12px; color:#c82333; background:none; border:none; cursor:pointer;">❌ Delete Image</button>`
+                            : ''
                         }
-                    
-                    // Client-side filtering for question type (example)
-                    if (qtypeVal !== 'All') {
-                         if (qtypeVal === 'MCQs' && !data.answer) return; // Simple check: if it has an answer field, it's an MCQ
-                         if (qtypeVal === 'Descriptive' && data.answer) return; // if it has an answer, it's not descriptive
-                    }
+                    </div>
+                    <input type="file" accept="image/*" style="display:none;" class="question-image-input">
+                    <button type="button" class="question-img-btn">📷 Add/Edit Image</button>
+                </div>
+            `;
+        });
 
-                    questionCount++;
-                    questionsHTML += `
-                        <div class="question-item" data-id="${doc.id}">
-                            <div class="question-meta">${data.metaLine || `Q${questionCount}: ${data.difficulty || 'N/A'}, ${data.marks || 'N/A'} Mark(s)`}</div>
-                            <div class="question-text">
-                                ${data.body || data.text}
-                                ${data.image 
-                                    ? `<img src="${data.image}">
-                                       <button type="button" class="delete-img-btn" style="margin-left:12px; color:#c82333; background:none; border:none; cursor:pointer;">❌ Delete Image</button>`
-                                    : ''
-                                }
-                            </div>
-                            <input type="file" accept="image/*" style="display:none;" class="question-image-input">
-                            <button type="button" class="question-img-btn">📷 Add/Edit Image</button>
-                        </div>
-                    `;
-                });
+        if (questionCount > 0) {
+            displayArea.innerHTML = questionsHTML;
 
-                    // === Image Button Logic: Add/Edit and Upload ===
+            // === Image Button Logic: Add/Edit and Upload ===
             document.querySelectorAll('.question-img-btn').forEach(btn => {
                 btn.onclick = function() {
                     const container = btn.closest('.question-item');
@@ -523,7 +524,8 @@
         console.error("Error fetching questions: ", error);
         displayArea.innerHTML = '<p class="no-questions-message">An error occurred while fetching questions.</p>';
     }
-  }
+}
+
     </script>
 </body>
 </html>
