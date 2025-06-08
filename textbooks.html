@@ -212,8 +212,9 @@
         if (!docs.empty) {
           const data = docs.docs[0].data();
           document.getElementById('already-uploaded-area').innerHTML =
-            `<span class="already-uploaded">Already Uploaded.</span>
-             <button class="pdf-view-btn" onclick="window.open('${data.storageURL}', '_blank')">View</button>`;
+        `<span class="already-uploaded">Already Uploaded.</span>
+         <button class="pdf-view-btn" onclick="window.open('${data.storageURL}', '_blank')">View</button>
+         <button class="pdf-view-btn" style="background:#c82333;margin-left:8px;" onclick="deletePDF('${docs.docs[0].id}', '${data.storageURL}')">Delete</button>`;
           document.getElementById('upload-btn').disabled = true;
           document.getElementById('pdf-input').disabled = true;
         } else {
@@ -263,6 +264,35 @@
         msgBar.textContent = 'Upload failed: ' + err.message;
       }
     }
+    async function deletePDF(docId, fileURL) {
+  if (!confirm('Are you sure you want to delete this file?')) return;
+  try {
+    // 1. Delete Firestore document
+    await db.collection('ap_textbooks').doc(docId).delete();
+
+    // 2. Delete from Firebase Storage
+    // Extract path from download URL
+    let storagePath;
+    try {
+      const url = new URL(fileURL);
+      const pathMatch = decodeURIComponent(url.pathname).match(/\/o\/(.+)\.pdf/);
+      storagePath = pathMatch ? pathMatch[1] + '.pdf' : null;
+    } catch (e) {
+      storagePath = null;
+    }
+    if (storagePath) {
+      await storage.ref(storagePath).delete();
+    }
+
+    document.getElementById('already-uploaded-area').innerHTML = '';
+    document.getElementById('upload-msg').textContent = 'Deleted successfully.';
+    // Enable upload again
+    document.getElementById('upload-btn').disabled = false;
+    document.getElementById('pdf-input').disabled = false;
+  } catch (err) {
+    alert('Delete failed: ' + err.message);
+  }
+}
   </script>
 </body>
 </html>
