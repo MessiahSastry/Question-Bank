@@ -240,75 +240,82 @@
             const downloadBtn = document.getElementById('download-pdf-btn');
             downloadBtn.addEventListener('click', generatePDF);
         }
-        async function generatePDF() {
-                const questionsDisplayArea = document.getElementById('questions-display-area');
-            
-                // 1. Check if there are any questions to download
-                if (questionsDisplayArea.children.length === 0 || questionsDisplayArea.querySelector('.no-questions-message')) {
-                    alert("Please filter and display some questions before downloading.");
-                    return;
-                }
-            
-                // Show a loading indicator
-                const downloadBtn = document.getElementById('download-pdf-btn');
-                downloadBtn.textContent = 'Generating PDF...';
-                downloadBtn.disabled = true;
-            
-                // 2. Create a new element to hold the content for the PDF
-                const pdfContent = document.createElement('div');
-                pdfContent.style.padding = '20mm'; // Add padding for a good print layout
-            
-                // 3. Get filter values to create a dynamic title and filename
-                const classVal = document.getElementById('class-value').value || 'All Classes';
-                const subjectVal = document.getElementById('subject-value').value || 'All Subjects';
-                const chapterVal = document.getElementById('chapter-value').value || 'All Chapters';
-            
-                // 4. Create a professional header for the PDF
-                const pdfHeader = `
-                    <div style="text-align: center; margin-bottom: 20px;">
-                        <h1 style="font-size: 24px; margin: 0;">St. Patrick's School</h1>
-                        <h2 style="font-size: 18px; margin: 5px 0;">Question Paper</h2>
-                        <p style="font-size: 14px; margin: 5px 0;">Class: ${classVal} | Subject: ${subjectVal} | Chapter: ${chapterVal}</p>
-                    </div>
-                    <hr style="margin-bottom: 20px;">
-                `;
-                pdfContent.innerHTML = pdfHeader;
-            
-                // 5. Clone the questions and clean them for printing
-                const questionsClone = questionsDisplayArea.cloneNode(true);
-                // Remove unwanted buttons ('Add/Edit Image', 'Delete Image') from the clone
-                questionsClone.querySelectorAll('.question-img-btn, .delete-img-btn, .question-image-input').forEach(btn => btn.remove());
-                pdfContent.appendChild(questionsClone);
-                
-                // Add the temporary element to the body to ensure styles are applied, but keep it invisible
-                pdfContent.style.position = 'absolute';
-                pdfContent.style.left = '-9999px';
-                document.body.appendChild(pdfContent);
-            
-                // Re-run MathJax on the cloned content to ensure formulas render correctly in the PDF
-                if (window.MathJax) {
-                   await MathJax.typesetPromise([pdfContent]);
-                }
-            
-                // 6. Configure and run html2pdf
-                const filename = `StPatricks_${classVal}_${subjectVal}_Questions.pdf`.replace(/ /g, '_');
-                const opt = {
-                    margin:       [15, 15, 15, 15], // [top, left, bottom, right] in mm
-                    filename:     filename,
-                    image:        { type: 'jpeg', quality: 0.98 },
-                    html2canvas:  { scale: 2, useCORS: true }, // 'scale' improves resolution, useCORS for external images
-                    jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
-                };
-            
-                // 7. Generate the PDF and clean up
-                html2pdf().from(pdfContent).set(opt).save().then(() => {
-                    // Restore the button text and re-enable it
-                    downloadBtn.innerHTML = '<i class="fa-solid fa-file-pdf"></i> Download as PDF';
-                    downloadBtn.disabled = false;
-                    // Remove the temporary element from the body
-                    document.body.removeChild(pdfContent);
-                });
-            }
+        // DELETE your old generatePDF function and REPLACE it with this one.
+async function generatePDF() {
+    const questionsDisplayArea = document.getElementById('questions-display-area');
+
+    if (questionsDisplayArea.children.length === 0 || questionsDisplayArea.querySelector('.no-questions-message')) {
+        alert("Please filter and display some questions before downloading.");
+        return;
+    }
+
+    const downloadBtn = document.getElementById('download-pdf-btn');
+    downloadBtn.textContent = 'Generating PDF...';
+    downloadBtn.disabled = true;
+
+    const pdfContent = document.createElement('div');
+    pdfContent.style.padding = '20mm';
+
+    const classVal = document.getElementById('class-value').value || 'All Classes';
+    const subjectVal = document.getElementById('subject-value').value || 'All Subjects';
+    const chapterVal = document.getElementById('chapter-value').value || 'All Chapters';
+
+    const pdfHeader = `
+        <div style="text-align: center; margin-bottom: 20px;">
+            <h1 style="font-size: 24px; margin: 0;">St. Patrick's School</h1>
+            <h2 style="font-size: 18px; margin: 5px 0;">Question Paper</h2>
+            <p style="font-size: 14px; margin: 5px 0;">Class: ${classVal} | Subject: ${subjectVal} | Chapter: ${chapterVal}</p>
+        </div>
+        <hr style="margin-bottom: 20px;">
+    `;
+    pdfContent.innerHTML = pdfHeader;
+
+    const questionsClone = questionsDisplayArea.cloneNode(true);
+    questionsClone.querySelectorAll('.question-img-btn, .delete-img-btn, .question-image-input').forEach(btn => btn.remove());
+    pdfContent.appendChild(questionsClone);
+    
+    pdfContent.style.position = 'absolute';
+    pdfContent.style.left = '-9999px';
+    document.body.appendChild(pdfContent);
+
+    // --- THIS IS THE CORRECTED LOGIC ---
+
+    // This function holds the PDF creation steps.
+    const createThePdfFile = () => {
+        const filename = `StPatricks_${classVal}_${subjectVal}_Questions.pdf`.replace(/ /g, '_');
+        const opt = {
+            margin:       [15, 15, 15, 15],
+            filename:     filename,
+            image:        { type: 'jpeg', quality: 0.98 },
+            html2canvas:  { scale: 2, useCORS: true },
+            jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
+        };
+
+        html2pdf().from(pdfContent).set(opt).save().then(() => {
+            downloadBtn.innerHTML = '<i class="fa-solid fa-file-pdf"></i> Download as PDF';
+            downloadBtn.disabled = false;
+            document.body.removeChild(pdfContent);
+
+            const messageEl = document.getElementById('download-message');
+            messageEl.textContent = 'File downloaded! Please check your Downloads folder.';
+            setTimeout(() => { messageEl.textContent = ''; }, 5000);
+        });
+    };
+
+    // We check if MathJax exists and if there are formulas to render.
+    // The '$$' check is a simple way to see if there is math content.
+    if (window.MathJax && pdfContent.innerHTML.includes('$')) {
+        // If there is math, we tell MathJax to process it.
+        MathJax.typesetPromise([pdfContent]).then(() => {
+            // IMPORTANT: After MathJax is DONE, we wait a tiny moment (0.1 seconds) 
+            // for the browser to finish drawing the formulas, then we create the PDF.
+            setTimeout(createThePdfFile, 100);
+        });
+    } else {
+        // If there is no math, we can create the PDF right away.
+        createThePdfFile();
+    }
+}
         function createDropdownHTML(id, options, defaultValueText = 'All') {
             const optionsHTML = options.map(opt => `<div data-value="${opt}">${opt}</div>`).join('');
             return `
