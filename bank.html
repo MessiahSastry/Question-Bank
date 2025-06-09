@@ -173,7 +173,10 @@
                         <div id="marks-dropdown" class="custom-dropdown"></div>
                     </div>
                 </form>
-            </div>
+            <button id="download-pdf-btn" style="display: block; width: 100%; padding: 12px; margin-top: 20px; background-color: #28a745; color: white; border: none; border-radius: 6px; font-size: 1em; cursor: pointer;">
+                <i class="fa-solid fa-file-pdf"></i> Download as PDF
+            </button>
+        </div>
             <div id="questions-display-area">
                 <p class="no-questions-message">Select filters to view questions.</p>
             </div>
@@ -183,6 +186,7 @@
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 
     <script>
         const firebaseConfig = {
@@ -233,8 +237,78 @@
         function initializeApp() {
             setupDropdowns();
             fetchAndDisplayQuestions();
+            const downloadBtn = document.getElementById('download-pdf-btn');
+            downloadBtn.addEventListener('click', generatePDF);
         }
-
+        async function generatePDF() {
+                const questionsDisplayArea = document.getElementById('questions-display-area');
+            
+                // 1. Check if there are any questions to download
+                if (questionsDisplayArea.children.length === 0 || questionsDisplayArea.querySelector('.no-questions-message')) {
+                    alert("Please filter and display some questions before downloading.");
+                    return;
+                }
+            
+                // Show a loading indicator
+                const downloadBtn = document.getElementById('download-pdf-btn');
+                downloadBtn.textContent = 'Generating PDF...';
+                downloadBtn.disabled = true;
+            
+                // 2. Create a new element to hold the content for the PDF
+                const pdfContent = document.createElement('div');
+                pdfContent.style.padding = '20mm'; // Add padding for a good print layout
+            
+                // 3. Get filter values to create a dynamic title and filename
+                const classVal = document.getElementById('class-value').value || 'All Classes';
+                const subjectVal = document.getElementById('subject-value').value || 'All Subjects';
+                const chapterVal = document.getElementById('chapter-value').value || 'All Chapters';
+            
+                // 4. Create a professional header for the PDF
+                const pdfHeader = `
+                    <div style="text-align: center; margin-bottom: 20px;">
+                        <h1 style="font-size: 24px; margin: 0;">St. Patrick's School</h1>
+                        <h2 style="font-size: 18px; margin: 5px 0;">Question Paper</h2>
+                        <p style="font-size: 14px; margin: 5px 0;">Class: ${classVal} | Subject: ${subjectVal} | Chapter: ${chapterVal}</p>
+                    </div>
+                    <hr style="margin-bottom: 20px;">
+                `;
+                pdfContent.innerHTML = pdfHeader;
+            
+                // 5. Clone the questions and clean them for printing
+                const questionsClone = questionsDisplayArea.cloneNode(true);
+                // Remove unwanted buttons ('Add/Edit Image', 'Delete Image') from the clone
+                questionsClone.querySelectorAll('.question-img-btn, .delete-img-btn, .question-image-input').forEach(btn => btn.remove());
+                pdfContent.appendChild(questionsClone);
+                
+                // Add the temporary element to the body to ensure styles are applied, but keep it invisible
+                pdfContent.style.position = 'absolute';
+                pdfContent.style.left = '-9999px';
+                document.body.appendChild(pdfContent);
+            
+                // Re-run MathJax on the cloned content to ensure formulas render correctly in the PDF
+                if (window.MathJax) {
+                   await MathJax.typesetPromise([pdfContent]);
+                }
+            
+                // 6. Configure and run html2pdf
+                const filename = `StPatricks_${classVal}_${subjectVal}_Questions.pdf`.replace(/ /g, '_');
+                const opt = {
+                    margin:       [15, 15, 15, 15], // [top, left, bottom, right] in mm
+                    filename:     filename,
+                    image:        { type: 'jpeg', quality: 0.98 },
+                    html2canvas:  { scale: 2, useCORS: true }, // 'scale' improves resolution, useCORS for external images
+                    jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
+                };
+            
+                // 7. Generate the PDF and clean up
+                html2pdf().from(pdfContent).set(opt).save().then(() => {
+                    // Restore the button text and re-enable it
+                    downloadBtn.innerHTML = '<i class="fa-solid fa-file-pdf"></i> Download as PDF';
+                    downloadBtn.disabled = false;
+                    // Remove the temporary element from the body
+                    document.body.removeChild(pdfContent);
+                });
+            }
         function createDropdownHTML(id, options, defaultValueText = 'All') {
             const optionsHTML = options.map(opt => `<div data-value="${opt}">${opt}</div>`).join('');
             return `
