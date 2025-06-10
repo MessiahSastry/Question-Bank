@@ -829,61 +829,80 @@ function handleFileUpload(event, sessionParams) {
 
     if (!currentUserProfile || currentSessionQuestions.length === 0) {
         alert("No new questions in this session to save.");
+        saveButton.disabled = false;
+        saveButton.innerHTML = "💾 Save All";
         return;
     }
 
     saveButton.disabled = true;
     saveButton.innerHTML = "⏳ Saving...";
 
-    let savedCount = 0, skippedCount = 0;
+    let savedCount = 0, skippedCount = 0, errorCount = 0;
 
-    const startNumber = await getNextQuestionNumber(sessionParams.class, sessionParams.subject, sessionParams.chapter);
+    let startNumber = 1;
+    try {
+        startNumber = await getNextQuestionNumber(sessionParams.class, sessionParams.subject, sessionParams.chapter);
+    } catch (err) {
+        alert("Could not get next question number. Check your Firestore rules.");
+        saveButton.disabled = false;
+        saveButton.innerHTML = "💾 Save All";
+        return;
+    }
 
     for (let i = 0; i < currentSessionQuestions.length; i++) {
         const qData = currentSessionQuestions[i];
-        
-        const snapshot = await db.collection("questions")
-            .where("subject", "==", qData.subject)
-            .where("chapter", "==", qData.chapter)
-            .get();
-        let isDuplicate = false;
-        snapshot.forEach(doc => {
-            const existing = doc.data();
-            if (getTextSimilarity(qData.parsedBody, existing.body) >= 0.9) {
-                isDuplicate = true;
+        try {
+            const snapshot = await db.collection("questions")
+                .where("class", "==", qData.class)
+                .where("subject", "==", qData.subject)
+                .where("chapter", "==", qData.chapter)
+                .get();
+            let isDuplicate = false;
+            snapshot.forEach(doc => {
+                const existing = doc.data();
+                if (getTextSimilarity(qData.parsedBody, existing.body) >= 0.9) {
+                    isDuplicate = true;
+                }
+            });
+            if (isDuplicate) {
+                skippedCount++;
+                continue;
             }
-        });
-        if (isDuplicate) {
-            skippedCount++;
-            continue;
+
+            const meta = parseMetaLine(qData.parsedMeta);
+            const currentQuestionNumber = startNumber + i;
+
+            await db.collection("questions").add({
+                text: qData.fullText,
+                body: qData.parsedBody,
+                answer: qData.parsedAnswer,
+                metaLine: qData.parsedMeta,
+                difficulty: meta.difficulty,
+                level: meta.level,
+                marks: meta.marks,
+                questionNumber: currentQuestionNumber,
+                class: qData.class,
+                subject: qData.subject,
+                chapter: qData.chapter,
+                createdBy: currentUserProfile.uid,
+                timestamp: firebase.firestore.FieldValue.serverTimestamp()
+            });
+
+            savedCount++;
+        } catch (err) {
+            errorCount++;
+            console.error("Failed to save question:", err);
         }
-
-        const meta = parseMetaLine(qData.parsedMeta);
-        const currentQuestionNumber = startNumber + i;
-
-        await db.collection("questions").add({
-            text: qData.fullText,
-            body: qData.parsedBody,
-            answer: qData.parsedAnswer,
-            metaLine: qData.parsedMeta,
-            difficulty: meta.difficulty,
-            level: meta.level,
-            marks: meta.marks,
-            questionNumber: currentQuestionNumber,
-            class: qData.class,
-            subject: qData.subject,
-            chapter: qData.chapter,
-            createdBy: currentUserProfile.uid,
-            timestamp: firebase.firestore.FieldValue.serverTimestamp()
-        });
-
-        savedCount++;
     }
 
-    alert(`${savedCount} question(s) saved. ${skippedCount} duplicate(s) skipped.`);
+    let msg = `${savedCount} question(s) saved. ${skippedCount} duplicate(s) skipped.`;
+    if (errorCount > 0) msg += ` ${errorCount} error(s) occurred (see console).`;
+    alert(msg);
+
     saveButton.disabled = false;
     saveButton.innerHTML = "💾 Save All";
 }
+
     function handleSelectionChange() {
         const selection = window.getSelection();
         const popup = document.getElementById('selection-popup');
