@@ -317,7 +317,30 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
     };
-
+    // --- Fetch N random questions matching filters from Firestore ---
+async function fetchQuestions({ selectedClass, selectedSubject, chapters, marksPerQuestion, count }) {
+  const firestore = firebase.firestore();
+  let query = firestore.collection("questions")
+    .where("class", "==", selectedClass)
+    .where("subject", "==", selectedSubject);
+  if (chapters && chapters.length) {
+    query = query.where("chapter", "in", chapters.slice(0, 10)); // Firestore only allows 10 in "in"
+  }
+  if (marksPerQuestion) {
+    query = query.where("marks", "==", parseInt(marksPerQuestion));
+  }
+  const snapshot = await query.get();
+  const allQuestions = [];
+  snapshot.forEach(doc => {
+    allQuestions.push({ id: doc.id, ...doc.data() });
+  });
+  // Shuffle and pick N random
+  for (let i = allQuestions.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [allQuestions[i], allQuestions[j]] = [allQuestions[j], allQuestions[i]];
+  }
+  return allQuestions.slice(0, count);
+}
     // ---- Custom Dropdown Helper (for all custom dropdowns) ----
     function createDropdown(containerId, options, placeholder) {
         const container = document.getElementById(containerId);
@@ -572,59 +595,117 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // --- Form Submit Logic ---
-    function handleFormSubmit(event) {
-        event.preventDefault();
-        const sections = [];
-        document.querySelectorAll('.section-item').forEach(section => {
-            const label = section.querySelector('.section-label-dropdown').dataset.value;
-            const typeLabel = section.querySelector('.section-type-dropdown').dataset.value;
-            const typeIndex = config.sectionTypes.indexOf(typeLabel);
-            const type = config.sectionTypeKeys[typeIndex];
-            let sec = { label, type };
-            if (type === "all") {
-                sec.numQuestions = section.querySelector('.num-questions-input').value;
-                sec.marksPerQuestion = section.querySelector('.marks-per-question-input').value;
-            } else if (type === "any") {
-                sec.numQuestions = section.querySelector('.num-questions-input').value;
-                sec.attemptAny = section.querySelector('.attempt-any-input').value;
-                sec.marksPerQuestion = section.querySelector('.marks-per-question-input').value;
-            } else if (type === "internal") {
-                sec.numPairs = section.querySelector('.num-pairs-input').value;
-                sec.marksPerQuestion = section.querySelector('.marks-per-question-input').value;
-                sec.pairs = [];
-                const pairDivs = section.querySelectorAll('.internal-choice-pairs > div');
-                pairDivs.forEach(div => {
-                    const [inputA, inputB] = div.querySelectorAll('.pair-chapter-input');
-                    sec.pairs.push({
-                        chapterA: inputA.value,
-                        chapterB: inputB.value
-                    });
+    // --- Form Submit Logic (BUILD PAPER FROM FIRESTORE) ---
+async function handleFormSubmit(event) {
+    event.preventDefault();
+    const sections = [];
+    document.querySelectorAll('.section-item').forEach(section => {
+        const label = section.querySelector('.section-label-dropdown').dataset.value;
+        const typeLabel = section.querySelector('.section-type-dropdown').dataset.value;
+        const typeIndex = config.sectionTypes.indexOf(typeLabel);
+        const type = config.sectionTypeKeys[typeIndex];
+        let sec = { label, type };
+        if (type === "all") {
+            sec.numQuestions = parseInt(section.querySelector('.num-questions-input').value);
+            sec.marksPerQuestion = parseInt(section.querySelector('.marks-per-question-input').value);
+        } else if (type === "any") {
+            sec.numQuestions = parseInt(section.querySelector('.num-questions-input').value);
+            sec.attemptAny = parseInt(section.querySelector('.attempt-any-input').value);
+            sec.marksPerQuestion = parseInt(section.querySelector('.marks-per-question-input').value);
+        } else if (type === "internal") {
+            sec.numPairs = parseInt(section.querySelector('.num-pairs-input').value);
+            sec.marksPerQuestion = parseInt(section.querySelector('.marks-per-question-input').value);
+            sec.pairs = [];
+            const pairDivs = section.querySelectorAll('.internal-choice-pairs > div');
+            pairDivs.forEach(div => {
+                const [inputA, inputB] = div.querySelectorAll('.pair-chapter-input');
+                sec.pairs.push({
+                    chapterA: inputA.value,
+                    chapterB: inputB.value
+                });
+            });
+        }
+        sections.push(sec);
+    });
+
+    const examConfig = {
+        class: document.getElementById('class-dropdown').dataset.value,
+        subject: document.getElementById('subject-dropdown').dataset.value,
+        chapters: Array.from(document.querySelectorAll('#chapters-multiselect input:checked')).map(cb => cb.value),
+        examName: document.getElementById('exam-name-dropdown').dataset.value,
+        examType: document.getElementById('exam-type-dropdown').dataset.value,
+        maxMarks: document.getElementById('max-marks-input').value,
+        time: document.getElementById('time-input').value,
+        date: document.getElementById('date-input').value,
+        difficulty: document.getElementById('difficulty-dropdown').dataset.value,
+        instructions: document.getElementById('instructions-input').value,
+        sections
+    };
+
+    if (!examConfig.class || !examConfig.subject || examConfig.chapters.length === 0) {
+        showToast("Please select a Class, Subject, and at least one Chapter.", "error");
+        return;
+    }
+
+    // ---- Build the Exam Paper by fetching questions from Firestore ----
+    const finalPaper = {
+        class: examConfig.class,
+        subject: examConfig.subject,
+        date: examConfig.date,
+        examName: examConfig.examName,
+        instructions: examConfig.instructions,
+        sections: []
+    };
+
+    for (let i = 0; i < examConfig.sections.length; i++) {
+        const sec = examConfig.sections[i];
+        let questions = [];
+        if (sec.type === "all" || sec.type === "any") {
+            questions = await fetchQuestions({
+                selectedClass: examConfig.class,
+                selectedSubject: examConfig.subject,
+                chapters: examConfig.chapters,
+                marksPerQuestion: sec.marksPerQuestion,
+                count: sec.numQuestions
+            });
+            questions = questions.map((q, idx) => ({
+                number: idx + 1,
+                text: q.question || q.text || "",
+                marks: sec.marksPerQuestion
+            }));
+        } else if (sec.type === "internal") {
+            for (let p = 0; p < sec.pairs.length; p++) {
+                let qA = await fetchQuestions({
+                    selectedClass: examConfig.class,
+                    selectedSubject: examConfig.subject,
+                    chapters: [sec.pairs[p].chapterA],
+                    marksPerQuestion: sec.marksPerQuestion,
+                    count: 1
+                });
+                let qB = await fetchQuestions({
+                    selectedClass: examConfig.class,
+                    selectedSubject: examConfig.subject,
+                    chapters: [sec.pairs[p].chapterB],
+                    marksPerQuestion: sec.marksPerQuestion,
+                    count: 1
+                });
+                questions.push({
+                    number: p + 1,
+                    text: `a) ${(qA[0] && (qA[0].question || qA[0].text)) || '---'}<br>b) ${(qB[0] && (qB[0].question || qB[0].text)) || '---'}`,
+                    marks: sec.marksPerQuestion
                 });
             }
-            sections.push(sec);
-        });
-
-        const examConfig = {
-            class: document.getElementById('class-dropdown').dataset.value,
-            subject: document.getElementById('subject-dropdown').dataset.value,
-            chapters: Array.from(document.querySelectorAll('#chapters-multiselect input:checked')).map(cb => cb.value),
-            examName: document.getElementById('exam-name-dropdown').dataset.value,
-            examType: document.getElementById('exam-type-dropdown').dataset.value,
-            maxMarks: document.getElementById('max-marks-input').value,
-            time: document.getElementById('time-input').value,
-            date: document.getElementById('date-input').value,
-            difficulty: document.getElementById('difficulty-dropdown').dataset.value,
-            instructions: document.getElementById('instructions-input').value,
-            sections
-        };
-
-        if (!examConfig.class || !examConfig.subject || examConfig.chapters.length === 0) {
-            showToast("Please select a Class, Subject, and at least one Chapter.", "error");
-            return;
         }
-        sessionStorage.setItem('examConfig', JSON.stringify(examConfig));
-        window.location.href = 'exam-review.html';
+        finalPaper.sections.push({
+            name: sec.label,
+            questions
+        });
     }
+
+    // ---- Save and Go to Review Page ----
+    sessionStorage.setItem('examPaper', JSON.stringify(finalPaper));
+    window.location.href = 'exam-review.html';
+}
 
     // --- Initial Load ---
     addSection();
