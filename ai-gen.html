@@ -385,6 +385,71 @@
         color: #5d4037;
         white-space: pre-wrap;
       }
+        /* --- Styles for Confirmation Modal --- */
+.confirmation-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 3000;
+    padding: 15px;
+    box-sizing: border-box;
+}
+
+.confirmation-modal {
+    background: #fff;
+    padding: 25px;
+    border-radius: 12px;
+    box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+    width: 100%;
+    max-width: 450px;
+    text-align: left;
+}
+
+.confirmation-modal h3 {
+    margin-top: 0;
+    font-size: 1.2em;
+    color: #0f3d6b;
+}
+
+.confirmation-modal p {
+    line-height: 1.6;
+    color: #333;
+    font-size: 0.95em;
+    white-space: pre-wrap; /* This ensures line breaks from AI are respected */
+}
+
+.confirmation-modal .modal-buttons {
+    margin-top: 20px;
+    text-align: right;
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
+}
+
+.confirmation-modal .modal-buttons button {
+    padding: 10px 20px;
+    border: none;
+    border-radius: 6px;
+    font-weight: bold;
+    cursor: pointer;
+    font-size: 0.95em;
+}
+
+#confirm-cancel-btn {
+    background: #e9ecef;
+    color: #495057;
+}
+
+#confirm-proceed-btn {
+    background: #0f3d6b;
+    color: white;
+}
     </style>
 </head>
 <body>
@@ -674,89 +739,142 @@
         });
         if(!currentlyOpen) currentDropdown.classList.add('open');
     }
+       function showConfirmationModal(summary, originalPrompt, sessionParams) {
+    const overlay = document.createElement('div');
+    overlay.className = 'confirmation-overlay';
 
-    async function handleSendPrompt(sessionParams) {
+    overlay.innerHTML = `
+        <div class="confirmation-modal">
+            <h3>Confirm Exam Instructions</h3>
+            <p>${summary}</p>
+            <div class="modal-buttons">
+                <button id="confirm-cancel-btn">Cancel</button>
+                <button id="confirm-proceed-btn">Proceed</button>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(overlay);
+
+    document.getElementById('confirm-cancel-btn').onclick = () => {
+        overlay.remove();
+        // Re-enable the send button if cancelled
         const chatPromptInput = document.getElementById('chat-prompt-input');
         const sendBtn = document.getElementById('chat-send-btn');
-        const userPrompt = chatPromptInput.value.trim();
-        const messagesArea = document.getElementById('chat-messages-area');
+        sendBtn.innerHTML = `<i class="fas fa-paper-plane"></i>`;
+        updateSendButtonState(chatPromptInput, sendBtn);
+    };
 
-        if (!userPrompt && !stagedFile) return;
+    document.getElementById('confirm-proceed-btn').onclick = () => {
+        overlay.remove();
+        proceedWithGeneration(originalPrompt, sessionParams);
+    };
+} 
+    async function proceedWithGeneration(originalPrompt, sessionParams) {
+    const messagesArea = document.getElementById('chat-messages-area');
+    const chatPromptInput = document.getElementById('chat-prompt-input');
+    const sendBtn = document.getElementById('chat-send-btn');
+    const didSendFile = stagedFile !== null; // We need to check this again
 
-        sendBtn.disabled = true;
-        sendBtn.innerHTML = `<i class="fas fa-spinner fa-spin"></i>`;
+    const loadingMessage = appendChatMessage('Generating questions as per your instructions...', 'system-message', messagesArea);
+    try {
+        let result;
+        if (stagedFile) {
+            const formData = new FormData();
+            formData.append('imageFile', stagedFile);
+            formData.append('prompt', originalPrompt);
+            const response = await fetch(`${API_BASE_URL}/api/v1/extract-from-image`, {
+                method: 'POST',
+                body: formData
+            });
+            result = await response.json();
+            if (!response.ok) throw new Error(result.error || "File processing failed.");
+        } else {
+            let fullPromptForAI;
+            const baseInfo = `Class: ${sessionParams.class}, Subject: ${sessionParams.subject}, Chapter: ${sessionParams.chapter}. User request: "${originalPrompt}".`;
 
-        if(userPrompt) appendChatMessage(userPrompt, 'user', messagesArea);
-        chatPromptInput.value = '';
-        chatPromptInput.style.height = 'auto'; // Reset height after sending
-
-        const loadingMessage = appendChatMessage('Generating...', 'system-message', messagesArea);
-        const didSendFile = stagedFile !== null;
-        try {
-            let result;
-            if (stagedFile) {
-                const formData = new FormData();
-                formData.append('imageFile', stagedFile);
-                formData.append('prompt', userPrompt);
-                const response = await fetch(`${API_BASE_URL}/api/v1/extract-from-image`, {
-                    method: 'POST',
-                    body: formData
-                });
-                result = await response.json();
-                if (!response.ok) throw new Error(result.error || "File processing failed.");
+            if (sessionParams.questionType === "MCQs") {
+                fullPromptForAI = `${baseInfo}
+                The user wants Multiple Choice Questions (MCQs).
+                Please generate questions based on the user's request. Each question MUST follow this strict format:
+                1. Start with the question number, difficulty, level, and marks (e.g., "Q1: Easy/Level 1, 1 Mark").
+                2. On the next line, write the question text.
+                3. On the following lines, provide four options, each starting with "A)", "B)", "C)", and "D)".
+                4. On the final line for that question, specify the correct answer using the format "Ans: C)".
+                Provide ONLY the questions in this exact format. Do not add any other text, explanation, or introduction.`;
             } else {
-                let fullPromptForAI;
-                const baseInfo = `Class: ${sessionParams.class}, Subject: ${sessionParams.subject}, Chapter: ${sessionParams.chapter}. User request: "${userPrompt}".`;
-
-                if (sessionParams.questionType === "MCQs") {
-                    fullPromptForAI = `${baseInfo}
-                    The user wants Multiple Choice Questions (MCQs).
-                    Please generate questions based on the user's request. Each question MUST follow this strict format:
-                    1. Start with the question number, difficulty, level, and marks (e.g., "Q1: Easy/Level 1, 1 Mark").
-                    2. On the next line, write the question text.
-                    3. On the following lines, provide four options, each starting with "A)", "B)", "C)", and "D)".
-                    4. On the final line for that question, specify the correct answer using the format "Ans: C)".
-
-                    Example of the required format:
-                    Q1: Easy/Level 1, 1 Mark
-                    What is the capital of France?
-                    A) London
-                    B) Berlin
-                    C) Paris
-                    D) Madrid
-                    Ans: C)
-
-                    Provide ONLY the questions in this exact format. Do not add any other text, explanation, or introduction.`;
-                } else {
-                    fullPromptForAI = `${baseInfo}
-                    The user wants Descriptive questions.
-                    Format each question strictly as: Q <num>: <Difficulty>/Level <Lvl>, <Marks> Marks
-                    Then the question text. Provide ONLY the questions.`;
-                }
-
-                const response = await fetch(`${API_BASE_URL}/api/v1/generate`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ prompt: fullPromptForAI })
-                });
-                result = await response.json();
-                if (!response.ok) throw new Error(result.error || "API error");
+                fullPromptForAI = `${baseInfo}
+                The user wants Descriptive questions.
+                Format each question strictly as: Q <num>: <Difficulty>/Level <Lvl>, <Marks> Marks
+                Then the question text. Provide ONLY the questions.`;
             }
-            parseAndDisplayAiQuestions(result.result, messagesArea, sessionParams);
-        } catch (err) {
-            appendChatMessage(`Error: ${err.message}`, 'system-message', messagesArea);
-        } finally {
-            loadingMessage.remove();
-            sendBtn.innerHTML = `<i class="fas fa-paper-plane"></i>`;
-            
-            if (didSendFile) {
-                stagedFile = null;
-                document.getElementById('file-preview-box').style.display = 'none';
-                document.getElementById('chat-upload-btn').style.color = '#54656f';
-            }
-            updateSendButtonState(chatPromptInput, sendBtn);
+
+            const response = await fetch(`${API_BASE_URL}/api/v1/generate`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ prompt: fullPromptForAI })
+            });
+            result = await response.json();
+            if (!response.ok) throw new Error(result.error || "API error");
         }
+        parseAndDisplayAiQuestions(result.result, messagesArea, sessionParams);
+    } catch (err) {
+        appendChatMessage(`Error: ${err.message}`, 'system-message', messagesArea);
+    } finally {
+        loadingMessage.remove();
+        sendBtn.innerHTML = `<i class="fas fa-paper-plane"></i>`;
+        if (didSendFile) {
+            stagedFile = null;
+            document.getElementById('file-preview-box').style.display = 'none';
+            document.getElementById('chat-upload-btn').style.color = '#54656f';
+        }
+        updateSendButtonState(chatPromptInput, sendBtn);
     }
+}
+    async function handleSendPrompt(sessionParams) {
+    const chatPromptInput = document.getElementById('chat-prompt-input');
+    const sendBtn = document.getElementById('chat-send-btn');
+    const userPrompt = chatPromptInput.value.trim();
+    const messagesArea = document.getElementById('chat-messages-area');
+
+    if (!userPrompt && !stagedFile) return;
+
+    // --- Stage 1: Get Confirmation ---
+
+    sendBtn.disabled = true;
+    sendBtn.innerHTML = `<i class="fas fa-spinner fa-spin"></i>`;
+
+    if(userPrompt) appendChatMessage(userPrompt, 'user', messagesArea);
+    chatPromptInput.value = '';
+    chatPromptInput.style.height = 'auto';
+
+    const loadingMessage = appendChatMessage('Parsing instructions...', 'system-message', messagesArea);
+
+    // This is the "meta-prompt" that asks the AI to summarize the teacher's request.
+    const promptForSummary = `A teacher has provided the following instructions for creating an exam. Re-write and structure these instructions clearly and concisely in a paragraph format for a confirmation message. Start with "You need to create a...". Do not add any conversational text, just the structured instructions. Teacher's instructions: "${userPrompt}"`;
+
+    try {
+        // We use the same generation endpoint, but with our special summary prompt.
+        const response = await fetch(`${API_BASE_URL}/api/v1/generate`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ prompt: promptForSummary })
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || "API error");
+
+        // On success, remove "Parsing..." and show the confirmation modal
+        loadingMessage.remove();
+        showConfirmationModal(result.result, userPrompt, sessionParams);
+
+    } catch (err) {
+        // If summary fails, show an error and re-enable the button
+        loadingMessage.remove();
+        appendChatMessage(`Error parsing instructions: ${err.message}. Please try again.`, 'system-message', messagesArea);
+        sendBtn.innerHTML = `<i class="fas fa-paper-plane"></i>`;
+        updateSendButtonState(chatPromptInput, sendBtn);
+    }
+}
 
     function handleFileUpload(event, sessionParams) {
         const file = event.target.files[0];
