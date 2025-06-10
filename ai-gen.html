@@ -837,36 +837,42 @@ function handleFileUpload(event, sessionParams) {
 
     let savedCount = 0, skippedCount = 0;
 
-    for (const qData of currentSessionQuestions) {
+    // Get the starting question number for this batch
+    const startNumber = await getNextQuestionNumber(sessionParams.class, sessionParams.subject, sessionParams.chapter);
+
+    for (let i = 0; i < currentSessionQuestions.length; i++) {
+        const qData = currentSessionQuestions[i];
+        
         const snapshot = await db.collection("questions")
             .where("subject", "==", qData.subject)
             .where("chapter", "==", qData.chapter)
             .get();
-
         let isDuplicate = false;
-
         snapshot.forEach(doc => {
             const existing = doc.data();
-            const similarity = getTextSimilarity(qData.parsedBody, existing.body);
-            if (similarity >= 0.9) {
+            if (getTextSimilarity(qData.parsedBody, existing.body) >= 0.9) {
                 isDuplicate = true;
             }
         });
-
         if (isDuplicate) {
             skippedCount++;
             continue;
         }
 
         const meta = parseMetaLine(qData.parsedMeta);
+        // Calculates the number for this specific question
+        const currentQuestionNumber = startNumber + i; 
+
+        // Saves the complete object with the new fields
         await db.collection("questions").add({
             text: qData.fullText,
             body: qData.parsedBody,
-            answer: qData.parsedAnswer, // This is the new line
+            answer: qData.parsedAnswer,
             metaLine: qData.parsedMeta,
             difficulty: meta.difficulty,
             level: meta.level,
             marks: meta.marks,
+            questionNumber: currentQuestionNumber, // ADDS THE QUESTION NUMBER
             class: qData.class,
             subject: qData.subject,
             chapter: qData.chapter,
