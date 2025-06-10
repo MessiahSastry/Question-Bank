@@ -728,42 +728,65 @@ document.addEventListener('DOMContentLoaded', () => {
             for (let i = 0; i < examConfig.sections.length; i++) {
                 const sec = examConfig.sections[i];
                 let questions = [];
+                // ... inside handleFormSubmit
                 if (sec.type === "all" || sec.type === "any") {
+                    const requestedCount = sec.numQuestions; // Get the number of questions needed
                     questions = await fetchQuestions({
                         selectedClass: examConfig.class,
                         selectedSubject: examConfig.subject,
                         chapters: examConfig.chapters,
                         marksPerQuestion: sec.marksPerQuestion,
-                        count: sec.numQuestions
+                        count: requestedCount
                     });
+                
+                    // --- NEW VALIDATION BLOCK ---
+                    if (questions.length < requestedCount) {
+                        showToast(`Error for ${sec.label}: Found only ${questions.length} of the ${requestedCount} questions needed. Please check your criteria.`, "error");
+                        btn.disabled = false;
+                        btn.textContent = "Build Exam Draft";
+                        return; // This stops the function from proceeding
+                    }
+                    // --- END OF VALIDATION ---
+                
                     questions = questions.map((q, idx) => ({
                         number: idx + 1,
                         text: q.question || q.text || "",
                         marks: sec.marksPerQuestion
                     }));
-                } else if (sec.type === "internal") {
-                    for (let p = 0; p < sec.pairs.length; p++) {
-                        let qA = await fetchQuestions({
-                            selectedClass: examConfig.class,
-                            selectedSubject: examConfig.subject,
-                            chapters: [sec.pairs[p].chapterA],
-                            marksPerQuestion: sec.marksPerQuestion,
-                            count: 1
-                        });
-                        let qB = await fetchQuestions({
-                            selectedClass: examConfig.class,
-                            selectedSubject: examConfig.subject,
-                            chapters: [sec.pairs[p].chapterB],
-                            marksPerQuestion: sec.marksPerQuestion,
-                            count: 1
-                        });
-                        questions.push({
-                            number: p + 1,
-                            text: `a) ${(qA[0] && (qA[0].question || qA[0].text)) || '---'}<br>b) ${(qB[0] && (qB[0].question || qB[0].text)) || '---'}`,
-                            marks: sec.marksPerQuestion
-                        });
+                // Replace the block above with this one
+                    } else if (sec.type === "internal") {
+                        for (let p = 0; p < sec.pairs.length; p++) {
+                            let qA = await fetchQuestions({
+                                selectedClass: examConfig.class,
+                                selectedSubject: examConfig.subject,
+                                chapters: [sec.pairs[p].chapterA],
+                                marksPerQuestion: sec.marksPerQuestion,
+                                count: 1
+                            });
+                            let qB = await fetchQuestions({
+                                selectedClass: examConfig.class,
+                                selectedSubject: examConfig.subject,
+                                chapters: [sec.pairs[p].chapterB],
+                                marksPerQuestion: sec.marksPerQuestion,
+                                count: 1
+                            });
+                    
+                            // --- NEW VALIDATION BLOCK ---
+                            if (qA.length < 1 || qB.length < 1) {
+                                showToast(`Error for ${sec.label}: Could not find a question for both parts of Pair ${p + 1}. Please check chapters ('${sec.pairs[p].chapterA}' / '${sec.pairs[p].chapterB}') and marks.`, "error");
+                                btn.disabled = false;
+                                btn.textContent = "Build Exam Draft";
+                                return; // This stops the function
+                            }
+                                     
+                            questions.push({
+                                number: p + 1,
+                                // Now that we know the questions exist, we can simplify this line
+                                text: `a) ${qA[0].question || qA[0].text}<br>b) ${qB[0].question || qB[0].text}`,
+                                marks: sec.marksPerQuestion
+                            });
+                        }
                     }
-                }
                 finalPaper.sections.push({
                     name: sec.label,
                     instructions: buildSectionInstructions(sec),
