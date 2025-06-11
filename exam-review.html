@@ -3,8 +3,8 @@
 <head>
   <script>
   window.MathJax = { tex: { inlineMath: [["$", "$"], ["\\(", "\\)"]] }, svg: { fontCache: "global" } };
-</script>
-<script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+  </script>
+  <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
   <meta charset="UTF-8" />
   <title>Exam Review | St. Patrick's School</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
@@ -59,34 +59,25 @@
     .question-text[contenteditable] { background:#f3f7fe; border-radius:6px; outline:2px solid #0f3d6b30;}
     .marks-box[contenteditable] { background:#f3f7fe; outline:2px solid #bcd6ef; border-radius:6px; padding:2px 6px;}
     .marks-label { margin-left:5px; color:#12416c; font-size:0.99em;}
-    .save-btn {
-      background:#1762a7; color:#fff; border:none; border-radius:7px; padding:8px 20px; font-size:1.08em; font-weight:600;
-      cursor:pointer; margin-top:30px; box-shadow:0 2px 7px #bcd6ef1a; float:right;
+    .save-btn, .preview-btn {
+      width: 100%;
+      background:#1762a7; color:#fff; border:none; border-radius:7px; padding:12px 0; font-size:1.08em; font-weight:600;
+      cursor:pointer; box-shadow:0 2px 7px #bcd6ef1a; margin:0;
+      transition: background 0.18s;
+      display: flex; justify-content: center; align-items: center; gap: 10px;
     }
-    .save-btn:hover { background:#12416c; }
+    .save-btn:hover, .preview-btn:hover { background:#12416c; }
+    .preview-btn {
+      background: #13ad59;
+      margin-top: 14px;
+    }
+    .preview-btn:hover {
+      background: #0b7c3b;
+    }
     .edit-indicator { color:#e67600; font-size:0.93em; margin-left:8px; }
     .section-header[contenteditable] { background:#f3f7fe; }
     @media (max-width:700px){ .review-container{max-width:98vw; padding:12px 4vw 14px 4vw;} }
     @media (max-width:480px){ #main-header .school-title{font-size:1.35em;} .review-container h2{font-size:1.25em;} }
-    .preview-btn {
-  background: #13ad59;
-  color: #fff;
-  border: none;
-  border-radius: 7px;
-  padding: 12px 34px;
-  font-size: 1.09em;
-  font-weight: 600;
-  cursor: pointer;
-  box-shadow: 0 2px 7px #bcd6ef1a;
-  margin-bottom: 0;
-}
-.preview-btn:hover {
-  background: #0b7c3b;
-}
-.save-btn {
-  margin-top: 0 !important; /* so they're close together */
-}
-
   </style>
 </head>
 <body>
@@ -99,15 +90,16 @@
     <div class="review-container">
       <h2>Review & Edit Exam Paper</h2>
       <div id="exam-review-area"></div>
-      <div style="display: flex; flex-direction: column; align-items: center; gap: 12px; margin-top: 24px;">
-      <button class="preview-btn" id="preview-btn">
-        <i class="fas fa-eye"></i> Preview Question Paper
-      </button>
-      <button class="save-btn" id="save-review-btn">
-        <i class="fas fa-save"></i> Save Changes
-      </button>
+      <div style="display: flex; flex-direction: column; align-items: center; gap: 14px; margin-top: 24px; width: 100%;">
+        <button class="save-btn" id="save-review-btn">
+          <i class="fas fa-save"></i> Save Changes
+        </button>
+        <button class="preview-btn" id="preview-btn">
+          <i class="fas fa-eye"></i> Preview Question Paper
+        </button>
+      </div>
     </div>
-   </main>
+  </main>
 </div>
 <script>
 function getExamPaper() {
@@ -127,6 +119,7 @@ function renderExam() {
   if (!paper) {
     area.innerHTML = `<div style="color:#b00;padding:16px;font-size:1.11em;">No exam paper found!<br>Please go back and generate one first.</div>`;
     document.getElementById("save-review-btn").disabled = true;
+    document.getElementById("preview-btn").disabled = true;
     return;
   }
 
@@ -144,9 +137,8 @@ function renderExam() {
     }
 
     (section.questions || []).forEach((q, qIdx) => {
-      let formattedText = q.text.replace(/\n/g, '<br>');
-    html += `<div class="question-row" data-section="<span class="math-inline">\{sIdx\}" data\-question\="</span>{qIdx}">
-    <span class="question-number"><span class="math-inline">\{q\.number ? q\.number \: \(qIdx\+1\)\}\.</span\>
+      html += `<div class="question-row" data-section="${sIdx}" data-question="${qIdx}">
+        <span class="question-number">${q.number ? q.number : (qIdx+1)}.</span>
         <span class="question-text" contenteditable="true" spellcheck="true">${q.text}</span>
         <span class="marks-box" contenteditable="true">${q.marks || ''}</span>
         <span class="marks-label">Marks</span>
@@ -155,28 +147,34 @@ function renderExam() {
   });
   area.innerHTML = html;
   MathJax.typesetPromise();
-  // Handle inline editing indicators
+
+  // Handle inline editing indicators (prevent repeated "Edited")
   area.querySelectorAll('[contenteditable]').forEach(el => {
     el.addEventListener('input', function() {
       this.classList.add('edited');
-      if (!this.nextSibling || !this.nextSibling.classList || !this.nextSibling.classList.contains('edit-indicator')) {
-        const ind = document.createElement('span');
-        ind.className = 'edit-indicator';
-        ind.textContent = 'Edited';
-        this.parentNode.appendChild(ind);
-      }
+      // Remove existing edit-indicator
+      const parent = this.parentNode;
+      const existing = parent.querySelector('.edit-indicator');
+      if (existing) existing.remove();
+      // Add new one
+      const ind = document.createElement('span');
+      ind.className = 'edit-indicator';
+      ind.textContent = 'Edited';
+      parent.appendChild(ind);
     });
     el.addEventListener('blur', function() {
       this.classList.remove('edited');
       if (this.parentNode && this.parentNode.querySelector('.edit-indicator')) {
         setTimeout(() => {
-          this.parentNode.querySelector('.edit-indicator').remove();
+          if (this.parentNode) {
+            const indicator = this.parentNode.querySelector('.edit-indicator');
+            if (indicator) indicator.remove();
+          }
         }, 600);
       }
     });
   });
 }
-
 
 function saveEdits() {
   const paper = getExamPaper();
@@ -203,9 +201,8 @@ function saveEdits() {
 
 document.getElementById('save-review-btn').onclick = saveEdits;
 window.onload = renderExam;
-  document.getElementById('preview-btn').onclick = function() {
+document.getElementById('preview-btn').onclick = function() {
   saveEdits(); // Save any pending edits first
-
   // Transfer to 'finalExamData' so preview page can use it
   const paper = getExamPaper();
   if (paper) {
