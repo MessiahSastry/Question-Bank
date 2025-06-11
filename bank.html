@@ -358,138 +358,162 @@
         }
 
         // WORD EXPORT WITH MATH AS IMAGE
-        async function exportWord(e) {
-            e.preventDefault();
-            const wordBtn = document.getElementById('download-word-btn');
-            wordBtn.disabled = true;
-            wordBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Generating Word...';
+        
+// WORD EXPORT WITH MATH AS IMAGE
+async function exportWord(e) {
+    e.preventDefault();
+    const wordBtn = document.getElementById('download-word-btn');
+    wordBtn.disabled = true;
+    wordBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Generating Word...';
 
-            const { Document, Packer, Paragraph, TextRun, AlignmentType, ImageRun } = window.docx;
+    const { Document, Packer, Paragraph, TextRun, AlignmentType, ImageRun } = window.docx;
 
-            // Header info
-            const classVal = document.getElementById('class-value').value || '';
-            const subjectVal = document.getElementById('subject-value').value || '';
-            const chapterVal = document.getElementById('chapter-value').value || '';
+    // Header info
+    const classVal = document.getElementById('class-value').value || '';
+    const subjectVal = document.getElementById('subject-value').value || '';
+    const chapterVal = document.getElementById('chapter-value').value || '';
 
-            let docChildren = [];
+    let docChildren = [];
 
-            // Header
-            docChildren.push(new Paragraph({
-                children: [new TextRun({ text: "St. Patrick's School", bold: true, size: 32 })],
-                alignment: AlignmentType.CENTER
-            }));
-            docChildren.push(new Paragraph({
-                children: [new TextRun({ text: "IIT & NEET FOUNDATION", bold: true, size: 26 })],
-                alignment: AlignmentType.CENTER
-            }));
-            docChildren.push(new Paragraph({
-                children: [new TextRun({ text: `Class: ${classVal}`, bold: true, size: 24 })],
-                alignment: AlignmentType.LEFT
-            }));
-            docChildren.push(new Paragraph({
-                children: [
-                    new TextRun({ text: `Subject: ${subjectVal}`, bold: true, size: 22 }),
-                    new TextRun({ text: "   " }),
-                    new TextRun({ text: `Topic: ${chapterVal}`, bold: true, size: 22 })
-                ],
-                alignment: AlignmentType.LEFT
-            }));
+    // Header
+    docChildren.push(new Paragraph({
+        children: [new TextRun({ text: "St. Patrick's School", bold: true, size: 32 })],
+        alignment: AlignmentType.CENTER
+    }));
+    docChildren.push(new Paragraph({
+        children: [new TextRun({ text: "IIT & NEET FOUNDATION", bold: true, size: 26 })],
+        alignment: AlignmentType.CENTER
+    }));
+    docChildren.push(new Paragraph({
+        children: [new TextRun({ text: `Class: ${classVal}`, bold: true, size: 24 })],
+        alignment: AlignmentType.LEFT
+    }));
+    docChildren.push(new Paragraph({
+        children: [
+            new TextRun({ text: `Subject: ${subjectVal}`, bold: true, size: 22 }),
+            new TextRun({ text: "   " }),
+            new TextRun({ text: `Topic: ${chapterVal}`, bold: true, size: 22 })
+        ],
+        alignment: AlignmentType.LEFT
+    }));
 
-            // Questions
-            const displayArea = document.getElementById('questions-display-area');
-            const nodes = displayArea.querySelectorAll('.question-item');
-            if (!nodes.length) {
-                alert("No questions to export!");
-                wordBtn.innerHTML = '<i class="fa-solid fa-file-word"></i> Download as Word';
-                wordBtn.disabled = false;
-                return;
-            }
+    // Questions
+    const displayArea = document.getElementById('questions-display-area');
+    const nodes = displayArea.querySelectorAll('.question-item');
+    if (!nodes.length) {
+        alert("No questions to export!");
+        wordBtn.innerHTML = '<i class="fa-solid fa-file-word"></i> Download as Word';
+        wordBtn.disabled = false;
+        return;
+    }
 
-            // For each question
-            for (let i = 0; i < nodes.length; i++) {
-                const item = nodes[i];
-                // Clone to avoid removing anything from original
-                const tempDiv = item.cloneNode(true);
-                // Remove buttons
-                tempDiv.querySelectorAll('.question-img-btn, .delete-img-btn, .question-image-input').forEach(btn => btn.remove());
+    for (let i = 0; i < nodes.length; i++) {
+        const item = nodes[i];
+        const tempDiv = item.cloneNode(true);
+        tempDiv.querySelectorAll('.question-img-btn, .delete-img-btn, .question-image-input').forEach(btn => btn.remove());
 
-                // Replace all math (SVG/MathJax) with images in DOM for export
-                const mathSvgs = tempDiv.querySelectorAll('svg');
-                let replacePromises = [];
-                mathSvgs.forEach((svg, idx) => {
-                    // Replace SVG with image using dom-to-image-more
-                    const promise = window.domtoimage.toPng(svg, { bgcolor: "#fff", width: svg.clientWidth * 2, height: svg.clientHeight * 2 })
-                      .then(dataUrl => {
-                        const img = document.createElement('img');
-                        img.src = dataUrl;
-                        img.style.verticalAlign = "middle";
-                        img.style.maxHeight = "30px";
-                        svg.parentNode.replaceChild(img, svg);
-                      })
-                      .catch(e => {
-                        console.error("Failed to convert MathJax SVG to PNG for Word export", e, svg);
-                        // Optionally: Insert a placeholder image or just leave the SVG
-                      });
-                    replacePromises.push(promise);
-                                    });
-                // Wait for math images to be ready
-                await Promise.all(replacePromises);
-                    if (replacePromises.some(p => p instanceof Promise && p.status === "rejected")) {
-                      alert("Some math equations could not be exported as images in the Word file.");
-                    }
-
-
-                // Now gather question meta/text/image for docx
-                const meta = tempDiv.querySelector('.question-meta')?.innerText || '';
-                const textNode = tempDiv.querySelector('.question-text');
-                let childRuns = [];
-                if (meta) {
-                    childRuns.push(new TextRun({ text: meta, bold: true, break: 1, size: 24 }));
-                }
-                // For all children: could be text, images, math images
-                textNode && textNode.childNodes.forEach(child => {
-                    if (child.nodeType === Node.TEXT_NODE) {
-                        childRuns.push(new TextRun({ text: child.textContent, size: 22 }));
-                    } else if (child.tagName === "IMG") {
-                        // Insert image (including math images)
-                        childRuns.push(new TextRun({ text: " " }));
-                        childRuns.push(new ImageRun({
-                            data: dataURLtoArrayBuffer(child.src),
-                            transformation: { width: 80, height: 30 }
-                        }));
-                        childRuns.push(new TextRun({ text: " " }));
-                    } else if (child.nodeType === Node.ELEMENT_NODE) {
-                        childRuns.push(new TextRun({ text: child.innerText || '', size: 22 }));
-                    }
+        // Replace all math (SVG/MathJax) with images in DOM for export
+        const mathSvgs = tempDiv.querySelectorAll('svg');
+        let replacePromises = [];
+        mathSvgs.forEach((svg, idx) => {
+            const promise = window.domtoimage.toPng(svg, { bgcolor: "#fff", width: svg.clientWidth * 2, height: svg.clientHeight * 2 })
+                .then(dataUrl => {
+                    const img = document.createElement('img');
+                    img.src = dataUrl;
+                    img.style.verticalAlign = "middle";
+                    img.style.maxHeight = "30px";
+                    svg.parentNode.replaceChild(img, svg);
+                })
+                .catch(e => {
+                    console.error("Failed to convert MathJax SVG to PNG for Word export", e, svg);
                 });
+            replacePromises.push(promise);
+        });
+        await Promise.all(replacePromises);
 
-                docChildren.push(new Paragraph({
-                    children: childRuns,
-                    spacing: { after: 120 }
-                }));
-            }
+        // Gather question text, options and images for docx
+        const qNum = i + 1;
+        let childRuns = [];
 
-            // Create and export docx
-            const doc = new Document({
-                sections: [
-                    {
-                        properties: {},
-                        children: docChildren
+        // Get question main text (first node)
+        const questionText = (tempDiv.querySelector('.question-text')?.childNodes[0]?.textContent || '').trim();
+        if (questionText) {
+            childRuns.push(new TextRun({
+                text: `Q${qNum}: ${questionText}`,
+                bold: false,
+                break: 1,
+                size: 24
+            }));
+        }
+
+        // Now append the rest (options, images, extra lines)
+        const textNode = tempDiv.querySelector('.question-text');
+        if (textNode) {
+            let optLine = '';
+            let optionCount = 0;
+            textNode.childNodes.forEach(child => {
+                // For MCQs with options (assuming options are after main question text)
+                if (child.nodeType === Node.TEXT_NODE && child.textContent.trim() && child !== textNode.childNodes[0]) {
+                    // Try to split by option pattern A) or B)
+                    const parts = child.textContent.split(/([A-D]\))/).filter(s => s.trim() !== "");
+                    if (parts.length > 1) {
+                        for (let j = 1; j < parts.length; j += 2) {
+                            optLine += parts[j] + parts[j + 1];
+                            optionCount++;
+                            if (optionCount % 2 === 0) {
+                                childRuns.push(new TextRun({ text: optLine.trim(), break: 1, size: 22 }));
+                                optLine = '';
+                            } else {
+                                optLine = optLine.padEnd(20, ' ');
+                            }
+                        }
+                        if (optLine.trim() !== '') {
+                            childRuns.push(new TextRun({ text: optLine.trim(), break: 1, size: 22 }));
+                        }
+                    } else {
+                        // Descriptive line, print as normal
+                        childRuns.push(new TextRun({ text: child.textContent.trim(), break: 1, size: 22 }));
                     }
-                ]
-            });
-
-            window.docx.Packer.toBlob(doc).then(blob => {
-                const fileName = `Question_Bank_${classVal || ''}_${subjectVal || ''}_${chapterVal || ''}.docx`.replace(/ /g,"_");
-                saveAs(blob, fileName);
-                wordBtn.innerHTML = '<i class="fa-solid fa-file-word"></i> Download as Word';
-                wordBtn.disabled = false;
-            }).catch(err => {
-                alert("Failed to export Word: " + err);
-                wordBtn.innerHTML = '<i class="fa-solid fa-file-word"></i> Download as Word';
-                wordBtn.disabled = false;
+                } else if (child.tagName === "IMG") {
+                    childRuns.push(new TextRun({ text: " " }));
+                    childRuns.push(new ImageRun({
+                        data: dataURLtoArrayBuffer(child.src),
+                        transformation: { width: 80, height: 30 }
+                    }));
+                    childRuns.push(new TextRun({ text: " " }));
+                }
             });
         }
+
+        docChildren.push(new Paragraph({
+            children: childRuns,
+            spacing: { after: 120 }
+        }));
+    }
+
+    // Create and export docx
+    const doc = new Document({
+        sections: [
+            {
+                properties: {},
+                children: docChildren
+            }
+        ]
+    });
+
+    window.docx.Packer.toBlob(doc).then(blob => {
+        const fileName = `Question_Bank_${classVal || ''}_${subjectVal || ''}_${chapterVal || ''}.docx`.replace(/ /g, "_");
+        saveAs(blob, fileName);
+        wordBtn.innerHTML = '<i class="fa-solid fa-file-word"></i> Download as Word';
+        wordBtn.disabled = false;
+    }).catch(err => {
+        alert("Failed to export Word: " + err);
+        wordBtn.innerHTML = '<i class="fa-solid fa-file-word"></i> Download as Word';
+        wordBtn.disabled = false;
+    });
+}
+}
+
 
         function dataURLtoArrayBuffer(dataURL) {
             const base64 = dataURL.split(',')[1];
