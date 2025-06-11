@@ -6,9 +6,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
     <script>
-        window.MathJax = { tex: { inlineMath: [["$", "$"], ["\\(", "\\)"]] }, svg: { fontCache: "global" } };
+      window.MathJax = { tex: { inlineMath: [["$", "$"], ["\\(", "\\)"]] } };
     </script>
-    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
+
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/dom-to-image/2.6.0/dom-to-image.min.js"></script>
@@ -355,174 +356,137 @@
             });
         }
 
-        // WORD EXPORT WITH MATH AS IMAGE
-// WORD EXPORT WITH MATH AS IMAGE
-        async function exportWord(e) {
-            e.preventDefault();
-            const wordBtn = document.getElementById('download-word-btn');
-            wordBtn.disabled = true;
-            wordBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Generating Word...';
+       
+        async function exportWord() {
+    const { Document, Packer, Paragraph, TextRun } = window.docx;
+    const area = document.getElementById('questions-display-area');
+    const questions = area.querySelectorAll('.question-item');
+    const docChildren = [];
 
-            const { Document, Packer, Paragraph, TextRun, AlignmentType, ImageRun } = window.docx;
+    // Helper to decode HTML entities (&nbsp;) and strip HTML tags
+    function decodeAndClean(html) {
+        html = html.replace(/<br\s*\/?>/gi, '\n');
+        html = html.replace(/<\/?[^>]+(>|$)/g, '');
+        const txt = document.createElement('textarea');
+        txt.innerHTML = html;
+        return txt.value.replace(/\u00a0/g, ' ');
+    }
 
-            const classVal = document.getElementById('class-value').value || '';
-            const subjectVal = document.getElementById('subject-value').value || '';
-            const chapterVal = document.getElementById('chapter-value').value || '';
+    let qNo = 1;
+    for (const q of questions) {
+        let qText = decodeAndClean(q.querySelector('.question-text').innerHTML);
+        let lines = qText.split('\n').map(l => l.trim()).filter(Boolean);
 
-            let docChildren = [];
+        // Determine question type (simple check: if options like A), B), a), b) exist, treat as MCQ)
+        let isMCQ = false;
+        for (let i = 1; i < lines.length; i++) {
+            if (/^[A-Da-d]\)/.test(lines[i]) || /^[A-Da-d][\.\-]/.test(lines[i])) {
+                isMCQ = true;
+                break;
+            }
+            if (/^(A|a)[\)\.\-]/.test(lines[i].trim())) {
+                isMCQ = true;
+                break;
+            }
+        }
+        if (!isMCQ && lines.length > 1 && /(A\).+B\).+C\).+D\))/.test(lines[1])) isMCQ = true;
 
-            docChildren.push(new Paragraph({
-                children: [new TextRun({
-                    text: "St. Patrick's School",
-                    bold: true,
-                    size: 32
-                })],
-                alignment: AlignmentType.CENTER
-            }));
-            docChildren.push(new Paragraph({
-                children: [new TextRun({
-                    text: "IIT & NEET FOUNDATION",
-                    bold: true,
-                    size: 26
-                })],
-                alignment: AlignmentType.CENTER
-            }));
-            docChildren.push(new Paragraph({
-                children: [new TextRun({
-                    text: `Class: ${classVal}`,
-                    bold: true,
-                    size: 24
-                })],
-                alignment: AlignmentType.LEFT
-            }));
+        // Word hanging indent: 700 twips (0.5 inch)
+        const hangingTwips = 700;
+
+        if (isMCQ) {
+            let questionLine = lines[0];
+            let optionsText = lines.slice(1).join(' ');
+            let options = [];
+
+            if (optionsText) {
+                let found = optionsText.match(/([A-Da-d]\)[^A-Da-d]*)/g);
+                if (found && found.length === 4) {
+                    options = found.map(o => o.trim());
+                } else {
+                    options = lines.slice(1).filter(x => x).map(x => x.trim());
+                }
+            } else {
+                options = lines.slice(1).filter(x => x).map(x => x.trim());
+            }
+
+            // Format MCQs: one line, two per line, or one per line
             docChildren.push(new Paragraph({
                 children: [
-                    new TextRun({
-                        text: `Subject: ${subjectVal}`,
-                        bold: true,
-                        size: 22
-                    }),
-                    new TextRun({
-                        text: "    "
-                    }),
-                    new TextRun({
-                        text: `Topic: ${chapterVal}`,
-                        bold: true,
-                        size: 22
-                    })
+                    new TextRun({ text: qNo + '. ', bold: true, size: 26 }),
+                    new TextRun({ text: questionLine, size: 26 }),
                 ],
-                alignment: AlignmentType.LEFT
+                indent: { hanging: hangingTwips, left: 0 },
+                spacing: { after: 80 }
             }));
 
-            const displayArea = document.getElementById('questions-display-area');
-            const nodes = displayArea.querySelectorAll('.question-item');
-            if (!nodes.length) {
-                alert("No questions to export!");
-                wordBtn.innerHTML = '<i class="fa-solid fa-file-word"></i> Download as Word';
-                wordBtn.disabled = false;
-                return;
-            }
-
-            for (let i = 0; i < nodes.length; i++) {
-                const item = nodes[i];
-                const tempDiv = item.cloneNode(true);
-                tempDiv.querySelectorAll('.question-img-btn, .delete-img-btn, .question-image-input').forEach(btn => btn.remove());
-
-                const mathSvgs = tempDiv.querySelectorAll('svg');
-                let replacePromises = [];
-                mathSvgs.forEach((svg, idx) => {
-                    const promise = window.domtoimage.toPng(svg, {
-                        bgcolor: "#fff",
-                        width: svg.clientWidth * 2,
-                        height: svg.clientHeight * 2
-                    })
-                    .then(dataUrl => {
-                        const img = document.createElement('img');
-                        img.src = dataUrl;
-                        img.style.verticalAlign = "middle";
-                        img.style.maxHeight = "30px";
-                        svg.parentNode.replaceChild(img, svg);
-                    })
-                    .catch(e => {
-                        console.error("Failed to convert MathJax SVG to PNG for Word export", e, svg);
-                    });
-                    replacePromises.push(promise);
+            if (options.length === 4 && options.every(opt => opt.length <= 24)) {
+                let runs = [];
+                options.forEach((opt, idx) => {
+                    runs.push(new TextRun({ text: opt, size: 26 }));
+                    if (idx < options.length - 1) runs.push(new TextRun({ text: "     ", size: 26 }));
                 });
-                await Promise.all(replacePromises);
-
-                const qNum = i + 1;
-                let childRuns = [];
-
-                const questionTextDiv = tempDiv.querySelector('.question-text');
-                if (questionTextDiv) {
-                    let isFirstLine = true;
-                    questionTextDiv.childNodes.forEach(child => {
-                        if (isFirstLine && child.nodeType === Node.TEXT_NODE) {
-                            childRuns.push(new TextRun({
-                                text: `Q${qNum}: ${child.textContent.trim()}`,
-                                size: 24
-                            }));
-                            isFirstLine = false;
-                        } else if (child.nodeType === Node.TEXT_NODE) {
-                            const text = child.textContent.trim();
-                            if (text) {
-                                childRuns.push(new TextRun({
-                                    text: text,
-                                    break: 1,
-                                    size: 22
-                                }));
-                            }
-                        } else if (child.nodeName === "BR") {
-                            childRuns.push(new TextRun({
-                                break: 1
-                            }));
-                        } else if (child.tagName === "IMG") {
-                            childRuns.push(new ImageRun({
-                                data: dataURLtoArrayBuffer(child.src),
-                                transformation: {
-                                    width: 80,
-                                    height: 30
-                                }
-                            }));
-                        } else if (child.nodeType === Node.ELEMENT_NODE) {
-                            const txt = child.innerText || '';
-                            if (txt.trim()) {
-                                childRuns.push(new TextRun({
-                                    text: txt.trim(),
-                                    break: 1,
-                                    size: 22
-                                }));
-                            }
-                        }
-                    });
-
+                docChildren.push(new Paragraph({
+                    children: runs,
+                    indent: { left: hangingTwips },
+                    spacing: { after: 120 }
+                }));
+            } else if (options.length === 4 && options.every(opt => opt.length <= 40)) {
+                docChildren.push(new Paragraph({
+                    children: [
+                        new TextRun({ text: options[0], size: 26 }),
+                        new TextRun({ text: "           ", size: 26 }),
+                        new TextRun({ text: options[1], size: 26 }),
+                    ],
+                    indent: { left: hangingTwips },
+                }));
+                docChildren.push(new Paragraph({
+                    children: [
+                        new TextRun({ text: options[2], size: 26 }),
+                        new TextRun({ text: "           ", size: 26 }),
+                        new TextRun({ text: options[3], size: 26 }),
+                    ],
+                    indent: { left: hangingTwips },
+                    spacing: { after: 120 }
+                }));
+            } else {
+                options.forEach(opt => {
                     docChildren.push(new Paragraph({
-                        children: childRuns,
-                        spacing: {
-                            after: 120
-                        }
+                        children: [new TextRun({ text: opt, size: 26 })],
+                        indent: { left: hangingTwips },
                     }));
-                }
+                });
+                docChildren.push(new Paragraph({
+                    children: [new TextRun({ text: "", size: 26 })],
+                    spacing: { after: 120 }
+                }));
             }
-
-            const doc = new Document({
-                sections: [{
-                    properties: {},
-                    children: docChildren
-                }]
-            });
-
-            window.docx.Packer.toBlob(doc).then(blob => {
-                const fileName = `Question_Bank_${classVal || ''}_${subjectVal || ''}_${chapterVal || ''}.docx`.replace(/ /g, "_");
-                saveAs(blob, fileName);
-                wordBtn.innerHTML = '<i class="fa-solid fa-file-word"></i> Download as Word';
-                wordBtn.disabled = false;
-            }).catch(err => {
-                alert("Failed to export Word: " + err);
-                wordBtn.innerHTML = '<i class="fa-solid fa-file-word"></i> Download as Word';
-                wordBtn.disabled = false;
-            });
+        } else {
+            docChildren.push(new Paragraph({
+                children: [
+                    new TextRun({ text: qNo + '. ', bold: true, size: 26 }),
+                    new TextRun({ text: lines.join(' '), size: 26 }),
+                ],
+                indent: { hanging: hangingTwips, left: 0 },
+                spacing: { after: 140 }
+            }));
         }
+        qNo++;
+    }
+
+    const doc = new Document({ sections: [{ properties: {}, children: docChildren }] });
+    window.docx.Packer.toBlob(doc).then(blob => {
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = "QuestionPaper.docx";
+        document.body.appendChild(link);
+        link.click();
+        setTimeout(() => {
+            document.body.removeChild(link);
+            window.URL.revokeObjectURL(link.href);
+        }, 50);
+    });
+}
         function dataURLtoArrayBuffer(dataURL) {
             const base64 = dataURL.split(',')[1];
             const binaryString = atob(base64);
