@@ -237,6 +237,30 @@
             messagingSenderId: "917615322861",
             appId: "1:917615322861:web:c6c890aa2184dd395b8ee4"
         };
+        function parseTextWithLatex(text) {
+    // Regular expression to find content between dollar signs
+    const regex = /\$(.*?)\$/g;
+    const parts = [];
+    let lastIndex = 0;
+    let match;
+
+    while ((match = regex.exec(text)) !== null) {
+        // Add the plain text part before the math
+        if (match.index > lastIndex) {
+            parts.push({ type: 'text', value: text.substring(lastIndex, match.index) });
+        }
+        // Add the LaTeX part (without the dollar signs)
+        parts.push({ type: 'latex', value: match[1] });
+        lastIndex = regex.lastIndex;
+    }
+
+    // Add any remaining plain text after the last piece of math
+    if (lastIndex < text.length) {
+        parts.push({ type: 'text', value: text.substring(lastIndex) });
+    }
+
+    return parts;
+}
         firebase.initializeApp(firebaseConfig);
         const auth = firebase.auth();
         const db = firebase.firestore();
@@ -282,7 +306,7 @@
             downloadBtn.addEventListener('click', generatePDF);
         }
     
-    async function generatePDF() {
+   async function generatePDF() {
     // We are using the jsPDF library directly.
     const { jsPDF } = window.jspdf;
 
@@ -307,11 +331,11 @@
         const leftMargin = 15;
         const rightMargin = 15;
         const topMargin = 20;
-        const bottomMargin = 20; // Used for page break logic
+        const bottomMargin = 20;
         const pageWidth = doc.internal.pageSize.getWidth();
         const pageHeight = doc.internal.pageSize.getHeight();
         const contentWidth = pageWidth - leftMargin - rightMargin;
-        let y = topMargin; // This variable tracks our vertical position
+        let y = topMargin;
 
         // 4. Draw the Header
         doc.setFont('times', 'bold');
@@ -333,37 +357,55 @@
         doc.text(`Chapter: ${chapterVal}`, pageWidth - rightMargin, y, { align: 'right' });
         y += 15;
 
-        // 5. NEW: Add Questions to the PDF
+        // 5. NEW: Add Questions to the PDF using the parser
         doc.setFont('times', 'normal');
         doc.setFontSize(12);
-        const lineHeight = 7; // Set line height for size 12 font in mm
+        const lineHeight = 7; // Line height in mm for size 12 font
 
         if (currentlyDisplayedQuestions.length === 0) {
             doc.text("No questions found for the selected criteria.", leftMargin, y);
         }
 
         currentlyDisplayedQuestions.forEach((question, index) => {
-            // Get the raw question text (ignoring options and images for now)
             const questionBody = question.body || question.text || '';
-            const fullQuestionText = `Q${index + 1}: ${questionBody}`;
-
-            // Split the text into lines that fit the page width
-            const textLines = doc.splitTextToSize(fullQuestionText, contentWidth);
-
-            // Calculate the height of the upcoming text block
-            const textBlockHeight = textLines.length * lineHeight;
-
-            // Check if the text block fits on the current page. If not, add a new page.
-            if (y + textBlockHeight > pageHeight - bottomMargin) {
+            
+            // Check if there's enough space for a new question. If not, add a page.
+            if (y + lineHeight * 2 > pageHeight - bottomMargin) {
                 doc.addPage();
-                y = topMargin; // Reset y to the top margin on the new page
+                y = topMargin;
             }
             
-            // Draw the question text
-            doc.text(textLines, leftMargin, y);
+            // Draw the Question number in bold
+            doc.setFont('times', 'bold');
+            doc.text(`Q${index + 1}:`, leftMargin, y);
+            y += lineHeight;
+            doc.setFont('times', 'normal');
 
-            // Move the y position down for the next element
-            y += textBlockHeight + (lineHeight / 2); // Add a small gap after the question text
+            // Parse the question body into text and math parts
+            const parts = parseTextWithLatex(questionBody);
+            
+            // Process each part
+            parts.forEach(part => {
+                // If it's a text part, use its value. If it's latex, use a placeholder for now.
+                const textToDraw = part.type === 'text' ? part.value.trim() : '[MATHS]';
+                
+                if (textToDraw) { // Don't process empty strings
+                    // Handle wrapping for this specific part
+                    const textLines = doc.splitTextToSize(textToDraw, contentWidth - 5); // Indent the text
+                    
+                    // Check for page break before drawing this part
+                    if (y + (textLines.length * lineHeight) > pageHeight - bottomMargin) {
+                        doc.addPage();
+                        y = topMargin;
+                    }
+
+                    // Draw the part, indented
+                    doc.text(textLines, leftMargin + 5, y); 
+                    y += textLines.length * lineHeight; // Move y down by the height of the text block
+                }
+            });
+            
+            y += lineHeight; // Add a gap after each full question
         });
 
         // 6. Save the PDF
@@ -375,12 +417,13 @@
         alert("An error occurred while generating the PDF.");
     } finally {
         // 7. Re-enable the download button
+        // ... (this part remains the same)
         downloadBtn.innerHTML = '<i class="fas fa-check"></i> Completed!';
         downloadBtn.style.backgroundColor = '#28a745';
         setTimeout(() => {
             downloadBtn.innerHTML = '<i class="fa-solid fa-file-pdf"></i> Download as PDF';
             downloadBtn.style.backgroundColor = '';
-            downloadBtn.style.opacity = '1'; // <-- Add this line
+            downloadBtn.style.opacity = '1';
             downloadBtn.disabled = false;
         }, 2500);
     }
