@@ -238,23 +238,26 @@
             appId: "1:917615322861:web:c6c890aa2184dd395b8ee4"
         };
         function parseTextWithLatex(text) {
-    // Regular expression to find content between dollar signs
-    const regex = /\$(.*?)\$/g;
+    // This regular expression now finds content between $...$ OR \(...\)
+    const regex = /\$(.*?)\$|\\\((.*?)\\\)/g;
     const parts = [];
     let lastIndex = 0;
     let match;
 
     while ((match = regex.exec(text)) !== null) {
-        // Add the plain text part before the math
+        // Add the plain text part that came before the math
         if (match.index > lastIndex) {
             parts.push({ type: 'text', value: text.substring(lastIndex, match.index) });
         }
-        // Add the LaTeX part (without the dollar signs)
-        parts.push({ type: 'latex', value: match[1] });
+        
+        // Add the LaTeX part, checking which delimiter was used
+        // match[1] is for $...$, match[2] is for \(...\)
+        const latexContent = match[1] || match[2];
+        parts.push({ type: 'latex', value: latexContent });
         lastIndex = regex.lastIndex;
     }
 
-    // Add any remaining plain text after the last piece of math
+    // Add the final piece of plain text after the last math equation
     if (lastIndex < text.length) {
         parts.push({ type: 'text', value: text.substring(lastIndex) });
     }
@@ -306,38 +309,23 @@
             downloadBtn.addEventListener('click', generatePDF);
         }
     
-   async function generatePDF() {
-    // We are using the jsPDF library directly.
+  async function generatePDF() {
     const { jsPDF } = window.jspdf;
+    const { html2canvas } = window; // We also need html2canvas directly
 
     const downloadBtn = document.getElementById('download-pdf-btn');
     downloadBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Generating PDF...';
     downloadBtn.disabled = true;
 
     try {
-        // 1. Initialize a new PDF document
-        const doc = new jsPDF({
-            orientation: 'portrait',
-            unit: 'mm',
-            format: 'a4'
-        });
-
-        // 2. Get the selected filter values
-        const classVal = document.getElementById('class-value').value || 'N/A';
-        const subjectVal = document.getElementById('subject-value').value || 'N/A';
-        const chapterVal = document.getElementById('chapter-value').value || 'N/A';
-
-        // 3. Define page margins and other settings
-        const leftMargin = 15;
-        const rightMargin = 15;
-        const topMargin = 20;
-        const bottomMargin = 20;
+        const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+        const leftMargin = 15, rightMargin = 15, topMargin = 20, bottomMargin = 20;
         const pageWidth = doc.internal.pageSize.getWidth();
         const pageHeight = doc.internal.pageSize.getHeight();
         const contentWidth = pageWidth - leftMargin - rightMargin;
         let y = topMargin;
 
-        // 4. Draw the Header
+        // Draw Header (code is unchanged)
         doc.setFont('times', 'bold');
         doc.setFontSize(16);
         doc.text("St. Patrick's School", pageWidth / 2, y, { align: 'center' });
@@ -349,6 +337,9 @@
         doc.setLineWidth(0.5);
         doc.line(leftMargin, y, pageWidth - rightMargin, y);
         y += 10;
+        const classVal = document.getElementById('class-value').value || 'N/A';
+        const subjectVal = document.getElementById('subject-value').value || 'N/A';
+        const chapterVal = document.getElementById('chapter-value').value || 'N/A';
         doc.setFont('times', 'normal');
         doc.setFontSize(12);
         doc.text(`Class: ${classVal}`, leftMargin, y);
@@ -357,75 +348,81 @@
         doc.text(`Chapter: ${chapterVal}`, pageWidth - rightMargin, y, { align: 'right' });
         y += 15;
 
-        // 5. NEW: Add Questions to the PDF using the parser
+        // FINAL: Add Questions with Rendered Math
         doc.setFont('times', 'normal');
         doc.setFontSize(12);
-        const lineHeight = 7; // Line height in mm for size 12 font
+        const lineHeight = 7;
 
         if (currentlyDisplayedQuestions.length === 0) {
             doc.text("No questions found for the selected criteria.", leftMargin, y);
         }
 
-        currentlyDisplayedQuestions.forEach((question, index) => {
+        // Use a for...of loop to handle async rendering
+        for (const [index, question] of currentlyDisplayedQuestions.entries()) {
             const questionBody = question.body || question.text || '';
             
-            // Check if there's enough space for a new question. If not, add a page.
-            if (y + lineHeight * 2 > pageHeight - bottomMargin) {
-                doc.addPage();
-                y = topMargin;
-            }
+            if (y + lineHeight * 2 > pageHeight - bottomMargin) { doc.addPage(); y = topMargin; }
             
-            // Draw the Question number in bold
             doc.setFont('times', 'bold');
             doc.text(`Q${index + 1}:`, leftMargin, y);
             y += lineHeight;
             doc.setFont('times', 'normal');
 
-            // Parse the question body into text and math parts
             const parts = parseTextWithLatex(questionBody);
             
-            // Process each part
-            parts.forEach(part => {
-                // If it's a text part, use its value. If it's latex, use a placeholder for now.
-                const textToDraw = part.type === 'text' ? part.value.trim() : '[MATHS]';
-                
-                if (textToDraw) { // Don't process empty strings
-                    // Handle wrapping for this specific part
-                    const textLines = doc.splitTextToSize(textToDraw, contentWidth - 5); // Indent the text
-                    
-                    // Check for page break before drawing this part
-                    if (y + (textLines.length * lineHeight) > pageHeight - bottomMargin) {
-                        doc.addPage();
-                        y = topMargin;
+            for (const part of parts) {
+                if (part.type === 'text' && part.value.trim()) {
+                    const textLines = doc.splitTextToSize(part.value.trim(), contentWidth - 5);
+                    if (y + (textLines.length * lineHeight) > pageHeight - bottomMargin) { doc.addPage(); y = topMargin; }
+                    doc.text(textLines, leftMargin + 5, y);
+                    y += textLines.length * lineHeight;
+                } else if (part.type === 'latex') {
+                    // This is the logic to render math
+                    const tempMathDiv = document.createElement('div');
+                    tempMathDiv.style.cssText = 'position:absolute; left:-10000px; font-size:16px;';
+                    tempMathDiv.innerHTML = `\\(${part.value}\\)`;
+                    document.body.appendChild(tempMathDiv);
+
+                    try {
+                        await MathJax.typesetPromise([tempMathDiv]);
+                        const mjxContainer = tempMathDiv.querySelector('mjx-container');
+                        if (mjxContainer) {
+                            const canvas = await html2canvas(mjxContainer, { backgroundColor: null, scale: 3 });
+                            const imgData = canvas.toDataURL('image/png');
+                            const imgWidth = canvas.width / 11.3; // Conversion factor for scale 3 to mm
+                            const imgHeight = canvas.height / 11.3;
+                            
+                            if (y + imgHeight > pageHeight - bottomMargin) { doc.addPage(); y = topMargin; }
+                            doc.addImage(imgData, 'PNG', leftMargin + 5, y, imgWidth, imgHeight);
+                            y += imgHeight + 2;
+                        }
+                    } catch (e) {
+                        console.error("Could not render LaTeX part:", part.value, e);
+                        doc.text(`[ERROR: ${part.value}]`, leftMargin + 5, y); // Fallback
+                        y += lineHeight;
+                    } finally {
+                        document.body.removeChild(tempMathDiv); // IMPORTANT: Clean up the temp div
                     }
-
-                    // Draw the part, indented
-                    doc.text(textLines, leftMargin + 5, y); 
-                    y += textLines.length * lineHeight; // Move y down by the height of the text block
                 }
-            });
-            
-            y += lineHeight; // Add a gap after each full question
-        });
+            }
+            y += lineHeight;
+        }
 
-        // 6. Save the PDF
+        // Save the PDF
         const filename = `StPatricks_${classVal}_${subjectVal}_Questions.pdf`.replace(/ /g, '_');
         doc.save(filename);
 
     } catch (error) {
         console.error("Error generating text-based PDF:", error);
         alert("An error occurred while generating the PDF.");
-    } finally {
-        // 7. Re-enable the download button
-        // ... (this part remains the same)
-        downloadBtn.innerHTML = '<i class="fas fa-check"></i> Completed!';
-        downloadBtn.style.backgroundColor = '#28a745';
-        setTimeout(() => {
-            downloadBtn.innerHTML = '<i class="fa-solid fa-file-pdf"></i> Download as PDF';
-            downloadBtn.style.backgroundColor = '';
-            downloadBtn.style.opacity = '1';
-            downloadBtn.disabled = false;
-        }, 2500);
+    } 
+    finally {
+        // Immediately revert button to its normal, clickable state
+        downloadBtn.innerHTML = '<i class="fa-solid fa-file-pdf"></i> Download as PDF';
+        downloadBtn.style.backgroundColor = '';
+        downloadBtn.style.opacity = '1';
+        downloadBtn.disabled = false;
+    }
     }
 }
         function createDropdownHTML(id, options, defaultValueText = 'All') {
