@@ -278,85 +278,150 @@
         }
 
         // PDF EXPORT USING html2pdf.js
-        async function exportPDF(e) {
-            e.preventDefault();
-            const pdfBtn = document.getElementById('download-pdf-btn');
-            pdfBtn.disabled = true;
-            pdfBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Generating PDF...';
+async function exportPDF(e) {
+    e.preventDefault();
+    const pdfBtn = document.getElementById('download-pdf-btn');
+    pdfBtn.disabled = true;
+    pdfBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Generating PDF...';
 
-            const classVal = document.getElementById('class-value').value || '';
-            const subjectVal = document.getElementById('subject-value').value || '';
-            const chapterVal = document.getElementById('chapter-value').value || '';
+    const classVal = document.getElementById('class-value').value || '';
+    const subjectVal = document.getElementById('subject-value').value || '';
+    const chapterVal = document.getElementById('chapter-value').value || '';
 
-            const printable = document.createElement('div');
-            printable.id = 'printable-export';
-            printable.style.background = "#fff";
-            printable.style.padding = "0";
-            printable.style.color = "#000";
-            printable.style.maxWidth = "750px";
-            printable.style.margin = "0 auto";
+    // Create a wrapper for the PDF content
+    const printable = document.createElement('div');
+    printable.id = 'printable-export';
+    printable.style.background = "#fff";
+    printable.style.color = "#000";
+    printable.style.fontFamily = "'Times New Roman', Times, serif";
+    printable.style.fontSize = "12pt";
+    printable.style.maxWidth = "820px";
+    printable.style.margin = "0 auto";
+    printable.style.padding = "18px 24px";
 
-            printable.innerHTML = `
-                <div style="text-align:center;font-size:1.6em;font-weight:bold;margin-bottom:2px;">St. Patrick's School</div>
-                <div style="text-align:center;font-size:1.18em;font-weight:bold;margin-bottom:12px;">IIT & NEET FOUNDATION</div>
-                <div style="text-align:left;font-size:1.1em;margin-bottom:0.5em;"><b>Class:</b> ${classVal || ''}</div>
-                <div style="display:flex;justify-content:space-between;font-size:1.05em;margin-bottom:16px;">
-                    <span><b>Subject:</b> ${subjectVal || ''}</span>
-                    <span><b>Topic:</b> ${chapterVal || ''}</span>
-                </div>
-            `;
+    // Header
+    printable.innerHTML = `
+        <div style="text-align:center;font-size:20pt;font-weight:bold;margin-bottom:2px;font-family:'Times New Roman', Times, serif;">St. Patrick's School</div>
+        <div style="text-align:center;font-size:13.5pt;font-weight:bold;margin-bottom:12px;font-family:'Times New Roman', Times, serif;">IIT & NEET FOUNDATION</div>
+        <div style="text-align:left;font-size:12pt;margin-bottom:4px;"><b>Class:</b> ${classVal || ''}</div>
+        <div style="display:flex;justify-content:space-between;font-size:12pt;margin-bottom:18px;">
+            <span><b>Subject:</b> ${subjectVal || ''}</span>
+            <span><b>Topic:</b> ${chapterVal || ''}</span>
+        </div>
+    `;
 
-            const displayArea = document.getElementById('questions-display-area');
-            const nodes = displayArea.querySelectorAll('.question-item');
-            if (!nodes.length) {
-                alert("No questions to export!");
-                pdfBtn.innerHTML = '<i class="fa-solid fa-file-pdf"></i> Download as PDF';
-                pdfBtn.disabled = false;
-                return;
+    // MCQ/Descriptive Layout
+    const displayArea = document.getElementById('questions-display-area');
+    const nodes = displayArea.querySelectorAll('.question-item');
+    if (!nodes.length) {
+        alert("No questions to export!");
+        pdfBtn.innerHTML = '<i class="fa-solid fa-file-pdf"></i> Download as PDF';
+        pdfBtn.disabled = false;
+        return;
+    }
+
+    // MCQ/Descriptive rendering
+    nodes.forEach((item, idx) => {
+        // Remove any edit/delete/image buttons
+        const clone = item.cloneNode(true);
+        clone.querySelectorAll('.question-img-btn, .delete-img-btn, .question-image-input').forEach(btn => btn.remove());
+
+        // Extract text and split into question + options
+        const textDiv = clone.querySelector('.question-text');
+        let html = textDiv ? textDiv.innerHTML : '';
+        // Remove extra <br> at start/end
+        html = html.replace(/^\s*<br\s*\/?>|<br\s*\/?>\s*$/gi, '');
+
+        // Basic MCQ/options extraction
+        let lines = html.split('<br>').map(l => l.trim()).filter(Boolean);
+        // If MCQ, show options on one or two rows as per your format
+        let questionLine = lines[0] || '';
+        let options = [];
+        if (lines.length > 1) {
+            // Check for A), B) pattern in the rest
+            const joined = lines.slice(1).join(' ');
+            // Try to get options in "A) ... B) ... C) ... D) ..." form
+            const optionRegex = /([A-D]\)\s*[^A-D]+)/g;
+            let match = Array.from(joined.matchAll(optionRegex)).map(x => x[0].trim());
+            if (match.length === 4) {
+                options = match;
+            } else {
+                // fallback: treat each non-empty line as an option
+                options = lines.slice(1);
             }
-            nodes.forEach((item, idx) => {
-                const clone = item.cloneNode(true);
-                clone.querySelectorAll('.question-img-btn, .delete-img-btn, .question-image-input').forEach(btn => btn.remove());
-                clone.style.border = "none";
-                clone.style.boxShadow = "none";
-                clone.style.borderRadius = "0";
-                clone.style.background = "none";
-                clone.style.marginBottom = "13px";
-                clone.style.padding = "0 0 4px 0";
-                const meta = clone.querySelector('.question-meta');
-                if (meta) meta.style.color = "#000";
-                const text = clone.querySelector('.question-text');
-                if (text) text.style.color = "#000";
-                printable.appendChild(clone);
-            });
-
-            if (window.MathJax && typeof window.MathJax.typesetPromise === 'function') {
-                await window.MathJax.typesetPromise([printable]);
-            }
-
-            html2pdf().set({
-                margin: [1.5, 1.5, 1.5, 1.5],
-                filename: `Question_Bank_${classVal || ''}_${subjectVal || ''}_${chapterVal || ''}.pdf`.replace(/ /g, "_"),
-                html2canvas: {
-                    scale: 2,
-                    useCORS: true
-                },
-                jsPDF: {
-                    unit: 'cm',
-                    format: 'a4',
-                    orientation: 'portrait'
-                }
-            }).from(printable).save().then(() => {
-                pdfBtn.innerHTML = '<i class="fa-solid fa-file-pdf"></i> Download as PDF';
-                pdfBtn.disabled = false;
-            }).catch((err) => {
-                alert("Failed to export PDF: " + err);
-                pdfBtn.innerHTML = '<i class="fa-solid fa-file-pdf"></i> Download as PDF';
-                pdfBtn.disabled = false;
-            });
         }
 
-       
+        // Build the HTML for this question
+        let qHtml = `
+        <div style="margin-bottom:24px;">
+            <div style="
+                font-weight:bold;
+                margin-bottom:10px;
+                font-size:12pt;
+                font-family:'Times New Roman', Times, serif;
+                line-height:1.52;
+                text-indent: -22px;
+                padding-left: 22px;
+            ">
+                ${idx + 1}. ${questionLine}
+            </div>
+            ${options.length > 0 ? (
+                options.length === 4
+                // Four in a row
+                ? `<div style="display:flex;flex-wrap:wrap;gap:0; margin-left:22px; margin-bottom:6px;">
+                        <div style="width:23%;min-width:90px;">${options[0]}</div>
+                        <div style="width:23%;min-width:90px;">${options[1]}</div>
+                        <div style="width:23%;min-width:90px;">${options[2]}</div>
+                        <div style="width:23%;min-width:90px;">${options[3]}</div>
+                   </div>`
+                // If two, two per row
+                : (options.length === 2
+                    ? `<div style="display:flex;flex-wrap:wrap;gap:0; margin-left:22px; margin-bottom:6px;">
+                        <div style="width:48%;">${options[0]}</div>
+                        <div style="width:48%;">${options[1]}</div>
+                       </div>`
+                // fallback, one per row
+                : `<div style="margin-left:22px; margin-bottom:6px;">
+                        ${options.map(o => `<div>${o}</div>`).join('')}
+                   </div>`)
+            ) : ''}
+        </div>
+        `;
+
+        // Insert into wrapper
+        let wrap = document.createElement('div');
+        wrap.innerHTML = qHtml;
+        printable.appendChild(wrap);
+    });
+
+    // Render MathJax equations before export
+    if (window.MathJax && typeof window.MathJax.typesetPromise === 'function') {
+        await window.MathJax.typesetPromise([printable]);
+    }
+
+    // Export to PDF
+    html2pdf().set({
+        margin: [1.1, 1.2, 1.1, 1.2], // [top, right, bottom, left] in cm
+        filename: `Question_Bank_${classVal || ''}_${subjectVal || ''}_${chapterVal || ''}.pdf`.replace(/ /g, "_"),
+        html2canvas: {
+            scale: 2,
+            useCORS: true
+        },
+        jsPDF: {
+            unit: 'cm',
+            format: 'a4',
+            orientation: 'portrait'
+        }
+    }).from(printable).save().then(() => {
+        pdfBtn.innerHTML = '<i class="fa-solid fa-file-pdf"></i> Download as PDF';
+        pdfBtn.disabled = false;
+    }).catch((err) => {
+        alert("Failed to export PDF: " + err);
+        pdfBtn.innerHTML = '<i class="fa-solid fa-file-pdf"></i> Download as PDF';
+        pdfBtn.disabled = false;
+    });
+}
+      
         async function exportWord() {
     const { Document, Packer, Paragraph, TextRun } = window.docx;
     const area = document.getElementById('questions-display-area');
