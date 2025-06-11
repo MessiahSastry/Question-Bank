@@ -277,7 +277,8 @@
             document.getElementById('download-word-btn').addEventListener('click', exportWord);
         }
 
-        // PDF EXPORT USING html2pdf.js
+        
+// PDF EXPORT USING html2pdf.js
 async function exportPDF(e) {
     e.preventDefault();
     const pdfBtn = document.getElementById('download-pdf-btn');
@@ -288,29 +289,35 @@ async function exportPDF(e) {
     const subjectVal = document.getElementById('subject-value').value || '';
     const chapterVal = document.getElementById('chapter-value').value || '';
 
-    // Create a wrapper for the PDF content
+    // Wrapper for PDF content
     const printable = document.createElement('div');
     printable.id = 'printable-export';
     printable.style.background = "#fff";
     printable.style.color = "#000";
     printable.style.fontFamily = "'Times New Roman', Times, serif";
-    printable.style.fontSize = "12pt";
+    printable.style.fontSize = "11pt";
     printable.style.maxWidth = "820px";
     printable.style.margin = "0 auto";
-    printable.style.padding = "18px 24px";
+    printable.style.padding = "0";
+    printable.style.lineHeight = "1.6";
 
     // Header
     printable.innerHTML = `
-        <div style="text-align:center;font-size:20pt;font-weight:bold;margin-bottom:2px;font-family:'Times New Roman', Times, serif;">St. Patrick's School</div>
-        <div style="text-align:center;font-size:13.5pt;font-weight:bold;margin-bottom:12px;font-family:'Times New Roman', Times, serif;">IIT & NEET FOUNDATION</div>
-        <div style="text-align:left;font-size:12pt;margin-bottom:4px;"><b>Class:</b> ${classVal || ''}</div>
-        <div style="display:flex;justify-content:space-between;font-size:12pt;margin-bottom:18px;">
+        <div style="text-align:center;font-size:20pt;font-weight:normal;margin-bottom:2px;font-family:'Times New Roman', Times, serif;">
+            St. Patrick's School
+        </div>
+        <div style="text-align:center;font-size:13.5pt;font-weight:normal;margin-bottom:16px;font-family:'Times New Roman', Times, serif;">
+            IIT & NEET FOUNDATION
+        </div>
+        <div style="text-align:left;font-size:11pt;margin-bottom:2px;">
+            <b>Class:</b> ${classVal || ''}
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:11pt;margin-bottom:14px;">
             <span><b>Subject:</b> ${subjectVal || ''}</span>
             <span><b>Topic:</b> ${chapterVal || ''}</span>
         </div>
     `;
 
-    // MCQ/Descriptive Layout
     const displayArea = document.getElementById('questions-display-area');
     const nodes = displayArea.querySelectorAll('.question-item');
     if (!nodes.length) {
@@ -320,77 +327,118 @@ async function exportPDF(e) {
         return;
     }
 
-    // MCQ/Descriptive rendering
+    // Helper for hanging indent
+    function createHangingDiv(qNum, text) {
+        // Hanging indent: 25px for the number
+        return `<div style="margin-bottom:18px;">
+            <div style="text-indent:-20px;padding-left:20px;font-size:11pt;">
+                ${qNum}. ${text}
+            </div>
+        </div>`;
+    }
+
+    // MCQ Option Formatter
+    function formatOptions(options) {
+        // Remove empty
+        options = options.map(x => x.trim()).filter(Boolean);
+        if (options.length === 0) return "";
+
+        // Check option lengths
+        const avgLen = options.reduce((a, b) => a + b.length, 0) / options.length;
+        const allShort = options.every(opt => opt.length <= 16);
+        const allMedium = options.every(opt => opt.length <= 32);
+
+        // All short, one line
+        if (allShort) {
+            return `<div style="display:flex;gap:10px;justify-content:space-between;margin-left:22px;margin-top:1px;">
+                ${options.map(opt => `<div style="flex:1;">${opt}</div>`).join("")}
+            </div>`;
+        }
+        // All medium, 2+2
+        if (allMedium) {
+            return `<div style="display:flex;gap:14px;justify-content:flex-start;margin-left:22px;">
+                <div style="flex:1;">${options[0] || ''}</div>
+                <div style="flex:1;">${options[1] || ''}</div>
+            </div>
+            <div style="display:flex;gap:14px;justify-content:flex-start;margin-left:22px;margin-bottom:2px;">
+                <div style="flex:1;">${options[2] || ''}</div>
+                <div style="flex:1;">${options[3] || ''}</div>
+            </div>`;
+        }
+        // Long: one per line
+        return `<div style="margin-left:22px;margin-top:1px;">
+            ${options.map(opt => `<div>${opt}</div>`).join("")}
+        </div>`;
+    }
+
+    // For MathJax rendering
+    let mathElements = [];
+
+    // Build questions
     nodes.forEach((item, idx) => {
-        // Remove any edit/delete/image buttons
+        const qNum = idx + 1;
+
+        // Remove buttons
         const clone = item.cloneNode(true);
         clone.querySelectorAll('.question-img-btn, .delete-img-btn, .question-image-input').forEach(btn => btn.remove());
 
-        // Extract text and split into question + options
+        // --- IMAGE HANDLING ---
+        let imgHtml = '';
+        const imgTag = clone.querySelector('img');
+        if (imgTag && imgTag.src) {
+            imgHtml = `<div style="margin:6px 0 10px 22px;"><img src="${imgTag.src}" style="max-width:170px;max-height:110px;border-radius:5px;box-shadow:0 2px 8px #0f3d6b19;display:block;"/></div>`;
+        }
+
+        // --- QUESTION TEXT + OPTIONS ---
         const textDiv = clone.querySelector('.question-text');
         let html = textDiv ? textDiv.innerHTML : '';
-        // Remove extra <br> at start/end
         html = html.replace(/^\s*<br\s*\/?>|<br\s*\/?>\s*$/gi, '');
-
-        // Basic MCQ/options extraction
         let lines = html.split('<br>').map(l => l.trim()).filter(Boolean);
-        // If MCQ, show options on one or two rows as per your format
+
+        // MCQ detection: look for options (A), B), etc)
+        let isMCQ = false;
         let questionLine = lines[0] || '';
         let options = [];
-        if (lines.length > 1) {
-            // Check for A), B) pattern in the rest
-            const joined = lines.slice(1).join(' ');
-            // Try to get options in "A) ... B) ... C) ... D) ..." form
-            const optionRegex = /([A-D]\)\s*[^A-D]+)/g;
-            let match = Array.from(joined.matchAll(optionRegex)).map(x => x[0].trim());
-            if (match.length === 4) {
-                options = match;
-            } else {
-                // fallback: treat each non-empty line as an option
-                options = lines.slice(1);
+        // MCQ: if we find A)/B)/C)/D)
+        const mcqRegex = /([A-Da-d]\)[^A-Da-d]*)/g;
+        let found = (lines.slice(1).join(' ') || '').match(mcqRegex);
+        if (found && found.length >= 2) {
+            isMCQ = true;
+            options = found.map(x => x.trim());
+        } else if (lines.length > 1) {
+            // fallback: treat each additional line as an option
+            const optLines = lines.slice(1).filter(x =>
+                /^[A-Da-d]\)/.test(x.trim()) || /^[A-Da-d][\.\-]/.test(x.trim()) || x.length < 64
+            );
+            if (optLines.length > 1) {
+                isMCQ = true;
+                options = optLines;
             }
         }
 
-        // Build the HTML for this question
-        let qHtml = `
-        <div style="margin-bottom:24px;">
-            <div style="
-                font-weight:bold;
-                margin-bottom:10px;
-                font-size:12pt;
-                font-family:'Times New Roman', Times, serif;
-                line-height:1.52;
-                text-indent: -22px;
-                padding-left: 22px;
-            ">
-                ${idx + 1}. ${questionLine}
-            </div>
-            ${options.length > 0 ? (
-                options.length === 4
-                // Four in a row
-                ? `<div style="display:flex;flex-wrap:wrap;gap:0; margin-left:22px; margin-bottom:6px;">
-                        <div style="width:23%;min-width:90px;">${options[0]}</div>
-                        <div style="width:23%;min-width:90px;">${options[1]}</div>
-                        <div style="width:23%;min-width:90px;">${options[2]}</div>
-                        <div style="width:23%;min-width:90px;">${options[3]}</div>
-                   </div>`
-                // If two, two per row
-                : (options.length === 2
-                    ? `<div style="display:flex;flex-wrap:wrap;gap:0; margin-left:22px; margin-bottom:6px;">
-                        <div style="width:48%;">${options[0]}</div>
-                        <div style="width:48%;">${options[1]}</div>
-                       </div>`
-                // fallback, one per row
-                : `<div style="margin-left:22px; margin-bottom:6px;">
-                        ${options.map(o => `<div>${o}</div>`).join('')}
-                   </div>`)
-            ) : ''}
-        </div>
-        `;
+        // MathJax tracking
+        if (/\$|\\\(|\\\)/.test(html)) mathElements.push(idx);
 
-        // Insert into wrapper
+        // Build output
+        let questionHtml = `<div style="margin-bottom:23px;">`;
+        // Number + question
+        questionHtml += `<div style="font-size:11pt;text-indent:-20px;padding-left:20px;line-height:1.68;margin-bottom:3px;">${qNum}. ${questionLine}</div>`;
+        // Image (if any)
+        if (imgHtml) questionHtml += imgHtml;
+
+        // MCQ options or Descriptive
+        if (isMCQ && options.length > 0) {
+            questionHtml += formatOptions(options);
+        } else {
+            // Descriptive: hanging indent, preserve line breaks (wrapped under question text)
+            if (lines.length > 1) {
+                questionHtml += `<div style="font-size:11pt;text-indent:-20px;padding-left:20px;white-space:pre-line;">${lines.slice(1).join('\n')}</div>`;
+            }
+        }
+        questionHtml += `</div>`;
+        // Append to printable
         let wrap = document.createElement('div');
-        wrap.innerHTML = qHtml;
+        wrap.innerHTML = questionHtml;
         printable.appendChild(wrap);
     });
 
@@ -399,9 +447,9 @@ async function exportPDF(e) {
         await window.MathJax.typesetPromise([printable]);
     }
 
-    // Export to PDF
+    // Final export using html2pdf
     html2pdf().set({
-        margin: [1.1, 1.2, 1.1, 1.2], // [top, right, bottom, left] in cm
+        margin: [1.5, 1.5, 1.5, 1.5], // [top, right, bottom, left] in cm
         filename: `Question_Bank_${classVal || ''}_${subjectVal || ''}_${chapterVal || ''}.pdf`.replace(/ /g, "_"),
         html2canvas: {
             scale: 2,
@@ -421,6 +469,7 @@ async function exportPDF(e) {
         pdfBtn.disabled = false;
     });
 }
+
       
         async function exportWord() {
     const { Document, Packer, Paragraph, TextRun } = window.docx;
