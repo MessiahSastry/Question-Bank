@@ -174,6 +174,10 @@
     padding-top: 12px;      /* Was 24px */
     padding-bottom: 12px;   /* Was 18px */
 }
+    #download-pdf-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
     </style>
 </head>
 <body>
@@ -237,6 +241,7 @@
         const db = firebase.firestore();
 
         let currentUser = null;
+        let currentlyDisplayedQuestions = []; 
 
         const filterConfig = {
             classes: ["3rd Class", "4th Class", "5th Class", "6th Class", "7th Class", "8th Class", "9th Class", "10th Class"],
@@ -275,59 +280,108 @@
             const downloadBtn = document.getElementById('download-pdf-btn');
             downloadBtn.addEventListener('click', generatePDF);
         }
-        // DELETE your old generatePDF function and REPLACE it with this one.
+    
     async function generatePDF() {
-    const questionsDisplayArea = document.getElementById('questions-display-area');
-
-    if (questionsDisplayArea.children.length === 0 || questionsDisplayArea.querySelector('.no-questions-message')) {
-        alert("Please filter and display some questions before downloading.");
-        return;
-    }
+    // We are using the jsPDF library directly.
+    const { jsPDF } = window.jspdf;
 
     const downloadBtn = document.getElementById('download-pdf-btn');
     downloadBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Generating PDF...';
     downloadBtn.disabled = true;
 
-    const pdfContent = document.createElement('div');
-    pdfContent.classList.add('pdf-export-mode');
-    const classVal = document.getElementById('class-value').value || 'All Classes';
-    const subjectVal = document.getElementById('subject-value').value || 'All Subjects';
-    const chapterVal = document.getElementById('chapter-value').value || 'All Chapters';
+    try {
+        // 1. Initialize a new PDF document
+        const doc = new jsPDF({
+            orientation: 'portrait',
+            unit: 'mm',
+            format: 'a4'
+        });
 
-    const pdfHeader = `
-        <div style="text-align: center; margin-bottom: 20px;">
-            <h1 style="font-size: 24px; margin: 0;">St. Patrick's School</h1>
-            <h2 style="font-size: 18px; margin: 5px 0;">Question Paper</h2>
-            <p style="font-size: 14px; margin: 5px 0;">Class: ${classVal} | Subject: ${subjectVal} | Chapter: ${chapterVal}</p>
-        </div>
-        <hr style="margin-bottom: 20px;">
-    `;
-    pdfContent.innerHTML = pdfHeader;
+        // 2. Get the selected filter values
+        const classVal = document.getElementById('class-value').value || 'N/A';
+        const subjectVal = document.getElementById('subject-value').value || 'N/A';
+        const chapterVal = document.getElementById('chapter-value').value || 'N/A';
 
-    // We are directly cloning the questions here for the test.
-    const questionsClone = questionsDisplayArea.cloneNode(true);
-    questionsClone.querySelectorAll('.question-img-btn, .delete-img-btn, .question-image-input').forEach(btn => btn.remove());
-    pdfContent.appendChild(questionsClone);
-    
-    // The PDF will be generated immediately, without waiting for MathJax.
-    const filename = `TEST_StPatricks_${classVal}_${subjectVal}_Questions.pdf`.replace(/ /g, '_');
-    const opt = {
-        margin:       [15, 15, 15, 15],
-        filename:     filename,
-        image:        { type: 'jpeg', quality: 0.98 },
-        html2canvas:  { scale: 2, useCORS: true },
-        jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
-    };
+        // 3. Define page margins and other settings
+        const leftMargin = 15;
+        const rightMargin = 15;
+        const topMargin = 20;
+        const bottomMargin = 20; // Used for page break logic
+        const pageWidth = doc.internal.pageSize.getWidth();
+        const pageHeight = doc.internal.pageSize.getHeight();
+        const contentWidth = pageWidth - leftMargin - rightMargin;
+        let y = topMargin; // This variable tracks our vertical position
 
-    html2pdf().from(pdfContent).set(opt).save().then(() => {
-    downloadBtn.innerHTML = '<i class="fas fa-check"></i> Completed!';
-    downloadBtn.style.backgroundColor = '#28a745'; // A nice green color for success
-    setTimeout(() => {
-        downloadBtn.innerHTML = '<i class="fa-solid fa-file-pdf"></i> Download as PDF';
-        downloadBtn.style.backgroundColor = ''; // Reverts to the color in your stylesheet
-        downloadBtn.disabled = false; // This line re-enables the button
-    }, 2500);
-});
+        // 4. Draw the Header
+        doc.setFont('times', 'bold');
+        doc.setFontSize(16);
+        doc.text("St. Patrick's School", pageWidth / 2, y, { align: 'center' });
+        y += 8;
+        doc.setFont('times', 'normal');
+        doc.setFontSize(14);
+        doc.text("IIT & NEET FOUNDATION", pageWidth / 2, y, { align: 'center' });
+        y += 10;
+        doc.setLineWidth(0.5);
+        doc.line(leftMargin, y, pageWidth - rightMargin, y);
+        y += 10;
+        doc.setFont('times', 'normal');
+        doc.setFontSize(12);
+        doc.text(`Class: ${classVal}`, leftMargin, y);
+        y += 7;
+        doc.text(`Subject: ${subjectVal}`, leftMargin, y);
+        doc.text(`Chapter: ${chapterVal}`, pageWidth - rightMargin, y, { align: 'right' });
+        y += 15;
+
+        // 5. NEW: Add Questions to the PDF
+        doc.setFont('times', 'normal');
+        doc.setFontSize(12);
+        const lineHeight = 7; // Set line height for size 12 font in mm
+
+        if (currentlyDisplayedQuestions.length === 0) {
+            doc.text("No questions found for the selected criteria.", leftMargin, y);
+        }
+
+        currentlyDisplayedQuestions.forEach((question, index) => {
+            // Get the raw question text (ignoring options and images for now)
+            const questionBody = question.body || question.text || '';
+            const fullQuestionText = `Q${index + 1}: ${questionBody}`;
+
+            // Split the text into lines that fit the page width
+            const textLines = doc.splitTextToSize(fullQuestionText, contentWidth);
+
+            // Calculate the height of the upcoming text block
+            const textBlockHeight = textLines.length * lineHeight;
+
+            // Check if the text block fits on the current page. If not, add a new page.
+            if (y + textBlockHeight > pageHeight - bottomMargin) {
+                doc.addPage();
+                y = topMargin; // Reset y to the top margin on the new page
+            }
+            
+            // Draw the question text
+            doc.text(textLines, leftMargin, y);
+
+            // Move the y position down for the next element
+            y += textBlockHeight + (lineHeight / 2); // Add a small gap after the question text
+        });
+
+        // 6. Save the PDF
+        const filename = `StPatricks_${classVal}_${subjectVal}_Questions.pdf`.replace(/ /g, '_');
+        doc.save(filename);
+
+    } catch (error) {
+        console.error("Error generating text-based PDF:", error);
+        alert("An error occurred while generating the PDF.");
+    } finally {
+        // 7. Re-enable the download button
+        downloadBtn.innerHTML = '<i class="fas fa-check"></i> Completed!';
+        downloadBtn.style.backgroundColor = '#28a745';
+        setTimeout(() => {
+            downloadBtn.innerHTML = '<i class="fa-solid fa-file-pdf"></i> Download as PDF';
+            downloadBtn.style.backgroundColor = '';
+            downloadBtn.disabled = false;
+        }, 2500);
+    }
 }
         function createDropdownHTML(id, options, defaultValueText = 'All') {
             const optionsHTML = options.map(opt => `<div data-value="${opt}">${opt}</div>`).join('');
@@ -477,7 +531,7 @@
                 query = query.orderBy("questionNumber");
 
                 const snapshot = await query.get();
-
+                currentlyDisplayedQuestions = snapshot.docs.map(doc => doc.data());
                 if (snapshot.empty) {
                     displayArea.innerHTML = '<p class="no-questions-message">No questions found matching your criteria.</p>';
                     return;
