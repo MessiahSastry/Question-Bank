@@ -225,7 +225,6 @@
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 
     <script>
@@ -237,39 +236,11 @@
             messagingSenderId: "917615322861",
             appId: "1:917615322861:web:c6c890aa2184dd395b8ee4"
         };
-        function parseTextWithLatex(text) {
-    // This regular expression now finds content between $...$ OR \(...\)
-    const regex = /\$(.*?)\$|\\\((.*?)\\\)/g;
-    const parts = [];
-    let lastIndex = 0;
-    let match;
-
-    while ((match = regex.exec(text)) !== null) {
-        // Add the plain text part that came before the math
-        if (match.index > lastIndex) {
-            parts.push({ type: 'text', value: text.substring(lastIndex, match.index) });
-        }
-        
-        // Add the LaTeX part, checking which delimiter was used
-        // match[1] is for $...$, match[2] is for \(...\)
-        const latexContent = match[1] || match[2];
-        parts.push({ type: 'latex', value: latexContent });
-        lastIndex = regex.lastIndex;
-    }
-
-    // Add the final piece of plain text after the last math equation
-    if (lastIndex < text.length) {
-        parts.push({ type: 'text', value: text.substring(lastIndex) });
-    }
-
-    return parts;
-}
         firebase.initializeApp(firebaseConfig);
         const auth = firebase.auth();
         const db = firebase.firestore();
 
         let currentUser = null;
-        let currentlyDisplayedQuestions = []; 
 
         const filterConfig = {
             classes: ["3rd Class", "4th Class", "5th Class", "6th Class", "7th Class", "8th Class", "9th Class", "10th Class"],
@@ -309,21 +280,33 @@
             downloadBtn.addEventListener('click', generatePDF);
         }
     
-  async function generatePDF() {
+    async function generatePDF() {
+    // We are using the jsPDF library directly.
     const { jsPDF } = window.jspdf;
-    const { html2canvas } = window; // We also need html2canvas directly
 
     const downloadBtn = document.getElementById('download-pdf-btn');
     downloadBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Generating PDF...';
     downloadBtn.disabled = true;
 
     try {
-        const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-        const leftMargin = 15, rightMargin = 15, topMargin = 20, bottomMargin = 20;
+        // 1. Initialize a new PDF document
+        const doc = new jsPDF({
+            orientation: 'portrait',
+            unit: 'mm',
+            format: 'a4'
+        });
+
+        // 2. Get the selected filter values
+        const classVal = document.getElementById('class-value').value || 'N/A';
+        const subjectVal = document.getElementById('subject-value').value || 'N/A';
+        const chapterVal = document.getElementById('chapter-value').value || 'N/A';
+
+        // 3. Define page margins and starting Y position
+        const leftMargin = 15;
+        const rightMargin = 15;
+        const topMargin = 20;
         const pageWidth = doc.internal.pageSize.getWidth();
-        const pageHeight = doc.internal.pageSize.getHeight();
-        const contentWidth = pageWidth - leftMargin - rightMargin;
-        let y = topMargin;
+        let y = topMargin; // This variable tracks our vertical position
 
         // Draw Header (code is unchanged)
         doc.setFont('times', 'bold');
@@ -347,81 +330,30 @@
         doc.text(`Subject: ${subjectVal}`, leftMargin, y);
         doc.text(`Chapter: ${chapterVal}`, pageWidth - rightMargin, y, { align: 'right' });
         y += 15;
-
-        // FINAL: Add Questions with Rendered Math
+        
+        // --- QUESTIONS WILL GO HERE IN FUTURE STEPS ---
+        // Set the font and size for the upcoming questions
         doc.setFont('times', 'normal');
         doc.setFontSize(12);
-        const lineHeight = 7;
+        doc.text("...Questions will be added here in the next step...", leftMargin, y);
 
-        if (currentlyDisplayedQuestions.length === 0) {
-            doc.text("No questions found for the selected criteria.", leftMargin, y);
-        }
 
-        // Use a for...of loop to handle async rendering
-        for (const [index, question] of currentlyDisplayedQuestions.entries()) {
-            const questionBody = question.body || question.text || '';
-            
-            if (y + lineHeight * 2 > pageHeight - bottomMargin) { doc.addPage(); y = topMargin; }
-            
-            doc.setFont('times', 'bold');
-            doc.text(`Q${index + 1}:`, leftMargin, y);
-            y += lineHeight;
-            doc.setFont('times', 'normal');
-
-            const parts = parseTextWithLatex(questionBody);
-            
-            for (const part of parts) {
-                if (part.type === 'text' && part.value.trim()) {
-                    const textLines = doc.splitTextToSize(part.value.trim(), contentWidth - 5);
-                    if (y + (textLines.length * lineHeight) > pageHeight - bottomMargin) { doc.addPage(); y = topMargin; }
-                    doc.text(textLines, leftMargin + 5, y);
-                    y += textLines.length * lineHeight;
-                } else if (part.type === 'latex') {
-                    // This is the logic to render math
-                    const tempMathDiv = document.createElement('div');
-                    tempMathDiv.style.cssText = 'position:absolute; left:-10000px; font-size:16px;';
-                    tempMathDiv.innerHTML = `\\(${part.value}\\)`;
-                    document.body.appendChild(tempMathDiv);
-
-                    try {
-                        await MathJax.typesetPromise([tempMathDiv]);
-                        const mjxContainer = tempMathDiv.querySelector('mjx-container');
-                        if (mjxContainer) {
-                            const canvas = await html2canvas(mjxContainer, { backgroundColor: null, scale: 3 });
-                            const imgData = canvas.toDataURL('image/png');
-                            const imgWidth = canvas.width / 11.3; // Conversion factor for scale 3 to mm
-                            const imgHeight = canvas.height / 11.3;
-                            
-                            if (y + imgHeight > pageHeight - bottomMargin) { doc.addPage(); y = topMargin; }
-                            doc.addImage(imgData, 'PNG', leftMargin + 5, y, imgWidth, imgHeight);
-                            y += imgHeight + 2;
-                        }
-                    } catch (e) {
-                        console.error("Could not render LaTeX part:", part.value, e);
-                        doc.text(`[ERROR: ${part.value}]`, leftMargin + 5, y); // Fallback
-                        y += lineHeight;
-                    } finally {
-                        document.body.removeChild(tempMathDiv); // IMPORTANT: Clean up the temp div
-                    }
-                }
-            }
-            y += lineHeight;
-        }
-
-        // Save the PDF
+        // 5. Save the PDF
         const filename = `StPatricks_${classVal}_${subjectVal}_Questions.pdf`.replace(/ /g, '_');
         doc.save(filename);
 
     } catch (error) {
         console.error("Error generating text-based PDF:", error);
         alert("An error occurred while generating the PDF.");
-    } 
-    finally {
-        // Immediately revert button to its normal, clickable state
-        downloadBtn.innerHTML = '<i class="fa-solid fa-file-pdf"></i> Download as PDF';
-        downloadBtn.style.backgroundColor = '';
-        downloadBtn.style.opacity = '1';
-        downloadBtn.disabled = false;
+    } finally {
+        // 6. Re-enable the download button
+        downloadBtn.innerHTML = '<i class="fas fa-check"></i> Completed!';
+        downloadBtn.style.backgroundColor = '#28a745';
+        setTimeout(() => {
+            downloadBtn.innerHTML = '<i class="fa-solid fa-file-pdf"></i> Download as PDF';
+            downloadBtn.style.backgroundColor = '';
+            downloadBtn.disabled = false;
+        }, 2500);
     }
 }
         function createDropdownHTML(id, options, defaultValueText = 'All') {
@@ -572,7 +504,7 @@
                 query = query.orderBy("questionNumber");
 
                 const snapshot = await query.get();
-                currentlyDisplayedQuestions = snapshot.docs.map(doc => doc.data());
+
                 if (snapshot.empty) {
                     displayArea.innerHTML = '<p class="no-questions-message">No questions found matching your criteria.</p>';
                     return;
