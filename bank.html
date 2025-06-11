@@ -356,173 +356,132 @@
         }
 
         // WORD EXPORT WITH MATH AS IMAGE
-        async function exportWord(e) {
-            e.preventDefault();
-            const wordBtn = document.getElementById('download-word-btn');
-            wordBtn.disabled = true;
-            wordBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Generating Word...';
+async function exportWord(e) {
+    e.preventDefault();
+    const wordBtn = document.getElementById('download-word-btn');
+    wordBtn.disabled = true;
+    wordBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Generating Word...';
 
-            const { Document, Packer, Paragraph, TextRun, AlignmentType, ImageRun } = window.docx;
+    const { Document, Packer, Paragraph, TextRun, AlignmentType, ImageRun } = window.docx;
 
-            const classVal = document.getElementById('class-value').value || '';
-            const subjectVal = document.getElementById('subject-value').value || '';
-            const chapterVal = document.getElementById('chapter-value').value || '';
+    const classVal = document.getElementById('class-value').value || '';
+    const subjectVal = document.getElementById('subject-value').value || '';
+    const chapterVal = document.getElementById('chapter-value').value || '';
 
-            let docChildren = [];
+    let docChildren = [];
 
-            docChildren.push(new Paragraph({
-                children: [new TextRun({
-                    text: "St. Patrick's School",
-                    bold: true,
-                    size: 32
-                })],
-                alignment: AlignmentType.CENTER
-            }));
-            docChildren.push(new Paragraph({
-                children: [new TextRun({
-                    text: "IIT & NEET FOUNDATION",
-                    bold: true,
-                    size: 26
-                })],
-                alignment: AlignmentType.CENTER
-            }));
-            docChildren.push(new Paragraph({
-                children: [new TextRun({
-                    text: `Class: ${classVal}`,
-                    bold: true,
-                    size: 24
-                })],
-                alignment: AlignmentType.LEFT
-            }));
-            docChildren.push(new Paragraph({
-                children: [
-                    new TextRun({
-                        text: `Subject: ${subjectVal}`,
-                        bold: true,
-                        size: 22
-                    }),
-                    new TextRun({
-                        text: "    "
-                    }),
-                    new TextRun({
-                        text: `Topic: ${chapterVal}`,
-                        bold: true,
-                        size: 22
-                    })
-                ],
-                alignment: AlignmentType.LEFT
-            }));
+    // Add Header paragraphs
+    docChildren.push(new Paragraph({ children: [new TextRun({ text: "St. Patrick's School", bold: true, size: 32 })], alignment: AlignmentType.CENTER }));
+    docChildren.push(new Paragraph({ children: [new TextRun({ text: "IIT & NEET FOUNDATION", bold: true, size: 26 })], alignment: AlignmentType.CENTER, spacing: { after: 200 } }));
+    docChildren.push(new Paragraph({ children: [new TextRun({ text: `Class: ${classVal}`, bold: true, size: 24 })], alignment: AlignmentType.LEFT }));
+    docChildren.push(new Paragraph({ children: [new TextRun({ text: `Subject: ${subjectVal}`, bold: true, size: 22 }), new TextRun({ text: "\t\t", }), new TextRun({ text: `Topic: ${chapterVal}`, bold: true, size: 22 })], alignment: AlignmentType.LEFT, spacing: { after: 400 } }));
 
-            const displayArea = document.getElementById('questions-display-area');
-            const nodes = displayArea.querySelectorAll('.question-item');
-            if (!nodes.length) {
-                alert("No questions to export!");
-                wordBtn.innerHTML = '<i class="fa-solid fa-file-word"></i> Download as Word';
-                wordBtn.disabled = false;
-                return;
-            }
+    const displayArea = document.getElementById('questions-display-area');
+    const nodes = displayArea.querySelectorAll('.question-item');
+    if (!nodes.length) {
+        alert("No questions to export!");
+        wordBtn.innerHTML = '<i class="fa-solid fa-file-word"></i> Download as Word';
+        wordBtn.disabled = false;
+        return;
+    }
 
-            for (let i = 0; i < nodes.length; i++) {
-                const item = nodes[i];
-                const tempDiv = item.cloneNode(true);
-                tempDiv.querySelectorAll('.question-img-btn, .delete-img-btn, .question-image-input').forEach(btn => btn.remove());
-
-                const mathSvgs = tempDiv.querySelectorAll('svg');
-                let replacePromises = [];
-                mathSvgs.forEach((svg, idx) => {
-                    const promise = window.domtoimage.toPng(svg, {
-                        bgcolor: "#fff",
-                        width: svg.clientWidth * 2,
-                        height: svg.clientHeight * 2
-                    })
+    for (let i = 0; i < nodes.length; i++) {
+        const item = nodes[i];
+        const tempDiv = item.cloneNode(true);
+        tempDiv.querySelectorAll('.question-img-btn, .delete-img-btn, .question-image-input').forEach(btn => btn.remove());
+        
+        tempDiv.style.position = 'absolute';
+        tempDiv.style.left = '-9999px';
+        document.body.appendChild(tempDiv);
+        
+        try {
+            // Convert MathJax SVGs to Images
+            const mathSvgs = tempDiv.querySelectorAll('svg');
+            let replacePromises = [];
+            mathSvgs.forEach((svg) => {
+                const promise = window.domtoimage.toPng(svg, { bgcolor: "#fff", width: svg.clientWidth * 2.5, height: svg.clientHeight * 2.5, style: { 'transform': 'scale(1.5)', 'transform-origin': 'top left' } })
                     .then(dataUrl => {
                         const img = document.createElement('img');
                         img.src = dataUrl;
-                        img.style.verticalAlign = "middle";
-                        img.style.maxHeight = "30px";
+                        img.style.verticalAlign = 'middle';
+                        img.style.maxHeight = '40px'; 
                         svg.parentNode.replaceChild(img, svg);
                     })
-                    .catch(e => {
-                        console.error("Failed to convert MathJax SVG to PNG for Word export", e, svg);
-                    });
-                    replacePromises.push(promise);
-                });
-                await Promise.all(replacePromises);
+                    .catch(e => console.error("SVG to PNG conversion failed", e));
+                replacePromises.push(promise);
+            });
+            await Promise.all(replacePromises);
 
-                const qNum = i + 1;
-                let childRuns = [];
+            const qNum = i + 1;
+            const paragraphChildren = []; // Holds all parts of a single question
+            let firstTextNodeFound = false;
 
-                const questionTextDiv = tempDiv.querySelector('.question-text');
-                if (questionTextDiv) {
-                    let isFirstLine = true;
-                    questionTextDiv.childNodes.forEach(child => {
-                        if (isFirstLine && child.nodeType === Node.TEXT_NODE) {
-                            childRuns.push(new TextRun({
-                                text: `Q${qNum}: ${child.textContent.trim()}`,
-                                size: 24
-                            }));
-                            isFirstLine = false;
-                        } else if (child.nodeType === Node.TEXT_NODE) {
-                            const text = child.textContent.trim();
-                            if (text) {
-                                childRuns.push(new TextRun({
-                                    text: text,
-                                    break: 1,
-                                    size: 22
-                                }));
+            // Add the Question number
+            paragraphChildren.push(new TextRun({ text: `Q${qNum}: `, size: 24, bold: true }));
+            
+            const questionTextDiv = tempDiv.querySelector('.question-text');
+            if (questionTextDiv) {
+                questionTextDiv.childNodes.forEach(child => {
+                    if (child.nodeType === Node.TEXT_NODE && child.textContent.trim()) {
+                        let text = child.textContent;
+                        
+                        // Check if this is the first piece of text we've found
+                        if (!firstTextNodeFound) {
+                            const lines = text.split('\n');
+                            const questionLine = lines[0];
+                            const remainingLines = lines.slice(1);
+
+                            // Add the first line (the question itself)
+                            paragraphChildren.push(new TextRun({ text: questionLine.trim(), size: 24 }));
+                            
+                            // Add the rest of the lines from this text node as options
+                            if (remainingLines.length > 0) {
+                                remainingLines.forEach(line => {
+                                    if (line.trim()) {
+                                        paragraphChildren.push(new TextRun({ text: `\t${line.trim()}`, size: 22, break: 1 }));
+                                    }
+                                });
                             }
-                        } else if (child.nodeName === "BR") {
-                            childRuns.push(new TextRun({
-                                break: 1
-                            }));
-                        } else if (child.tagName === "IMG") {
-                            childRuns.push(new ImageRun({
-                                data: dataURLtoArrayBuffer(child.src),
-                                transformation: {
-                                    width: 80,
-                                    height: 30
+                            firstTextNodeFound = true;
+                        } else {
+                            // If it's not the first text node, all its lines are options
+                            const lines = text.split('\n');
+                            lines.forEach(line => {
+                                if (line.trim()) {
+                                    paragraphChildren.push(new TextRun({ text: `\t${line.trim()}`, size: 22, break: 1 }));
                                 }
-                            }));
-                        } else if (child.nodeType === Node.ELEMENT_NODE) {
-                            const txt = child.innerText || '';
-                            if (txt.trim()) {
-                                childRuns.push(new TextRun({
-                                    text: txt.trim(),
-                                    break: 1,
-                                    size: 22
-                                }));
-                            }
+                            });
                         }
-                    });
-
-                    docChildren.push(new Paragraph({
-                        children: childRuns,
-                        spacing: {
-                            after: 120
-                        }
-                    }));
-                }
+                    } else if (child.tagName === "IMG") {
+                        // Add inline images (from MathJax)
+                        paragraphChildren.push(new ImageRun({ data: dataURLtoArrayBuffer(child.src), transformation: { width: child.width * 0.7, height: child.height * 0.7 } }));
+                    }
+                });
             }
+            // Add the fully constructed paragraph to the document
+            docChildren.push(new Paragraph({ children: paragraphChildren, spacing: { after: 200 }}));
 
-            const doc = new Document({
-                sections: [{
-                    properties: {},
-                    children: docChildren
-                }]
-            });
-
-            window.docx.Packer.toBlob(doc).then(blob => {
-                const fileName = `Question_Bank_${classVal || ''}_${subjectVal || ''}_${chapterVal || ''}.docx`.replace(/ /g, "_");
-                saveAs(blob, fileName);
-                wordBtn.innerHTML = '<i class="fa-solid fa-file-word"></i> Download as Word';
-                wordBtn.disabled = false;
-            }).catch(err => {
-                alert("Failed to export Word: " + err);
-                wordBtn.innerHTML = '<i class="fa-solid fa-file-word"></i> Download as Word';
-                wordBtn.disabled = false;
-            });
+        } finally {
+            // Cleanup the temporary div
+            document.body.removeChild(tempDiv);
         }
+    }
 
+    const doc = new Document({
+        sections: [{ properties: {}, children: docChildren }]
+    });
+
+    window.docx.Packer.toBlob(doc).then(blob => {
+        const fileName = `Question_Bank_${classVal || ''}_${subjectVal || ''}_${chapterVal || ''}.docx`.replace(/ /g, "_");
+        saveAs(blob, fileName);
+        wordBtn.innerHTML = '<i class="fa-solid fa-file-word"></i> Download as Word';
+        wordBtn.disabled = false;
+    }).catch(err => {
+        alert("Failed to export Word: " + err);
+        wordBtn.innerHTML = '<i class="fa-solid fa-file-word"></i> Download as Word';
+        wordBtn.disabled = false;
+    });
+}
         function dataURLtoArrayBuffer(dataURL) {
             const base64 = dataURL.split(',')[1];
             const binaryString = atob(base64);
