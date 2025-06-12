@@ -349,54 +349,49 @@ function renderPrintPreview() {
                 const parts = formatted.split(/\n(?=\s*[A-D]\))/);
                 const isMCQ = parts.length > 1;
 
-                if (isMCQ) {
-                    questionContentHTML = parts[0];
-                    const optionLines = parts.slice(1);
-                    const renderOption = (opt) => `<div style="flex: 1 1 0; min-width: 50px;">${opt.trim().replace(/\n/g, '<br>')}</div>`;
-
-                    // ===> THIS IS THE FINAL CORRECTED LOGIC <===
-                    // First, check if any option contains its own line breaks.
-                    const hasMultiLineOptions = optionLines.some(opt => opt.includes('\n'));
-
-                    if (hasMultiLineOptions) {
-                        // If options are complex (like in Q5), force a 2x2 grid without measuring.
-                        const row1HTML = renderOption(optionLines[0]) + (optionLines[1] ? renderOption(optionLines[1]) : '');
-                        let row2HTML = '';
-                        if (optionLines[2]) {
-                            row2HTML = renderOption(optionLines[2]) + (optionLines[3] ? renderOption(optionLines[3]) : '');
-                        }
-                        optionsHTML = `<div style="display: flex; gap: 32px;">${row1HTML}</div>`;
-                        if (row2HTML) {
-                            optionsHTML += `<div style="display: flex; gap: 32px; margin-top: 2px;">${row2HTML}</div>`;
-                        }
-                    } else {
-                        // If options are simple, use the measurement logic.
-                        const dummy = document.createElement('span');
-                        dummy.style.cssText = 'visibility: hidden; position: absolute; white-space: nowrap; padding: 0; margin: 0; border: none; font-family: \'Times New Roman\', Times, serif; font-size: 1.11em;';
-                        const firstLinesForMeasurement = optionLines.map(line => line.split('\n')[0].trim());
-                        dummy.innerText = firstLinesForMeasurement.join('    ');
-                        document.body.appendChild(dummy);
-                        const fitsSingleLine = dummy.offsetWidth < 440;
-
-                        if (fitsSingleLine) {
-                            optionsHTML = `<div style="display: flex; gap: 32px;">${optionLines.map(renderOption).join('')}</div>`;
-                        } else {
-                            dummy.innerText = firstLinesForMeasurement.slice(0, 2).join('    ');
-                            const fitsRow = dummy.offsetWidth < 440;
-                            if (fitsRow && optionLines.length > 2) {
-                                const row1HTML = renderOption(optionLines[0]) + renderOption(optionLines[1]);
-                                let row2HTML = renderOption(optionLines[2]);
-                                if (optionLines[3]) row2HTML += renderOption(optionLines[3]);
-                                optionsHTML = `<div style="display: flex; gap: 32px;">${row1HTML}</div><div style="display: flex; gap: 32px; margin-top: 2px;">${row2HTML}</div>`;
-                            } else {
-                                optionsHTML = optionLines.map(renderOption).join('');
-                            }
-                        }
-                        document.body.removeChild(dummy);
-                    }
-                } else {
-                    questionContentHTML = formatted.replace(/\n/g, ' ');
-                }
+               if (isMCQ) {
+                      questionContentHTML = parts[0];
+                      const optionLines = parts.slice(1);
+                  
+                      // New grid logic:
+                      const renderOption = (opt) => `<div style="flex:1 1 0;min-width:60px;">${opt.trim().replace(/\n/g, '<br>')}</div>`;
+                  
+                      // 1. Try all 4 options in one row
+                      let dummy = document.createElement('span');
+                      dummy.style.cssText = 'visibility:hidden;position:absolute;white-space:nowrap;padding:0;margin:0;border:none;font-family:\'Times New Roman\',Times,serif;font-size:1.11em;';
+                      dummy.innerText = optionLines.map(line => line.split('\n')[0].trim()).join('    ');
+                      document.body.appendChild(dummy);
+                      let fitsFour = dummy.offsetWidth < 440;
+                      document.body.removeChild(dummy);
+                  
+                      if (fitsFour) {
+                          // All in one row
+                          optionsHTML = `<div style="display:flex;gap:32px;">${optionLines.map(renderOption).join('')}</div>`;
+                      } else {
+                          // Try two rows (A & B, C & D)
+                          let dummy2 = document.createElement('span');
+                          dummy2.style.cssText = dummy.style.cssText;
+                          dummy2.innerText = optionLines[0].split('\n')[0].trim() + '    ' + optionLines[1].split('\n')[0].trim();
+                          document.body.appendChild(dummy2);
+                          let fitsTwo = dummy2.offsetWidth < 440;
+                          document.body.removeChild(dummy2);
+                  
+                          if (fitsTwo) {
+                              // Two rows: A+B, C+D
+                              const row1 = renderOption(optionLines[0]) + renderOption(optionLines[1]);
+                              const row2 = renderOption(optionLines[2]) + renderOption(optionLines[3]);
+                              optionsHTML = `
+                                  <div style="display:flex;gap:32px;">${row1}</div>
+                                  <div style="display:flex;gap:32px;margin-top:2px;">${row2}</div>
+                              `;
+                          } else {
+                              // Four rows, one option each
+                              optionsHTML = optionLines.map(opt => `<div style="margin-bottom:2px;">${opt.trim().replace(/\n/g, '<br>')}</div>`).join('');
+                          }
+                      }
+                  } else {
+                      questionContentHTML = formatted.replace(/\n/g, ' ');
+                  }
 
                 const imageHTML = q.image ? `<div class="question-img-block"><img class="question-img" src="${q.image}" alt="Question Image" /></div>` : '';
 
