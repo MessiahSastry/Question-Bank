@@ -5,6 +5,8 @@
   <title>Exam Print Preview | St. Patrick's School</title>
   <meta name="viewport" content="width=900, initial-scale=1.0">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/docx/8.0.1/docx.min.js"></script>
   <script>
     window.MathJax = {
       tex: { inlineMath: [["$", "$"], ["\\(", "\\)"]] },
@@ -58,7 +60,7 @@
       margin-bottom: 0;
     }
     .school-logo {
-      height: 88px;
+      height: 88px; /* Increased */
       width: auto;
       margin: 0 16px 0 16px;
     }
@@ -123,17 +125,25 @@
     .section-block {
       margin-bottom: 24px;
     }
-    .section-header-instruct {
+    .section-header {
       font-weight: bold;
       font-size: 1.12em;
       color: #1762a7;
-      margin-bottom: 18px;
+      margin-bottom: 10px;
       margin-top: 18px;
       text-transform: uppercase;
       letter-spacing: 0.03em;
-      display: flex;
-      gap: 12px;
-      align-items: center;
+    }
+    .section-instructions {
+      font-size: 1.07em;
+      color: #19639c;
+      background: #f1f7fd;
+      border-left: 4px solid #bdd7f6;
+      border-radius: 6px;
+      padding: 7px 12px;
+      margin-bottom: 13px;
+      margin-top: 4px;
+      max-width: 95%;
     }
     .question-list {
       margin-left: 0;
@@ -149,31 +159,6 @@
       line-height: 1.6;
       white-space: pre-line;
     }
-    .mcq-options-row {
-      display: flex;
-      gap: 36px;
-      margin-top: 6px;
-      margin-bottom: 0;
-    }
-    .mcq-options-two-row {
-      display: flex;
-      flex-direction: column;
-      margin-top: 6px;
-      margin-bottom: 0;
-      gap: 2px;
-    }
-    .mcq-options-line {
-      display: flex;
-      gap: 36px;
-    }
-    .mcq-options-col {
-      display: flex;
-      flex-direction: column;
-      margin-top: 6px;
-      gap: 2px;
-      margin-bottom: 0;
-    }
-    .mcq-option { white-space: pre-line; }
     .question-img {
       display: block;
       margin: 12px 0 4px 0;
@@ -237,12 +222,11 @@
     </div>
   </div>
   <script>
-    // -- Change to your actual logo files --
     const schoolLogo1 = 'schoollogo1.png';
     const schoolLogo2 = 'schoollogo2.png';
+    let exam = JSON.parse(sessionStorage.getItem('finalExamData') || '{}');
 
     // Demo fallback (for local preview)
-    let exam = JSON.parse(sessionStorage.getItem('finalExamData') || '{}');
     if (!exam.sections) {
       exam = {
         examName: "Formative Assessment 1",
@@ -254,92 +238,28 @@
         sections: [
           {
             name: "Section A",
-            instructions: "Answer all the questions (8 x 1 = 8 Marks)",
+            instructions: "Answer any 3 questions. (3 × 4 = 12 Marks)",
             questions: [
-              { text: "What is 2 + 2? A) 2 B) 3 C) 4 D) 5", image: null },
-              { text: "Which of the following are even numbers? A) 2 B) 4 C) 7 D) 9", image: null },
-              { text: "Which of the following best describes osmosis? A) The movement of water molecules through a semipermeable membrane from a region of low solute concentration to a region of high solute concentration B) The process by which plants make food using sunlight C) The movement of oxygen from the air into the bloodstream D) The process by which cells divide to form new cells", image: null }
+              { text: "What is the speed of light in a vacuum? A) 3x10^8 m/s B) 3x10^6 m/s C) 3x10^5 m/s D) 3x10^7 m/s", image: null },
+              { text: "Which planet is known as the Red Planet? A) Earth B) Mars C) Jupiter D) Venus", image: null },
+              { text: "Water boils at what temperature? A) 90°C B) 80°C C) 100°C D) 110°C", image: null },
+              { text: "Define osmosis.", image: null }
             ]
           }
         ]
       }
     }
 
-    // Helper to remove question metadata (like "Q9: Easy/Level 1, 1 Mark.")
-    function cleanQuestionText(text) {
-      // Remove Qx: ... style prefix
-      return text.replace(/^Q\d+:\s*[^.]*\.\s*/, '').trim();
-    }
-
-    // Helper to detect MCQ and format options
-    function renderMCQOptions(questionText) {
-      // Detect options like "A) ... B) ... C) ... D) ..."
-      const mcqMatch = questionText.match(/^(.*?)(?:\s*)A\)(.*)B\)(.*)C\)(.*)D\)(.*)$/s);
-      if (!mcqMatch) return null; // Not an MCQ
-
-      // Extract question and options
-      const question = mcqMatch[1].trim().replace(/\s+$/, '');
-      const options = [
-        mcqMatch[2] ? mcqMatch[2].trim() : "",
-        mcqMatch[3] ? mcqMatch[3].trim() : "",
-        mcqMatch[4] ? mcqMatch[4].trim() : "",
-        mcqMatch[5] ? mcqMatch[5].trim() : ""
-      ];
-
-      // Prepare option strings
-      const optLabels = ['A', 'B', 'C', 'D'];
-      const optionStrs = options.map((opt, i) => `${optLabels[i]}) ${opt}`);
-
-      // Try single line
-      const singleLineStr = optionStrs.join('    ');
-      // For measuring, create a dummy span
-      const dummy = document.createElement('span');
-      dummy.style.visibility = 'hidden';
-      dummy.style.position = 'absolute';
-      dummy.style.fontFamily = "'Times New Roman', Times, serif";
-      dummy.style.fontSize = '1.11em';
-      dummy.innerText = singleLineStr;
-      document.body.appendChild(dummy);
-      const fitsSingleLine = dummy.offsetWidth < 540; // approx A4 printable width in px
-      document.body.removeChild(dummy);
-
-      if (fitsSingleLine) {
-        // All options in one row
-        return {
-          question,
-          html: `<div class="mcq-options-row">${optionStrs.map(opt => `<div class="mcq-option">${opt}</div>`).join('')}</div>`
-        }
+    // Helper to split options for MCQs
+    function formatQuestionText(text) {
+      // Remove metadata like "Q9: Easy/Level 1, 1 Mark"
+      text = text.replace(/^Q\d+:\s*[^.]*\.\s*/, '');
+      // Split options onto new lines if present
+      if (text.match(/A\)[^]+/)) {
+        // Split options A) ... B) ... C) ... D) ...
+        return text.replace(/\s*A\)/, '\nA)').replace(/\s*B\)/, '\nB)').replace(/\s*C\)/, '\nC)').replace(/\s*D\)/, '\nD)');
       }
-      // Try two lines (2 per line)
-      const firstRow = optionStrs.slice(0,2).join('    ');
-      const secondRow = optionStrs.slice(2,4).join('    ');
-      // Dummy spans for each line
-      const dummy1 = document.createElement('span');
-      dummy1.style.visibility = 'hidden';
-      dummy1.style.position = 'absolute';
-      dummy1.style.fontFamily = "'Times New Roman', Times, serif";
-      dummy1.style.fontSize = '1.11em';
-      dummy1.innerText = firstRow;
-      document.body.appendChild(dummy1);
-      const fitsTwoPerLine = dummy1.offsetWidth < 540;
-      document.body.removeChild(dummy1);
-
-      if (fitsTwoPerLine) {
-        return {
-          question,
-          html: `
-          <div class="mcq-options-two-row">
-            <div class="mcq-options-line">${optionStrs.slice(0,2).map(opt => `<div class="mcq-option">${opt}</div>`).join('')}</div>
-            <div class="mcq-options-line">${optionStrs.slice(2,4).map(opt => `<div class="mcq-option">${opt}</div>`).join('')}</div>
-          </div>
-          `
-        }
-      }
-      // Otherwise, one per line
-      return {
-        question,
-        html: `<div class="mcq-options-col">${optionStrs.map(opt => `<div class="mcq-option">${opt}</div>`).join('')}</div>`
-      }
+      return text;
     }
 
     function renderPrintPreview() {
@@ -376,35 +296,23 @@
       // Sections and questions
       let qNum = 1;
       for (const section of (exam.sections || [])) {
-        // Section header and instructions on single line
-        let sectionHeader = '';
-        if (section.name && section.name !== "undefined") sectionHeader += section.name;
-        if (section.instructions && section.instructions !== "undefined") sectionHeader += (sectionHeader ? ': ' : '') + section.instructions;
-        if (sectionHeader) {
-          page.innerHTML += `<div class="section-header-instruct">${sectionHeader}</div>`;
+        // Section Heading
+        if (section.name && section.name !== "undefined") {
+          page.innerHTML += `<div class="section-header">${section.name}</div>`;
+        }
+        // Section Instructions
+        if (section.instructions && section.instructions !== "undefined") {
+          page.innerHTML += `<div class="section-instructions">${section.instructions}</div>`;
         }
         // Questions
         if (section.questions) {
           page.innerHTML += `<ol class="question-list" type="1" start="${qNum}">` +
-            section.questions.map(q => {
-              // Remove metadata, handle MCQ formatting
-              const cleanText = cleanQuestionText(q.text);
-              const mcqObj = renderMCQOptions(cleanText);
-              if (mcqObj) {
-                // MCQ: question, then options as per rule
-                return `<li class="question-item">
-                  <span class="question-text">${mcqObj.question}</span>
-                  ${mcqObj.html}
-                  ${q.image ? `<img class="question-img" src="${q.image}" alt="Question Image" />` : ''}
-                </li>`;
-              } else {
-                // Not MCQ: Just show as-is (text will wrap naturally)
-                return `<li class="question-item">
-                  <span class="question-text">${cleanText}</span>
-                  ${q.image ? `<img class="question-img" src="${q.image}" alt="Question Image" />` : ''}
-                </li>`;
-              }
-            }).join('') +
+            section.questions.map(q =>
+              `<li class="question-item">
+                <span class="question-text">${formatQuestionText(q.text)}</span>
+                ${q.image ? `<img class="question-img" src="${q.image}" alt="Question Image" />` : ''}
+              </li>`
+            ).join('') +
             `</ol>`;
           qNum += section.questions.length;
         }
