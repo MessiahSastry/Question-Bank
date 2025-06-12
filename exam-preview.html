@@ -304,119 +304,140 @@ function formatQuestionText(text) {
     return text;
 }
 
-function renderPrintPreview() {
-    const container = document.getElementById('print-preview');
-    container.innerHTML = ''; // Clear previous content
-    const page = document.createElement('div');
-    page.className = 'a4-page';
+ function renderPrintPreview() {
+      const container = document.getElementById('print-preview');
+      container.innerHTML = '';
+      let page = document.createElement('div');
+      page.className = 'a4-page';
 
-    page.innerHTML = `
+      // Heading row
+      page.innerHTML += `
         <div class="heading-row">
-            <img src="schoollogo1.png" class="school-logo" alt="School Logo" onerror="this.style.display='none';">
-            <div class="school-headings">
-                <div class="school-title">St. Patrick’s School</div>
-                <div class="subtitle">IIT & NEET FOUNDATION</div>
-                <div class="exam-title">${exam.examName || ''}</div>
-            </div>
-            <img src="schoollogo2.png" class="school-logo" alt="School Logo" onerror="this.style.display='none';">
+          <img src="${schoolLogo1}" class="school-logo" alt="School Logo" onerror="this.style.display='none';">
+          <div class="school-headings">
+            <div class="school-title">St. Patrick’s School</div>
+            <div class="subtitle">IIT & NEET FOUNDATION</div>
+            <div class="exam-title">${exam.examName || ''}</div>
+          </div>
+          <img src="${schoolLogo2}" class="school-logo" alt="School Logo" onerror="this.style.display='none';">
         </div>
         <div class="details-rect">
-            <div class="rect-row">
-                <span class="rect-label">Class: ${exam.class || ''}</span>
-                <span class="rect-subject">${(exam.subject || '').toUpperCase()}</span>
-                <span class="rect-label">Date: ${exam.date || ''}</span>
-            </div>
-            <div class="rect-row">
-                <span class="rect-label">Time: ${exam.time ? exam.time + ' min' : ''}</span>
-                <span style="flex:1;"></span>
-                <span class="rect-label">Max Marks: ${exam.maxMarks || ''}</span>
-            </div>
+          <div class="rect-row">
+            <span class="rect-label">Class: ${exam.class || ''}</span>
+            <span class="rect-subject">${(exam.subject || '').toUpperCase()}</span>
+            <span class="rect-label">Date: ${exam.date || ''}</span>
+          </div>
+          <div class="rect-row">
+            <span class="rect-label">Time: ${exam.time ? exam.time + ' min' : ''}</span>
+            <span style="flex:1;"></span>
+            <span class="rect-label">Max Marks: ${exam.maxMarks ? exam.maxMarks : ''}</span>
+          </div>
         </div>
-    `;
+      `;
 
-    let contentHTML = '';
-    let qNum = 1;
-    for (const section of (exam.sections || [])) {
-        if (section.name || section.instructions) {
-            contentHTML += `<div class="section-header">${section.name || ''}${(section.instructions ? ': ' + section.instructions : '')}</div>`;
-        }
+      // Sections and questions
+      let qNum = 1;
+      for (const section of (exam.sections || [])) {
+        // Section Heading
+        if ((section.name && section.name !== "undefined") || (section.instructions && section.instructions !== "undefined")) {
+        page.innerHTML += `<div class="section-header">${(section.name && section.name !== "undefined" ? section.name : "")}${(section.instructions && section.instructions !== "undefined" ? ": " + section.instructions : "")}</div>`;
+      }
+        // Questions
+        if (section.questions) {
+         page.innerHTML += `<ol class="question-list" type="1" start="${qNum}" style="list-style-position: inside; padding-left:0;">` +
+        section.questions.map(q => {
+          const formatted = formatQuestionText(q.text);
+          // Split formatted into first line (question), remaining (options/lines)
+          const lines = formatted.split('\n');
+const questionLine = lines[0];
+const optionLines = lines.slice(1);
 
-        if (section.questions && section.questions.length > 0) {
-            const questionsHTML = section.questions.map((q, index) => {
-                const currentQNum = qNum + index;
-                const formatted = formatQuestionText(q.text || '');
-                const lines = formatted.split('\n');
+// Detect if MCQ: options start with A), B), C), D)
+const isMCQ = optionLines.length >= 2 && 
+  optionLines[0].trim().startsWith('A)') && 
+  optionLines[1].trim().startsWith('B)');
 
-                let questionContentHTML = '';
-                let optionsHTML = '';
+// Option HTML to inject
+let optionsHTML = '';
+if (isMCQ) {
+  // Join all options as one line, test its length
+  const joined = optionLines.map(line => line.trim()).join('    ');
+  // Create a dummy span to test width
+  const dummy = document.createElement('span');
+  dummy.style.visibility = 'hidden';
+  dummy.style.position = 'absolute';
+  dummy.style.fontFamily = "'Times New Roman', Times, serif";
+  dummy.style.fontSize = '1.11em';
+  dummy.innerText = joined;
+  document.body.appendChild(dummy);
+  const fitsSingleLine = dummy.offsetWidth < 520;
+  document.body.removeChild(dummy);
 
-                // Check if the question is an MCQ by seeing if the second line starts with "A)"
-                const isMCQ = lines.length > 1 && lines[1].trim().startsWith('A)');
-
-                if (isMCQ) {
-                    // --- This is the existing, correct logic for MCQs ---
-                    questionContentHTML = lines[0];
-                    const optionLines = lines.slice(1);
-                    
-                    const dummy = document.createElement('span');
-                    dummy.style.cssText = "visibility: hidden; position: absolute; font-family: 'Times New Roman', Times, serif; font-size: 1.11em;";
-                    dummy.innerText = optionLines.map(line => line.trim()).join('    ');
-                    document.body.appendChild(dummy);
-                    const fitsSingleLine = dummy.offsetWidth < 520;
-
-                    if (fitsSingleLine) {
-                        optionsHTML = `<div style="display: flex; gap: 32px;">${optionLines.map(opt => `<div>${opt.trim()}</div>`).join('')}</div>`;
-                    } else {
-                        dummy.innerText = optionLines.slice(0, 2).map(opt => opt.trim()).join('    ');
-                        const fitsRow = dummy.offsetWidth < 520;
-                        if (fitsRow && optionLines.length > 2) {
-                            const row1HTML = `<div>${optionLines[0].trim()}</div><div>${optionLines[1].trim()}</div>`;
-                            let row2HTML = `<div>${optionLines[2].trim()}</div>`;
-                            if (optionLines[3]) row2HTML += `<div>${optionLines[3].trim()}</div>`;
-                            optionsHTML = `<div style="display: flex; gap: 32px;">${row1HTML}</div><div style="display: flex; gap: 32px; margin-top: 2px;">${row2HTML}</div>`;
-                        } else {
-                            optionsHTML = optionLines.map(opt => `<div>${opt.trim()}</div>`).join('');
-                        }
-                    }
-                    document.body.removeChild(dummy);
-
-                } else {
-                    // --- THIS IS THE NEW FIX FOR NON-MCQ / MATH QUESTIONS ---
-                    // It's NOT an MCQ. Treat the whole thing as a single block of text.
-                    // Replace newlines with spaces to create one single, flowing paragraph.
-                    questionContentHTML = formatted.replace(/\n/g, ' ');
-                }
-
-                const imageHTML = q.image ? `<div class="question-img-block"><img class="question-img" src="${q.image}" alt="Question Image" /></div>` : '';
-
-                return `
-                    <div class="question-container">
-                        <div class="question-number">${currentQNum}.</div>
-                        <div class="question-body">
-                            <div class="question-text">${questionContentHTML}</div>
-                            ${imageHTML}
-                            <div class="options-block">${optionsHTML}</div>
-                        </div>
-                    </div>
-                `;
-            }).join('');
-            contentHTML += questionsHTML;
-            qNum += section.questions.length;
-        }
-    }
-
-    page.innerHTML += contentHTML;
-    page.innerHTML += `
-        <div class="footer-row">
-            <div>St. Patrick’s School – a school for IIT & NEET Foundation</div>
+  if (fitsSingleLine) {
+    // All options on one line
+    optionsHTML = `<div style="display: flex; gap: 32px; margin: 6px 0;">${optionLines.map(opt => `<div>${opt.trim()}</div>`).join('')}</div>`;
+  } else {
+    // Try two lines (2 options per line)
+    const row1 = optionLines.slice(0, 2).map(opt => opt.trim()).join('    ');
+    const row2 = optionLines.slice(2, 4).map(opt => opt.trim()).join('    ');
+    // Check width of row1 and row2
+    const dummy1 = document.createElement('span');
+    dummy1.style.visibility = 'hidden';
+    dummy1.style.position = 'absolute';
+    dummy1.style.fontFamily = "'Times New Roman', Times, serif";
+    dummy1.style.fontSize = '1.11em';
+    dummy1.innerText = row1;
+    document.body.appendChild(dummy1);
+    const fitsRow = dummy1.offsetWidth < 520;
+    document.body.removeChild(dummy1);
+    if (fitsRow) {
+      optionsHTML = `
+        <div style="display: flex; gap: 32px; margin: 6px 0;">
+          <div>${optionLines[0].trim()}</div>
+          <div>${optionLines[1].trim()}</div>
         </div>
-    `;
-    container.appendChild(page);
-
-    if (window.MathJax) {
-        window.MathJax.typesetPromise();
+        <div style="display: flex; gap: 32px;">
+          <div>${optionLines[2].trim()}</div>
+          <div>${optionLines[3].trim()}</div>
+        </div>
+      `;
+    } else {
+      // Each option on its own line
+      optionsHTML = optionLines.map(opt => `<div style="margin:3px 0;">${opt.trim()}</div>`).join('');
     }
+  }
+} else {
+  // Not MCQ or only one line (non-option question)
+  optionsHTML = optionLines.length ? `<div>${optionLines.join('<br>')}</div>` : '';
 }
+
+return `<li class="question-item">
+  <div class="question-line">
+    ${questionLine}
+  </div>
+  ${q.image ? `<div class="question-img-block"><img class="question-img" src="${q.image}" alt="Question Image" /></div>` : ''}
+  <div class="options-block">
+    ${optionsHTML}
+  </div>
+</li>
+  }).join('') +
+        `</ol>`;
+          qNum += section.questions.length;
+        }
+      }
+
+      // Footer
+      page.innerHTML += `
+        <div class="footer-row">
+          <div>St. Patrick’s School – a school for IIT & NEET Foundation</div>
+        </div>
+      `;
+
+      container.appendChild(page);
+
+      // MathJax render
+      if (window.MathJax) MathJax.typesetPromise();
+    }
 
     renderPrintPreview();
 
