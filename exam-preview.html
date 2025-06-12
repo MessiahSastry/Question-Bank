@@ -302,14 +302,134 @@ function formatQuestionText(text) {
     return text;
 }
  
-// FIND THIS EXACT FUNCTION
+// REPLACE IT WITH THIS FINAL VERSION
 function renderPrintPreview() {
-    // ... the code you currently have ...
+    const container = document.getElementById('print-preview');
+    container.innerHTML = '';
+    const page = document.createElement('div');
+    page.className = 'a4-page';
+
+    page.innerHTML = `
+        <div class="heading-row">
+            <img src="schoollogo1.png" class="school-logo" alt="School Logo" onerror="this.style.display='none';">
+            <div class="school-headings">
+                <div class="school-title">St. Patrick’s School</div>
+                <div class="subtitle">IIT & NEET FOUNDATION</div>
+                <div class="exam-title">${exam.examName || ''}</div>
+            </div>
+            <img src="schoollogo2.png" class="school-logo" alt="School Logo" onerror="this.style.display='none';">
+        </div>
+        <div class="details-rect">
+            <div class="rect-row">
+                <span class="rect-label">Class: ${exam.class || ''}</span>
+                <span class="rect-subject">${(exam.subject || '').toUpperCase()}</span>
+                <span class="rect-label">Date: ${exam.date || ''}</span>
+            </div>
+            <div class="rect-row">
+                <span class="rect-label">Time: ${exam.time ? exam.time + ' min' : ''}</span>
+                <span style="flex:1;"></span>
+                <span class="rect-label">Max Marks: ${exam.maxMarks || ''}</span>
+            </div>
+        </div>
+    `;
+
+    let contentHTML = '';
+    let qNum = 1;
+    for (const section of(exam.sections || [])) {
+        if (section.name || section.instructions) {
+            contentHTML += `<div class="section-header">${section.name || ''}${(section.instructions ? ': ' + section.instructions : '')}</div>`;
+        }
+
+        if (section.questions && section.questions.length > 0) {
+            const questionsHTML = section.questions.map((q, index) => {
+                const currentQNum = qNum + index;
+                const formatted = formatQuestionText(q.text || '');
+                let questionContentHTML = '';
+                let optionsHTML = '';
+                const parts = formatted.split(/\n(?=\s*[A-D]\))/);
+                const isMCQ = parts.length > 1;
+
+                if (isMCQ) {
+                    questionContentHTML = parts[0];
+                    const optionLines = parts.slice(1);
+                    const renderOption = (opt) => `<div style="flex: 1 1 0; min-width: 50px;">${opt.trim().replace(/\n/g, '<br>')}</div>`;
+
+                    // ===> THIS IS THE FINAL CORRECTED LOGIC <===
+                    // First, check if any option contains its own line breaks.
+                    const hasMultiLineOptions = optionLines.some(opt => opt.includes('\n'));
+
+                    if (hasMultiLineOptions) {
+                        // If options are complex (like in Q5), force a 2x2 grid without measuring.
+                        const row1HTML = renderOption(optionLines[0]) + (optionLines[1] ? renderOption(optionLines[1]) : '');
+                        let row2HTML = '';
+                        if (optionLines[2]) {
+                            row2HTML = renderOption(optionLines[2]) + (optionLines[3] ? renderOption(optionLines[3]) : '');
+                        }
+                        optionsHTML = `<div style="display: flex; gap: 32px;">${row1HTML}</div>`;
+                        if (row2HTML) {
+                            optionsHTML += `<div style="display: flex; gap: 32px; margin-top: 2px;">${row2HTML}</div>`;
+                        }
+                    } else {
+                        // If options are simple, use the measurement logic.
+                        const dummy = document.createElement('span');
+                        dummy.style.cssText = 'visibility: hidden; position: absolute; white-space: nowrap; padding: 0; margin: 0; border: none; font-family: \'Times New Roman\', Times, serif; font-size: 1.11em;';
+                        const firstLinesForMeasurement = optionLines.map(line => line.split('\n')[0].trim());
+                        dummy.innerText = firstLinesForMeasurement.join('    ');
+                        document.body.appendChild(dummy);
+                        const fitsSingleLine = dummy.offsetWidth < 440;
+
+                        if (fitsSingleLine) {
+                            optionsHTML = `<div style="display: flex; gap: 32px;">${optionLines.map(renderOption).join('')}</div>`;
+                        } else {
+                            dummy.innerText = firstLinesForMeasurement.slice(0, 2).join('    ');
+                            const fitsRow = dummy.offsetWidth < 440;
+                            if (fitsRow && optionLines.length > 2) {
+                                const row1HTML = renderOption(optionLines[0]) + renderOption(optionLines[1]);
+                                let row2HTML = renderOption(optionLines[2]);
+                                if (optionLines[3]) row2HTML += renderOption(optionLines[3]);
+                                optionsHTML = `<div style="display: flex; gap: 32px;">${row1HTML}</div><div style="display: flex; gap: 32px; margin-top: 2px;">${row2HTML}</div>`;
+                            } else {
+                                optionsHTML = optionLines.map(renderOption).join('');
+                            }
+                        }
+                        document.body.removeChild(dummy);
+                    }
+                } else {
+                    questionContentHTML = formatted.replace(/\n/g, ' ');
+                }
+
+                const imageHTML = q.image ? `<div class="question-img-block"><img class="question-img" src="${q.image}" alt="Question Image" /></div>` : '';
+
+                return `
+                    <div class="question-container">
+                        <div class="question-number">${currentQNum}.</div>
+                        <div class="question-body">
+                            <div class="question-text">${questionContentHTML}</div>
+                            ${imageHTML}
+                            <div class="options-block">${optionsHTML}</div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            contentHTML += questionsHTML;
+            qNum += section.questions.length;
+        }
+    }
+
+    page.innerHTML += contentHTML;
+    page.innerHTML += `
+        <div class="footer-row">
+            <div>St. Patrick’s School – a school for IIT & NEET Foundation</div>
+        </div>
+    `;
+    container.appendChild(page);
+
+    if (window.MathJax) {
+        window.MathJax.typesetPromise();
+    }
 }
     renderPrintPreview();
-
-    // PDF Export
-    document.getElementById('download-pdf').onclick = function () {
+     document.getElementById('download-pdf').onclick = function () {
       import('jspdf').then(jsPDF => {
         const doc = new jsPDF.jsPDF({ unit: "mm", format: "a4" });
         doc.html(document.querySelector('.a4-page'), {
