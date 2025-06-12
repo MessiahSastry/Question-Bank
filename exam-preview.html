@@ -306,14 +306,74 @@
           const formatted = formatQuestionText(q.text);
           // Split formatted into first line (question), remaining (options/lines)
           const lines = formatted.split('\n');
-          const questionLine = lines[0];
-          const restLines = lines.slice(1).join('<br>');
-          return `<li class="question-item">
-            <span class="question-text">${questionLine}</span>
-            ${restLines ? `<br>${restLines}` : ''}
-            ${q.image ? `<br><img class="question-img" src="${q.image}" alt="Question Image" />` : ''}
-          </li>`;
-        }).join('') +
+const questionLine = lines[0];
+const optionLines = lines.slice(1);
+
+// Detect if MCQ: options start with A), B), C), D)
+const isMCQ = optionLines.length >= 2 && 
+  optionLines[0].trim().startsWith('A)') && 
+  optionLines[1].trim().startsWith('B)');
+
+// Option HTML to inject
+let optionsHTML = '';
+if (isMCQ) {
+  // Join all options as one line, test its length
+  const joined = optionLines.map(line => line.trim()).join('    ');
+  // Create a dummy span to test width
+  const dummy = document.createElement('span');
+  dummy.style.visibility = 'hidden';
+  dummy.style.position = 'absolute';
+  dummy.style.fontFamily = "'Times New Roman', Times, serif";
+  dummy.style.fontSize = '1.11em';
+  dummy.innerText = joined;
+  document.body.appendChild(dummy);
+  const fitsSingleLine = dummy.offsetWidth < 520;
+  document.body.removeChild(dummy);
+
+  if (fitsSingleLine) {
+    // All options on one line
+    optionsHTML = `<div style="display: flex; gap: 32px; margin: 6px 0;">${optionLines.map(opt => `<div>${opt.trim()}</div>`).join('')}</div>`;
+  } else {
+    // Try two lines (2 options per line)
+    const row1 = optionLines.slice(0, 2).map(opt => opt.trim()).join('    ');
+    const row2 = optionLines.slice(2, 4).map(opt => opt.trim()).join('    ');
+    // Check width of row1 and row2
+    const dummy1 = document.createElement('span');
+    dummy1.style.visibility = 'hidden';
+    dummy1.style.position = 'absolute';
+    dummy1.style.fontFamily = "'Times New Roman', Times, serif";
+    dummy1.style.fontSize = '1.11em';
+    dummy1.innerText = row1;
+    document.body.appendChild(dummy1);
+    const fitsRow = dummy1.offsetWidth < 520;
+    document.body.removeChild(dummy1);
+    if (fitsRow) {
+      optionsHTML = `
+        <div style="display: flex; gap: 32px; margin: 6px 0;">
+          <div>${optionLines[0].trim()}</div>
+          <div>${optionLines[1].trim()}</div>
+        </div>
+        <div style="display: flex; gap: 32px;">
+          <div>${optionLines[2].trim()}</div>
+          <div>${optionLines[3].trim()}</div>
+        </div>
+      `;
+    } else {
+      // Each option on its own line
+      optionsHTML = optionLines.map(opt => `<div style="margin:3px 0;">${opt.trim()}</div>`).join('');
+    }
+  }
+} else {
+  // Not MCQ or only one line (non-option question)
+  optionsHTML = optionLines.length ? `<div>${optionLines.join('<br>')}</div>` : '';
+}
+
+return `<li class="question-item">
+  <span class="question-text">${questionLine}</span>
+  ${q.image ? `<br><img class="question-img" src="${q.image}" alt="Question Image" />` : ''}
+  ${optionsHTML}
+</li>`;
+  }).join('') +
         `</ol>`;
           qNum += section.questions.length;
         }
