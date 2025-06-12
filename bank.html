@@ -303,20 +303,23 @@ async function exportPDF(e) {
 
     // Header
     printable.innerHTML = `
-        <div style="text-align:center;font-size:20pt;font-weight:normal;margin-bottom:2px;font-family:'Times New Roman', Times, serif;">
-            St. Patrick's School
-        </div>
-        <div style="text-align:center;font-size:13.5pt;font-weight:normal;margin-bottom:16px;font-family:'Times New Roman', Times, serif;">
-            IIT & NEET FOUNDATION
-        </div>
-        <div style="text-align:left;font-size:11pt;margin-bottom:2px;">
-            <b>Class:</b> ${classVal || ''}
-        </div>
-        <div style="display:flex;justify-content:space-between;font-size:11pt;margin-bottom:14px;">
-            <span><b>Subject:</b> ${subjectVal || ''}</span>
-            <span><b>Topic:</b> ${chapterVal || ''}</span>
-        </div>
-    `;
+  <div style="display:flex;align-items:flex-end;justify-content:center;margin-top:0;margin-bottom:0;">
+    <img src="schoollogo1.png" style="height:62px;width:auto;margin:0 10px 0 10px;" onerror="this.style.display='none';">
+    <div style="flex:1;text-align:center;min-width:0;">
+      <div style="font-size:2.1em;font-weight:bold;letter-spacing:0.03em;font-family:'Times New Roman', Times, serif;text-transform:capitalize;">St. Patrick’s School</div>
+      <div style="font-size:1.13em;font-weight:500;color:#0f3d6b;margin-top:3px;margin-bottom:2px;letter-spacing:0.04em;">IIT & NEET FOUNDATION</div>
+      <div style="font-size:1.09em;font-weight:bold;margin:4px 0 0 0;">Question Bank Export</div>
+    </div>
+    <img src="schoollogo2.png" style="height:62px;width:auto;margin:0 10px 0 10px;" onerror="this.style.display='none';">
+  </div>
+  <div style="margin:16px 0 18px 0;border:2px solid #bdd7f6;border-radius:14px;padding:10px 14px 10px 14px;width:100%;display:flex;flex-direction:column;background:#fafdff;box-sizing:border-box;max-width:100%;">
+    <div style="display:flex;align-items:center;width:100%;justify-content:space-between;font-size:1.13em;margin-bottom:2px;">
+      <span style="font-weight:bold;margin-right:6px;">Class: ${classVal || ''}</span>
+      <span style="flex:1;text-align:center;font-size:1.1em;font-weight:bold;letter-spacing:0.03em;">${(subjectVal || '').toUpperCase()}</span>
+      <span style="font-weight:bold;margin-left:6px;">Topic: ${chapterVal || ''}</span>
+    </div>
+  </div>
+`;
 
     const displayArea = document.getElementById('questions-display-area');
     const nodes = displayArea.querySelectorAll('.question-item');
@@ -375,72 +378,102 @@ async function exportPDF(e) {
     let mathElements = [];
 
     // Build questions
-    nodes.forEach((item, idx) => {
-        const qNum = idx + 1;
+   nodes.forEach((item, idx) => {
+    const qNum = idx + 1;
 
-        // Remove buttons
-        const clone = item.cloneNode(true);
-        clone.querySelectorAll('.question-img-btn, .delete-img-btn, .question-image-input').forEach(btn => btn.remove());
+    // Remove buttons from clone
+    const clone = item.cloneNode(true);
+    clone.querySelectorAll('.question-img-btn, .delete-img-btn, .question-image-input').forEach(btn => btn.remove());
 
-        // --- IMAGE HANDLING ---
-        let imgHtml = '';
-        const imgTag = clone.querySelector('img');
-        if (imgTag && imgTag.src) {
-            imgHtml = `<div style="margin:6px 0 10px 22px;"><img src="${imgTag.src}" style="max-width:170px;max-height:110px;border-radius:5px;box-shadow:0 2px 8px #0f3d6b19;display:block;"/></div>`;
-        }
+    // --- IMAGE HANDLING ---
+    let imgHtml = '';
+    const imgTag = clone.querySelector('img');
+    if (imgTag && imgTag.src) {
+        imgHtml = `<div class="question-img-block" style="margin:10px 0 4px 0;">
+            <img class="question-img" src="${imgTag.src}" style="max-width:300px;max-height:120px;border:1px solid #eee;border-radius:5px;display:block;"/>
+        </div>`;
+    }
 
-        // --- QUESTION TEXT + OPTIONS ---
-        const textDiv = clone.querySelector('.question-text');
-        let html = textDiv ? textDiv.innerHTML : '';
-        html = html.replace(/^\s*<br\s*\/?>|<br\s*\/?>\s*$/gi, '');
-        let lines = html.split('<br>').map(l => l.trim()).filter(Boolean);
+    // --- QUESTION TEXT + OPTIONS ---
+    const textDiv = clone.querySelector('.question-text');
+    let html = textDiv ? textDiv.innerHTML : '';
+    html = html.replace(/^\s*<br\s*\/?>|<br\s*\/?>\s*$/gi, '');
+    let lines = html.split('<br>').map(l => l.trim()).filter(Boolean);
 
-        // MCQ detection: look for options (A), B), etc)
-        let isMCQ = false;
-        let questionLine = lines[0] || '';
-        let options = [];
-        // MCQ: if we find A)/B)/C)/D)
-        const mcqRegex = /([A-Da-d]\)[^A-Da-d]*)/g;
-        let found = (lines.slice(1).join(' ') || '').match(mcqRegex);
-        if (found && found.length >= 2) {
+    // MCQ detection
+    let isMCQ = false;
+    let questionLine = lines[0] || '';
+    let options = [];
+    const mcqRegex = /([A-Da-d]\)[^A-Da-d]*)/g;
+    let found = (lines.slice(1).join(' ') || '').match(mcqRegex);
+    if (found && found.length === 4) {
+        isMCQ = true;
+        options = found.map(x => x.trim());
+    } else if (lines.length > 1) {
+        const optLines = lines.slice(1).filter(x =>
+            /^[A-Da-d]\)/.test(x.trim()) || /^[A-Da-d][\.\-]/.test(x.trim()) || x.length < 64
+        );
+        if (optLines.length === 4) {
             isMCQ = true;
-            options = found.map(x => x.trim());
-        } else if (lines.length > 1) {
-            // fallback: treat each additional line as an option
-            const optLines = lines.slice(1).filter(x =>
-                /^[A-Da-d]\)/.test(x.trim()) || /^[A-Da-d][\.\-]/.test(x.trim()) || x.length < 64
-            );
-            if (optLines.length > 1) {
-                isMCQ = true;
-                options = optLines;
-            }
+            options = optLines;
         }
+    }
 
-        // MathJax tracking
-        if (/\$|\\\(|\\\)/.test(html)) mathElements.push(idx);
+    // MathJax tracking (keep if you use MathJax)
+    if (/\$|\\\(|\\\)/.test(html)) mathElements.push(idx);
 
-        // Build output
-        let questionHtml = `<div style="margin-bottom:23px;">`;
-        // Number + question
-        questionHtml += `<div style="font-size:11pt;text-indent:-20px;padding-left:20px;line-height:1.68;margin-bottom:3px;">${qNum}. ${questionLine}</div>`;
-        // Image (if any)
-        if (imgHtml) questionHtml += imgHtml;
+    // --- Final question container layout (matches exam preview) ---
+    let questionHtml = `
+    <div class="question-container" style="display:flex;align-items:flex-start;margin-bottom:10px;">
+        <div class="question-number" style="min-width:28px;padding-right:4px;font-size:1.1em;">${qNum}.</div>
+        <div class="question-body" style="flex:1;">
+            <div class="question-text" style="font-size:1.1em;font-family:'Times New Roman', Times, serif;">${questionLine}</div>
+            ${imgHtml ? imgHtml : ''}
+            <div class="options-block" style="margin-top:2px;">
+                ${
+                    isMCQ && options.length === 4
+                    // Use grid logic for MCQ options, as in exam preview
+                    ? (() => {
+                        // 1. Try all 4 in one row
+                        const temp = document.createElement('span');
+                        temp.style.cssText = 'visibility:hidden;position:absolute;white-space:nowrap;padding:0;margin:0;border:none;font-family:\'Times New Roman\',Times,serif;font-size:1.11em;';
+                        temp.innerText = options.map(line => line.split('\n')[0].trim()).join('    ');
+                        document.body.appendChild(temp);
+                        let fitsFour = temp.offsetWidth < 440;
+                        document.body.removeChild(temp);
 
-        // MCQ options or Descriptive
-        if (isMCQ && options.length > 0) {
-            questionHtml += formatOptions(options);
-        } else {
-            // Descriptive: hanging indent, preserve line breaks (wrapped under question text)
-            if (lines.length > 1) {
-                questionHtml += `<div style="font-size:11pt;text-indent:-20px;padding-left:20px;white-space:pre-line;">${lines.slice(1).join('\n')}</div>`;
-            }
-        }
-        questionHtml += `</div>`;
-        // Append to printable
-        let wrap = document.createElement('div');
-        wrap.innerHTML = questionHtml;
-        printable.appendChild(wrap);
-    });
+                        if (fitsFour) {
+                            return `<div style="display:flex;gap:32px;">${options.map(opt => `<div style="flex:1 1 0;min-width:60px;">${opt}</div>`).join('')}</div>`;
+                        } else {
+                            // Try 2+2
+                            const temp2 = document.createElement('span');
+                            temp2.style.cssText = temp.style.cssText;
+                            temp2.innerText = options[0].split('\n')[0].trim() + '    ' + options[1].split('\n')[0].trim();
+                            document.body.appendChild(temp2);
+                            let fitsTwo = temp2.offsetWidth < 440;
+                            document.body.removeChild(temp2);
+
+                            if (fitsTwo) {
+                                const row1 = `<div style="display:flex;gap:32px;">${options.slice(0,2).map(opt => `<div style="flex:1 1 0;min-width:60px;">${opt}</div>`).join('')}</div>`;
+                                const row2 = `<div style="display:flex;gap:32px;margin-top:2px;">${options.slice(2).map(opt => `<div style="flex:1 1 0;min-width:60px;">${opt}</div>`).join('')}</div>`;
+                                return row1 + row2;
+                            } else {
+                                return options.map(opt => `<div style="margin-bottom:2px;">${opt}</div>`).join('');
+                            }
+                        }
+                    })()
+                    : (lines.length > 1
+                        ? `<div style="font-size:1.1em;white-space:pre-line;">${lines.slice(1).join('\n')}</div>`
+                        : '')
+                }
+            </div>
+        </div>
+    </div>
+    `;
+    let wrap = document.createElement('div');
+    wrap.innerHTML = questionHtml;
+    printable.appendChild(wrap);
+});
 
     // Render MathJax equations before export
     if (window.MathJax && typeof window.MathJax.typesetPromise === 'function') {
