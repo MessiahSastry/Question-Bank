@@ -401,23 +401,56 @@ async function exportPDF(e) {
     let lines = html.split('<br>').map(l => l.trim()).filter(Boolean);
 
     // MCQ detection
-    let isMCQ = false;
-    let questionLine = lines[0] || '';
-    let options = [];
-    const mcqRegex = /([A-Da-d]\)[^A-Da-d]*)/g;
-    let found = (lines.slice(1).join(' ') || '').match(mcqRegex);
-    if (found && found.length === 4) {
-        isMCQ = true;
-        options = found.map(x => x.trim());
-    } else if (lines.length > 1) {
-        const optLines = lines.slice(1).filter(x =>
-            /^[A-Da-d]\)/.test(x.trim()) || /^[A-Da-d][\.\-]/.test(x.trim()) || x.length < 64
-        );
-        if (optLines.length === 4) {
-            isMCQ = true;
-            options = optLines;
-        }
-    }
+   // --- Final question container layout (matches exam preview) ---
+let questionHtml = `
+<div class="question-container" style="display:flex;align-items:flex-start;margin-bottom:10px;">
+    <div class="question-number" style="min-width:28px;padding-right:4px;font-size:1.1em;">${qNum}.</div>
+    <div class="question-body" style="flex:1;">
+        <div class="question-text" style="font-size:1.1em;font-family:'Times New Roman', Times, serif;">${questionLine}</div>
+        ${imgHtml ? imgHtml : ''}
+        <div class="options-block" style="margin-top:2px;">
+            ${
+                isMCQ && options.length === 4
+                // Use grid logic for MCQ options, as in exam preview
+                ? (() => {
+                    // 1. Try all 4 in one row
+                    const renderOption = (opt) => `<div style="flex:1 1 0;min-width:60px;">${opt.trim().replace(/\n/g, '<br>')}</div>`;
+                    const temp = document.createElement('span');
+                    temp.style.cssText = 'visibility:hidden;position:absolute;white-space:nowrap;padding:0;margin:0;border:none;font-family:\'Times New Roman\',Times,serif;font-size:1.11em;';
+                    temp.innerText = options.map(line => line.split('\n')[0].trim()).join('    ');
+                    document.body.appendChild(temp);
+                    let fitsFour = temp.offsetWidth < 440;
+                    document.body.removeChild(temp);
+
+                    if (fitsFour) {
+                        return `<div style="display:flex;gap:32px;">${options.map(renderOption).join('')}</div>`;
+                    } else {
+                        // Try 2+2
+                        const temp2 = document.createElement('span');
+                        temp2.style.cssText = temp.style.cssText;
+                        temp2.innerText = options[0].split('\n')[0].trim() + '    ' + options[1].split('\n')[0].trim();
+                        document.body.appendChild(temp2);
+                        let fitsTwo = temp2.offsetWidth < 440;
+                        document.body.removeChild(temp2);
+
+                        if (fitsTwo) {
+                            const row1 = `<div style="display:flex;gap:32px;">${options.slice(0,2).map(renderOption).join('')}</div>`;
+                            const row2 = `<div style="display:flex;gap:32px;margin-top:2px;">${options.slice(2).map(renderOption).join('')}</div>`;
+                            return row1 + row2;
+                        } else {
+                            return options.map(opt => `<div style="margin-bottom:2px;">${opt.trim().replace(/\n/g, '<br>')}</div>`).join('');
+                        }
+                    }
+                })()
+                : (lines.length > 1
+                    ? `<div style="font-size:1.1em;white-space:pre-line;">${lines.slice(1).join('\n')}</div>`
+                    : '')
+            }
+        </div>
+    </div>
+</div>
+`;
+
 
     // MathJax tracking (keep if you use MathJax)
     if (/\$|\\\(|\\\)/.test(html)) mathElements.push(idx);
