@@ -301,9 +301,10 @@ function formatQuestionText(text) {
     }
     return text;
 }
- function renderPrintPreview() {
+ // REPLACE IT WITH THIS FINAL, CORRECTED VERSION
+function renderPrintPreview() {
     const container = document.getElementById('print-preview');
-    container.innerHTML = ''; // Clear previous content
+    container.innerHTML = '';
     const page = document.createElement('div');
     page.className = 'a4-page';
 
@@ -333,7 +334,7 @@ function formatQuestionText(text) {
 
     let contentHTML = '';
     let qNum = 1;
-    for (const section of (exam.sections || [])) {
+    for (const section of(exam.sections || [])) {
         if (section.name || section.instructions) {
             contentHTML += `<div class="section-header">${section.name || ''}${(section.instructions ? ': ' + section.instructions : '')}</div>`;
         }
@@ -342,45 +343,46 @@ function formatQuestionText(text) {
             const questionsHTML = section.questions.map((q, index) => {
                 const currentQNum = qNum + index;
                 const formatted = formatQuestionText(q.text || '');
-                const lines = formatted.split('\n');
 
                 let questionContentHTML = '';
                 let optionsHTML = '';
 
-                // Check if the question is an MCQ by seeing if the second line starts with "A)"
-                const isMCQ = lines.length > 1 && lines[1].trim().startsWith('A)');
+                const parts = formatted.split(/\n(?=\s*[A-D]\))/);
+                const isMCQ = parts.length > 1;
 
                 if (isMCQ) {
-                    // --- This is the existing, correct logic for MCQs ---
-                    questionContentHTML = lines[0];
-                    const optionLines = lines.slice(1);
-                    
+                    questionContentHTML = parts[0];
+                    const optionLines = parts.slice(1);
+
+                    const renderOption = (opt) => `<div>${opt.trim().replace(/\n/g, '<br>')}</div>`;
+
                     const dummy = document.createElement('span');
-                    dummy.style.cssText = "visibility: hidden; position: absolute; font-family: 'Times New Roman', Times, serif; font-size: 1.11em;";
-                    dummy.innerText = optionLines.map(line => line.trim()).join('    ');
+                    dummy.style.cssText = 'visibility: hidden; position: absolute; white-space: nowrap; padding: 0; margin: 0; border: none; font-family: \'Times New Roman\', Times, serif; font-size: 1.11em;';
+
+                    dummy.innerText = optionLines.map(line => line.replace(/\n/g, ' ').trim()).join('    ');
                     document.body.appendChild(dummy);
-                    const fitsSingleLine = dummy.offsetWidth < 520;
+                    
+                    // ===> CORRECTED THRESHOLD <===
+                    const fitsSingleLine = dummy.offsetWidth < 440;
 
                     if (fitsSingleLine) {
-                        optionsHTML = `<div style="display: flex; gap: 32px;">${optionLines.map(opt => `<div>${opt.trim()}</div>`).join('')}</div>`;
+                        optionsHTML = `<div style="display: flex; gap: 32px;">${optionLines.map(renderOption).join('')}</div>`;
                     } else {
-                        dummy.innerText = optionLines.slice(0, 2).map(opt => opt.trim()).join('    ');
-                        const fitsRow = dummy.offsetWidth < 520;
+                        dummy.innerText = optionLines.slice(0, 2).map(line => line.replace(/\n/g, ' ').trim()).join('    ');
+                        
+                        // ===> CORRECTED THRESHOLD <===
+                        const fitsRow = dummy.offsetWidth < 440;
                         if (fitsRow && optionLines.length > 2) {
-                            const row1HTML = `<div>${optionLines[0].trim()}</div><div>${optionLines[1].trim()}</div>`;
-                            let row2HTML = `<div>${optionLines[2].trim()}</div>`;
-                            if (optionLines[3]) row2HTML += `<div>${optionLines[3].trim()}</div>`;
+                            const row1HTML = renderOption(optionLines[0]) + renderOption(optionLines[1]);
+                            let row2HTML = renderOption(optionLines[2]);
+                            if (optionLines[3]) row2HTML += renderOption(optionLines[3]);
                             optionsHTML = `<div style="display: flex; gap: 32px;">${row1HTML}</div><div style="display: flex; gap: 32px; margin-top: 2px;">${row2HTML}</div>`;
                         } else {
-                            optionsHTML = optionLines.map(opt => `<div>${opt.trim()}</div>`).join('');
+                            optionsHTML = optionLines.map(renderOption).join('');
                         }
                     }
                     document.body.removeChild(dummy);
-
                 } else {
-                    // --- THIS IS THE NEW FIX FOR NON-MCQ / MATH QUESTIONS ---
-                    // It's NOT an MCQ. Treat the whole thing as a single block of text.
-                    // Replace newlines with spaces to create one single, flowing paragraph.
                     questionContentHTML = formatted.replace(/\n/g, ' ');
                 }
 
