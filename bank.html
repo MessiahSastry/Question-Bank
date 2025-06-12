@@ -428,61 +428,44 @@ let questionHtml = `
         <div class="options-block" style="margin-top:2px;">
             ${
                isMCQ && options.length === 4
-    ? (() => {
-        // Helper: measure if options fit in one row or two rows
-        function getLineWidth(text) {
-            const temp = document.createElement('span');
-            temp.style.cssText = 'visibility:hidden;position:absolute;white-space:nowrap;padding:0;margin:0;border:none;font-family:\'Times New Roman\',Times,serif;font-size:1.11em;';
-            temp.innerText = text;
-            document.body.appendChild(temp);
-            const width = temp.offsetWidth;
-            document.body.removeChild(temp);
-            return width;
-        }
-
-        // 1. Try all 4 in one table row
-        const allFour = options.map(opt => opt.split('\n')[0].trim()).join('    ');
-        if (getLineWidth(allFour) < 440) {
-            // All 4 in one line
-            return `
-            <table style="width:100%;margin-left:12px;margin-bottom:4px;border-collapse:collapse;">
-              <tr>
-                <td style="padding-right:24px;">${options[0]}</td>
-                <td style="padding-right:24px;">${options[1]}</td>
-                <td style="padding-right:24px;">${options[2]}</td>
-                <td>${options[3]}</td>
-              </tr>
-            </table>
-            `;
-        }
-
-        // 2. Try two per line
-        const ab = options[0].split('\n')[0].trim() + '    ' + options[1].split('\n')[0].trim();
-        const cd = options[2].split('\n')[0].trim() + '    ' + options[3].split('\n')[0].trim();
-        if (getLineWidth(ab) < 440 && getLineWidth(cd) < 440) {
-            return `
-            <table style="width:100%;margin-left:12px;margin-bottom:4px;border-collapse:collapse;">
-              <tr>
-                <td style="padding-right:32px;">${options[0]}</td>
-                <td>${options[1]}</td>
-              </tr>
-              <tr>
-                <td style="padding-right:32px;">${options[2]}</td>
-                <td>${options[3]}</td>
-              </tr>
-            </table>
-            `;
-        }
-
-        // 3. Else, one per line
-        return `
-          <div style="margin-left:12px;">
-            ${options.map(opt => `<div style="margin-bottom:2px;">${opt}</div>`).join('')}
-          </div>
-        `;
-    })()
-                : (lines.length > 1
-                    ? `<div style="font-size:1.1em;white-space:pre-line;">${lines.slice(1).join('\n')}</div>`
+                ? (() => {
+                    // Use the same layout logic as exam preview
+                    const optionLines = options.map(opt => opt.replace(/\n+/g, ' ').trim());
+                    const renderOption = (opt) => `<div style="flex:1 1 0;min-width:60px;">${opt}</div>`;
+                
+                    // Try all 4 options in one row
+                    let dummy = document.createElement('span');
+                    dummy.style.cssText = 'visibility:hidden;position:absolute;white-space:nowrap;padding:0;margin:0;border:none;font-family:\'Times New Roman\',Times,serif;font-size:1.11em;';
+                    dummy.innerText = optionLines.join('    ');
+                    document.body.appendChild(dummy);
+                    let fitsFour = dummy.offsetWidth < 440;
+                    document.body.removeChild(dummy);
+                
+                    if (fitsFour) {
+                        // One row (all short)
+                        return `<div style="display:flex;gap:32px;">${optionLines.map(renderOption).join('')}</div>`;
+                    } else {
+                        // Try two rows (A+B, C+D)
+                        let dummy2 = document.createElement('span');
+                        dummy2.style.cssText = dummy.style.cssText;
+                        dummy2.innerText = optionLines[0] + '    ' + optionLines[1];
+                        document.body.appendChild(dummy2);
+                        let fitsTwo = dummy2.offsetWidth < 440;
+                        document.body.removeChild(dummy2);
+                
+                        if (fitsTwo) {
+                            // Two rows: A&B, C&D
+                            const row1 = renderOption(optionLines[0]) + renderOption(optionLines[1]);
+                            const row2 = renderOption(optionLines[2]) + renderOption(optionLines[3]);
+                            return `<div style="display:flex;gap:32px;">${row1}</div>
+                                    <div style="display:flex;gap:32px;margin-top:2px;">${row2}</div>`;
+                        } else {
+                            // Four rows, one option each
+                            return optionLines.map(opt => `<div style="margin-bottom:2px;">${opt}</div>`).join('');
+                        }
+                    }
+                })()
+                : (lines.length > 1 ? `<div style="font-size:1.1em;white-space:pre-line;">${lines.slice(1).join('\n')}</div>` : '')
                     : '')
             }
         </div>
