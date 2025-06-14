@@ -476,7 +476,7 @@
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js"></script>
 
-    <script>
+   <script>
     // --- FULL JAVASCRIPT ---
 
     const API_BASE_URL = 'https://question-bank-lqsu.onrender.com';
@@ -493,7 +493,6 @@
     const db = firebase.firestore(); let stagedFile = null;
     let currentUserProfile = null;
     let currentSessionQuestions = [];
-    let chatHistory = [];
     const aiGeneratorConfig = {
       classes: ["3rd Class", "4th Class", "5th Class", "6th Class", "7th Class", "8th Class", "9th Class", "10th Class"],
       subjectMappings: {
@@ -544,8 +543,8 @@
       const subjectsHTML = initialSubjects.map(s => `<div data-value="${s}">${s}</div>`).join('');
       const qTypesHTML = aiGeneratorConfig.questionTypes.map(qt => `<div data-value="${qt}">${qt}</div>`).join('');
       
-      formContainer.innerHTML =
-      `<h2>AI Question Generator</h2>
+      formContainer.innerHTML = `
+      <h2>AI Question Generator</h2>
         <form id="ai-setup-form">
             <div class="form-group"><label>Class:</label><div id="class-dropdown-ai" class="custom-dropdown"><input type="hidden" id="class-value-ai" value="${aiGeneratorConfig.classes[0]}"><div class="selected-option">${aiGeneratorConfig.classes[0]}</div><div class="dropdown-options">${classesHTML}</div></div></div>
             <div class="form-group"><label>Subject:</label><div id="subject-dropdown-ai" class="custom-dropdown"><input type="hidden" id="subject-value-ai" value="${initialSubjects[0] || ''}"><div class="selected-option">${initialSubjects[0] || 'Select Subject'}</div><div class="dropdown-options">${subjectsHTML}</div></div></div>
@@ -560,7 +559,6 @@
             </div>
             <button type="submit">Start Generating</button>
        </form>`;
-
         const initialChapters =
           textbooks[aiGeneratorConfig.classes[0]] && textbooks[aiGeneratorConfig.classes[0]][initialSubjects[0]]
             ? textbooks[aiGeneratorConfig.classes[0]][initialSubjects[0]]
@@ -625,7 +623,6 @@
             </div>
             <button id="scroll-to-bottom" title="Scroll to Bottom">⬇️</button>
         </div>`;
-
         document.getElementById('ai-change-setup-btn').onclick = () => history.back();
         document.getElementById('ai-save-all-btn').onclick = () => saveSessionQuestions(sessionParams);
         const chatPromptInput = document.getElementById('chat-prompt-input');
@@ -754,7 +751,6 @@
             </div>
         </div>
     `;
-
     document.body.appendChild(overlay);
 
     document.getElementById('confirm-cancel-btn').onclick = () => {
@@ -819,9 +815,6 @@
             if (!response.ok) throw new Error(result.error || "API error");
         }
         parseAndDisplayAiQuestions(result.result, messagesArea, sessionParams);
-        if (result && result.result) {
-          chatHistory.push({ role: "assistant", content: result.result });
-        }
     } catch (err) {
         appendChatMessage(`Error: ${err.message}`, 'system-message', messagesArea);
     } finally {
@@ -843,16 +836,6 @@
 
     if (!userPrompt && !stagedFile) return;
 
-        if (stagedFile) {
-          // Directly call proceedWithGeneration for image upload
-          proceedWithGeneration(userPrompt, sessionParams);
-          return; // Skip the rest of the function for images
-        }
-        
-        // For normal text, continue as usual (show confirmation, etc.)
-        if (userPrompt) {
-          chatHistory.push({ role: "user", content: userPrompt });
-        }
     // --- Stage 1: Get Confirmation ---
 
     sendBtn.disabled = true;
@@ -865,17 +848,14 @@
     const loadingMessage = appendChatMessage('Parsing instructions...', 'system-message', messagesArea);
 
     // This is the "meta-prompt" that asks the AI to summarize the teacher's request.
-    const promptForSummary = `
-        Summarize the teacher's request for generating questions, making it clear and simple for confirmation before proceeding.
-        Do not add any greeting or extra commentary.  
-        Instructions from the teacher: "${userPrompt}"
-        `;
+    const promptForSummary = `A teacher has provided the following instructions for creating an exam. Re-write and structure these instructions clearly and concisely in a paragraph format for a confirmation message. Start with "You need to create a...". Do not add any conversational text, just the structured instructions. Teacher's instructions: "${userPrompt}"`;
+
     try {
         // We use the same generation endpoint, but with our special summary prompt.
         const response = await fetch(`${API_BASE_URL}/api/v1/generate`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ history: chatHistory })
+            body: JSON.stringify({ prompt: promptForSummary })
         });
         const result = await response.json();
         if (!response.ok) throw new Error(result.error || "API error");
@@ -1074,7 +1054,6 @@ function splitMcqOptions(body) {
             <div class="question-actions">
                 <button class="q-action-btn" title="Options"><i class="fas fa-ellipsis-v"></i></button>
             </div>`;
-
         const actionButton = questionEl.querySelector('.q-action-btn');
 
         actionButton.addEventListener('click', (e) => {
@@ -1192,7 +1171,6 @@ function splitMcqOptions(body) {
                 <button id="edit-cancel">Cancel</button>
                 <button id="edit-save">Save</button>
             </div>`;
-
         document.body.appendChild(editor);
 
         document.getElementById('edit-cancel').onclick = () => editor.remove();
