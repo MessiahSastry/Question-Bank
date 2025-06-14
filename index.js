@@ -60,13 +60,13 @@ const openai = new OpenAI({
 // ========== 1. AI Text-Based Question Generation ==========
 app.post(`${API_VERSION}/generate`, async (req, res) => {
     try {
-        const { prompt } = req.body;
-        if (!prompt) {
-            return res.status(400).json({ error: "No prompt provided." });
+        const { history } = req.body;
+        if (!history || !Array.isArray(history) || history.length === 0) {
+            return res.status(400).json({ error: "No chat history provided." });
         }
         const response = await openai.chat.completions.create({
             model: "gpt-4o",
-            messages: [{ role: "user", content: prompt }],
+            messages: history,
             max_tokens: 2000,
         });
         res.json({ result: response.choices[0].message.content });
