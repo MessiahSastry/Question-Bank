@@ -60,13 +60,13 @@ const openai = new OpenAI({
 // ========== 1. AI Text-Based Question Generation ==========
 app.post(`${API_VERSION}/generate`, async (req, res) => {
     try {
-        const { history } = req.body;
-        if (!history || !Array.isArray(history) || history.length === 0) {
-            return res.status(400).json({ error: "No chat history provided." });
+        const { prompt } = req.body;
+        if (!prompt) {
+            return res.status(400).json({ error: "No prompt provided." });
         }
         const response = await openai.chat.completions.create({
             model: "gpt-4o",
-            messages: history,
+            messages: [{ role: "user", content: prompt }],
             max_tokens: 2000,
         });
         res.json({ result: response.choices[0].message.content });
@@ -81,8 +81,7 @@ app.post(`${API_VERSION}/summarize-prompt`, async (req, res) => {
     try {
         const { prompt, class: examClass, subject, examName, chapters } = req.body;
         // Compose a GPT-4o prompt for summarization/confirmation
-        const chatPrompt = `
-A teacher is trying to create an exam paper. Here are their instructions (may be incomplete or unclear):
+        const chatPrompt = `A teacher is trying to create an exam paper. Here are their instructions (may be incomplete or unclear):
 
 ---
 Prompt: "${prompt}"
@@ -100,7 +99,6 @@ Your job:
 Example output:
 "You are about to generate a Science exam for Class 8 based mostly on chapters 1 and 2, with an emphasis on MCQs. Total marks: 50."
         `.trim();
-
         const response = await openai.chat.completions.create({
             model: "gpt-4o",
             messages: [{ role: "user", content: chatPrompt }],
@@ -137,7 +135,6 @@ app.post(`${API_VERSION}/extract-from-image`, upload.single("imageFile"), async 
                 ---
                 Now, process the attached image based on the teacher's request and follow all formatting instructions. Provide ONLY the formatted questions as your response.
             `;
-
             const response = await openai.chat.completions.create({
                 model: "gpt-4o",
                 messages: [{
@@ -171,7 +168,6 @@ app.post(`${API_VERSION}/extract-from-image`, upload.single("imageFile"), async 
                 ---
                 Now, fulfill the teacher's request using the provided text and follow all formatting instructions. Provide ONLY the formatted questions as your response.
             `;
-
             const response = await openai.chat.completions.create({
                 model: "gpt-4o",
                 messages: [{ role: "user", content: masterPrompt }],
@@ -228,8 +224,7 @@ app.post(`${API_VERSION}/build-exam`, async (req, res) => {
         }
 
         // Compose the AI prompt
-        const buildPrompt = `
-You are an expert exam paper creator for St. Patrick's School.
+        const buildPrompt = `You are an expert exam paper creator for St. Patrick's School.
 Your job: From ONLY the below "Available Questions", build an exam paper as per teacher's config.
 ${examConfig.prompt ? "Additional Teacher Prompt: " + examConfig.prompt : ""}
 -----
@@ -257,7 +252,6 @@ Instructions:
   "warning": "..." // if any
 }
         `.trim();
-
         // Call OpenAI
         const response = await openai.chat.completions.create({
             model: "gpt-4o",
