@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>View AP Text Book | St. Patrick's School</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
+  <style>
+    body {
+      margin: 0; padding: 0;
+      font-family: 'Segoe UI', Arial, sans-serif;
+      background: #f4f8fc;
+    }
+    #main-header {
+      background: linear-gradient(90deg, #1762a7, #0f3d6b);
+      color: #fff;
+      border-bottom-left-radius: 28px;
+      border-bottom-right-radius: 28px;
+      min-height: 70px;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      padding: 15px 10px 18px 10px;
+      box-sizing: border-box;
+    }
+    #main-header .school-title { font-size: 1.4em; font-weight: bold; margin: 0;}
+    #main-header .subtitle { font-size: 1em; color: #e0eaff; margin-top: 5px; }
+    .info-bar {
+      margin: 20px auto 10px auto;
+      max-width: 980px;
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: 0 2px 8px #0f3d6b19;
+      padding: 18px 16px 14px 16px;
+      font-size: 1.13em;
+      color: #13487c;
+      text-align: center;
+    }
+    .pdf-container {
+      width: 100%;
+      max-width: 990px;
+      margin: 0 auto 30px auto;
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: 0 2px 8px #0f3d6b19;
+      min-height: 80vh;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    iframe {
+      width: 100%;
+      height: 78vh;
+      border: none;
+      background: #e6f1ff;
+      border-radius: 10px;
+      margin-top: 0;
+    }
+    .error-msg {
+      color: #c82333;
+      font-size: 1.18em;
+      font-weight: 600;
+      margin: 30px 0 0 0;
+      text-align: center;
+    }
+    @media (max-width: 700px) {
+      .pdf-container { max-width: 100%; border-radius: 0; }
+      iframe { height: 75vh; }
+    }
+  </style>
+</head>
+<body>
+  <header id="main-header">
+    <div class="school-title">St. Patrick's School</div>
+    <div class="subtitle">IIT & NEET FOUNDATION</div>
+  </header>
+  <div class="info-bar" id="info-bar">
+    Loading...
+  </div>
+  <div class="pdf-container" id="pdf-container" style="display:none;">
+    <iframe id="pdf-frame" src="" allow="fullscreen"></iframe>
+  </div>
+  <div class="error-msg" id="error-msg" style="display:none;"></div>
+
+  <!-- Firebase JS SDKs -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+  <script>
+    // 1. Firebase setup
+    const firebaseConfig = {
+      apiKey: "AIzaSyAszVhWXUUOYLQ7VimKmPKf1yEu_CI9RCE",
+      authDomain: "stpatricks-questionbank.firebaseapp.com",
+      projectId: "stpatricks-questionbank",
+      storageBucket: "stpatricks-questionbank.appspot.com",
+      messagingSenderId: "917615322861",
+      appId: "1:917615322861:web:c6c890aa2184dd395b8ee4"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+
+    // 2. Helper to read URL query params
+    function getQueryParam(key) {
+      const params = new URLSearchParams(window.location.search);
+      return params.get(key) || '';
+    }
+
+    // 3. Load PDF
+    async function loadPDF() {
+      const infoBar = document.getElementById('info-bar');
+      const pdfContainer = document.getElementById('pdf-container');
+      const errorMsg = document.getElementById('error-msg');
+      const pdfFrame = document.getElementById('pdf-frame');
+      infoBar.textContent = 'Loading...';
+      pdfContainer.style.display = "none";
+      errorMsg.style.display = "none";
+
+      // Get class and subject from query
+      const classVal = getQueryParam('class');
+      const subjectVal = getQueryParam('subject');
+      if (!classVal || !subjectVal) {
+        infoBar.style.display = "none";
+        errorMsg.textContent = "Class or subject not specified in the link.";
+        errorMsg.style.display = "block";
+        return;
+      }
+      infoBar.innerHTML = `<b>Class:</b> ${classVal} &nbsp; | &nbsp; <b>Subject:</b> ${subjectVal}`;
+
+      try {
+        const query = db.collection('ap_textbooks')
+          .where('class', '==', classVal)
+          .where('subject', '==', subjectVal)
+          .limit(1);
+
+        const snap = await query.get();
+        if (snap.empty) {
+          errorMsg.textContent = "No textbook found for this class and subject.";
+          errorMsg.style.display = "block";
+          infoBar.style.display = "none";
+          return;
+        }
+
+        const doc = snap.docs[0].data();
+        pdfFrame.src = doc.storageURL;
+        pdfContainer.style.display = "block";
+        infoBar.style.display = "block";
+      } catch (err) {
+        errorMsg.textContent = "Failed to load PDF. Please try again later.";
+        errorMsg.style.display = "block";
+        infoBar.style.display = "none";
+      }
+    }
+
+    document.addEventListener('DOMContentLoaded', loadPDF);
+  </script>
+</body>
+</html>
