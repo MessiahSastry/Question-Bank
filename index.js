@@ -4,7 +4,7 @@ admin.initializeApp({
   credential: admin.credential.cert(serviceAccount)
 });
 const db = admin.firestore();
-
+const Tesseract = require('tesseract.js');
 const express = require("express");
 const cors = require("cors");
 const { OpenAI } = require("openai");
@@ -121,33 +121,36 @@ app.post(`${API_VERSION}/extract-from-image`, upload.single("imageFile"), async 
         let aiResponse;
 
         if (req.file.mimetype.startsWith("image/")) {
-            const imageBase64 = req.file.buffer.toString("base64");
-            const masterPrompt = `
-                You are an expert AI assistant for St. Patrick's School. Your task is to extract and format questions from an image provided by a teacher.
-                The teacher's specific request is: "${teacherPrompt}"
-                ---
-                **YOUR INSTRUCTIONS:**
-                Follow the teacher's request and format every single question you output according to this strict structure:
-                1.  **Meta-data Line:** Each question MUST begin on a new line with the pattern "Q<number>: <Difficulty>/Level <Lvl>, <Marks> Marks". You must estimate the difficulty, level, and marks.
-                2.  **Question Line:** The text of the question must follow on the next line.
-                3.  **MCQ Formatting:** If it is a multiple-choice question, the options (A, B, C, D) and the final answer ("Ans: ...") should follow.
-                4.  **LaTeX:** All mathematical equations must be in proper LaTeX format.
-                ---
-                Now, process the attached image based on the teacher's request and follow all formatting instructions. Provide ONLY the formatted questions as your response.
-            `;
-            const response = await openai.chat.completions.create({
-                model: "gpt-4o",
-                messages: [{
-                    role: "user",
-                    content: [
-                        { type: "text", text: masterPrompt },
-                        { type: "image_url", image_url: { url: `data:${req.file.mimetype};base64,${imageBase64}` } },
-                    ],
-                }],
-                max_tokens: 3000,
-            });
-            aiResponse = response.choices[0].message.content;
-        }
+    // 1. Use Tesseract to extract text from the image
+    const { data: { text: extractedText } } = await Tesseract.recognize(req.file.buffer, 'eng');
+
+    // 2. Prepare the prompt for OpenAI using extracted text
+    const masterPrompt = `
+        You are an expert AI assistant for St. Patrick's School. You will be given text extracted from an image and a teacher's request.
+        The teacher's specific request is: "${teacherPrompt}"
+        ---
+        **YOUR INSTRUCTIONS:**
+        Analyze the following text based on the teacher's request and format every single question you find according to this strict structure:
+        1.  **Meta-data Line:** Each question MUST begin on a new line with the pattern "Q<number>: <Difficulty>/Level <Lvl>, <Marks> Marks". You must estimate the difficulty, level, and marks.
+        2.  **Question Line:** The text of the question must follow on the next line.
+        3.  **MCQ Formatting:** If it is a multiple-choice question, the options (A, B, C, D) and the final answer ("Ans: ...") should follow.
+        4.  **LaTeX:** All mathematical equations must be in proper LaTeX format.
+        ---
+        **Extracted Text from Image:**
+        ${extractedText}
+        ---
+        Now, fulfill the teacher's request using the provided text and follow all formatting instructions. Provide ONLY the formatted questions as your response.
+    `;
+
+    const response = await openai.chat.completions.create({
+        model: "gpt-4o",
+        messages: [{ role: "user", content: masterPrompt }],
+        max_tokens: 3000,
+    });
+
+    aiResponse = response.choices[0].message.content;
+}
+
         // --- B. ELSE IF THE FILE IS A PDF ---
         else if (req.file.mimetype === "application/pdf") {
             const data = await pdfParse(req.file.buffer);
