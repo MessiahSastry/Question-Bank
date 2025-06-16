@@ -505,7 +505,7 @@
         "9th Class": ["Telugu", "Hindi", "English 1", "English 2", "Math 1", "Math 1 IIT", "Math 2", "Math 2 IIT", "Physics", "Physics IIT & NEET", "Chemistry", "Chemistry IIT & NEET", "Biology", "Biology NEET", "Social"],
         "10th Class": ["Telugu", "Hindi", "English 1", "English 2", "Math 1", "Math 1 IIT", "Math 2", "Math 2 IIT", "Physics", "Physics IIT & NEET", "Chemistry", "Chemistry IIT & NEET", "Biology", "Biology NEET", "Social"]
       },
-      questionTypes: ["MCQs", "Descriptive"],
+      questionTypes: ["MCQ (Single)", "MCQ (Multiple)", "Descriptive"],
       getSubjectsForClass: function(className) { return this.subjectMappings[className] || []; }
     };
     
@@ -790,16 +790,26 @@
             let fullPromptForAI;
             const baseInfo = `Class: ${sessionParams.class}, Subject: ${sessionParams.subject}, Chapter: ${sessionParams.chapter}. User request: "${originalPrompt}".`;
 
-            if (sessionParams.questionType === "MCQs") {
+            if (sessionParams.questionType === "MCQ (Single)") {
                 fullPromptForAI = `${baseInfo}
-                The user wants Multiple Choice Questions (MCQs).
+                The user wants Multiple Choice Questions (MCQs) with only one correct answer for each question.
                 Please generate questions based on the user's request. Each question MUST follow this strict format:
                 1. Start with the question number, difficulty, level, and marks (e.g., "Q1: Easy/Level 1, 1 Mark").
                 2. On the next line, write the question text.
                 3. On the following lines, provide four options, each starting with "A)", "B)", "C)", and "D)".
-                4. On the final line for that question, specify the correct answer using the format "Ans: C)".
+                4. On the final line for that question, specify the correct answer using the format "Ans: C)" (only ONE letter).
+                Provide ONLY the questions in this exact format. Do not add any other text, explanation, or introduction.`;
+            } else if (sessionParams.questionType === "MCQ (Multiple)") {
+                fullPromptForAI = `${baseInfo}
+                The user wants Multiple Choice Questions (MCQs) with more than one correct answer possible for each question (Multiple correct options).
+                Please generate questions based on the user's request. Each question MUST follow this strict format:
+                1. Start with the question number, difficulty, level, and marks (e.g., "Q1: Easy/Level 1, 1 Mark").
+                2. On the next line, write the question text.
+                3. On the following lines, provide four options, each starting with "A)", "B)", "C)", and "D)".
+                4. On the final line for that question, specify ALL correct answers using the format "Ans: A), C), D)" (may be more than one letter, separated by comma).
                 Provide ONLY the questions in this exact format. Do not add any other text, explanation, or introduction.`;
             } else {
+                // Descriptive
                 fullPromptForAI = `${baseInfo}
                 The user wants Descriptive questions.
                 Format each question strictly as: Q <num>: <Difficulty>/Level <Lvl>, <Marks> Marks
@@ -934,6 +944,7 @@
                 class: qData.class,
                 subject: qData.subject,
                 chapter: qData.chapter,
+                mcqType: sessionParams.questionType.startsWith('MCQ') ? sessionParams.questionType : null,
                 createdBy: currentUserProfile.uid,
                 timestamp: firebase.firestore.FieldValue.serverTimestamp()
             });
@@ -1017,10 +1028,10 @@ function splitMcqOptions(body) {
             const partsMatch = originalMeta.match(/Q\s*\d+:\s*(.*?),\s*(.*)/i);
             if (partsMatch && partsMatch[1]) difficultyLevel = partsMatch[1].trim();
             if (partsMatch && partsMatch[2]) marks = partsMatch[2].trim();
-            if (sessionParams.questionType === "MCQs") marks = "1 Mark";
+            if (sessionParams.questionType.startsWith("MCQ")) marks = "1 Mark";
 
-            questionData.parsedMeta = `Q${currentSessionQuestions.length + 1}: ${difficultyLevel}, ${marks}`;
-            
+            questionData.parsedMeta = `Q${currentSessionQuestions.length + 1}: ${difficultyLevel}, ${marks} [${sessionParams.questionType}]`;
+          
             let rawBody = qText.substring(originalMeta.length).trim();
             const answerRegex = /(.*)(Ans:\s*.*)/s;
             const answerMatch = rawBody.match(answerRegex);
