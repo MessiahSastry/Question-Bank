@@ -426,7 +426,16 @@ document.addEventListener('DOMContentLoaded', () => {
         sectionLabelDropdown.classList.add('section-label-dropdown');
         sectionLabelDropdown.style.width = "120px";
         sectionLabelDropdown.style.marginRight = "8px";
-
+        // MCQ Type Dropdown (Single/Multiple, default Single)
+            const mcqTypeDropdown = createSectionDropdown(
+                ["MCQ (Single)", "MCQ (Multiple)"],
+                "MCQ Type",
+                "MCQ (Single)",
+                null
+            );
+            mcqTypeDropdown.classList.add('mcq-type-dropdown');
+            mcqTypeDropdown.style.width = "150px";
+            mcqTypeDropdown.style.marginRight = "10px";
         // Section Type Dropdown
         const sectionTypeDropdown = createSectionDropdown(
             config.sectionTypes,
@@ -458,10 +467,9 @@ document.addEventListener('DOMContentLoaded', () => {
         newItem.appendChild(dragHandle);
         newItem.appendChild(sectionLabelDropdown);
         newItem.appendChild(sectionTypeDropdown);
+        newItem.appendChild(mcqTypeDropdown);   // <<== ADD THIS LINE
         newItem.appendChild(logicFields);
         newItem.appendChild(removeBtn);
-        list.appendChild(newItem);
-
         // Initial logic fields
         updateSectionLogicFields(newItem, config.sectionTypeKeys[0]);
     }
@@ -511,7 +519,6 @@ document.addEventListener('DOMContentLoaded', () => {
             sectionItem.querySelector('.num-pairs-input').addEventListener('input', () => generateInternalPairs(sectionItem));
         }
     }
-
     function generateInternalPairs(sectionItem) {
         const pairCount = parseInt(sectionItem.querySelector('.num-pairs-input').value) || 1;
         const pairsDiv = sectionItem.querySelector('.internal-choice-pairs');
@@ -527,19 +534,31 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         pairsDiv.innerHTML = html;
     }
-
     // --- All Other Dropdown Logic (same as before) ---
     createDropdown('class-dropdown', config.classes, 'Select Class');
     createDropdown('subject-dropdown', [], 'Select Class first');
     createDropdown('exam-name-dropdown', config.examNames, 'Select Exam Name');
     createDropdown('exam-type-dropdown', config.examTypes, 'Select Exam Type');
+    document.getElementById('exam-type-dropdown').addEventListener('change', handleExamTypeChange);
     createDropdown('difficulty-dropdown', config.difficultyLevels, 'Select Difficulty');
 
     document.getElementById('class-dropdown').addEventListener('change', handleClassChange);
     document.getElementById('subject-dropdown').addEventListener('change', handleSubjectChange);
     document.getElementById('exam-setup-form').addEventListener('submit', handleFormSubmit);
     document.getElementById('add-section-btn').addEventListener('click', addSection);
-
+    // --- Automatically manage section(s) based on exam type ---
+    function handleExamTypeChange() {
+        const examType = document.getElementById('exam-type-dropdown').dataset.value;
+        const sectionsList = document.getElementById('sections-list');
+        // If MCQs and no sections yet, add Section A
+        if (examType === "MCQs" && sectionsList.children.length === 0) {
+            addSection();
+        }
+        // If not MCQs, clear all sections so user can start fresh
+        if (examType !== "MCQs") {
+            sectionsList.innerHTML = '';
+        }
+    }
     // --- Chapter Multiselect ---
     const chapterContainer = document.getElementById('chapters-multiselect');
     chapterContainer.addEventListener('click', (e) => {
@@ -622,6 +641,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 const typeIndex = config.sectionTypes.indexOf(typeLabel);
                 const type = config.sectionTypeKeys[typeIndex];
                 let sec = { label, type };
+                const mcqTypeEl = section.querySelector('.mcq-type-dropdown');
+                const mcqType = mcqTypeEl ? mcqTypeEl.dataset.value : "MCQ (Single)";
+                sec.mcqType = mcqType;
+
                 if (type === "all") {
                     sec.numQuestions = parseInt(section.querySelector('.num-questions-input').value);
                     sec.marksPerQuestion = parseInt(section.querySelector('.marks-per-question-input').value);
@@ -738,6 +761,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         selectedSubject: examConfig.subject,
                         chapters: examConfig.chapters,
                         marksPerQuestion: sec.marksPerQuestion,
+                        mcqType: sec.mcqType,
                         count: requestedCount
                     });
                 
