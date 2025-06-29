@@ -866,25 +866,25 @@ document.addEventListener('DOMContentLoaded', () => {
                     // --- END OF VALIDATION ---
                     console.log("Fetched questions before mapping:", questions);
                     questions = questions.map((q, idx) => {
+                    // If there is NO options array, try to extract from the question string!
+                    let stem = q.question || q.text || '';
+                    let match = stem.match(/^(.*?)(?:A\)|a\))\s*([^B|b]*)[B|b]\)\s*([^C|c]*)[C|c]\)\s*([^D|d]*)[D|d]\)\s*(.*)$/);
                     let optionsArray = q.options;
-                    // Try to auto-split from question text if not present
-                    if (!optionsArray && q.question) {
-                        // Match "A) ... B) ... C) ... D) ..." pattern
-                        const parts = q.question.split(/A\)\s*|B\)\s*|C\)\s*|D\)\s*/);
-                        if (parts.length === 5) { // [qtext, A, B, C, D]
-                            const qtext = parts[0].trim();
-                            optionsArray = [parts[1].trim(), parts[2].trim(), parts[3].trim(), parts[4].trim()];
-                            // Remove options from question for display
-                            q.question = qtext;
-                            q.options = optionsArray;
-                        }
+                    if (!optionsArray && match) {
+                        // [1] stem, [2] A, [3] B, [4] C, [5] D
+                        optionsArray = [match[2].trim(), match[3].trim(), match[4].trim(), match[5].trim()];
+                        stem = match[1].trim();
                     }
-                    // Now shuffle if possible
+                    // If after this, we have options, do the shuffle
                     if (
                         (sec.mcqType === "MCQ (Single)" || sec.mcqType === "MCQ (Multiple)") &&
-                        Array.isArray(q.options) && q.options.length === 4
+                        Array.isArray(optionsArray) && optionsArray.length === 4
                     ) {
-                        const shuffled = shuffleMCQQuestion(q);
+                        const shuffled = shuffleMCQQuestion({
+                            ...q,
+                            options: optionsArray,
+                            question: stem
+                        });
                         return {
                             number: idx + 1,
                             text: shuffled.question || shuffled.text || "",
@@ -895,9 +895,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     } else {
                         return {
                             number: idx + 1,
-                            text: q.question || q.text || "",
+                            text: stem,
                             marks: sec.marksPerQuestion,
-                            options: q.options || [],
+                            options: optionsArray || [],
                             answer: q.answer || ""
                         };
                     }
