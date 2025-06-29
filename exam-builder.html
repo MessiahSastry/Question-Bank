@@ -273,6 +273,54 @@
 
    <!-- Place this after your form HTML and before </body> -->
 <script>
+    // Shuffle array in-place using Fisher-Yates
+function shuffleArray(arr) {
+    for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+}
+
+// Shuffles MCQ options and remaps answer keys for both Single/Multiple
+function shuffleMCQQuestion(questionObj) {
+    if (!questionObj.options || !questionObj.options.length) return questionObj;
+
+    // Prepare old options and answers
+    let { options, answer } = questionObj; // `answer` is like "Ans: A), C)" or "Ans: B)"
+    let correctIndices = [];
+
+    // Parse correct options from answer line
+    if (typeof answer === 'string') {
+        const ansMatches = answer.match(/[A-D]/g);
+        if (ansMatches) {
+            correctIndices = ansMatches.map(l => "ABCD".indexOf(l));
+        }
+    } else if (Array.isArray(answer)) {
+        correctIndices = answer; // direct indices, rare case
+    }
+
+    // Map old options to [option, oldIndex]
+    const optPairs = options.map((opt, idx) => ({ opt, idx }));
+    shuffleArray(optPairs);
+
+    // New options
+    const newOptions = optPairs.map(p => p.opt);
+
+    // New answer indices (A=0, ...)
+    const newCorrectIndices = optPairs
+        .map((p, newIdx) => (correctIndices.includes(p.idx) ? newIdx : null))
+        .filter(x => x !== null);
+
+    // Build new answer line (A), C), ...)
+    const ansStr = "Ans: " + newCorrectIndices.map(i => "ABCD"[i] + ")").join(", ");
+
+    // Return new object
+    return {
+        ...questionObj,
+        options: newOptions,
+        answer: ansStr
+    };
+}
 document.addEventListener('DOMContentLoaded', () => {
     const config = {
         classes: ["3rd Class", "4th Class", "5th Class", "6th Class", "7th Class", "8th Class", "9th Class", "10th Class"],
@@ -816,11 +864,22 @@ document.addEventListener('DOMContentLoaded', () => {
                     }
                     // --- END OF VALIDATION ---
                 
-                    questions = questions.map((q, idx) => ({
-                        number: idx + 1,
-                        text: q.question || q.text || "",
-                        marks: sec.marksPerQuestion
-                    }));
+                    questions = questions.map((q, idx) => {
+    // Only shuffle if question is MCQ and has options array
+    if (
+        (sec.mcqType === "MCQ (Single)" || sec.mcqType === "MCQ (Multiple)") &&
+        Array.isArray(q.options) && q.options.length === 4
+    ) {
+        q = shuffleMCQQuestion(q);
+    }
+    return {
+        number: idx + 1,
+        text: q.question || q.text || "",
+        marks: sec.marksPerQuestion,
+        options: q.options || [],
+        answer: q.answer || ""
+    };
+});
                 // Replace the block above with this one
                     } else if (sec.type === "internal") {
                         for (let p = 0; p < sec.pairs.length; p++) {
