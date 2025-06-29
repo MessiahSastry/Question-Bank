@@ -258,8 +258,9 @@
   <div id="page-container">
     <div id="print-preview" class="print-preview"></div>
     <div class="toolbar">
-       <button onclick="window.print()"><i class="fas fa-print"></i> Print</button>
-    </div>
+   <button onclick="window.print()"><i class="fas fa-print"></i> Print</button>
+   <button id="downloadPdfBtn"><i class="fas fa-file-pdf"></i> Download PDF</button>
+</div>
   </div>
  <script>
 const schoolLogo1 = 'schoollogo1.png';
@@ -477,6 +478,75 @@ async function renderMathJaxToImages(containerSelector) {
         el.parentNode.replaceChild(img, el);
     }
 }
+</script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script>
+document.getElementById('downloadPdfBtn').onclick = async function () {
+  const page = document.querySelector('.a4-page');
+  if (!page) return;
+
+  // A4 size in pixels at 96dpi
+  const A4_WIDTH_PX = Math.round(210 / 25.4 * 96);
+  const A4_HEIGHT_PX = Math.round(297 / 25.4 * 96);
+
+  // Get total height
+  const totalHeight = page.offsetHeight;
+  let yOffset = 0;
+
+  // Set up jsPDF (A4, portrait)
+  const { jsPDF } = window.jspdf;
+  const pdf = new jsPDF({ unit: 'pt', format: 'a4' });
+  let pageNum = 0;
+
+  while (yOffset < totalHeight) {
+    // Create temp clone and show only slice for this page
+    const pageClone = page.cloneNode(true);
+    pageClone.style.margin = '0';
+    pageClone.style.padding = '0';
+    pageClone.style.position = 'absolute';
+    pageClone.style.top = `-${yOffset}px`;
+    pageClone.style.left = '0';
+    pageClone.style.width = page.offsetWidth + 'px';
+    pageClone.style.height = A4_HEIGHT_PX + 'px';
+    pageClone.style.overflow = 'hidden';
+    pageClone.style.background = '#fff';
+
+    // Prepare wrapper for html2canvas
+    const wrapper = document.createElement('div');
+    wrapper.style.position = 'absolute';
+    wrapper.style.top = '0';
+    wrapper.style.left = '0';
+    wrapper.style.width = page.offsetWidth + 'px';
+    wrapper.style.height = A4_HEIGHT_PX + 'px';
+    wrapper.style.overflow = 'hidden';
+    wrapper.style.background = '#fff';
+    wrapper.appendChild(pageClone);
+    document.body.appendChild(wrapper);
+
+    // Capture image
+    const canvas = await html2canvas(wrapper, {
+      backgroundColor: '#fff',
+      scale: 2,
+      windowWidth: page.offsetWidth,
+      windowHeight: A4_HEIGHT_PX
+    });
+
+    const imgData = canvas.toDataURL('image/png');
+
+    // Add to PDF
+    if (pageNum > 0) pdf.addPage();
+    pdf.addImage(imgData, 'PNG', 0, 0, pdf.internal.pageSize.getWidth(), pdf.internal.pageSize.getHeight());
+
+    document.body.removeChild(wrapper);
+    yOffset += A4_HEIGHT_PX;
+    pageNum++;
+  }
+
+  // Set filename from exam name, fallback if empty
+  let fileName = (window.exam && window.exam.examName) ? window.exam.examName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9\-]/g, '') : 'Exam-Paper';
+  pdf.save(`${fileName}.pdf`);
+};
 </script>
 </body>
 </html>
