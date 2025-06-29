@@ -344,18 +344,59 @@ function renderPrintPreview() {
         if (section.questions && section.questions.length > 0) {
             const questionsHTML = section.questions.map((q, index) => {
                 const currentQNum = qNum + index;
-                const formatted = formatQuestionText(q.text || '');
                 let questionContentHTML = '';
-                let optionsHTML = '';
-                const parts = formatted.split(/\n(?=\s*[A-D]\))/);
-                const isMCQ = parts.length > 1;
-                if (isMCQ) {
-                  questionContentHTML = parts[0];
-                  // JOIN ALL LINES IN EACH OPTION INTO ONE LINE:
-                  const optionLines = parts.slice(1).map(opt => opt.replace(/\n+/g, ' ').trim());
-                  // ... rest of your MCQ layout logic here
-
-                  
+                    let optionsHTML = '';
+                    const hasShuffledOptions = Array.isArray(q.options) && q.options.length === 4;
+                    
+                    if (hasShuffledOptions) {
+                      // Use shuffled options array, not text parsing!
+                      questionContentHTML = (q.question || q.text || '').replace(/\s*A\).*/g, '').trim();
+                      // Option labels: A), B), C), D)
+                      const optionLines = q.options.map((opt, idx) => String.fromCharCode(65 + idx) + ") " + opt.trim());
+                      // Layout: if all short, 1 row; else 2 rows
+                      const allShort = optionLines.every(opt => opt.length < 22);
+                      if (allShort) {
+                        optionsHTML = `<div style="display:flex;gap:32px;flex-wrap:wrap;margin-bottom:3px;">${optionLines.map(opt => `<span style="min-width:70px;display:inline-block;">${opt}</span>`).join('')}</div>`;
+                      } else {
+                        optionsHTML = `
+                          <div style="display:flex;gap:32px;margin-bottom:1px;">
+                            <span style="min-width:70px;display:inline-block;">${optionLines[0]}</span>
+                            <span style="min-width:70px;display:inline-block;">${optionLines[1]}</span>
+                          </div>
+                          <div style="display:flex;gap:32px;">
+                            <span style="min-width:70px;display:inline-block;">${optionLines[2]}</span>
+                            <span style="min-width:70px;display:inline-block;">${optionLines[3]}</span>
+                          </div>
+                        `;
+                      }
+                    } else {
+                      // Fallback: Parse from question text as before
+                      const formatted = formatQuestionText(q.text || '');
+                      const parts = formatted.split(/\n(?=\s*[A-D]\))/);
+                      const isMCQ = parts.length > 1;
+                      if (isMCQ) {
+                        questionContentHTML = parts[0];
+                        const optionLines = parts.slice(1).map(opt => opt.replace(/\n+/g, ' ').trim());
+                        const allShort = optionLines.every(opt => opt.length < 22);
+                        if (allShort) {
+                          optionsHTML = `<div style="display:flex;gap:32px;flex-wrap:wrap;margin-bottom:3px;">${optionLines.map(opt => `<span style="min-width:70px;display:inline-block;">${opt.trim()}</span>`).join('')}</div>`;
+                        } else {
+                          optionsHTML = `
+                            <div style="display:flex;gap:32px;margin-bottom:1px;">
+                              <span style="min-width:70px;display:inline-block;">${optionLines[0]}</span>
+                              <span style="min-width:70px;display:inline-block;">${optionLines[1]}</span>
+                            </div>
+                            <div style="display:flex;gap:32px;">
+                              <span style="min-width:70px;display:inline-block;">${optionLines[2]}</span>
+                              <span style="min-width:70px;display:inline-block;">${optionLines[3]}</span>
+                            </div>
+                          `;
+                        }
+                      } else {
+                        questionContentHTML = formatted.replace(/\n/g, ' ');
+                      }
+                    }
+                 
                       // New grid logic:
                       const renderOption = (opt) => `<div style="flex:1 1 0;min-width:60px;">${opt.trim().replace(/\n/g, '<br>')}</div>`;
                   
