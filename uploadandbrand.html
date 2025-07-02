@@ -127,6 +127,10 @@
     .dropdown-options div[data-value]:hover {
       background: #e0eaff;
     }
+    @keyframes spin {
+  0% { transform: rotate(0deg);}
+  100% { transform: rotate(360deg);}
+}
   </style>
 </head>
 <body>
@@ -212,94 +216,106 @@ function formatDate(dateStr) {
 }
 
 document.getElementById('processBtn').onclick = async function () {
-  const pdfFile = document.getElementById('pdfFile').files[0];
-  const schoolName = "St. Patrick's School";
-  const examName = document.getElementById('examName').value.trim();
-  const className = document.getElementById('class-dropdown').dataset.value;
-  const subject = document.getElementById('subject-dropdown').dataset.value;
-  const date = document.getElementById('date').value;
-  const time = document.getElementById('time').value.trim();
-  const maxMarks = document.getElementById('maxMarks').value.trim();
-  if (!pdfFile) return alert("Please select a PDF to brand!");
+  const showSpinner = () => document.getElementById('spinner-overlay').style.display = "flex";
+  const hideSpinner = () => document.getElementById('spinner-overlay').style.display = "none";
 
-  const pdfBytes = await pdfFile.arrayBuffer();
-  const pdfDoc = await PDFLib.PDFDocument.load(pdfBytes);
+  showSpinner();
+  try {
+    const pdfFile = document.getElementById('pdfFile').files[0];
+    const schoolName = "St. Patrick's School";
+    const examName = document.getElementById('examName').value.trim();
+    const className = document.getElementById('class-dropdown').dataset.value;
+    const subject = document.getElementById('subject-dropdown').dataset.value;
+    const date = document.getElementById('date').value;
+    const time = document.getElementById('time').value.trim();
+    const maxMarks = document.getElementById('maxMarks').value.trim();
+    if (!pdfFile) { hideSpinner(); return alert("Please select a PDF to brand!"); }
 
-  const fontBold = await pdfDoc.embedFont(PDFLib.StandardFonts.TimesRomanBold);
-  const fontReg = await pdfDoc.embedFont(PDFLib.StandardFonts.TimesRoman);
+    const pdfBytes = await pdfFile.arrayBuffer();
+    const pdfDoc = await PDFLib.PDFDocument.load(pdfBytes);
 
-  const fetchLogo = async (path) => {
-    const res = await fetch(path);
-    const imgBytes = await res.arrayBuffer();
-    return await pdfDoc.embedPng(imgBytes);
-  };
-  const logo1Img = await fetchLogo('schoollogo1.png');
-  const logo2Img = await fetchLogo('schoollogo2.png');
-  const logo1Dims = logo1Img.scale(66 / logo1Img.height);
-  const logo2Dims = logo2Img.scale(66 / logo2Img.height);
+    const fontBold = await pdfDoc.embedFont(PDFLib.StandardFonts.TimesRomanBold);
+    const fontReg = await pdfDoc.embedFont(PDFLib.StandardFonts.TimesRoman);
 
-  const page = pdfDoc.getPage(0);
-  const { width, height } = page.getSize();
-  const margin = 45, headH = 170;
+    const fetchLogo = async (path) => {
+      const res = await fetch(path);
+      const imgBytes = await res.arrayBuffer();
+      return await pdfDoc.embedPng(imgBytes);
+    };
+    const logo1Img = await fetchLogo('schoollogo1.png');
+    const logo2Img = await fetchLogo('schoollogo2.png');
+    const logo1Dims = logo1Img.scale(66 / logo1Img.height);
+    const logo2Dims = logo2Img.scale(66 / logo2Img.height);
 
-  page.drawRectangle({ x: 0, y: height - headH, width: width, height: headH, color: PDFLib.rgb(1,1,1), opacity: 1 });
-  const logoY = height - 100;
+    const page = pdfDoc.getPage(0);
+    const { width, height } = page.getSize();
+    const margin = 45, headH = 170;
 
-  page.drawImage(logo1Img, { x: 50, y: logoY, width: logo1Dims.width, height: logo1Dims.height });
-  page.drawImage(logo2Img, { x: width - 50 - logo2Dims.width, y: logoY, width: logo2Dims.width, height: logo2Dims.height });
+    page.drawRectangle({ x: 0, y: height - headH, width: width, height: headH, color: PDFLib.rgb(1,1,1), opacity: 1 });
+    const logoY = height - 100;
 
-  const headingY = logoY + 15;
-  page.drawText(schoolName, {
-    x: width / 2 - fontBold.widthOfTextAtSize(schoolName, 24) / 2,
-    y: headingY + 30,
-    size: 24,
-    font: fontBold,
-    color: PDFLib.rgb(0.10, 0.18, 0.5)
-  });
-  page.drawText('IIT & NEET FOUNDATION', {
-    x: width / 2 - fontReg.widthOfTextAtSize('IIT & NEET FOUNDATION', 15) / 2,
-    y: headingY + 10,
-    size: 15,
-    font: fontReg,
-    color: PDFLib.rgb(0.08, 0.25, 0.48)
-  });
-  page.drawText(examName, {
-    x: width / 2 - fontBold.widthOfTextAtSize(examName, 15) / 2,
-    y: headingY - 10,
-    size: 15,
-    font: fontBold,
-    color: PDFLib.rgb(0.12, 0.12, 0.16)
-  });
-  
-  // Move the box up and set its dimensions
-  const boxX = 50;
-const boxY = height - 165;
-const boxW = width - 100;
-const boxH = 55;
-const r = 10; // corner radius
-page.drawRectangle({
-  x: 50, y: boxY, width: boxW, height: boxH,
-  borderColor: PDFLib.rgb(0.24, 0.60, 0.96),
-  color: PDFLib.rgb(0.98, 0.99, 1),
-  borderWidth: 2,
-  borderRadius: 10, // This does NOT work in pdf-lib
-});
-  const subj = subject.toUpperCase();
-  page.drawText("Class: " + className, { x: 68, y: boxY + boxH - 22, size: 12.5, font: fontBold, color: PDFLib.rgb(0.11, 0.23, 0.53) });
-  page.drawText(subj, { x: width / 2 - fontBold.widthOfTextAtSize(subj, 17) / 2, y: boxY + boxH - 20, size: 17, font: fontBold, color: PDFLib.rgb(0.07, 0.18, 0.5) });
-  page.drawText("Date: " + formatDate(date), { x: width - 168, y: boxY + boxH - 22, size: 12.5, font: fontBold, color: PDFLib.rgb(0.11, 0.23, 0.53) });
-  page.drawText("Time: " + time + " min", { x: 68, y: boxY + 13, size: 12.5, font: fontBold, color: PDFLib.rgb(0.15, 0.24, 0.35) });
-  page.drawText("Max Marks: " + maxMarks, { x: width - 168, y: boxY + 13, size: 12.5, font: fontBold, color: PDFLib.rgb(0.15, 0.24, 0.35) });
+    page.drawImage(logo1Img, { x: 50, y: logoY, width: logo1Dims.width, height: logo1Dims.height });
+    page.drawImage(logo2Img, { x: width - 50 - logo2Dims.width, y: logoY, width: logo2Dims.width, height: logo2Dims.height });
 
-  const newPdfBytes = await pdfDoc.save();
-  const blob = new Blob([newPdfBytes], { type: 'application/pdf' });
-  const url = URL.createObjectURL(blob);
-  const link = document.getElementById('downloadLink');
-  link.href = url;
-  link.download = 'QuestionPaper_Branded.pdf';
-  link.style.display = '';
-  link.click();
+    const headingY = logoY + 15;
+    page.drawText(schoolName, {
+      x: width / 2 - fontBold.widthOfTextAtSize(schoolName, 24) / 2,
+      y: headingY + 30,
+      size: 24,
+      font: fontBold,
+      color: PDFLib.rgb(0.10, 0.18, 0.5)
+    });
+    page.drawText('IIT & NEET FOUNDATION', {
+      x: width / 2 - fontReg.widthOfTextAtSize('IIT & NEET FOUNDATION', 15) / 2,
+      y: headingY + 10,
+      size: 15,
+      font: fontReg,
+      color: PDFLib.rgb(0.08, 0.25, 0.48)
+    });
+    page.drawText(examName, {
+      x: width / 2 - fontBold.widthOfTextAtSize(examName, 15) / 2,
+      y: headingY - 10,
+      size: 15,
+      font: fontBold,
+      color: PDFLib.rgb(0.12, 0.12, 0.16)
+    });
+
+    // Box for class/subject/date/time/marks
+    const boxX = 50;
+    const boxY = height - 165;
+    const boxW = width - 100;
+    const boxH = 55;
+    page.drawRectangle({
+      x: 50, y: boxY, width: boxW, height: boxH,
+      borderColor: PDFLib.rgb(0.24, 0.60, 0.96),
+      color: PDFLib.rgb(0.98, 0.99, 1),
+      borderWidth: 2,
+      borderRadius: 10, // Doesn't work in pdf-lib
+    });
+    const subj = subject.toUpperCase();
+    page.drawText("Class: " + className, { x: 68, y: boxY + boxH - 22, size: 12.5, font: fontBold, color: PDFLib.rgb(0.11, 0.23, 0.53) });
+    page.drawText(subj, { x: width / 2 - fontBold.widthOfTextAtSize(subj, 17) / 2, y: boxY + boxH - 20, size: 17, font: fontBold, color: PDFLib.rgb(0.07, 0.18, 0.5) });
+    page.drawText("Date: " + formatDate(date), { x: width - 168, y: boxY + boxH - 22, size: 12.5, font: fontBold, color: PDFLib.rgb(0.11, 0.23, 0.53) });
+    page.drawText("Time: " + time + " min", { x: 68, y: boxY + 13, size: 12.5, font: fontBold, color: PDFLib.rgb(0.15, 0.24, 0.35) });
+    page.drawText("Max Marks: " + maxMarks, { x: width - 168, y: boxY + 13, size: 12.5, font: fontBold, color: PDFLib.rgb(0.15, 0.24, 0.35) });
+
+    const newPdfBytes = await pdfDoc.save();
+    const blob = new Blob([newPdfBytes], { type: 'application/pdf' });
+    const url = URL.createObjectURL(blob);
+
+    // Directly trigger download
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'QuestionPaper_Branded.pdf';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  } catch (e) {
+    alert("Error while branding PDF: " + (e.message || e));
+  }
+  hideSpinner();
 };
+
 
 document.getElementById('date').valueAsDate = new Date();
 createDropdown('class-dropdown', config.classes, 'Select Class');
@@ -310,5 +326,11 @@ document.getElementById('class-dropdown').addEventListener('change', () => {
   createDropdown('subject-dropdown', subjects, 'Select Subject');
 });
 </script>
+<div id="spinner-overlay" style="display:none;position:fixed;z-index:9999;top:0;left:0;width:100vw;height:100vh;background:rgba(255,255,255,0.80);align-items:center;justify-content:center;">
+  <div style="display:flex;flex-direction:column;align-items:center;gap:16px;">
+    <div class="spinner" style="width:52px;height:52px;border:6px solid #1762a7;border-top:6px solid #bcd6ef;border-radius:50%;animation:spin 1s linear infinite;"></div>
+    <div style="font-size:1.1em;color:#1762a7;font-weight:600;">Branding PDF, please wait...</div>
+  </div>
+</div>
 </body>
 </html>
