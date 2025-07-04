@@ -1205,32 +1205,47 @@ function splitMcqOptions(body) {
             const right = match[2].trim().split(/\n/).map(x => x.trim()).filter(Boolean);
             const optionsRaw = match[3].trim().split(/\n/).map(x => x.trim()).filter(Boolean);
             const correctAns = match[4].trim();
-
+            // --- Extract meta line from the AI text (e.g., Q1: Easy/Level 1, 1 Mark [Matching MCQ]) ---
+            let metaLineMatch = responseText.match(/^(Q\d+:\s*[^,]+,\s*[^[]+)\[/m);
+            let metaLine = metaLineMatch ? metaLineMatch[1].trim() + ' [Matching MCQ]' : 'Matching MCQ';
             const container = document.createElement('div');
             container.className = 'message ai-message';
             container.innerHTML = `
-                <div style="font-weight:600; color:#0f3d6b;">Matching MCQ</div>
-                <div style="margin-top:8px;">
-                    <div style="font-weight:500; color:#1762a7;">Left Side:</div>
-                    <div style="white-space:pre-line; margin-bottom:6px;">${left.join('\n')}</div>
-                    <div style="font-weight:500; color:#1762a7;">Right Side:</div>
-                    <div style="white-space:pre-line; margin-bottom:8px;">${right.join('\n')}</div>
+              <div class="question-meta-ai" style="margin-bottom:5px;">${metaLine}</div>
+              <div style="display:flex; gap:30px; margin-top:10px; margin-bottom:10px; align-items:flex-start;">
+                <div>
+                  <div style="font-weight:500; color:#1762a7;">Left Side</div>
+                  <ul style="margin:6px 0 0 0; padding-left:18px;">
+                    ${left.map(item => `<li>${item.replace(/^\d+\.\s*/, "")}</li>`).join('')}
+                  </ul>
                 </div>
-                <div style="font-weight:500; color:#1762a7;">Options:</div>
-                <ol type="A" style="padding-left:18px; margin-bottom:6px;">
-                    ${optionsRaw.map(opt=>`<li>${opt.replace(/^[A-D]\)\s*/,'')}</li>`).join('')}
-                </ol>
-                <div style="color:#c82333; font-weight:600;">Answer: ${correctAns}</div>
+                <div>
+                  <div style="font-weight:500; color:#1762a7;">Right Side</div>
+                  <ul style="margin:6px 0 0 0; padding-left:18px;">
+                    ${right.map(item => `<li>${item.replace(/^[A-F]\)\s*/, "")}</li>`).join('')}
+                  </ul>
+                </div>
+              </div>
+              <div style="font-weight:500; color:#1762a7;">Options:</div>
+              <ol type="A" style="padding-left:18px; margin-bottom:6px;">
+                ${optionsRaw.map(opt=>`<li>${opt.replace(/^[A-D]\)\s*/,'')}</li>`).join('')}
+              </ol>
+              <div style="color:#c82333; font-weight:600;">Answer: ${correctAns}</div>
             `;
             messagesArea.appendChild(container);
 
             // Store in session for save (as a single question)
-            const questionData = {
+            let metaMatch = responseText.match(/Q\d+:\s*([^,]+),?\s*([^[]*)/i);
+            let difficulty = metaMatch && metaMatch[1] ? metaMatch[1].trim() : "Easy/Level 1";
+            let marks = metaMatch && metaMatch[2] ? metaMatch[2].replace("Mark", "Mark").trim() : "1 Mark";
+            const metaLine = `Q${currentSessionQuestions.length + 1}: ${difficulty}, ${marks} [Matching]`;
+            
+            const metaLine = `Q${currentSessionQuestions.length + 1}: ${difficulty}, ${marks} [Matching]`;
                 fullText: responseText.trim(),
                 class: sessionParams.class,
                 subject: sessionParams.subject,
                 chapter: sessionParams.chapter,
-                parsedMeta: "Matching MCQ",
+                parsedMeta: metaLine,
                 parsedBody: responseText.trim(),
                 parsedAnswer: correctAns
             };
