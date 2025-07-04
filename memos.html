@@ -1,0 +1,705 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Download Progress Card PDFs - St. Patrick's School</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+  <link href="https://fonts.googleapis.com/css?family=Segoe+UI:400,600,700&display=swap" rel="stylesheet">
+  <style>
+    html, body { background: #f4f8fc; margin:0; padding:0; font-family:'Segoe UI',Arial,sans-serif;}
+    .container { max-width: 580px; margin: 30px auto 20px auto; background: #fff; border-radius: 18px; box-shadow: 0 4px 18px #0f3d6b22; padding: 24px 18px 30px 18px;}
+    .school-title { color: #0f3d6b; font-size: 1.7em; font-weight: bold; text-align: center;}
+    .subtitle { color: #1762a7; font-size: 1.09em; font-weight: 500; text-align: center; margin-bottom: 16px;}
+    .section { margin-bottom: 20px; }
+    label { font-weight: 600; color: #195084; display: block; margin-bottom: 6px; }
+    .row { display: flex; gap: 13px; }
+    .row > div { flex:1; }
+    .actions { display:flex; gap:14px; margin: 15px 0 14px 0;}
+    .custom-btn, button { background: linear-gradient(90deg, #1762a7 0%, #0f3d6b 100%); color: #fff; font-weight: 600; border:none; padding: 12px 17px; border-radius: 8px; font-size: 1.09em; cursor:pointer; box-shadow: 0 2px 8px #d2e7fa; margin-bottom:0; margin-top:5px; transition: background 0.14s; }
+    .custom-btn:hover, button:hover { background: #113b6c; }
+    .student-list { margin: 8px 0 19px 0; padding-left: 0;}
+    .student-name-row { display: flex; align-items: center; gap: 13px; margin-bottom: 7px; padding-left: 5px;}
+    .student-btn { background: #e5f1fb; color: #1562a7; border: 1px solid #b4c8e9; border-radius: 6px; padding: 7px 11px; font-size: 1em; font-weight:600; cursor:pointer; margin-left: auto; margin-right: 8px; transition: background 0.13s;}
+    .student-btn:hover { background: #cae6fb;}
+    .pdf-preview { border: 2px solid #d1e5f7; border-radius: 12px; padding: 12px; margin-top: 10px; background: #fafdff;}
+    .pdf-preview canvas { max-width: 100%; margin-bottom: 10px;}
+    .toast { display: none; position: fixed; left: 50%; bottom: 38px; transform: translateX(-50%); background: #1762a7; color: #fff; padding: 13px 34px; border-radius: 9px; font-size: 1.08em; box-shadow: 0 2px 16px #19508488; z-index: 9999; opacity: 0.95; font-weight: 600;}
+    @media (max-width: 640px) { .container { max-width: 99vw; padding:6vw 2vw;} .student-btn { font-size: 0.97em; } }
+
+    /* --- SIMPLE FLAT WHITE DROPDOWN, NO SHADOW, LIKE AI GENERATOR SCREENSHOT --- */
+    .custom-select.styled-dropdown, select.styled-dropdown {
+      background: #fff;
+      border: 1.5px solid #b4c8e9;
+      color: #14305a;
+      font-size: 1.12em;
+      border-radius: 5px;
+      appearance: none;
+      -webkit-appearance: none;
+      outline: none;
+      box-shadow: none;
+      background-image: none;
+      padding: 14px 16px;
+      margin-bottom: 14px;
+      min-width: 0;
+      width: 100%;
+      transition: border 0.15s;
+    }
+    .custom-select.styled-dropdown:focus, select.styled-dropdown:focus {
+      border: 1.5px solid #1762a7;
+      outline: none;
+    }
+    /* Remove browser default arrow and use system */
+    select.styled-dropdown::-ms-expand { display: none; }
+    @media (max-width: 800px) {
+      .custom-select.styled-dropdown, select.styled-dropdown {
+        font-size: 1.08em;
+        padding: 13px 12px;
+      }
+    }
+  </style>
+  <!-- Choices.js for custom dropdown -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/choices.js/public/assets/styles/choices.min.css" />
+<script src="https://cdn.jsdelivr.net/npm/choices.js/public/assets/scripts/choices.min.js"></script>
+</head>
+<body>
+  <div class="container">
+    <div class="school-title">St. Patrick's School</div>
+    <div class="subtitle">IIT & NEET FOUNDATION<br>Download Progress Cards (PDF)</div>
+    <div class="section">
+      <label for="yearSel">Academic Year</label>
+      <select id="yearSel" class="custom-select styled-dropdown"></select>
+    </div>
+    <div class="section row">
+      <div>
+        <label for="classSel">Class</label>
+        <select id="classSel" class="custom-select styled-dropdown"></select>
+      </div>
+      <div>
+        <label for="sectionSel">Section</label>
+        <select id="sectionSel" class="custom-select styled-dropdown"></select>
+      </div>
+    </div>
+    <div class="section">
+      <label for="examSel">Exam</label>
+      <select id="examSel" class="custom-select styled-dropdown"></select>
+    </div>
+    <div class="actions">
+      <button id="previewBtn" class="custom-btn">Preview (First 3)</button>
+      <button id="downloadAllBtn" class="custom-btn">Download All (PDF)</button>
+    </div>
+    <div class="student-list" id="studentList"></div>
+    <div class="pdf-preview" id="pdfPreview"></div>
+    <div style="color:#888;font-size:.98em;margin-top:16px;">
+      <b>Note:</b> Only first 3 student memos are shown as preview for speed. Download PDF for all.
+    </div>
+  </div>
+  <div id="toast" class="toast"></div>
+  <!-- Firebase libraries -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+  <script>
+    // Maps each class name to a group string (used for fetching exams)
+const CLASS_GROUP_MAP = {
+  "Nursery": "nursery-lkg-ukg",
+  "LKG": "nursery-lkg-ukg",
+  "UKG": "nursery-lkg-ukg",
+  "1": "1-2",
+  "2": "1-2",
+  "1st": "1-2",
+  "2nd": "1-2",
+  "3": "3-5",
+  "4": "3-5",
+  "5": "3-5",
+  "3rd": "3-5",
+  "4th": "3-5",
+  "5th": "3-5",
+  "6": "6-9",
+  "7": "6-9",
+  "8": "6-9",
+  "9": "6-9",
+  "6th": "6-9",
+  "7th": "6-9",
+  "8th": "6-9",
+  "9th": "6-9",
+  "10": "10",
+  "10th": "10"
+};
+
+// Returns the group name for a given class name
+function getClassGroupName(className) {
+  className = (className+"").replace(/[^a-z0-9]/gi,'').toLowerCase();
+  for (let [k, v] of Object.entries(CLASS_GROUP_MAP)) {
+    let key = k.replace(/[^a-z0-9]/gi,'').toLowerCase();
+    if (className === key || className === key.replace("th","")) return v;
+  }
+  // Default group (for safety)
+  return "6-9";
+}
+const PNG_CONFIG = [
+  {
+    file: "memo-nursery.png",
+    classes: ["Nursery", "LKG", "UKG"]
+  },
+  {
+    file: "memo-1-2.png",
+    classes: ["1", "2", "1st", "2nd"]
+  },
+  {
+    file: "memo-3-4-5.png",
+    classes: ["3", "4", "5", "3rd", "4th", "5th"]
+  },
+  {
+    file: "memo-6-7-8-9.png",
+    classes: ["6", "7", "8", "9", "6th", "7th", "8th", "9th"]
+  },
+  {
+    file: "memo-10.png",
+    classes: ["10", "10th"]
+  }
+];
+
+// Custom Y coordinates (exact order as your template for each memo)
+const customSubjectRowsY = {
+  "memo-nursery.png": [1814, 1923, 2013, 2130, 2232, 2338, 2443, 2547],
+  "memo-1-2.png": [1814, 1923, 2013, 2130, 2232, 2338, 2443],
+  "memo-3-4-5.png": [1814, 1923, 2013, 2130, 2232, 2338, 2443, 2547],
+  "memo-6-7-8-9.png": [1595, 1712, 1814, 1923, 2013, 2130, 2232, 2338, 2443, 2547, 2650, 2760],
+  "memo-10.png": [1814, 1923, 2013, 2130, 2232, 2338, 2443, 2547, 2650]
+};
+
+// X coordinates for (max/marks/grade)
+const X_MAX   = 1236;
+const X_MARKS = 1502;
+const X_GRADE = 1802;
+
+// Header/attendance coordinates
+const HEAD_EXAM     = [1226, 831, 60]; // center, size 60
+const HEAD_NAME     = [973, 992, 60];  // left, size 60, green
+const HEAD_FATHER   = [973, 1107, 60]; // left, size 60, red
+const HEAD_CLASS    = [500, 1216, 60]; // left, size 60, green
+const HEAD_ROLL     = [1300, 1216, 60]; // left, size 60, green
+const HEAD_PERCENT  = [1836, 1216, 60]; // left, size 60, green
+const HEAD_RANK     = [2137, 755, 100]; // center, size 100, white with brown border
+
+// Attendance 10 months, work & pres (same as before)
+const attWorkCoords = [[725, 2956],[867, 2956],[1049, 2956],[1221, 2956],[1356, 2956],[1491, 2956],[1622, 2956],[1758, 2956],[1889, 2956],[2056, 2956]];
+const attPresCoords = [[725, 3027],[867, 3027],[1049, 3027],[1221, 3027],[1356, 3027],[1491, 3027],[1622, 3027],[1758, 3027],[1889, 3027],[2056, 3027]];
+
+const COLOR_GREEN = [22,163,74];
+const COLOR_RED = [220,38,38];
+const COLOR_BROWN = [139,69,19];
+const COLOR_GRADE = COLOR_BROWN;
+
+let memoImgData = null, memoImgFile = "memo-6-7-8-9.png"; // fallback
+
+// FIREBASE CONFIG
+const firebaseConfig = {
+  apiKey: "AIzaSyBXCXAB2n2qqF6lIxpX5XYnqBWHClYik14",
+  authDomain: "stpatricksprogresscard.firebaseapp.com",
+  projectId: "stpatricksprogresscard",
+  storageBucket: "stpatricksprogresscard.appspot.com",
+  messagingSenderId: "671416933178",
+  appId: "1:671416933178:web:4921d57abc6eb11bd2ce03"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+
+firebase.auth().onAuthStateChanged(function(user) {
+  if (!user) { window.location.replace("index.html"); }
+});
+
+function classMemoFile(className) {
+  className = (className+"").replace(/[^a-z0-9]/gi,'').toLowerCase();
+  for (let cfg of PNG_CONFIG) {
+    for (let cl of cfg.classes) {
+      if(className===cl.replace(/[^a-z0-9]/gi,'').toLowerCase()) return cfg;
+      if (className===(cl+"").replace(/[^a-z0-9]/gi,'').toLowerCase().replace("th","")) return cfg;
+    }
+  }
+  return PNG_CONFIG[3];
+}
+function sleep(ms){return new Promise(res=>setTimeout(res,ms));}
+function loadMemoImg(file) {
+  return fetch(file).then(resp => resp.blob()).then(blob => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = ev => { memoImgData = ev.target.result; resolve(); };
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  }));
+}
+// UI ELEMENTS
+const yearSel = document.getElementById('yearSel');
+const classSel = document.getElementById('classSel');
+const sectionSel = document.getElementById('sectionSel');
+const examSel = document.getElementById('examSel');
+    // Initialize Choices.js for better dropdown UI (Class, Section, Exam)
+const classChoices = new Choices(classSel, {
+  searchEnabled: false,
+  itemSelectText: '',
+  shouldSort: false
+});
+const sectionChoices = new Choices(sectionSel, {
+  searchEnabled: false,
+  itemSelectText: '',
+  shouldSort: false
+});
+const examChoices = new Choices(examSel, {
+  searchEnabled: false,
+  itemSelectText: '',
+  shouldSort: false
+});
+const yearChoices = new Choices(yearSel, {
+  searchEnabled: false,
+  itemSelectText: '',
+  shouldSort: false
+});
+const previewBtn = document.getElementById('previewBtn');
+const downloadAllBtn = document.getElementById('downloadAllBtn');
+const pdfPreview = document.getElementById('pdfPreview');
+const studentListDiv = document.getElementById('studentList');
+const toastDiv = document.getElementById('toast');
+
+let years = [], classes = [], sections = [], exams = [], students = [];
+
+// ================== UI LOADERS ====================
+async function loadYears() {
+  let snap = await db.collection('years').orderBy('name', 'desc').get();
+  years = snap.docs.map(doc => ({id: doc.id, ...doc.data()}));
+  yearChoices.clearStore();
+yearChoices.setChoices(
+  years.map(y => ({ value: y.id, label: y.id, selected: false })),
+  'value', 'label', false
+);
+yearChoices.setChoiceByValue(years[0]?.id || '');
+await loadClasses();
+}
+async function loadClasses() {
+  let year = yearSel.value;
+  let snap = await db.collection('years').doc(year).collection('classes').orderBy('name').get();
+  classes = snap.docs.map(doc => ({id: doc.id, ...doc.data()}));
+  classChoices.clearStore();
+classChoices.setChoices(
+  classes.map(c => ({ value: c.id, label: c.name, selected: false })),
+  'value', 'label', false
+);
+classChoices.setChoiceByValue(classes[0]?.id || '');
+await loadSections();
+}
+async function loadSections() {
+  let year = yearSel.value, classId = classSel.value;
+  if (!year || !classId) { sectionSel.innerHTML = ''; return; }
+  let snap = await db.collection('years').doc(year).collection('classes').doc(classId).collection('sections').orderBy('name').get();
+  sections = snap.docs.map(doc => ({id: doc.id, ...doc.data()}));
+  sectionChoices.clearStore();
+sectionChoices.setChoices(
+  sections.map(s => ({ value: s.id, label: s.name, selected: false })),
+  'value', 'label', false
+);
+sectionChoices.setChoiceByValue(sections[0]?.id || '');
+await loadExams();
+}
+async function loadExams() {
+  let year = yearSel.value;
+  let classId = classSel.value;
+  // Get class group for this class (reuse your CLASS_GROUP_MAP from students.html if possible)
+  let classObj = classes.find(c => c.id === classId);
+  let className = classObj ? classObj.name : '';
+  let classGroup = getClassGroupName ? getClassGroupName(className) : '';
+  if (!classGroup) {
+    examChoices.clearStore();
+    examChoices.setChoices([{ value: '', label: 'No choices to choose from', selected: true }], 'value', 'label', false);
+    await loadStudents();
+    return;
+  }
+  // Get exams for this classGroup (same logic as in students.html)
+  let snap = await db.collection('years').doc(year)
+    .collection('exams').doc('classGroups')
+    .collection(classGroup).get();
+  exams = snap.docs.map(doc => ({id: doc.id, ...doc.data()}));
+  examChoices.clearStore();
+  if (exams.length === 0) {
+    examChoices.setChoices([{ value: '', label: 'No choices to choose from', selected: true }], 'value', 'label', false);
+  } else {
+    examChoices.setChoices(
+      exams.map(e => ({ value: e.id, label: e.name, selected: false })),
+      'value', 'label', false
+    );
+    examChoices.setChoiceByValue(exams[0]?.id || '');
+  }
+  await loadStudents();
+}
+async function loadStudents() {
+  let year = yearSel.value, classId = classSel.value, sectionId = sectionSel.value;
+  if (!year || !classId || !sectionId) { studentListDiv.innerHTML = ''; students = []; return; }
+  let snap = await db.collection('years').doc(year).collection('classes').doc(classId).collection('sections').doc(sectionId).collection('students').orderBy('roll').get();
+  students = [];
+  snap.forEach(doc => { let d=doc.data(); if (!d.isDeleted) students.push({id: doc.id, ...d}); });
+  showStudentList();
+}
+function showStudentList() {
+  studentListDiv.innerHTML = students.length ?
+    `<div style="font-weight:600;color:#195084;margin-bottom:8px;">Download Individual:</div>` +
+    students.map(stu =>
+      `<div class="student-name-row"><span style="flex:1;text-align:left;font-size:1.08em;color:#14305a;">${stu.roll ? stu.roll + '. ' : ''}${stu.name}</span>
+      <button class="student-btn" onclick="downloadOne('${stu.id}')">Download</button></div>`
+    ).join('')
+    : `<span style="color:#999;">No students in this section.</span>`;
+}
+yearSel.onchange = () => loadClasses();
+classSel.onchange = () => loadSections();
+sectionSel.onchange = () => loadExams();
+examSel.onchange = () => loadStudents();
+
+window.downloadOne = async function(studentId) {
+  let stu = students.find(s => s.id === studentId);
+  if (!stu) return;
+  await generatePDF([stu], true);
+  showToast("Download completed.");
+};
+previewBtn.onclick = async () => {
+  pdfPreview.innerHTML = `<i>Generating preview...</i>`;
+  await sleep(150);
+  let fullDataArr = await getAllStudentFullData();
+  await showPreviewPDF(fullDataArr.slice(0,3));
+};
+downloadAllBtn.onclick = async () => {
+  await generatePDF(students, false);
+  showToast("Download completed.");
+};
+
+// ======= PDF Helpers ========
+function centerText(pdf, text, x, y, size=12, color=[0,0,0], fontStyle="bold", fontName="helvetica") {
+  if (
+    (typeof text !== 'string' && typeof text !== 'number') ||
+    typeof x !== 'number' || typeof y !== 'number' || isNaN(x) || isNaN(y)
+  ) return;
+  pdf.setFont(fontName, fontStyle);
+  pdf.setFontSize(size);
+  pdf.setTextColor(...color);
+  pdf.text(String(text), x, y, {align: 'center'});
+  pdf.setFont("helvetica", "normal");
+  pdf.setTextColor(0,0,0);
+}
+function leftText(pdf, text, x, y, size=12, color=[0,0,0], fontStyle="bold", fontName="helvetica") {
+  pdf.setFont(fontName, fontStyle);
+  pdf.setFontSize(size);
+  pdf.setTextColor(...color);
+  pdf.text(String(text), x, y, {align: 'left'});
+  pdf.setFont("helvetica", "normal");
+  pdf.setTextColor(0,0,0);
+}
+function formatClass(val) {
+  if (!val) return '';
+  return val.replace(/^(\d+)(\w+)$/, (m, num, suff) => num.toUpperCase() + suff.toLowerCase());
+}
+
+// --- Get memo PNG file and mapping
+async function getMemoAndMapping(student) {
+  let cl = (student.class||"").replace(/[^a-z0-9]/gi,'').toLowerCase();
+  let cfg = PNG_CONFIG.find(c=>c.classes.some(name => {
+    let cls=name.replace(/[^a-z0-9]/gi,'').toLowerCase();
+    return cl===cls || cl===cls.replace("th","");
+  })) || PNG_CONFIG[3];
+  if (!memoImgData || memoImgFile!==cfg.file) {
+    memoImgFile = cfg.file;
+    await loadMemoImg(cfg.file);
+  }
+  return cfg;
+}
+
+// ======= PDF GENERATION =========
+async function fetchStudentData(stu) {
+  let year = yearSel.value, classId = classSel.value, sectionId = sectionSel.value, examId = examSel.value;
+  let examObj = exams.find(e => e.id === examId);
+  let marksDoc = await db.collection('years').doc(year)
+    .collection('classes').doc(classId)
+    .collection('sections').doc(sectionId)
+    .collection('students').doc(stu.id)
+    .collection('marks').doc(examId).get();
+  let marks = marksDoc.exists ? marksDoc.data() : {};
+  let subjects = (examObj && Array.isArray(examObj.subjects)) ? examObj.subjects : [];
+  let stuSubjects = [];
+  let totalMarks = 0, totalMax = 0, pass = true;
+  // Normalize function for robust matching
+  function norm(s) { return (s||'').replace(/[\s.]/g,'').toLowerCase(); }
+  subjects.forEach((subj, i) => {
+    let subjObj = null;
+    // Look for a matching key in marks, case/space/dot-insensitive
+    Object.keys(marks).forEach(k => {
+      if(norm(k) === norm(subj.name)) subjObj = marks[k];
+    });
+    let m = marks[subj.name] ?? subjObj ?? '';
+    let grade = '';
+    if (m !== '' && m !== null && m !== undefined && !isNaN(m)) {
+      let percent = (m / subj.max) * 100;
+      if (percent >= 95) grade = 'A+';
+      else if (percent >= 90) grade = 'A';
+      else if (percent >= 85) grade = 'B+';
+      else if (percent >= 80) grade = 'B';
+      else if (percent >= 70) grade = 'C+';
+      else if (percent >= 60) grade = 'C';
+      else if (percent >= 50) grade = 'D';
+      else if (percent >= 40) grade = 'E';
+      else grade = 'F';
+    } else if (m === "AB" || m === "ab" || m === "Ab") {
+      grade = "AB";
+    }
+    if (m !== '' && m !== null && m !== undefined && !isNaN(m)) { totalMarks += +m; totalMax += +subj.max; }
+    stuSubjects.push({name: subj.name, max: subj.max, marks: m, grade});
+  });
+  let attSnap = { forEach: () => {} }; // default empty
+  if (year && classId && sectionId) {
+    attSnap = await db.collection('years').doc(year)
+      .collection('classes').doc(classId)
+      .collection('sections').doc(sectionId)
+      .collection('attendance').get();
+  }
+  let months = ['06','07','08','09','10','11','12','01','02','03'];
+  let attArr = months.map(mo => ({work:0, pres:0}));
+  attSnap.forEach(doc => {
+    let date = doc.id;
+    let mm = date.split('-')[1];
+    let idx = months.indexOf(mm);
+    if (idx >= 0) {
+      attArr[idx].work += 1;
+      let st = doc.data()[stu.id];
+      if (st && st.M !== 'absent') attArr[idx].pres += 0.5;
+      if (st && st.A !== 'absent') attArr[idx].pres += 0.5;
+    }
+  });
+ return {
+  name: stu.name,
+  father: stu.father,
+  roll: stu.roll,
+  class: classes.find(c=>c.id===classId)?.name || '',
+  percentage: totalMax ? Math.round((totalMarks/totalMax)*100) : '',
+  rank: '', // Will fill later
+  subjects: stuSubjects,
+  totalMarks, totalMax,
+  overallGrade: totalMax
+    ? ((totalMarks/totalMax)*100 >= 95 ? 'A+'
+      : (totalMarks/totalMax)*100 >= 90 ? 'A'
+      : (totalMarks/totalMax)*100 >= 85 ? 'B+'
+      : (totalMarks/totalMax)*100 >= 80 ? 'B'
+      : (totalMarks/totalMax)*100 >= 70 ? 'C+'
+      : (totalMarks/totalMax)*100 >= 60 ? 'C'
+      : (totalMarks/totalMax)*100 >= 50 ? 'D'
+      : (totalMarks/totalMax)*100 >= 40 ? 'E'
+      : 'F')
+    : '',
+  attendance: attArr
+};
+}
+async function getAllStudentFullData() {
+  let dataArr = [];
+  for (let stu of students) {
+    let dat = await fetchStudentData(stu);
+    dataArr.push(dat);
+  }
+  dataArr.sort((a,b)=>b.totalMarks-a.totalMarks);
+  let rank = 1, lastMark = null, lastRank = 1;
+  dataArr.forEach((d,i) => {
+    if (d.totalMarks !== lastMark) { rank = i+1; lastMark = d.totalMarks; lastRank = rank; }
+    d.rank = lastRank;
+  });
+  dataArr.sort((a,b)=> {
+    let aIdx = students.findIndex(s=>s.name===a.name&&s.roll==a.roll);
+    let bIdx = students.findIndex(s=>s.name===b.name&&s.roll==b.roll);
+    return aIdx-bIdx;
+  });
+  return dataArr;
+}
+
+// PDF generation (multi or single)
+async function generatePDF(studentArr, isSingle) {
+  let exam = examSel.options[examSel.selectedIndex].textContent;
+  let examId = examSel.value;
+  let examObj = exams.find(e => e.id === examId);
+  let fullDataArr = [];
+  var pdf = new window.jspdf.jsPDF({orientation: "portrait", unit: "px", format: [2481, 3509]});
+  fullDataArr = await getAllStudentFullData();
+  if (isSingle && studentArr.length === 1)
+    fullDataArr = [fullDataArr.find(d=>d.name===studentArr[0].name && d.roll==studentArr[0].roll)];
+  for (let idx = 0; idx < fullDataArr.length; idx++) {
+    let student = fullDataArr[idx];
+    let memoMap = await getMemoAndMapping(student);
+    if (idx===0 && !isSingle) { pdf = new window.jspdf.jsPDF({orientation: "portrait", unit: "px", format: [2481, 3509]}); }
+    else if (idx > 0 || !isSingle) pdf.addPage([2481,3509], 'p');
+    pdf.addImage(memoImgData, "PNG", 0, 0, 2481, 3509);
+    // Exam Name
+    centerText(pdf, exam.toUpperCase(), HEAD_EXAM[0], HEAD_EXAM[1], HEAD_EXAM[2]);
+    // Name (Green), Father (Red)
+    leftText(pdf, student.name?.toUpperCase() || '', HEAD_NAME[0], HEAD_NAME[1], HEAD_NAME[2], COLOR_GREEN);
+    leftText(pdf, student.father?.toUpperCase() || '', HEAD_FATHER[0], HEAD_FATHER[1], HEAD_FATHER[2], COLOR_RED);
+    // Class, Roll, Percentage (Green), All size 60
+    leftText(pdf, formatClass(student.class), HEAD_CLASS[0], HEAD_CLASS[1], HEAD_CLASS[2], COLOR_GREEN);
+    leftText(pdf, student.roll?.toString() || '', HEAD_ROLL[0], HEAD_ROLL[1], HEAD_ROLL[2], COLOR_GREEN);
+    leftText(pdf, student.percentage, HEAD_PERCENT[0], HEAD_PERCENT[1], HEAD_PERCENT[2], COLOR_GREEN);
+    // Rank Badge - 3D: white with brown border, drop shadow
+    let [cx,cy,s] = HEAD_RANK;
+    pdf.setFillColor(120,80,30); // shadow color (darker brown)
+    pdf.ellipse(cx+10, cy+15, 55, 40, 'F'); // drop shadow
+    pdf.setFillColor(255,255,255);
+    pdf.setDrawColor(...COLOR_BROWN);
+    pdf.setLineWidth(8);
+    pdf.ellipse(cx, cy, 52, 35, 'FD');
+    pdf.setTextColor(0,0,0);
+    pdf.setFontSize(s);
+    pdf.setFont('helvetica','bold');
+    pdf.text(
+  (typeof student.rank !== "undefined" && student.rank !== null) ? student.rank.toString() : "", 
+  cx, cy+33, {align:'center'}
+);
+    pdf.setLineWidth(1);
+
+    // --- Subject rows: Always PNG template order, AB for missing
+    let memoYArr = customSubjectRowsY[memoImgFile];
+    let templateSubjects = examObj.subjects || [];
+    let totalMarks = 0, totalMax = 0;
+    function norm(s) { return (s||'').replace(/[\s.]/g,'').toLowerCase(); }
+    for (let i = 0; i < memoYArr.length-1; i++) {
+      let subjName = templateSubjects[i]?.name ?? "";
+      let subjMax = templateSubjects[i]?.max ?? "";
+      let subjMarkObj = student.subjects.find(s => norm(s.name) === norm(subjName));
+      let marks = (subjMarkObj && subjMarkObj.marks !== undefined && subjMarkObj.marks !== null && subjMarkObj.marks !== '') 
+        ? subjMarkObj.marks 
+        : "AB";
+      let grade = (subjMarkObj && subjMarkObj.grade) ? subjMarkObj.grade : (marks === "AB" ? "AB" : "");
+      if (marks !== '' && marks !== null && marks !== undefined && !isNaN(marks)) {
+        totalMarks += +marks;
+        totalMax += +subjMax;
+      }
+      centerText(pdf, subjMax, X_MAX, memoYArr[i], 60, COLOR_RED);
+
+      // --- RED CIRCLE for <40% ---
+      if (marks !== "" && marks !== "AB" && subjMax && +subjMax > 0 && (marks/subjMax)*100 < 40) {
+        pdf.setDrawColor(...COLOR_RED);
+        pdf.setLineWidth(4);
+        pdf.ellipse(X_MARKS, memoYArr[i]-10, 55, 38, 'D');
+        pdf.setLineWidth(1);
+      }
+      centerText(pdf, marks, X_MARKS, memoYArr[i], 60, COLOR_GREEN);
+      centerText(pdf, (grade+"").toUpperCase(), X_GRADE, memoYArr[i], 60, COLOR_GRADE);
+    }
+    // Draw total row (last Y in array)
+    let totalY = memoYArr[memoYArr.length - 1] + 20;
+    centerText(pdf, totalMax, X_MAX, totalY, 60, COLOR_RED);
+    centerText(pdf, totalMarks, X_MARKS, totalY, 60, COLOR_GREEN);
+    centerText(pdf, student.overallGrade, X_GRADE, totalY, 60, COLOR_GRADE);
+
+    // Attendance numbers font size 60
+    for (let i = 0; i < 10; i++) {
+      let a = student.attendance[i] || {work:'', pres:''};
+      centerText(pdf, String(a.work||''), attWorkCoords[i][0], attWorkCoords[i][1], 60, COLOR_GREEN);
+      centerText(pdf, String(a.pres||''), attPresCoords[i][0], attPresCoords[i][1], 60, COLOR_BROWN);
+    }
+  }
+  pdf.save(isSingle ? `progress_card_${fullDataArr[0].roll || 'student'}.pdf`
+                    : `progress_cards_${classSel.options[classSel.selectedIndex].text}_${sectionSel.options[sectionSel.selectedIndex].text}.pdf`);
+}
+
+// ========== PREVIEW RENDER ===============
+async function showPreviewPDF(stuArr) {
+  let pdf;
+  for (let idx = 0; idx < stuArr.length; idx++) {
+    let student = stuArr[idx];
+    let memoMap = await getMemoAndMapping(student);
+    if (idx===0) { pdf = new window.jspdf.jsPDF({orientation: "portrait", unit: "px", format: [2481, 3509]}); }
+    else pdf.addPage([2481,3509], 'p');
+    pdf.addImage(memoImgData, "PNG", 0, 0, 2481, 3509);
+    let exam = examSel.options[examSel.selectedIndex].textContent;
+    let examId = examSel.value;
+    let examObj = exams.find(e => e.id === examId);
+    centerText(pdf, exam.toUpperCase(), HEAD_EXAM[0], HEAD_EXAM[1], HEAD_EXAM[2]);
+    leftText(pdf, student.name?.toUpperCase() || '', HEAD_NAME[0], HEAD_NAME[1], HEAD_NAME[2], COLOR_GREEN);
+    leftText(pdf, student.father?.toUpperCase() || '', HEAD_FATHER[0], HEAD_FATHER[1], HEAD_FATHER[2], COLOR_RED);
+    leftText(pdf, formatClass(student.class), HEAD_CLASS[0], HEAD_CLASS[1], HEAD_CLASS[2], COLOR_GREEN);
+    leftText(pdf, student.roll?.toString() || '', HEAD_ROLL[0], HEAD_ROLL[1], HEAD_ROLL[2], COLOR_GREEN);
+    leftText(pdf, student.percentage, HEAD_PERCENT[0], HEAD_PERCENT[1], HEAD_PERCENT[2], COLOR_GREEN);
+
+    let [cx,cy,s] = HEAD_RANK;
+    pdf.setFillColor(120,80,30);
+    pdf.ellipse(cx+10, cy+15, 55, 40, 'F');
+    pdf.setFillColor(255,255,255);
+    pdf.setDrawColor(...COLOR_BROWN);
+    pdf.setLineWidth(8);
+    pdf.ellipse(cx, cy, 52, 35, 'FD');
+    pdf.setTextColor(0,0,0);
+    pdf.setFontSize(s);
+    pdf.setFont('helvetica','bold');
+    pdf.text(student.rank.toString(), cx, cy+33, {align:'center'});
+    pdf.setLineWidth(1);
+
+    // --- Subject rows: Always PNG template order, AB for missing
+    let memoYArr = customSubjectRowsY[memoImgFile];
+    let templateSubjects = examObj.subjects || [];
+    let totalMarks = 0, totalMax = 0;
+    function norm(s) { return (s||'').replace(/[\s.]/g,'').toLowerCase(); }
+    for (let i = 0; i < memoYArr.length-1; i++) {
+      let subjName = templateSubjects[i]?.name ?? "";
+      let subjMax = templateSubjects[i]?.max ?? "";
+      let subjMarkObj = student.subjects.find(s => norm(s.name) === norm(subjName));
+      let marks = (subjMarkObj && subjMarkObj.marks !== undefined && subjMarkObj.marks !== null && subjMarkObj.marks !== '') 
+        ? subjMarkObj.marks 
+        : "AB";
+      let grade = (subjMarkObj && subjMarkObj.grade) ? subjMarkObj.grade : (marks === "AB" ? "AB" : "");
+      if (marks !== '' && marks !== null && marks !== undefined && !isNaN(marks)) {
+        totalMarks += +marks;
+        totalMax += +subjMax;
+      }
+      centerText(pdf, subjMax, X_MAX, memoYArr[i], 60, COLOR_RED);
+
+      // --- RED CIRCLE for <40% ---
+      if (marks !== "" && marks !== "AB" && subjMax && +subjMax > 0 && (marks/subjMax)*100 < 40) {
+        pdf.setDrawColor(...COLOR_RED);
+        pdf.setLineWidth(4);
+        pdf.ellipse(X_MARKS, memoYArr[i]-10, 55, 38, 'D');
+        pdf.setLineWidth(1);
+      }
+      centerText(pdf, marks, X_MARKS, memoYArr[i], 60, COLOR_GREEN);
+      centerText(pdf, (grade+"").toUpperCase(), X_GRADE, memoYArr[i], 60, COLOR_GRADE);
+    }
+    let totalY = memoYArr[memoYArr.length - 1] + 25;
+    centerText(pdf, totalMax, X_MAX, totalY, 60, COLOR_RED);
+    centerText(pdf, totalMarks, X_MARKS, totalY, 60, COLOR_GREEN);
+    centerText(pdf, student.overallGrade, X_GRADE, totalY, 60, COLOR_GRADE);
+
+    for (let i = 0; i < 10; i++) {
+      let a = student.attendance[i] || {work:'', pres:''};
+      centerText(pdf, String(a.work||''), attWorkCoords[i][0], attWorkCoords[i][1], 60, COLOR_GREEN);
+      centerText(pdf, String(a.pres||''), attPresCoords[i][0], attPresCoords[i][1], 60, COLOR_BROWN);
+    }
+  }
+  let data = pdf.output('arraybuffer');
+  let loadingTask = window['pdfjsLib'].getDocument({data});
+  pdfPreview.innerHTML = '';
+  loadingTask.promise.then(function(pdfDoc) {
+    for(let i=1;i<=pdfDoc.numPages;i++) {
+      pdfDoc.getPage(i).then(function(page) {
+        let viewport = page.getViewport({scale: 0.19});
+        let canvas = document.createElement('canvas');
+        let ctx = canvas.getContext('2d');
+        canvas.height = viewport.height;
+        canvas.width = viewport.width;
+        pdfPreview.appendChild(canvas);
+        page.render({canvasContext: ctx, viewport: viewport});
+      });
+    }
+  });
+}
+function showToast(msg) {
+  toastDiv.innerHTML = msg;
+  toastDiv.style.display = 'block';
+  setTimeout(()=>{toastDiv.style.display='none';}, 2000);
+}
+// INIT
+(async function() {
+  await loadMemoImg(memoImgFile);
+  await loadYears();
+})();
+  </script>
+</body>
+</html>

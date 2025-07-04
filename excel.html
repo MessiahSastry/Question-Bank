@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Download Class Marks (Excel) - St. Patrick's School</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Segoe+UI:400,600,700&display=swap">
+  <style>
+    body {
+      background: #f4f8fc;
+      font-family: 'Segoe UI', Arial, sans-serif;
+      margin: 0; padding: 0;
+      min-height: 100vh;
+    }
+    .container {
+      max-width: 520px;
+      margin: 50px auto 30px auto;
+      background: #fff;
+      border-radius: 16px;
+      box-shadow: 0 4px 18px #0f3d6b22;
+      padding: 36px 24px 32px 24px;
+      text-align: center;
+    }
+    .title {
+      color: #0f3d6b;
+      font-size: 1.3em;
+      font-weight: bold;
+      margin-bottom: 6px;
+      letter-spacing: .2px;
+    }
+    .desc {
+      font-size: 1.06em;
+      color: #2d4870;
+      margin-bottom: 20px;
+      margin-top: 0;
+    }
+    .download-btn {
+      background: #0f3d6b;
+      color: #fff;
+      font-size: 1.13em;
+      font-weight: bold;
+      border: none;
+      border-radius: 10px;
+      padding: 13px 35px;
+      cursor: pointer;
+      margin-top: 28px;
+      transition: background .17s;
+    }
+    .download-btn:disabled { background: #b8c7da; cursor: not-allowed; }
+    .download-btn:hover:not(:disabled) { background: #164b7d; }
+    .status {
+      color: #e26c17;
+      margin-top: 18px;
+      font-size: 1.08em;
+      min-height: 25px;
+    }
+    .back-link {
+      display: inline-block;
+      margin-top: 22px;
+      color: #0f3d6b;
+      text-decoration: underline;
+      cursor: pointer;
+      font-size: 1em;
+    }
+  </style>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+</head>
+<body>
+  <div class="container">
+    <div class="title">Download Class Marks (Excel)</div>
+    <div class="desc">
+      Export all students' marks, totals, grades, and ranks for every exam.<br>
+      Format: Roll, Name, Father, [FA1 Tel, FA1 Eng1, ..., Total, Grade, Rank], [FA2...], etc.
+    </div>
+    <button class="download-btn" id="downloadBtn" disabled>Download Excel</button>
+    <div class="status" id="status"></div>
+     </div>
+  <script>
+    // ----------- Firebase config -------------
+    const firebaseConfig = {
+      apiKey: "AIzaSyBXCXAB2n2qqF6lIxpX5XYnqBWHClYik14",
+      authDomain: "stpatricksprogresscard.firebaseapp.com",
+      projectId: "stpatricksprogresscard",
+      storageBucket: "stpatricksprogresscard.appspot.com",
+      messagingSenderId: "671416933178",
+      appId: "1:671416933178:web:4921d57abc6eb11bd2ce03"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+    const auth = firebase.auth();
+
+    // ---- Class group map -----
+    const CLASS_GROUP_MAP = {
+      'Nursery': 'nursery-lkg-ukg', 'LKG': 'nursery-lkg-ukg', 'UKG': 'nursery-lkg-ukg',
+      '1st Class': 'class-1-2', '2nd Class': 'class-1-2',
+      '3rd Class': 'class-3-5', '4th Class': 'class-3-5', '5th Class': 'class-3-5',
+      '6th Class': 'class-6-9', '7th Class': 'class-6-9', '8th Class': 'class-6-9', '9th Class': 'class-6-9',
+      '10th Class': 'class-10'
+    };
+    function getClassGroupName(className) {
+      return CLASS_GROUP_MAP[className] || 'default';
+    }
+
+    // Subject Short Names Map
+    const SUBJECT_SHORT = {
+      "Telugu": "Tel",
+      "English 1": "Eng1",
+      "English 2": "Eng2",
+      "Mathematics": "Math",
+      "Maths": "Math",
+      "Science": "Sci",
+      "Physical Science": "Phy",
+      "Biology": "Bio",
+      "Social": "Soc",
+      "Hindi": "Hin",
+      "GK": "GK"
+      // Add more as per your subjects
+    };
+
+    function getSubjectShort(name) {
+      if (!name) return '';
+      return SUBJECT_SHORT[name] || name.replace(/[^a-zA-Z0-9]/g,'').slice(0, 4);
+    }
+    function getExamShort(name) {
+      let m = name.match(/FA[0-9]+|SA[0-9]+/i);
+      if (m) return m[0].toUpperCase();
+      if (name.toLowerCase().includes("formative")) return "FA" + (name.match(/\d+/)?.[0] || "");
+      if (name.toLowerCase().includes("summative")) return "SA" + (name.match(/\d+/)?.[0] || "");
+      return name.slice(0, 4).toUpperCase();
+    }
+
+    // ---------- Grade logic ----------
+    function getGrade(percent) {
+      if (percent >= 95) return 'A+';
+      if (percent >= 90) return 'A';
+      if (percent >= 85) return 'B+';
+      if (percent >= 80) return 'B';
+      if (percent >= 70) return 'C+';
+      if (percent >= 60) return 'C';
+      if (percent >= 50) return 'D';
+      if (percent >= 40) return 'E';
+      return 'F';
+    }
+
+    // --- Auth check and button logic ---
+    const statusDiv = document.getElementById('status');
+    const downloadBtn = document.getElementById('downloadBtn');
+    downloadBtn.disabled = true; // default
+
+    auth.onAuthStateChanged(function(user) {
+      if (!user) {
+        statusDiv.textContent = "You must be logged in to download marks.";
+        downloadBtn.disabled = true;
+      } else {
+        statusDiv.textContent = "";
+        downloadBtn.disabled = false;
+      }
+    });
+
+    // ---------- Download Excel Button ----------
+    downloadBtn.onclick = async function () {
+      statusDiv.textContent = "Preparing data. Please wait...";
+
+      // Get academic year, class, section from localStorage
+      let academicYear = localStorage.getItem('sp_selectedYear') || '';
+      let classId = localStorage.getItem('sp_selectedClassId') || '';
+      let className = localStorage.getItem('sp_selectedClassName') || '';
+      let sectionId = localStorage.getItem('sp_selectedSectionId') || '';
+      let sectionName = localStorage.getItem('sp_selectedSectionName') || '';
+      if (!academicYear || !classId || !sectionId) {
+        statusDiv.textContent = "Error: Class or section not selected.";
+        return;
+      }
+
+      try {
+        // 1. Fetch all students
+        let studentsSnap = await db.collection('years').doc(academicYear)
+          .collection('classes').doc(classId)
+          .collection('sections').doc(sectionId)
+          .collection('students').orderBy('roll').get();
+        let students = [];
+        studentsSnap.forEach(doc => {
+          const s = doc.data();
+          if (!s.isDeleted) students.push({ id: doc.id, ...s });
+        });
+
+        if (students.length === 0) {
+          statusDiv.textContent = "No students found in this section.";
+          return;
+        }
+
+        // 2. Fetch all exams for this class group
+        const classGroup = getClassGroupName(className);
+        let examsSnap = await db.collection('years').doc(academicYear)
+          .collection('exams').doc('classGroups')
+          .collection(classGroup).orderBy('name').get();
+        let exams = [];
+        examsSnap.forEach(doc => {
+          let ex = doc.data();
+          ex.id = doc.id;
+          exams.push(ex);
+        });
+
+        if (exams.length === 0) {
+          statusDiv.textContent = "No exams found for this class group.";
+          return;
+        }
+
+        // 3. Prepare columns: Roll, Name, Father, [exam1 subject1, subject2,...Total, Grade, Rank]...
+        let headers = ['Roll', 'Name', 'Father'];
+        let examColumns = [];
+        for (let exam of exams) {
+          let examShort = getExamShort(exam.name);
+          let cols = [];
+          if (Array.isArray(exam.subjects)) {
+            exam.subjects.forEach(subj => {
+              if (!subj || !subj.name) return;
+              let subjShort = getSubjectShort(subj.name);
+              cols.push(`${examShort} ${subjShort}`);
+            });
+          }
+          cols.push(`${examShort} Total`, `${examShort} Grade`, `${examShort} Rank`);
+          headers.push(...cols);
+          examColumns.push({
+            name: exam.name,
+            subjects: Array.isArray(exam.subjects) ? exam.subjects.map(s => s?.name || '') : [],
+            id: exam.id
+          });
+        }
+
+        // 4. Fetch marks for each student for each exam
+        statusDiv.textContent = "Loading marks for all students...";
+        let studentsWithMarks = {};
+        for (let stu of students) {
+          studentsWithMarks[stu.id] = { ...stu, marks: {} };
+        }
+
+        // For rank calculation, keep: examTotals[examName] = [ {stuId, total}, ... ]
+        let examTotals = {};
+        for (let exam of exams) {
+          examTotals[exam.name] = [];
+          for (let stu of students) {
+            let markDoc = await db.collection('years').doc(academicYear)
+              .collection('classes').doc(classId)
+              .collection('sections').doc(sectionId)
+              .collection('students').doc(stu.id)
+              .collection('marks').doc(exam.id).get();
+            let marksObj = (markDoc.exists ? markDoc.data() : {});
+            let subjMarks = {};
+            let total = 0, maxTotal = 0;
+            if (Array.isArray(exam.subjects)) {
+              for (let subj of exam.subjects) {
+                if (!subj || !subj.name) continue;
+                let val = marksObj[subj.name];
+                val = (typeof val === 'number' && !isNaN(val)) ? val : '';
+                subjMarks[subj.name] = val;
+                if (val !== '' && val != null) {
+                  total += Number(val);
+                  maxTotal += Number(subj.max || 100);
+                } else {
+                  maxTotal += Number(subj.max || 100);
+                }
+              }
+            }
+            studentsWithMarks[stu.id].marks[exam.name] = {
+              ...subjMarks, _total: total, _max: maxTotal
+            };
+            examTotals[exam.name].push({ stuId: stu.id, total });
+          }
+        }
+
+        // 5. Calculate ranks for each exam
+        let examRanks = {};
+        for (let exam of exams) {
+          let scores = examTotals[exam.name].map(x => x.total);
+          let sortedTotals = Array.from(new Set(scores)).sort((a, b) => b - a);
+          examRanks[exam.name] = {};
+          examTotals[exam.name].forEach(({ stuId, total }) => {
+            let rank = sortedTotals.indexOf(total) + 1;
+            examRanks[exam.name][stuId] = rank;
+          });
+        }
+
+        // 6. Build Excel data rows
+        let data = [];
+        data.push(headers);
+
+        for (let stu of students) {
+          let row = [stu.roll, stu.name, stu.father];
+          for (let exam of exams) {
+            let mks = (studentsWithMarks[stu.id].marks[exam.name] || {});
+            let ttotal = 0, tmax = 0;
+            if (Array.isArray(exam.subjects)) {
+              for (let subj of exam.subjects) {
+                if (!subj || !subj.name) continue;
+                let val = mks[subj.name];
+                row.push(val !== undefined ? val : '');
+                if (typeof val === 'number' && !isNaN(val)) {
+                  ttotal += Number(val);
+                  tmax += Number(subj.max || 100);
+                } else {
+                  tmax += Number(subj.max || 100);
+                }
+              }
+            }
+            ttotal = mks._total !== undefined ? mks._total : ttotal;
+            tmax = mks._max !== undefined ? mks._max : tmax;
+            let percent = (tmax > 0) ? Math.round((ttotal / tmax) * 100) : 0;
+            let grade = getGrade(percent);
+            let rank = examRanks[exam.name][stu.id] || '';
+            row.push(ttotal, grade, rank);
+          }
+          data.push(row);
+        }
+
+        // 7. Export to Excel using SheetJS
+        let ws = XLSX.utils.aoa_to_sheet(data);
+        let colWidths = [ { wch: 8 }, { wch: 20 }, { wch: 20 } ];
+        for (let i = 3; i < headers.length; ++i) colWidths.push({ wch: 14 });
+        ws['!cols'] = colWidths;
+
+        let wb = XLSX.utils.book_new();
+        let sheetName = `${className}-${sectionName}`;
+        XLSX.utils.book_append_sheet(wb, ws, sheetName);
+
+        // 8. Save file
+        let fname = `Marks_${className}_${sectionName}_${academicYear}.xlsx`;
+        XLSX.writeFile(wb, fname);
+        statusDiv.textContent = "Excel downloaded!";
+      } catch (err) {
+        statusDiv.textContent = "Error: " + err.message;
+      }
+    };
+  </script>
+</body>
+</html>

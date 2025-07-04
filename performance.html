@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Performance Graph - St. Patrick's School</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Segoe+UI:400,600,700&display=swap">
+  <style>
+    body {
+      background: #f4f8fc;
+      font-family: 'Segoe UI', Arial, sans-serif;
+      margin: 0; padding: 0; min-height: 100vh;
+    }
+    .container {
+      max-width: 560px;
+      margin: 44px auto 30px auto;
+      background: #fff;
+      border-radius: 16px;
+      box-shadow: 0 4px 18px #0f3d6b22;
+      padding: 34px 24px 32px 24px;
+      text-align: center;
+    }
+    .title {
+      color: #0f3d6b;
+      font-size: 1.5em;
+      font-weight: bold;
+      margin-bottom: 4px;
+      letter-spacing: 1.5px;
+    }
+    .subtitle {
+      color: #1467b7;
+      font-size: 1.07em;
+      margin-bottom: 14px;
+      font-weight: 500;
+    }
+    #chartContainer { margin: 36px 0 12px 0; }
+    #downloadBtn {
+      background: #0f3d6b;
+      color: #fff;
+      font-size: 1.1em;
+      font-weight: bold;
+      border: none;
+      border-radius: 10px;
+      padding: 11px 32px;
+      cursor: pointer;
+      margin-top: 18px;
+      transition: background .17s;
+    }
+    #downloadBtn:hover { background: #1762a7; }
+    #status {
+      color: #e26c17;
+      margin-top: 18px;
+      font-size: 1.04em;
+      min-height: 25px;
+    }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+</head>
+<body>
+  <div class="container">
+    <div class="title">St. Patrick's School</div>
+    <div class="subtitle" id="classSec"></div>
+    <div id="chartContainer">
+      <canvas id="barChart" width="430" height="360"></canvas>
+    </div>
+    <button id="downloadBtn">Download Chart as Image</button>
+    <div id="status"></div>
+  </div>
+  <script>
+    // --- Config ---
+    const firebaseConfig = {
+      apiKey: "AIzaSyBXCXAB2n2qqF6lIxpX5XYnqBWHClYik14",
+      authDomain: "stpatricksprogresscard.firebaseapp.com",
+      projectId: "stpatricksprogresscard",
+      storageBucket: "stpatricksprogresscard.appspot.com",
+      messagingSenderId: "671416933178",
+      appId: "1:671416933178:web:4921d57abc6eb11bd2ce03"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+    const auth = firebase.auth();
+
+    const CLASS_GROUP_MAP = {
+      'Nursery': 'nursery-lkg-ukg', 'LKG': 'nursery-lkg-ukg', 'UKG': 'nursery-lkg-ukg',
+      '1st Class': 'class-1-2', '2nd Class': 'class-1-2',
+      '3rd Class': 'class-3-5', '4th Class': 'class-3-5', '5th Class': 'class-3-5',
+      '6th Class': 'class-6-9', '7th Class': 'class-6-9', '8th Class': 'class-6-9', '9th Class': 'class-6-9',
+      '10th Class': 'class-10'
+    };
+    function getClassGroupName(className) {
+      return CLASS_GROUP_MAP[className] || 'default';
+    }
+
+    const academicYear = localStorage.getItem('sp_selectedYear') || '';
+    const classId = localStorage.getItem('sp_selectedClassId') || '';
+    const className = localStorage.getItem('sp_selectedClassName') || '';
+    const sectionId = localStorage.getItem('sp_selectedSectionId') || '';
+    const sectionName = localStorage.getItem('sp_selectedSectionName') || '';
+    document.getElementById('classSec').textContent = `${className} – ${sectionName} (${academicYear})`;
+
+    const statusDiv = document.getElementById('status');
+    const chartCanvas = document.getElementById('barChart');
+    let chartInstance = null;
+    let subjectNames = [];
+    let subjectPercents = [];
+    // Main logic (no auth check as per your last request)
+    window.onload = async function () {
+      if (!academicYear || !classId || !sectionId) {
+        statusDiv.textContent = "Error: Class or section not selected.";
+        return;
+      }
+      try {
+        statusDiv.textContent = "Loading data...";
+        // 1. Get all students (not deleted)
+        let stuSnap = await db.collection('years').doc(academicYear)
+          .collection('classes').doc(classId)
+          .collection('sections').doc(sectionId)
+          .collection('students').orderBy('roll').get();
+        let students = [];
+        stuSnap.forEach(doc => { let d = doc.data(); if (!d.isDeleted) students.push({ id: doc.id, ...d }); });
+        if (students.length === 0) {
+          statusDiv.textContent = "No students found in this section.";
+          return;
+        }
+
+        // 2. Get all exams for this class group
+        const classGroup = getClassGroupName(className);
+        let examsSnap = await db.collection('years').doc(academicYear)
+          .collection('exams').doc('classGroups')
+          .collection(classGroup).orderBy('name').get();
+        let exams = [];
+        examsSnap.forEach(doc => {
+          let ex = doc.data();
+          ex.id = doc.id;
+          exams.push(ex);
+        });
+        if (exams.length === 0) {
+          statusDiv.textContent = "No exams found for this class group.";
+          return;
+        }
+
+        // 3. For each subject in all exams, compute class average percentage
+        let subjectTotals = {};
+        for (let exam of exams) {
+          if (!Array.isArray(exam.subjects)) continue;
+          for (let subj of exam.subjects) {
+            if (!subj || !subj.name) continue;
+            let subjName = subj.name;
+            if (!subjectTotals[subjName]) subjectTotals[subjName] = { total: 0, max: 0, count: 0 };
+          }
+        }
+        for (let stu of students) {
+          for (let exam of exams) {
+            if (!Array.isArray(exam.subjects)) continue;
+            let markDoc = await db.collection('years').doc(academicYear)
+              .collection('classes').doc(classId)
+              .collection('sections').doc(sectionId)
+              .collection('students').doc(stu.id)
+              .collection('marks').doc(exam.id).get();
+            let marksObj = markDoc.exists ? markDoc.data() : {};
+            for (let subj of exam.subjects) {
+              if (!subj || !subj.name) continue;
+              let val = marksObj[subj.name];
+              if (typeof val === 'number' && !isNaN(val)) {
+                subjectTotals[subj.name].total += val;
+                subjectTotals[subj.name].max += (subj.max || 100);
+                subjectTotals[subj.name].count += 1;
+              } else {
+                subjectTotals[subj.name].total += 0;
+                subjectTotals[subj.name].max += (subj.max || 100);
+                subjectTotals[subj.name].count += 1;
+              }
+            }
+          }
+        }
+
+       subjectNames.length = 0;
+      subjectPercents.length = 0;
+      for (let subj in subjectTotals) {
+        subjectNames.push(subj);
+   let obj = subjectTotals[subj];
+          let percent = obj.max > 0 ? (obj.total / obj.max) * 100 : 0;
+          subjectPercents.push(Math.round(percent * 10) / 10);
+        }
+        if (subjectNames.length === 0) {
+          statusDiv.textContent = "No subject data available.";
+          return;
+        }
+
+        // Chart.js - remove x axis labels, use custom plugin for inside bar text
+        if (chartInstance) chartInstance.destroy();
+        chartInstance = new Chart(chartCanvas, {
+          type: 'bar',
+          data: {
+            labels: subjectNames.map(() => ''), // remove x labels
+            datasets: [{
+              label: 'Average Percentage',
+              data: subjectPercents,
+              backgroundColor: [
+                '#1762a7', '#eb6877', '#5db5e6', '#fdc600', '#24b47e',
+                '#f97d09', '#8661d1', '#b8336a', '#03a87c', '#e14c53',
+                '#3369e7', '#cfb019'
+              ],
+              borderWidth: 2,
+              borderRadius: 10
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: { display: false },
+              title: {
+              display: false
+            },
+              tooltip: {
+                callbacks: {
+                  label: function(ctx) { return ctx.parsed.y + "%"; }
+                }
+              }
+            },
+            scales: {
+              y: {
+                beginAtZero: true,
+                max: 100,
+                title: { display: true, text: "Average (%)", color: "#0f3d6b" },
+                ticks: { color: "#1467b7", font: { size: 18 } }
+              },
+              x: {
+                grid: { display: false },
+                ticks: { display: false }
+              }
+            }
+          },
+          plugins: [{
+            id: 'subjectLabelPlugin',
+            afterDatasetsDraw: function(chart) {
+              const {ctx} = chart;
+              chart.getDatasetMeta(0).data.forEach((bar, i) => {
+                // Subject name (vertical, centered)
+                ctx.save();
+                ctx.font = "bold 20px 'Segoe UI', Arial, sans-serif";
+                ctx.fillStyle = "#fff";
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                // Draw subject name inside vertical bar
+                ctx.translate(bar.x, bar.y + bar.height / 2);
+                ctx.rotate(-Math.PI / 2);
+                ctx.fillText(subjectNames[i], 0, 0);
+                ctx.restore();
+
+                // Draw percentage on top of bar
+                ctx.save();
+                ctx.font = "bold 22px 'Segoe UI', Arial, sans-serif";
+                ctx.fillStyle = "#1762a7";
+                ctx.textAlign = "center";
+                ctx.textBaseline = "bottom";
+                ctx.fillText(subjectPercents[i] + "%", bar.x, bar.y - 10);
+                ctx.restore();
+              });
+            }
+          }]
+        });
+        statusDiv.textContent = "";
+      } catch (err) {
+        statusDiv.textContent = "Error: " + err.message;
+      }
+    };
+
+ // Download as PNG in true landscape (wide) format, chart vertical bars, big space!
+document.getElementById('downloadBtn').onclick = async function () {
+  if (!chartInstance) return;
+  const canvasW = 1800;  // Always wide for mobile landscape PNG
+  const canvasH = 1000;  // Shorter height
+  // Make temp canvas for download (not visible)
+  const tempCanvas = document.createElement('canvas');
+  tempCanvas.width = canvasW;
+  tempCanvas.height = canvasH;
+  tempCanvas.style.display = 'none';
+  document.body.appendChild(tempCanvas);
+  // Copy data for download chart
+  const tempChart = new Chart(tempCanvas.getContext('2d'), {
+    type: 'bar',
+    data: chartInstance.data,
+    options: {
+      responsive: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { enabled: false }
+      },
+      layout: { padding: { top: 180, left: 70, right: 60, bottom: 60 } },
+      scales: {
+        y: {
+          beginAtZero: true,
+          max: 100,
+          title: { display: true, text: "Average (%)", color: "#0f3d6b", font: { size: 38 } },
+          ticks: { color: "#1467b7", font: { size: 32 } }
+        },
+        x: {
+          grid: { display: false },
+          ticks: { display: false }
+        }
+      },
+      animation: false
+    },
+    plugins: [{
+      id: 'subjectLabelPlugin',
+      afterDatasetsDraw: function(chart, args, opts) {
+        const {ctx, chartArea} = chart;
+        chart.getDatasetMeta(0).data.forEach((bar, i) => {
+          // Vertical subject name inside bar
+          ctx.save();
+          ctx.font = "bold 46px 'Segoe UI', Arial, sans-serif";
+          ctx.fillStyle = "#fff";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.translate(bar.x, bar.y + bar.height / 2);
+          ctx.rotate(-Math.PI / 2);
+          ctx.fillText(subjectNames[i], 0, 0);
+          ctx.restore();
+
+          // Percentage above bar, never left of y-axis
+          ctx.save();
+          ctx.font = "bold 54px 'Segoe UI', Arial, sans-serif";
+          ctx.fillStyle = "#1762a7";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "bottom";
+          let x = Math.max(bar.x, 110); // never left of y axis
+          ctx.fillText(subjectPercents[i] + "%", x, bar.y - 24);
+          ctx.restore();
+        });
+      }
+    }]
+  });
+  // Draw school/class/section on top
+  const ctx = tempCanvas.getContext('2d');
+  ctx.save();
+  ctx.font = "bold 80px 'Segoe UI', Arial, sans-serif";
+  ctx.fillStyle = "#0f3d6b";
+  ctx.textAlign = "center";
+  ctx.fillText("St. Patrick's School", canvasW / 2, 80);
+  ctx.font = "bold 54px 'Segoe UI', Arial, sans-serif";
+  ctx.fillStyle = "#1762a7";
+  ctx.fillText(`${className} – ${sectionName} (${academicYear})`, canvasW / 2, 150);
+  ctx.restore();
+  // Wait a moment for Chart.js to render (important for big graphs)
+  await new Promise(r => setTimeout(r, 300));
+  // Download
+  const url = tempCanvas.toDataURL("image/png");
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `Performance_Graph_${className}_${sectionName}.png`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  // Cleanup
+  tempChart.destroy();
+  tempCanvas.remove();
+};
+
+  </script>
+</body>
+</html>
