@@ -308,28 +308,37 @@ async function loadExams() {
   let classObj = classes.find(c => c.id === classId);
   let className = classObj ? classObj.name : '';
   let classGroup = getClassGroupName ? getClassGroupName(className) : '';
-  if (!classGroup) {
-    examChoices.clearStore();
-    examChoices.setChoices([{ value: '', label: 'No choices to choose from', selected: true }], 'value', 'label', false);
-    await loadStudents();
-    return;
-  }
-  // Get exams for this classGroup (same logic as in students.html)
+let classGroupVariants = [classGroup, 'class-' + classGroup, classGroup.replace('th',''), 'class-' + classGroup.replace('th','')];
+let examsSnap = null;
+
+// Try all possible collection names
+for (let grp of classGroupVariants) {
   let snap = await db.collection('years').doc(year)
     .collection('exams').doc('classGroups')
-    .collection(classGroup).get();
-  exams = snap.docs.map(doc => ({id: doc.id, ...doc.data()}));
-  examChoices.clearStore();
-  if (exams.length === 0) {
-    examChoices.setChoices([{ value: '', label: 'No choices to choose from', selected: true }], 'value', 'label', false);
-  } else {
-    examChoices.setChoices(
-      exams.map(e => ({ value: e.id, label: e.name, selected: false })),
-      'value', 'label', false
-    );
-    examChoices.setChoiceByValue(exams[0]?.id || '');
+    .collection(grp).get();
+  if (!snap.empty) {
+    examsSnap = snap;
+    break;
   }
+}
+if (!examsSnap) {
+  examChoices.clearStore();
+  examChoices.setChoices([{ value: '', label: 'No choices to choose from', selected: true }], 'value', 'label', false);
   await loadStudents();
+  return;
+}
+exams = examsSnap.docs.map(doc => ({id: doc.id, ...doc.data()}));
+examChoices.clearStore();
+if (exams.length === 0) {
+  examChoices.setChoices([{ value: '', label: 'No choices to choose from', selected: true }], 'value', 'label', false);
+} else {
+  examChoices.setChoices(
+    exams.map(e => ({ value: e.id, label: e.name, selected: false })),
+    'value', 'label', false
+  );
+  examChoices.setChoiceByValue(exams[0]?.id || '');
+}
+await loadStudents();
 }
 async function loadStudents() {
   let year = yearSel.value, classId = classSel.value, sectionId = sectionSel.value;
