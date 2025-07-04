@@ -230,6 +230,7 @@
   <!-- Firebase (v9 compat) -->
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script>
     // ====== Your Data Mapping ======
     const aiGeneratorConfig = {
@@ -383,42 +384,52 @@ document.addEventListener('DOMContentLoaded', function() {
 });
     document.addEventListener('DOMContentLoaded', function() {
   document.getElementById('download-btn').onclick = async function () {
-    const year = document.getElementById('pdf-year-value').value;
-    const className = document.getElementById('pdf-class-value').value;
-    const exam = document.getElementById('pdf-exam-value').value;
+  const year = document.getElementById('pdf-year-value').value;
+  const className = document.getElementById('pdf-class-value').value;
+  const exam = document.getElementById('pdf-exam-value').value;
 
-    // Fetch ALL subjects for this class/year/exam
-    const snap = await db.collection('year_plan')
-      .where('year', '==', year)
-      .where('class', '==', className)
-      .where('exam', '==', exam)
-      .get();
+  // Fetch ALL subjects for this class/year/exam
+  const snap = await db.collection('year_plan')
+    .where('year', '==', year)
+    .where('class', '==', className)
+    .where('exam', '==', exam)
+    .get();
 
-    if (snap.empty) {
-      alert('No syllabus found for this selection.');
-      return;
-    }
+  if (snap.empty) {
+    alert('No syllabus found for this selection.');
+    return;
+  }
 
-    // Prepare data
-    const data = [];
-    snap.forEach(doc => {
-      const d = doc.data();
-      data.push({subject: d.subject, syllabus: d.syllabus});
-    });
+  // Prepare data
+  const data = [];
+  snap.forEach(doc => {
+    const d = doc.data();
+    data.push({subject: d.subject, syllabus: d.syllabus});
+  });
 
-    // Build simple PDF text
-    let content = `Exam Syllabus\nClass: ${className}\nYear: ${year}\nExam: ${exam}\n\n`;
-    data.forEach(d => {
-      content += `${d.subject}:\n${d.syllabus}\n\n`;
-    });
+  // ======= jsPDF Part =======
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  let y = 14;
+  doc.setFontSize(14);
+  doc.text(`Exam Syllabus`, 10, y); y += 8;
+  doc.setFontSize(12);
+  doc.text(`Class: ${className}`, 10, y); y += 7;
+  doc.text(`Year: ${year}`, 10, y); y += 7;
+  doc.text(`Exam: ${exam}`, 10, y); y += 9;
 
-    // Download as PDF (plain text for now)
-    const blob = new Blob([content], {type: "application/pdf"});
-    const link = document.createElement("a");
-    link.href = URL.createObjectURL(blob);
-    link.download = `${className}_${exam}_syllabus.pdf`;
-    link.click();
-  };
+  data.forEach(d => {
+    doc.setFont(undefined, 'bold');
+    doc.text(`${d.subject}:`, 10, y); y += 7;
+    doc.setFont(undefined, 'normal');
+    let lines = doc.splitTextToSize(d.syllabus, 180);
+    doc.text(lines, 16, y);
+    y += lines.length * 7 + 2;
+    if (y > 270) { doc.addPage(); y = 14; }
+  });
+
+  doc.save(`${className}_${exam}_syllabus.pdf`);
+};
 });
   </script>
 </body>
