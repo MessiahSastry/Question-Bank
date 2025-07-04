@@ -818,26 +818,33 @@
                 4. On the final line for that question, specify ALL correct answers using the format "Ans: A), C), D)" (list all correct answers, separated by comma).
                 Provide ONLY the questions in this exact format. Do not add any other text, explanation, or introduction.`;
             } else if (sessionParams.questionType === "Comprehensive") {
-                fullPromptForAI = `${baseInfo}
-                Generate a passage of about 80 words on the given chapter/topic. Then, provide three MCQ questions (single correct, 1 mark each) based only on the passage. Each MCQ must have four options (A–D) and the correct answer in this format:
-                Passage:
-                [passage text]
-            
-                Q1: [question text]
-                A) [option1]
-                B) [option2]
-                C) [option3]
-                D) [option4]
-                Ans: [correct letter, e.g., B)]
-            
-                Q2: [question text]
-                ... (same as above)
-            
-                Q3: [question text]
-                ... (same as above)
-            
-                Provide ONLY the passage and the questions in this exact format. Do not add any other text, explanation, or introduction.`;
-            } else if (sessionParams.questionType === "Matching") {
+                    // Try to extract "N comprehensives" or "N comprehensions" or "N passages"
+                    let nMatch = originalPrompt.match(/\b(\d+)\s*(comprehensives?|comprehensions?|passages?)\b/i);
+                    let n = nMatch ? Math.max(1, Math.min(10, parseInt(nMatch[1], 10))) : 1;
+                
+                    fullPromptForAI = `${baseInfo}
+                    Generate ${n} comprehension passages for the given chapter/topic. 
+                    Each passage must not exceed 40 words. 
+                    For each passage, provide exactly 2 MCQ questions (each 1 mark, single correct answer, four options A–D) based strictly on the passage. 
+                    Each comprehension should be in this format:
+                
+                    Passage:
+                    [passage text]
+                
+                    Q1: [question text]
+                    A) [option 1]
+                    B) [option 2]
+                    C) [option 3]
+                    D) [option 4]
+                    Ans: [correct letter, e.g., B)]
+                
+                    Q2: [question text]
+                    A) ...
+                    Ans: ...
+                    
+                    Do not write explanations, and do not exceed 40 words for any passage. 
+                    If more than one comprehension is needed, repeat this format for each block.`;
+                } else if (sessionParams.questionType === "Matching") {
                 fullPromptForAI = `${baseInfo}
                 Generate one matching-type MCQ for the given chapter/topic. The question should have 4 items on the left (numbered 1–4) and 6 items on the right (labeled A–F, with 2 distractors). Provide four MCQ options, each showing a possible sequence of matches (1-A, 2-B, 3-C, 4-D format). Only one option should be fully correct. Specify the correct answer.
             
@@ -971,46 +978,70 @@
         const startNumber = await getNextQuestionNumber(sessionParams.class, sessionParams.subject, sessionParams.chapter);
 
         for (let i = 0; i < currentSessionQuestions.length; i++) {
-            const qData = currentSessionQuestions[i];
+    const qData = currentSessionQuestions[i];
 
-            const snapshot = await db.collection("questions")
-                .where("subject", "==", qData.subject)
-                .where("chapter", "==", qData.chapter)
-                .get();
-            let isDuplicate = false;
-            snapshot.forEach(doc => {
-                const existing = doc.data();
-                if (getTextSimilarity(qData.parsedBody, existing.body) >= 0.9) {
-                    isDuplicate = true;
-                }
-            });
-            if (isDuplicate) {
-                skippedCount++;
-                continue;
-            }
+    // If comprehensive, use fullText for duplicate check, else parsedBody
+    let compareText = (qData.parsedMeta && qData.parsedMeta.includes("[Comprehensive]"))
+        ? qData.fullText : qData.parsedBody;
 
-            const meta = parseMetaLine(qData.parsedMeta);
-            const currentQuestionNumber = startNumber + savedCount; // Increment based on successfully saved count
-
-            await db.collection("questions").add({
-                text: qData.fullText,
-                body: qData.parsedBody,
-                answer: qData.parsedAnswer,
-                metaLine: qData.parsedMeta,
-                difficulty: meta.difficulty,
-                level: meta.level,
-                marks: meta.marks,
-                questionNumber: currentQuestionNumber,
-                class: qData.class,
-                subject: qData.subject,
-                chapter: qData.chapter,
-                mcqType: sessionParams.questionType.startsWith('MCQ') ? sessionParams.questionType : null,
-                createdBy: currentUserProfile.uid,
-                timestamp: firebase.firestore.FieldValue.serverTimestamp()
-            });
-
-            savedCount++;
+    const snapshot = await db.collection("questions")
+        .where("subject", "==", qData.subject)
+        .where("chapter", "==", qData.chapter)
+        .get();
+    let isDuplicate = false;
+    snapshot.forEach(doc => {
+        const existing = doc.data();
+        let existingText = (existing.metaLine && existing.metaLine.includes("[Comprehensive]")) ? existing.text : existing.body;
+        if (getTextSimilarity(compareText, existingText) >= 0.9) {
+            isDuplicate = true;
         }
+    });
+    if (isDuplicate) {
+        skippedCount++;
+        continue;
+    }
+
+    const meta = parseMetaLine(qData.parsedMeta);
+    const currentQuestionNumber = startNumber + savedCount; // Increment based on successfully saved count
+
+    if (qData.parsedMeta && qData.parsedMeta.includes("[Comprehensive]")) {
+        // Save as a comprehensive block
+        await db.collection("questions").add({
+            type: "Comprehensive",
+            text: qData.fullText,
+            metaLine: qData.parsedMeta,
+            marks: 2,
+            passage: qData.passage,
+            mcqs: qData.mcqs,
+            questionNumber: currentQuestionNumber,
+            class: qData.class,
+            subject: qData.subject,
+            chapter: qData.chapter,
+            createdBy: currentUserProfile.uid,
+            timestamp: firebase.firestore.FieldValue.serverTimestamp()
+        });
+    } else {
+        // Normal question save (single, multiple, descriptive)
+        await db.collection("questions").add({
+            text: qData.fullText,
+            body: qData.parsedBody,
+            answer: qData.parsedAnswer,
+            metaLine: qData.parsedMeta,
+            difficulty: meta.difficulty,
+            level: meta.level,
+            marks: meta.marks,
+            questionNumber: currentQuestionNumber,
+            class: qData.class,
+            subject: qData.subject,
+            chapter: qData.chapter,
+            mcqType: sessionParams.questionType.startsWith('MCQ') ? sessionParams.questionType : null,
+            createdBy: currentUserProfile.uid,
+            timestamp: firebase.firestore.FieldValue.serverTimestamp()
+        });
+    }
+
+    savedCount++;
+}
 
         alert(`${savedCount} question(s) saved. ${skippedCount} duplicate(s) skipped.`);
         saveButton.disabled = false;
@@ -1061,47 +1092,106 @@ function splitMcqOptions(body) {
     function parseAndDisplayAiQuestions(responseText, messagesArea, sessionParams) {
 
     // --- Handle Comprehensive ---
-    if (sessionParams.questionType === "Comprehensive") {
-        // Expect: Passage:\n[passage text]\n\nQ1: ...\nA) ...\n...\nAns: ...\nQ2: ...
-        const passageMatch = responseText.match(/Passage:\s*([\s\S]*?)\n\s*Q1:/i);
-        const passageText = passageMatch ? passageMatch[1].trim() : '';
-        let rest = responseText;
-        if (passageMatch) rest = responseText.substring(passageMatch.index + passageMatch[0].length - 4); // "- 4" to keep "Q1:"
+   // --- Handle Comprehensive ---
+if (sessionParams.questionType === "Comprehensive") {
+    // Split AI output into blocks: Each starts with Passage:
+    const comprehensiveBlocks = responseText.split(/(?:^|\n)Passage:/i)
+        .map(s => s.trim()).filter(Boolean);
 
-        const questionBlocks = rest.split(/\n(?=Q\d+:)/g).map(q => q.trim()).filter(q => /^Q\d+:/.test(q));
-        const fragment = document.createDocumentFragment();
+    comprehensiveBlocks.forEach((block, idx) => {
+        // Split out passage (first line up to Q1:) and two MCQs
+        let passageMatch = block.match(/^([\s\S]*?)\nQ1:/i);
+        let passage = passageMatch ? passageMatch[1].trim() : '';
+        let rest = passageMatch ? block.substring(passageMatch[0].length - 4).trim() : block;
 
-        // Show passage first
-        if (passageText) {
-            const passageDiv = document.createElement('div');
-            passageDiv.className = 'message ai-message';
-            passageDiv.innerHTML = `<div style="font-weight:600; color:#0f3d6b;">Comprehension Passage</div>
-                <div style="white-space:pre-line; color:#222; margin-top:4px; margin-bottom:8px;">${passageText.replace(/</g,"&lt;").replace(/>/g,"&gt;")}</div>`;
-            fragment.appendChild(passageDiv);
+        // Make sure passage ≤ 40 words
+        let passageWords = passage.split(/\s+/).length;
+        if (passageWords > 40) {
+            passage = passage.split(/\s+/).slice(0, 40).join(' ') + '...';
         }
 
-        // Then each MCQ
-        questionBlocks.forEach((qText, i) => {
-            const questionData = {
-                fullText: qText,
-                class: sessionParams.class,
-                subject: sessionParams.subject,
-                chapter: sessionParams.chapter,
-                parsedMeta: `Q${i+1}: [Comprehensive MCQ]`,
-                parsedBody: qText,
-                parsedAnswer: (qText.match(/Ans:.*$/m)||[])[0] || null
+        // Get both MCQs
+        let mcqs = rest.split(/\n(?=Q\d+:)/g).map(s => s.trim()).filter(s => /^Q\d+:/.test(s));
+        if (mcqs.length > 2) mcqs = mcqs.slice(0, 2);
+
+        // Prepare single question block data
+        const questionData = {
+            fullText: `Passage:\n${passage}\n\n${mcqs.join('\n\n')}`,
+            class: sessionParams.class,
+            subject: sessionParams.subject,
+            chapter: sessionParams.chapter,
+            parsedMeta: `Q${currentSessionQuestions.length+1}: Passage with 2 MCQs, 2 Marks [Comprehensive]`,
+            passage: passage,
+            mcqs: mcqs.map(qText => ({
+                body: qText,
+                answer: (qText.match(/Ans:.*$/m)||[])[0] || null
+            })),
+            marks: 2,
+        };
+        currentSessionQuestions.push(questionData);
+
+        // Create and append a comprehensive block element
+        const blockEl = document.createElement('div');
+        blockEl.className = 'message ai-question-item';
+        blockEl.dataset.sessionQuestionIndex = currentSessionQuestions.length - 1;
+
+        // Build MCQ HTMLs
+        const mcqHtml = questionData.mcqs.map((mcq, i) =>
+            `<div class="question-text-ai" style="margin-top:8px;">
+                <b>Q${i+1}.</b> ${mcq.body.replace(/Ans:.*/,'').trim().replace(/</g,"&lt;").replace(/>/g,"&gt;")}
+                <div class="temp-answer" style="display:none; margin-top:3px; color:#5d4037;">${mcq.answer ? mcq.answer : ''}</div>
+            </div>`
+        ).join('');
+
+        blockEl.innerHTML = `
+            <div class="question-meta-ai">${questionData.parsedMeta}</div>
+            <div class="question-text-ai" style="white-space:pre-line; margin-bottom:8px;"><b>Passage:</b> ${passage}</div>
+            ${mcqHtml}
+            <div class="question-actions">
+                <button class="q-action-btn" title="Options"><i class="fas fa-ellipsis-v"></i></button>
+            </div>
+        `;
+
+        // Menu logic: show/hide both answers, edit, delete
+        blockEl.querySelector('.q-action-btn').onclick = (e) => {
+            e.stopPropagation();
+            const existingMenu = document.querySelector('.actions-menu');
+            if (existingMenu) existingMenu.remove();
+            const menu = document.createElement('div');
+            menu.className = 'actions-menu';
+            menu.innerHTML = `
+                <button class="menu-show-answer-btn">Show Answer</button>
+                <button class="menu-edit-btn">Edit</button>
+                <button class="menu-delete-btn">Delete</button>`;
+            blockEl.appendChild(menu);
+
+            menu.querySelector('.menu-show-answer-btn').onclick = () => {
+                const answers = blockEl.querySelectorAll('.temp-answer');
+                const show = answers[0].style.display === 'none';
+                answers.forEach(ans => ans.style.display = show ? 'block' : 'none');
+                menu.querySelector('.menu-show-answer-btn').textContent = show ? 'Hide Answer' : 'Show Answer';
+                menu.remove();
             };
-            currentSessionQuestions.push(questionData);
-            const questionEl = createQuestionElement(questionData, currentSessionQuestions.length - 1);
-            fragment.appendChild(questionEl);
-        });
+            menu.querySelector('.menu-edit-btn').onclick = () => {
+                showEditPopupForComprehensive(currentSessionQuestions.length - 1);
+                menu.remove();
+            };
+            menu.querySelector('.menu-delete-btn').onclick = () => {
+                if (confirm('Are you sure you want to delete this comprehensive?')) {
+                    currentSessionQuestions.splice(currentSessionQuestions.length - 1, 1);
+                    rerenderAllQuestions();
+                }
+                menu.remove();
+            };
+        };
 
-        messagesArea.appendChild(fragment);
-        if (window.MathJax) MathJax.typesetPromise([messagesArea]);
-        messagesArea.scrollTop = messagesArea.scrollHeight;
-        return;
-    }
+        messagesArea.appendChild(blockEl);
+        if (window.MathJax) MathJax.typesetPromise([blockEl]);
+    });
 
+    messagesArea.scrollTop = messagesArea.scrollHeight;
+    return;
+}
     // --- Handle Matching ---
     if (sessionParams.questionType === "Matching") {
         // Expect: 
@@ -1300,63 +1390,140 @@ function splitMcqOptions(body) {
         return questionEl;
     }
 
-    function rerenderAllQuestions() {
-        const messagesArea = document.getElementById('chat-messages-area');
-        messagesArea.querySelectorAll('.ai-question-item').forEach(item => item.remove());
+   function rerenderAllQuestions() {
+    const messagesArea = document.getElementById('chat-messages-area');
+    messagesArea.querySelectorAll('.ai-question-item').forEach(item => item.remove());
 
-        const fragment = document.createDocumentFragment();
-        currentSessionQuestions.forEach((q, i) => {
+    const fragment = document.createDocumentFragment();
+    currentSessionQuestions.forEach((q, i) => {
+        // For comprehensives, we need a different renderer
+        if (q.parsedMeta && q.parsedMeta.includes("[Comprehensive]")) {
+            // Renumber meta
             const metaPartsMatch = q.parsedMeta.match(/Q\s*\d+:\s*(.*)/i);
             const details = metaPartsMatch ? metaPartsMatch[1] : '';
             q.parsedMeta = `Q${i + 1}: ${details}`;
-            
+            // Build element (copy from parseAndDisplayAiQuestions)
+            const blockEl = document.createElement('div');
+            blockEl.className = 'message ai-question-item';
+            blockEl.dataset.sessionQuestionIndex = i;
+
+            // Build MCQ HTMLs
+            const mcqHtml = q.mcqs.map((mcq, k) =>
+                `<div class="question-text-ai" style="margin-top:8px;">
+                    <b>Q${k+1}.</b> ${mcq.body.replace(/Ans:.*/,'').trim().replace(/</g,"&lt;").replace(/>/g,"&gt;")}
+                    <div class="temp-answer" style="display:none; margin-top:3px; color:#5d4037;">${mcq.answer ? mcq.answer : ''}</div>
+                </div>`
+            ).join('');
+
+            blockEl.innerHTML = `
+                <div class="question-meta-ai">${q.parsedMeta}</div>
+                <div class="question-text-ai" style="white-space:pre-line; margin-bottom:8px;"><b>Passage:</b> ${q.passage}</div>
+                ${mcqHtml}
+                <div class="question-actions">
+                    <button class="q-action-btn" title="Options"><i class="fas fa-ellipsis-v"></i></button>
+                </div>
+            `;
+            blockEl.querySelector('.q-action-btn').onclick = (e) => {
+                e.stopPropagation();
+                const existingMenu = document.querySelector('.actions-menu');
+                if (existingMenu) existingMenu.remove();
+                const menu = document.createElement('div');
+                menu.className = 'actions-menu';
+                menu.innerHTML = `
+                    <button class="menu-show-answer-btn">Show Answer</button>
+                    <button class="menu-edit-btn">Edit</button>
+                    <button class="menu-delete-btn">Delete</button>`;
+                blockEl.appendChild(menu);
+
+                menu.querySelector('.menu-show-answer-btn').onclick = () => {
+                    const answers = blockEl.querySelectorAll('.temp-answer');
+                    const show = answers[0].style.display === 'none';
+                    answers.forEach(ans => ans.style.display = show ? 'block' : 'none');
+                    menu.querySelector('.menu-show-answer-btn').textContent = show ? 'Hide Answer' : 'Show Answer';
+                    menu.remove();
+                };
+                menu.querySelector('.menu-edit-btn').onclick = () => {
+                    showEditPopupForComprehensive(i);
+                    menu.remove();
+                };
+                menu.querySelector('.menu-delete-btn').onclick = () => {
+                    if (confirm('Are you sure you want to delete this comprehensive?')) {
+                        currentSessionQuestions.splice(i, 1);
+                        rerenderAllQuestions();
+                    }
+                    menu.remove();
+                };
+            };
+
+            fragment.appendChild(blockEl);
+
+        } else {
+            // Normal question
+            const metaPartsMatch = q.parsedMeta.match(/Q\s*\d+:\s*(.*)/i);
+            const details = metaPartsMatch ? metaPartsMatch[1] : '';
+            q.parsedMeta = `Q${i + 1}: ${details}`;
             const questionEl = createQuestionElement(q, i);
             fragment.appendChild(questionEl);
-        });
-        messagesArea.appendChild(fragment);
-        if (window.MathJax) MathJax.typesetPromise([messagesArea]);
-    }
+        }
+    });
+    messagesArea.appendChild(fragment);
+    if (window.MathJax) MathJax.typesetPromise([messagesArea]);
+}
 
-    function showEditPopupForQuestion(questionIndex) {
-        const questionData = currentSessionQuestions[questionIndex];
-        if (!questionData) return;
+    function showEditPopupForComprehensive(index) {
+    const qData = currentSessionQuestions[index];
+    if (!qData) return;
 
-        const oldText = questionData.parsedBody;
-        const oldMeta = questionData.parsedMeta;
+    // Prepare editable values
+    let passageVal = qData.passage || '';
+    let mcqBodies = qData.mcqs.map(m => m.body.replace(/Ans:.*/,'').trim());
+    let mcqAnswers = qData.mcqs.map(m => m.answer ? m.answer.replace('Ans:', '').trim() : '');
 
-        const editor = document.createElement('div');
-        editor.className = 'edit-popup';
-        editor.innerHTML = `
-            <h3>Edit Question</h3>
-            <label>Meta Line:</label>
-            <input type="text" id="edit-meta" value="${oldMeta}" />
-            <label>Question Body:</label>
-            <textarea id="edit-body" rows="6">${oldText}</textarea>
-            <div class="popup-buttons">
-                <button id="edit-cancel">Cancel</button>
-                <button id="edit-save">Save</button>
-            </div>`;
-        document.body.appendChild(editor);
+    // Build HTML
+    const editor = document.createElement('div');
+    editor.className = 'edit-popup';
+    editor.innerHTML = `
+        <h3>Edit Comprehensive</h3>
+        <label>Meta Line:</label>
+        <input type="text" id="edit-meta" value="${qData.parsedMeta}" />
+        <label>Passage (max 40 words):</label>
+        <textarea id="edit-passage" rows="2">${passageVal}</textarea>
+        <label>MCQ 1:</label>
+        <textarea id="edit-mcq1" rows="4">${mcqBodies[0] || ''}</textarea>
+        <input type="text" id="edit-mcq1-ans" placeholder="Answer e.g. Ans: B)" value="${mcqAnswers[0] || ''}" />
+        <label>MCQ 2:</label>
+        <textarea id="edit-mcq2" rows="4">${mcqBodies[1] || ''}</textarea>
+        <input type="text" id="edit-mcq2-ans" placeholder="Answer e.g. Ans: C)" value="${mcqAnswers[1] || ''}" />
+        <div class="popup-buttons">
+            <button id="edit-cancel">Cancel</button>
+            <button id="edit-save">Save</button>
+        </div>
+    `;
+    document.body.appendChild(editor);
 
-        document.getElementById('edit-cancel').onclick = () => editor.remove();
+    document.getElementById('edit-cancel').onclick = () => editor.remove();
 
-        document.getElementById('edit-save').onclick = () => {
-            const newMeta = document.getElementById('edit-meta').value.trim();
-            const newBody = document.getElementById('edit-body').value.trim();
+    document.getElementById('edit-save').onclick = () => {
+        // Save edited values back
+        qData.parsedMeta = document.getElementById('edit-meta').value.trim();
+        qData.passage = document.getElementById('edit-passage').value.trim();
+        let mcq1Body = document.getElementById('edit-mcq1').value.trim();
+        let mcq1Ans = document.getElementById('edit-mcq1-ans').value.trim();
+        let mcq2Body = document.getElementById('edit-mcq2').value.trim();
+        let mcq2Ans = document.getElementById('edit-mcq2-ans').value.trim();
 
-            currentSessionQuestions[questionIndex].parsedMeta = newMeta;
-            currentSessionQuestions[questionIndex].parsedBody = newBody;
-            currentSessionQuestions[questionIndex].fullText = `${newMeta}\n${newBody}`;
-            
-            if (currentSessionQuestions[questionIndex].parsedAnswer) {
-                currentSessionQuestions[questionIndex].fullText += `\n${currentSessionQuestions[questionIndex].parsedAnswer}`;
-            }
+        qData.mcqs = [
+            { body: mcq1Body, answer: mcq1Ans ? "Ans: " + mcq1Ans.replace(/^Ans:\s*/i,'') : "" },
+            { body: mcq2Body, answer: mcq2Ans ? "Ans: " + mcq2Ans.replace(/^Ans:\s*/i,'') : "" }
+        ];
 
-            rerenderAllQuestions();
-            editor.remove();
-        };
-    }
+        // Rebuild fullText (for saving/export)
+        qData.fullText = `Passage:\n${qData.passage}\n\nQ1: ${mcq1Body}${mcq1Ans ? '\n' + "Ans: " + mcq1Ans.replace(/^Ans:\s*/i,'') : ''}\n\nQ2: ${mcq2Body}${mcq2Ans ? '\n' + "Ans: " + mcq2Ans.replace(/^Ans:\s*/i,'') : ''}`;
 
+        rerenderAllQuestions();
+        editor.remove();
+    };
+}
     function parseMetaLine(metaLine) {
         const meta = { difficulty: null, level: null, marks: null };
         const diffMatch = metaLine.match(/Q\s*\d+:\s*([^,/]+)/i);
