@@ -505,7 +505,7 @@
         "9th Class": ["Telugu", "Hindi", "English 1", "English 2", "Math 1", "Math 1 IIT", "Math 2", "Math 2 IIT", "Physics", "Physics IIT & NEET", "Chemistry", "Chemistry IIT & NEET", "Biology", "Biology NEET", "Social"],
         "10th Class": ["Telugu", "Hindi", "English 1", "English 2", "Math 1", "Math 1 IIT", "Math 2", "Math 2 IIT", "Physics", "Physics IIT & NEET", "Chemistry", "Chemistry IIT & NEET", "Biology", "Biology NEET", "Social"]
       },
-      questionTypes: ["MCQ (Single)", "MCQ (Multiple)", "Descriptive"],
+      questionTypes: ["MCQ (Single)", "MCQ (Multiple)", "Descriptive", "Comprehensive", "Matching"],
       getSubjectsForClass: function(className) { return this.subjectMappings[className] || []; }
     };
     
@@ -800,7 +800,7 @@
                 4. On the final line for that question, specify the correct answer using the format "Ans: C)" (only ONE letter).
                 Provide ONLY the questions in this exact format. Do not add any other text, explanation, or introduction.`;
             } else if (sessionParams.questionType === "MCQ (Multiple)") {
-                    fullPromptForAI = `${baseInfo}
+                fullPromptForAI = `${baseInfo}
                 The user wants Multiple Choice Questions (MCQs) with more than one correct answer possible for each question (Multiple correct options).
                 ***STRICT RULES FOR ANSWERS:***
                 - You MUST create exactly 10 questions per batch, following this distribution:
@@ -817,7 +817,58 @@
                 3. On the following lines, provide four options, each starting with "A)", "B)", "C)", and "D)".
                 4. On the final line for that question, specify ALL correct answers using the format "Ans: A), C), D)" (list all correct answers, separated by comma).
                 Provide ONLY the questions in this exact format. Do not add any other text, explanation, or introduction.`;
-                } else {
+            } else if (sessionParams.questionType === "Comprehensive") {
+                fullPromptForAI = `${baseInfo}
+                Generate a passage of about 80 words on the given chapter/topic. Then, provide three MCQ questions (single correct, 1 mark each) based only on the passage. Each MCQ must have four options (A–D) and the correct answer in this format:
+                Passage:
+                [passage text]
+            
+                Q1: [question text]
+                A) [option1]
+                B) [option2]
+                C) [option3]
+                D) [option4]
+                Ans: [correct letter, e.g., B)]
+            
+                Q2: [question text]
+                ... (same as above)
+            
+                Q3: [question text]
+                ... (same as above)
+            
+                Provide ONLY the passage and the questions in this exact format. Do not add any other text, explanation, or introduction.`;
+            } else if (sessionParams.questionType === "Matching") {
+                fullPromptForAI = `${baseInfo}
+                Generate one matching-type MCQ for the given chapter/topic. The question should have 4 items on the left (numbered 1–4) and 6 items on the right (labeled A–F, with 2 distractors). Provide four MCQ options, each showing a possible sequence of matches (1-A, 2-B, 3-C, 4-D format). Only one option should be fully correct. Specify the correct answer.
+            
+                Strict format:
+                Q1: [difficulty/level], 1 Mark
+                Match the following.
+            
+                Left Side:
+                1. [text1]
+                2. [text2]
+                3. [text3]
+                4. [text4]
+            
+                Right Side:
+                A) [optionA]
+                B) [optionB]
+                C) [optionC]
+                D) [optionD]
+                E) [optionE]
+                F) [optionF]
+            
+                Options:
+                A) 1-[X], 2-[Y], 3-[Z], 4-[W]
+                B) ...
+                C) ...
+                D) ...
+            
+                Ans: [Correct Option Letter, e.g., A)]
+                
+                Provide ONLY the question in this format. Do not add any other text, explanation, or introduction.`;
+            } else {
                 // Descriptive
                 fullPromptForAI = `${baseInfo}
                 The user wants Descriptive questions.
@@ -1008,7 +1059,101 @@ function splitMcqOptions(body) {
 }
 
     function parseAndDisplayAiQuestions(responseText, messagesArea, sessionParams) {
-        const questionBlocks = responseText.split(/\n(?=Q\s*\d+:)/g).map(q => q.trim()).filter(q => q.match(/^Q\s*\d+:/));
+
+    // --- Handle Comprehensive ---
+    if (sessionParams.questionType === "Comprehensive") {
+        // Expect: Passage:\n[passage text]\n\nQ1: ...\nA) ...\n...\nAns: ...\nQ2: ...
+        const passageMatch = responseText.match(/Passage:\s*([\s\S]*?)\n\s*Q1:/i);
+        const passageText = passageMatch ? passageMatch[1].trim() : '';
+        let rest = responseText;
+        if (passageMatch) rest = responseText.substring(passageMatch.index + passageMatch[0].length - 4); // "- 4" to keep "Q1:"
+
+        const questionBlocks = rest.split(/\n(?=Q\d+:)/g).map(q => q.trim()).filter(q => /^Q\d+:/.test(q));
+        const fragment = document.createDocumentFragment();
+
+        // Show passage first
+        if (passageText) {
+            const passageDiv = document.createElement('div');
+            passageDiv.className = 'message ai-message';
+            passageDiv.innerHTML = `<div style="font-weight:600; color:#0f3d6b;">Comprehension Passage</div>
+                <div style="white-space:pre-line; color:#222; margin-top:4px; margin-bottom:8px;">${passageText.replace(/</g,"&lt;").replace(/>/g,"&gt;")}</div>`;
+            fragment.appendChild(passageDiv);
+        }
+
+        // Then each MCQ
+        questionBlocks.forEach((qText, i) => {
+            const questionData = {
+                fullText: qText,
+                class: sessionParams.class,
+                subject: sessionParams.subject,
+                chapter: sessionParams.chapter,
+                parsedMeta: `Q${i+1}: [Comprehensive MCQ]`,
+                parsedBody: qText,
+                parsedAnswer: (qText.match(/Ans:.*$/m)||[])[0] || null
+            };
+            currentSessionQuestions.push(questionData);
+            const questionEl = createQuestionElement(questionData, currentSessionQuestions.length - 1);
+            fragment.appendChild(questionEl);
+        });
+
+        messagesArea.appendChild(fragment);
+        if (window.MathJax) MathJax.typesetPromise([messagesArea]);
+        messagesArea.scrollTop = messagesArea.scrollHeight;
+        return;
+    }
+
+    // --- Handle Matching ---
+    if (sessionParams.questionType === "Matching") {
+        // Expect: 
+        // Q1: ...\nMatch the following.\nLeft Side:\n1. ...\n...\nRight Side:\nA) ...\n...\nOptions:\nA) ...\nB) ...\nC) ...\nD) ...\nAns: X)
+        const match = responseText.match(/Q\d+:[\s\S]*?Match the following\.[\s\S]*?Left Side:\s*([\s\S]*?)Right Side:\s*([\s\S]*?)Options:\s*([\s\S]*?)Ans:\s*([A-D]\))/i);
+        if (match) {
+            const left = match[1].trim().split(/\n/).map(x => x.trim()).filter(Boolean);
+            const right = match[2].trim().split(/\n/).map(x => x.trim()).filter(Boolean);
+            const optionsRaw = match[3].trim().split(/\n/).map(x => x.trim()).filter(Boolean);
+            const correctAns = match[4].trim();
+
+            const container = document.createElement('div');
+            container.className = 'message ai-message';
+            container.innerHTML = `
+                <div style="font-weight:600; color:#0f3d6b;">Matching MCQ</div>
+                <div style="margin-top:8px;">
+                    <div style="font-weight:500; color:#1762a7;">Left Side:</div>
+                    <div style="white-space:pre-line; margin-bottom:6px;">${left.join('\n')}</div>
+                    <div style="font-weight:500; color:#1762a7;">Right Side:</div>
+                    <div style="white-space:pre-line; margin-bottom:8px;">${right.join('\n')}</div>
+                </div>
+                <div style="font-weight:500; color:#1762a7;">Options:</div>
+                <ol type="A" style="padding-left:18px; margin-bottom:6px;">
+                    ${optionsRaw.map(opt=>`<li>${opt.replace(/^[A-D]\)\s*/,'')}</li>`).join('')}
+                </ol>
+                <div style="color:#c82333; font-weight:600;">Answer: ${correctAns}</div>
+            `;
+            messagesArea.appendChild(container);
+
+            // Store in session for save (as a single question)
+            const questionData = {
+                fullText: responseText.trim(),
+                class: sessionParams.class,
+                subject: sessionParams.subject,
+                chapter: sessionParams.chapter,
+                parsedMeta: "Matching MCQ",
+                parsedBody: responseText.trim(),
+                parsedAnswer: correctAns
+            };
+            currentSessionQuestions.push(questionData);
+
+            if (window.MathJax) MathJax.typesetPromise([messagesArea]);
+            messagesArea.scrollTop = messagesArea.scrollHeight;
+            return;
+        }
+        // fallback: show as plain text
+        appendChatMessage(responseText, 'ai', messagesArea);
+        return;
+    }
+
+    // The original logic (leave as-is for MCQ/Descriptive):
+    const questionBlocks = responseText.split(/\n(?=Q\s*\d+:)/g).map(q => q.trim()).filter(q => q.match(/^Q\s*\d+:/));
 
         if (questionBlocks.length === 0 && responseText) {
             appendChatMessage(responseText, 'ai', messagesArea);
