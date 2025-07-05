@@ -401,7 +401,7 @@ async function exportPDF(e) {
         </div>`;
     }
 
-    
+    // --- QUESTION TEXT + OPTIONS ---
     // --- QUESTION TEXT + OPTIONS ---
 const textDiv = clone.querySelector('.question-text');
 let html = textDiv ? textDiv.innerHTML : '';
@@ -439,35 +439,37 @@ let questionHtml = `
                     const optionLines = options.map(opt => opt.replace(/\n+/g, ' ').trim());
                     const SHORT_LIMIT = 14;
                     const MEDIUM_LIMIT = 28;
-                       if (optionLines.every(opt => opt.length <= SHORT_LIMIT)) {
-                    // All short: one line, 4 columns
-                    return `<div style="
+                    if (optionLines.every(opt => opt.length <= SHORT_LIMIT)) {
+                        // All short: one line, 4 columns
+                       return `<div style="
                         display: flex;
                         justify-content: space-between;
                         margin-left: 8px;
                         margin-right: 12px;
                         min-width: 360px;
-                    ">${optionLines.map(opt => `<div style="flex:1;text-align:center;min-width:70px;">${opt}</div>`).join('')}
+                    ">${optionLines.map(opt => `
+                        <div style="flex:1;text-align:center;min-width:70px;">${opt}</div>
+                    `).join('')}
                     </div>`;
-                } else if (optionLines.every(opt => opt.length <= MEDIUM_LIMIT)) {
-                    // Medium: two rows, 2 columns each
-                    return `
-                      <div style="display:flex;gap:32px;margin-left:4px;">
-                        <div style="min-width:120px;">${optionLines[0]}</div>
-                        <div style="min-width:120px;">${optionLines[1]}</div>
-                      </div>
-                      <div style="display:flex;gap:32px;margin-left:4px;">
-                        <div style="min-width:120px;">${optionLines[2]}</div>
-                        <div style="min-width:120px;">${optionLines[3]}</div>
-                      </div>
-                    `;
-                } else {
-                    // Long: each option on its own line
-                    return optionLines.map(opt =>
-                      `<div style="margin-left:8px;margin-bottom:2px;">${opt}</div>`
-                    ).join('');
-                }
-               })()
+                    } else if (optionLines.every(opt => opt.length <= MEDIUM_LIMIT)) {
+                        // Medium: two rows, 2 columns each
+                        return `
+                          <div style="display:flex;gap:32px;margin-left:4px;">
+                            <div style="min-width:120px;">${optionLines[0]}</div>
+                            <div style="min-width:120px;">${optionLines[1]}</div>
+                          </div>
+                          <div style="display:flex;gap:32px;margin-left:4px;">
+                            <div style="min-width:120px;">${optionLines[2]}</div>
+                            <div style="min-width:120px;">${optionLines[3]}</div>
+                          </div>
+                        `;
+                    } else {
+                        // Long: each option on its own line
+                        return optionLines.map(opt =>
+                          `<div style="margin-left:8px;margin-bottom:2px;">${opt}</div>`
+                        ).join('');
+                    }
+                })()
                 : (lines.length > 1
                     ? `<div style="font-size:1.1em;white-space:pre-line;">${lines.slice(1).join('\n')}</div>`
                     : ''
@@ -787,177 +789,137 @@ let questionHtml = `
         }
 
         async function fetchAndDisplayQuestions() {
-    if (!currentUser) return;
+            if (!currentUser) return;
 
-    const displayArea = document.getElementById('questions-display-area');
-    displayArea.innerHTML = '<p class="no-questions-message">Loading questions...</p>';
+            const displayArea = document.getElementById('questions-display-area');
+            displayArea.innerHTML = '<p class="no-questions-message">Loading questions...</p>';
 
-    try {
-        const classVal = document.getElementById('class-value').value;
-        const subjectVal = document.getElementById('subject-value').value;
-        const qtypeVal = document.getElementById('qtype-value').value;
-        const chapterVal = document.getElementById('chapter-value').value;
-        const marksVal = document.getElementById('marks-value').value;
-        const numericMarks = parseInt(marksVal, 10);
+            try {
+                const classVal = document.getElementById('class-value').value;
+                const subjectVal = document.getElementById('subject-value').value;
+                const qtypeVal = document.getElementById('qtype-value').value;
+                const chapterVal = document.getElementById('chapter-value').value;
+                const marksVal = document.getElementById('marks-value').value;
+                const numericMarks = parseInt(marksVal, 10);
 
-        let query = db.collection('questions');
-        if (classVal && classVal !== 'Select Class') query = query.where('class', '==', classVal);
-        if (subjectVal && subjectVal !== 'Select Subject') query = query.where('subject', '==', subjectVal);
-        if (chapterVal && chapterVal !== 'All') query = query.where('chapter', '==', chapterVal);
-        query = query.orderBy("questionNumber");
+                let query = db.collection('questions');
+                if (classVal && classVal !== 'Select Class') query = query.where('class', '==', classVal);
+                if (subjectVal && subjectVal !== 'Select Subject') query = query.where('subject', '==', subjectVal);
+                if (chapterVal && chapterVal !== 'All') query = query.where('chapter', '==', chapterVal);
+                query = query.orderBy("questionNumber");
 
-        const snapshot = await query.get();
+                const snapshot = await query.get();
 
-        if (snapshot.empty) {
-            displayArea.innerHTML = '<p class="no-questions-message">No questions found matching your criteria.</p>';
-            return;
-        }
-
-        let questionsHTML = '';
-        let questionCount = 0;
-
-        snapshot.forEach(doc => {
-            const data = doc.data();
-
-            if (marksVal !== 'All') {
-                const questionMarks = Number(data.marks);
-                if (questionMarks !== numericMarks) {
+                if (snapshot.empty) {
+                    displayArea.innerHTML = '<p class="no-questions-message">No questions found matching your criteria.</p>';
                     return;
                 }
-            }
-            if (qtypeVal !== 'All') {
-                if ((qtypeVal === 'MCQ (Single)' || qtypeVal === 'MCQ (Multiple)') && data.mcqType !== qtypeVal) return;
-                if (qtypeVal === 'Descriptive' && (data.mcqType === 'MCQ (Single)' || data.mcqType === 'MCQ (Multiple)')) return;
-            }
 
-         questionCount++;
-// --- PATCH: Matching Table Display ---
-if (
-    Array.isArray(data.leftItems) &&
-    Array.isArray(data.rightItems) &&
-    data.leftItems.length === data.rightItems.length &&
-    data.leftItems.length > 0
-) {
-    questionsHTML += `
-        <div class="question-item" data-id="${doc.id}">
-            <div class="question-meta">
-                ${data.metaLine || `Q${questionCount}: ${data.difficulty || 'N/A'}, ${data.marks || 'N/A'} Mark(s)`}
-            </div>
-            <div class="question-text">
-                <table style="border-collapse:collapse;width:100%;margin-bottom:12px;">
-                    <tbody>
-                        ${data.leftItems.map((left, i) => `
-                            <tr>
-                                <td style="padding:6px 7px 6px 0;font-weight:500;text-align:right;width:32px;">${i+1}.</td>
-                                <td style="padding:6px 7px;min-width:90px;">${left}</td>
-                                <td style="padding:6px 7px 6px 0;text-align:center;width:32px;">( )</td>
-                                <td style="padding:6px 7px 6px 0;font-weight:500;text-align:right;width:32px;">${String.fromCharCode(65+i)}.</td>
-                                <td style="padding:6px 7px;min-width:90px;">${(data.rightItems && data.rightItems[i]) ? data.rightItems[i] : ""}</td>
-                            </tr>
-                        `).join("")}
-                    </tbody>
-                </table>
-                ${(data.options && Array.isArray(data.options) && data.options.length) ?
-                  `<div style="margin-top:2px;"><b>Options:</b><br>
-                    ${data.options.map((opt, j) => String.fromCharCode(65+j) + ") " + opt).join("<br>")}
-                  </div>` : ""}
-                ${data.parsedAnswer ?
-                  `<div style="margin-top:4px;"><b>Answer:</b> ${data.parsedAnswer}</div>` : ""}
-                ${data.image
-                    ? `<img src="${data.image}">
-                       <button type="button" class="delete-img-btn" style="margin-left:12px; color:#c82333; background:none; border:none; cursor:pointer;">❌ Delete Image</button>`
-                    : ''
-                }
-            </div>
-            <input type="file" accept="image/*" style="display:none;" class="question-image-input">
-            <button type="button" class="question-img-btn">📷 Add/Edit Image</button>
-        </div>
-    `;
-} else {
-    // Regular question rendering (as before)
-    questionsHTML += `
-        <div class="question-item" data-id="${doc.id}">
-            <div class="question-meta">
-                ${data.metaLine || `Q${questionCount}: ${data.difficulty || 'N/A'}, ${data.marks || 'N/A'} Mark(s)`}
-                ${(data.mcqType && (data.mcqType === 'MCQ (Single)' || data.mcqType === 'MCQ (Multiple)'))
-                  ? `<span style="color:#126c30;font-weight:600;margin-left:10px;">[${data.mcqType}]</span>` : ''}
-            </div>
-            <div class="question-text">
-                ${data.body || data.text || ""}
-                ${data.image
-                    ? `<img src="${data.image}">
-                       <button type="button" class="delete-img-btn" style="margin-left:12px; color:#c82333; background:none; border:none; cursor:pointer;">❌ Delete Image</button>`
-                    : ''
-                }
-            </div>
-            <input type="file" accept="image/*" style="display:none;" class="question-image-input">
-            <button type="button" class="question-img-btn">📷 Add/Edit Image</button>
-        </div>
-    `;
-}
+                let questionsHTML = '';
+                let questionCount = 0;
 
-// --- DO NOT PUT ANY 'else' AFTER THIS! ---
-if (questionCount > 0) {
-    displayArea.innerHTML = questionsHTML;
+                snapshot.forEach(doc => {
+                    const data = doc.data();
 
-    document.querySelectorAll('.question-img-btn').forEach(btn => {
-        btn.onclick = function() {
-            const container = btn.closest('.question-item');
-            const input = container.querySelector('.question-image-input');
-            input.click();
-        };
-    });
-    document.querySelectorAll('.question-image-input').forEach(input => {
-        input.onchange = async function() {
-            const file = input.files[0];
-            if (!file) return;
-            const reader = new FileReader();
-            reader.onload = async function(e) {
-                let img = input.closest('.question-item').querySelector('img');
-                if (!img) {
-                    img = document.createElement('img');
-                    img.style.maxWidth = '100%';
-                    img.style.marginTop = '8px';
-                    input.closest('.question-item').appendChild(img);
+                    if (marksVal !== 'All') {
+                        const questionMarks = Number(data.marks);
+                        if (questionMarks !== numericMarks) {
+                            return;
+                        }
+                    }
+                    if (qtypeVal !== 'All') {
+                    if ((qtypeVal === 'MCQ (Single)' || qtypeVal === 'MCQ (Multiple)') && data.mcqType !== qtypeVal) return;
+                    if (qtypeVal === 'Descriptive' && (data.mcqType === 'MCQ (Single)' || data.mcqType === 'MCQ (Multiple)')) return;
                 }
-                img.src = e.target.result;
-                const docId = input.closest('.question-item').getAttribute('data-id');
-                await db.collection('questions').doc(docId).update({
-                    image: e.target.result
+
+
+                    questionCount++;
+                    questionsHTML += `
+                        <div class="question-item" data-id="${doc.id}">
+                           <div class="question-meta">
+                        ${data.metaLine || `Q${questionCount}: ${data.difficulty || 'N/A'}, ${data.marks || 'N/A'} Mark(s)`}
+                        ${(data.mcqType && (data.mcqType === 'MCQ (Single)' || data.mcqType === 'MCQ (Multiple)'))
+                          ? `<span style="color:#126c30;font-weight:600;margin-left:10px;">[${data.mcqType}]</span>` : ''}
+                    </div>
+                            <div class="question-text">
+                                ${data.body || data.text}
+                                ${data.image
+                                    ? `<img src="${data.image}">
+                                       <button type="button" class="delete-img-btn" style="margin-left:12px; color:#c82333; background:none; border:none; cursor:pointer;">❌ Delete Image</button>`
+                                    : ''
+                                }
+                            </div>
+                            <input type="file" accept="image/*" style="display:none;" class="question-image-input">
+                            <button type="button" class="question-img-btn">📷 Add/Edit Image</button>
+                        </div>
+                    `;
                 });
-                alert('Image saved!');
-            };
-            reader.readAsDataURL(file);
-        };
-    });
 
-    document.querySelectorAll('.delete-img-btn').forEach(btn => {
-        btn.onclick = async function() {
-            const container = btn.closest('.question-item');
-            const docId = container.getAttribute('data-id');
-            if (!docId) return;
-            if (!confirm("Delete the image from this question?")) return;
-            try {
-                await db.collection('questions').doc(docId).update({
-                    image: firebase.firestore.FieldValue.delete()
-                });
-                fetchAndDisplayQuestions();
-            } catch (err) {
-                alert("Could not delete image: " + err.message);
+                if (questionCount > 0) {
+                    displayArea.innerHTML = questionsHTML;
+
+                    document.querySelectorAll('.question-img-btn').forEach(btn => {
+                        btn.onclick = function() {
+                            const container = btn.closest('.question-item');
+                            const input = container.querySelector('.question-image-input');
+                            input.click();
+                        };
+                    });
+                    document.querySelectorAll('.question-image-input').forEach(input => {
+                        input.onchange = async function() {
+                            const file = input.files[0];
+                            if (!file) return;
+                            const reader = new FileReader();
+                            reader.onload = async function(e) {
+                                let img = input.closest('.question-item').querySelector('img');
+                                if (!img) {
+                                    img = document.createElement('img');
+                                    img.style.maxWidth = '100%';
+                                    img.style.marginTop = '8px';
+                                    input.closest('.question-item').appendChild(img);
+                                }
+                                img.src = e.target.result;
+                                const docId = input.closest('.question-item').getAttribute('data-id');
+                                await db.collection('questions').doc(docId).update({
+                                    image: e.target.result
+                                });
+                                alert('Image saved!');
+                            };
+                            reader.readAsDataURL(file);
+                        };
+                    });
+
+                    document.querySelectorAll('.delete-img-btn').forEach(btn => {
+                        btn.onclick = async function() {
+                            const container = btn.closest('.question-item');
+                            const docId = container.getAttribute('data-id');
+                            if (!docId) return;
+                            if (!confirm("Delete the image from this question?")) return;
+                            try {
+                                await db.collection('questions').doc(docId).update({
+                                    image: firebase.firestore.FieldValue.delete()
+                                });
+                                fetchAndDisplayQuestions();
+                            } catch (err) {
+                                alert("Could not delete image: " + err.message);
+                            }
+                        };
+                    });
+                    
+                    if (window.MathJax && typeof window.MathJax.typesetPromise === 'function') {
+                        window.MathJax.typesetPromise([displayArea]).catch(function (err) {
+                            console.error('MathJax rendering error:', err);
+                        });
+                    }
+
+                } else {
+                    displayArea.innerHTML = '<p class="no-questions-message">No questions found matching all filter criteria.</p>';
+                }
+            } catch (error) {
+                console.error("Error fetching questions: ", error);
+                displayArea.innerHTML = '<p class="no-questions-message">An error occurred while fetching questions.</p>';
             }
-        };
-    });
-    
-    if (window.MathJax && typeof window.MathJax.typesetPromise === 'function') {
-        window.MathJax.typesetPromise([displayArea]).catch(function (err) {
-            console.error('MathJax rendering error:', err);
-        });
-    }
-
-} else {
-    displayArea.innerHTML = '<p class="no-questions-message">No questions found matching all filter criteria.</p>';
-}
-
+        }
     </script>
 </body>
 </html>
