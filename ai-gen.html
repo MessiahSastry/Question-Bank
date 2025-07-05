@@ -1201,8 +1201,19 @@ function splitMcqOptions(body) {
     // Q1: ...\nMatch the following.\nLeft Side:\n1. ...\n...\nRight Side:\nA) ...\n...\nOptions:\nA) ...\nB) ...\nC) ...\nD) ...\nAns: X)
     const match = responseText.match(/Q\d+:[\s\S]*?Match the following\.[\s\S]*?Left Side:\s*([\s\S]*?)Right Side:\s*([\s\S]*?)Options:\s*([\s\S]*?)Ans:\s*([A-D]\))/i);
     if (match) {
-        const left = match[1].trim().split(/\n/).map(x => x.trim()).filter(Boolean);
-        const right = match[2].trim().split(/\n/).map(x => x.trim()).filter(Boolean);
+        function autoLatex(line) {
+    // Only wrap if not already wrapped (for LaTeX style)
+    if (line.match(/^\\?\(.*\\?\)$/) || line.match(/^\$.*\$$/)) return line;
+    // Wrap numbers with sqrt, frac, etc. in $...$
+    if (/[\\](sqrt|frac|times|cdot|pm|leq|geq|sin|cos|tan|log|ln|int|sum|prod|lim|left|right|alpha|beta|gamma|theta|phi|Delta|pi|mu|Sigma|delta|to|neq|le|ge|approx|infty)/.test(line) || /[a-zA-Z0-9\s]*[+\-*/^=<>]/.test(line)) {
+        return `$${line}$`;
+    }
+    return line;
+}
+
+const left = match[1].trim().split(/\n/).map(x => autoLatex(x.trim())).filter(Boolean);
+const right = match[2].trim().split(/\n/).map(x => autoLatex(x.trim())).filter(Boolean);
+
         const optionsRaw = match[3].trim().split(/\n/).map(x => x.trim()).filter(Boolean);
         const correctAns = match[4].trim();
 
@@ -1211,6 +1222,8 @@ function splitMcqOptions(body) {
         let difficulty = metaMatch && metaMatch[1] ? metaMatch[1].trim() : "Easy/Level 1";
         let marks = metaMatch && metaMatch[2] ? metaMatch[2].replace("Mark", "Mark").trim() : "1 Mark";
         let metaLine = `Q${currentSessionQuestions.length + 1}: ${difficulty}, ${marks} [Matching]`;
+        // Remove all lines up to (and including) 'Options:' in the question display
+        responseText = responseText.replace(/^(Q\d+:.*?Options:)([\s\S]*)/i, '$2').trim();
 
        // Build vertical matching table (A / B style)
             let tableRows = '';
@@ -1219,11 +1232,11 @@ function splitMcqOptions(body) {
                 <tr>
                   <td style="padding:3px 6px 3px 0; font-weight:600;">${i+1}.</td>
                   <td style="padding:3px 10px 3px 0; display:flex; align-items:center; gap:4px;">
-                  <span style="flex:1;">${left[i].replace(/^\d+\.\s*/, "")}</span>
+                  <span style="flex:1;" class="latex">${left[i].replace(/^\d+\.\s*/, "")}</span>
                   <span style="font-weight:bold; font-size:1.13em; display:inline-flex; align-items:center; margin-left:6px;">( )</span>
                 </td>
                   <td style="padding:3px 6px; font-weight:600;">${String.fromCharCode(65+i)}.</td>
-                  <td style="padding:3px 0;">${right[i] ? right[i].replace(/^[A-F]\)\s*/, "") : ''}</td>
+                  <td style="padding:3px 0;" class="latex">${right[i] ? right[i].replace(/^[A-F]\)\s*/, "") : ''}</td>
                 </tr>
               `;
             }
@@ -1311,10 +1324,7 @@ container.querySelector('.q-action-btn').onclick = (e) => {
                     messagesArea.scrollTop = messagesArea.scrollHeight;
                     return;
                 }
-                // fallback: show as plain text
-                appendChatMessage(responseText, 'ai', messagesArea);
-                return;
-            }
+               }
     // The original logic (leave as-is for MCQ/Descriptive):
     const questionBlocks = responseText.split(/\n(?=Q\s*\d+:)/g).map(q => q.trim()).filter(q => q.match(/^Q\s*\d+:/));
 
