@@ -963,10 +963,7 @@
         });
     } else {
         // Normal question save (single, multiple, descriptive)
-        await db.collection("questions").add({
-            text: qData.fullText,
-            body: qData.parsedBody,
-            answer: qData.parsedAnswer,
+        let toSave = {
             metaLine: qData.parsedMeta,
             difficulty: meta.difficulty,
             level: meta.level,
@@ -975,11 +972,22 @@
             class: qData.class,
             subject: qData.subject,
             chapter: qData.chapter,
-            mcqType: sessionParams.questionType.startsWith('MCQ') ? sessionParams.questionType : null,
             createdBy: currentUserProfile.uid,
             timestamp: firebase.firestore.FieldValue.serverTimestamp()
-        });
-    }
+        };
+        
+        if (sessionParams.questionType.startsWith('MCQ')) {
+            toSave.question = qData.question;
+            toSave.options = qData.options; // Save as array!
+            toSave.answer = qData.parsedAnswer;
+        } else {
+            toSave.text = qData.fullText;
+            toSave.body = qData.parsedBody;
+            toSave.answer = qData.parsedAnswer;
+        }
+        
+        await db.collection("questions").add(toSave);
+           }
 
     savedCount++;
 }
@@ -1070,13 +1078,21 @@ function splitMcqOptions(body) {
             const answerMatch = rawBody.match(answerRegex);
 
             if (answerMatch) {
-            questionData.parsedBody = splitMcqOptions(answerMatch[1].trim());
-            questionData.parsedAnswer = answerMatch[2].trim();
-        } else {
-            questionData.parsedBody = splitMcqOptions(rawBody);
-            questionData.parsedAnswer = null;
-        }
-
+                const questionAndOptions = answerMatch[1].trim();
+                const lines = questionAndOptions.split('\n').map(x => x.trim()).filter(Boolean);
+            
+                // First line is the main question, next 4 are options.
+                questionData.question = lines[0];
+                questionData.options = lines.slice(1, 5); // Next 4 lines
+                questionData.parsedAnswer = answerMatch[2].trim();
+                questionData.parsedBody = questionAndOptions; // For backward compatibility, can remove later
+            } else {
+                // Fallback (if not found, treat whole thing as question)
+                questionData.question = rawBody.split('\n')[0].trim();
+                questionData.options = rawBody.split('\n').slice(1, 5).map(x => x.trim());
+                questionData.parsedAnswer = null;
+                questionData.parsedBody = rawBody;
+            }
             currentSessionQuestions.push(questionData);
             const questionEl = createQuestionElement(questionData, currentSessionQuestions.length - 1);
             fragment.appendChild(questionEl);
