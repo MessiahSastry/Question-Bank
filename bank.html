@@ -787,223 +787,182 @@ let questionHtml = `
         }
 
         async function fetchAndDisplayQuestions() {
-            if (!currentUser) return;
+    if (!currentUser) return;
 
-            const displayArea = document.getElementById('questions-display-area');
-            displayArea.innerHTML = '<p class="no-questions-message">Loading questions...</p>';
+    const displayArea = document.getElementById('questions-display-area');
+    displayArea.innerHTML = '<p class="no-questions-message">Loading questions...</p>';
 
-            try {
-                const classVal = document.getElementById('class-value').value;
-                const subjectVal = document.getElementById('subject-value').value;
-                const qtypeVal = document.getElementById('qtype-value').value;
-                const chapterVal = document.getElementById('chapter-value').value;
-                const marksVal = document.getElementById('marks-value').value;
-                const numericMarks = parseInt(marksVal, 10);
+    try {
+        const classVal = document.getElementById('class-value').value;
+        const subjectVal = document.getElementById('subject-value').value;
+        const qtypeVal = document.getElementById('qtype-value').value;
+        const chapterVal = document.getElementById('chapter-value').value;
+        const marksVal = document.getElementById('marks-value').value;
+        const numericMarks = parseInt(marksVal, 10);
 
-                let query = db.collection('questions');
-                if (classVal && classVal !== 'Select Class') query = query.where('class', '==', classVal);
-                if (subjectVal && subjectVal !== 'Select Subject') query = query.where('subject', '==', subjectVal);
-                if (chapterVal && chapterVal !== 'All') query = query.where('chapter', '==', chapterVal);
-                query = query.orderBy("questionNumber");
+        let query = db.collection('questions');
+        if (classVal && classVal !== 'Select Class') query = query.where('class', '==', classVal);
+        if (subjectVal && subjectVal !== 'Select Subject') query = query.where('subject', '==', subjectVal);
+        if (chapterVal && chapterVal !== 'All') query = query.where('chapter', '==', chapterVal);
+        query = query.orderBy("questionNumber");
 
-                const snapshot = await query.get();
+        const snapshot = await query.get();
 
-                if (snapshot.empty) {
-                    displayArea.innerHTML = '<p class="no-questions-message">No questions found matching your criteria.</p>';
+        if (snapshot.empty) {
+            displayArea.innerHTML = '<p class="no-questions-message">No questions found matching your criteria.</p>';
+            return;
+        }
+
+        let questionsHTML = '';
+        let questionCount = 0;
+
+        snapshot.forEach(doc => {
+            const data = doc.data();
+
+            if (marksVal !== 'All') {
+                const questionMarks = Number(data.marks);
+                if (questionMarks !== numericMarks) {
                     return;
                 }
+            }
+            if (qtypeVal !== 'All') {
+                if ((qtypeVal === 'MCQ (Single)' || qtypeVal === 'MCQ (Multiple)') && data.mcqType !== qtypeVal) return;
+                if (qtypeVal === 'Descriptive' && (data.mcqType === 'MCQ (Single)' || data.mcqType === 'MCQ (Multiple)')) return;
+            }
 
-                let questionsHTML = '';
-                let questionCount = 0;
+            questionCount++;
+            // --- MATCHING TABLE DISPLAY PATCH --- //
+            if (
+                data.metaLine &&
+                data.metaLine.toLowerCase().includes("matching") &&
+                Array.isArray(data.leftItems) &&
+                Array.isArray(data.rightItems)
+            ) {
+                questionsHTML += `
+                    <div class="question-item" data-id="${doc.id}">
+                        <div class="question-meta">
+                            ${data.metaLine || `Q${questionCount}: ${data.difficulty || 'N/A'}, ${data.marks || 'N/A'} Mark(s)`}
+                        </div>
+                        <div class="question-text">
+                            <table style="border-collapse:collapse;width:100%;margin-bottom:12px;">
+                                <tbody>
+                                    ${data.leftItems.map((left, i) => `
+                                        <tr>
+                                            <td style="padding:6px 7px 6px 0;font-weight:500;text-align:right;width:28px;">${i+1}.</td>
+                                            <td style="padding:6px 7px;width:42%;">${left}</td>
+                                            <td style="padding:6px 7px 6px 0;text-align:center;">( )</td>
+                                            <td style="padding:6px 7px 6px 0;font-weight:500;text-align:right;">${String.fromCharCode(65+i)}.</td>
+                                            <td style="padding:6px 7px;width:42%;">${(data.rightItems && data.rightItems[i]) ? data.rightItems[i] : ""}</td>
+                                        </tr>
+                                    `).join("")}
+                                </tbody>
+                            </table>
+                            ${(data.options && Array.isArray(data.options) && data.options.length) ?
+                              `<div style="margin-top:2px;"><b>Options:</b><br>
+                                ${data.options.map((opt, j) => String.fromCharCode(65+j) + ") " + opt).join("<br>")}
+                              </div>` : ""}
+                            ${data.parsedAnswer ?
+                              `<div style="margin-top:4px;"><b>Answer:</b> ${data.parsedAnswer}</div>` : ""}
+                            ${data.image
+                                ? `<img src="${data.image}">
+                                   <button type="button" class="delete-img-btn" style="margin-left:12px; color:#c82333; background:none; border:none; cursor:pointer;">❌ Delete Image</button>`
+                                : ''
+                            }
+                        </div>
+                        <input type="file" accept="image/*" style="display:none;" class="question-image-input">
+                        <button type="button" class="question-img-btn">📷 Add/Edit Image</button>
+                    </div>
+                `;
+            } else {
+                // All other types (default rendering)
+                questionsHTML += `
+                    <div class="question-item" data-id="${doc.id}">
+                        <div class="question-meta">
+                            ${data.metaLine || `Q${questionCount}: ${data.difficulty || 'N/A'}, ${data.marks || 'N/A'} Mark(s)`}
+                            ${(data.mcqType && (data.mcqType === 'MCQ (Single)' || data.mcqType === 'MCQ (Multiple)'))
+                                ? `<span style="color:#126c30;font-weight:600;margin-left:10px;">[${data.mcqType}]</span>` : ''}
+                        </div>
+                        <div class="question-text">
+                            ${data.body || data.text}
+                            ${data.image
+                                ? `<img src="${data.image}">
+                                   <button type="button" class="delete-img-btn" style="margin-left:12px; color:#c82333; background:none; border:none; cursor:pointer;">❌ Delete Image</button>`
+                                : ''
+                            }
+                        </div>
+                        <input type="file" accept="image/*" style="display:none;" class="question-image-input">
+                        <button type="button" class="question-img-btn">📷 Add/Edit Image</button>
+                    </div>
+                `;
+            }
+        });
 
-                snapshot.forEach(doc => {
-                    const data = doc.data();
+        if (questionCount > 0) {
+            displayArea.innerHTML = questionsHTML;
 
-                    if (marksVal !== 'All') {
-                        const questionMarks = Number(data.marks);
-                        if (questionMarks !== numericMarks) {
-                            return;
+            document.querySelectorAll('.question-img-btn').forEach(btn => {
+                btn.onclick = function() {
+                    const container = btn.closest('.question-item');
+                    const input = container.querySelector('.question-image-input');
+                    input.click();
+                };
+            });
+            document.querySelectorAll('.question-image-input').forEach(input => {
+                input.onchange = async function() {
+                    const file = input.files[0];
+                    if (!file) return;
+                    const reader = new FileReader();
+                    reader.onload = async function(e) {
+                        let img = input.closest('.question-item').querySelector('img');
+                        if (!img) {
+                            img = document.createElement('img');
+                            img.style.maxWidth = '100%';
+                            img.style.marginTop = '8px';
+                            input.closest('.question-item').appendChild(img);
                         }
+                        img.src = e.target.result;
+                        const docId = input.closest('.question-item').getAttribute('data-id');
+                        await db.collection('questions').doc(docId).update({
+                            image: e.target.result
+                        });
+                        alert('Image saved!');
+                    };
+                    reader.readAsDataURL(file);
+                };
+            });
+
+            document.querySelectorAll('.delete-img-btn').forEach(btn => {
+                btn.onclick = async function() {
+                    const container = btn.closest('.question-item');
+                    const docId = container.getAttribute('data-id');
+                    if (!docId) return;
+                    if (!confirm("Delete the image from this question?")) return;
+                    try {
+                        await db.collection('questions').doc(docId).update({
+                            image: firebase.firestore.FieldValue.delete()
+                        });
+                        fetchAndDisplayQuestions();
+                    } catch (err) {
+                        alert("Could not delete image: " + err.message);
                     }
-                    if (qtypeVal !== 'All') {
-                    if ((qtypeVal === 'MCQ (Single)' || qtypeVal === 'MCQ (Multiple)') && data.mcqType !== qtypeVal) return;
-                    if (qtypeVal === 'Descriptive' && (data.mcqType === 'MCQ (Single)' || data.mcqType === 'MCQ (Multiple)')) return;
-                }
+                };
+            });
+            
+            if (window.MathJax && typeof window.MathJax.typesetPromise === 'function') {
+                window.MathJax.typesetPromise([displayArea]).catch(function (err) {
+                    console.error('MathJax rendering error:', err);
+                });
+            }
 
-
-                   questionCount++;
-// --- MATCHING TABLE DISPLAY PATCH --- //
-if (
-  data.metaLine &&
-  data.metaLine.toLowerCase().includes("matching") &&
-  Array.isArray(data.leftItems) &&
-  Array.isArray(data.rightItems)
-) {
-  questionsHTML += `
-    <div class="question-item" data-id="${doc.id}">
-      <div class="question-meta">
-        ${
-          data.metaLine ||
-          `Q${questionCount}: ${data.difficulty || "N/A"}, ${
-            data.marks || "N/A"
-          } Mark(s)`
+        } else {
+            displayArea.innerHTML = '<p class="no-questions-message">No questions found matching all filter criteria.</p>';
         }
-      </div>
-      <div class="question-text">
-        <table style="border-collapse:collapse;width:100%;margin-bottom:12px;">
-          <tbody>
-            ${data.leftItems
-              .map(
-                (left, i) => `
-              <tr>
-                <td style="padding:6px 7px 6px 0;font-weight:500;text-align:right;width:28px;">${i + 1}.</td>
-                <td style="padding:6px 7px;width:42%;">${left}</td>
-                <td style="padding:6px 7px 6px 0;text-align:center;">( )</td>
-                <td style="padding:6px 7px 6px 0;font-weight:500;text-align:right;">${String.fromCharCode(
-                  65 + i
-                )}.</td>
-                <td style="padding:6px 7px;width:42%;">${
-                  data.rightItems && data.rightItems[i] ? data.rightItems[i] : ""
-                }</td>
-              </tr>
-            `
-              )
-              .join("")}
-          </tbody>
-        </table>
-        ${
-          data.options &&
-          Array.isArray(data.options) &&
-          data.options.length
-            ? `<div style="margin-top:2px;"><b>Options:</b><br>
-              ${data.options
-                .map(
-                  (opt, j) => String.fromCharCode(65 + j) + ") " + opt
-                )
-                .join("<br>")}
-            </div>`
-            : ""
-        }
-        ${
-          data.parsedAnswer
-            ? `<div style="margin-top:4px;"><b>Answer:</b> ${data.parsedAnswer}</div>`
-            : ""
-        }
-        ${
-          data.image
-            ? `<img src="${data.image}">
-               <button type="button" class="delete-img-btn" style="margin-left:12px; color:#c82333; background:none; border:none; cursor:pointer;">❌ Delete Image</button>`
-            : ""
-        }
-      </div>
-      <input type="file" accept="image/*" style="display:none;" class="question-image-input">
-      <button type="button" class="question-img-btn">📷 Add/Edit Image</button>
-    </div>
-  `;
-} else {
-  // All other types (default rendering)
-  questionsHTML += `
-    <div class="question-item" data-id="${doc.id}">
-      <div class="question-meta">
-        ${
-          data.metaLine ||
-          `Q${questionCount}: ${data.difficulty || "N/A"}, ${
-            data.marks || "N/A"
-          } Mark(s)`
-        }
-        ${
-          data.mcqType &&
-          (data.mcqType === "MCQ (Single)" ||
-            data.mcqType === "MCQ (Multiple)")
-            ? `<span style="color:#126c30;font-weight:600;margin-left:10px;">[${data.mcqType}]</span>`
-            : ""
-        }
-      </div>
-      <div class="question-text">
-        ${data.body || data.text}
-        ${
-          data.image
-            ? `<img src="${data.image}">
-               <button type="button" class="delete-img-btn" style="margin-left:12px; color:#c82333; background:none; border:none; cursor:pointer;">❌ Delete Image</button>`
-            : ""
-        }
-      </div>
-      <input type="file" accept="image/*" style="display:none;" class="question-image-input">
-      <button type="button" class="question-img-btn">📷 Add/Edit Image</button>
-    </div>
-  `;
-}
+    } catch (error) {
+        console.error("Error fetching questions: ", error);
+        displayArea.innerHTML = '<p class="no-questions-message">An error occurred while fetching questions.</p>';
+    }
 }
 
-if (questionCount > 0) {
-  displayArea.innerHTML = questionsHTML;
-
-  document.querySelectorAll(".question-img-btn").forEach((btn) => {
-    btn.onclick = function () {
-      const container = btn.closest(".question-item");
-      const input = container.querySelector(".question-image-input");
-      input.click();
-    };
-  });
-  document.querySelectorAll(".question-image-input").forEach((input) => {
-    input.onchange = async function () {
-      const file = input.files[0];
-      if (!file) return;
-      const reader = new FileReader();
-      reader.onload = async function (e) {
-        let img = input.closest(".question-item").querySelector("img");
-        if (!img) {
-          img = document.createElement("img");
-          img.style.maxWidth = "100%";
-          img.style.marginTop = "8px";
-          input.closest(".question-item").appendChild(img);
-        }
-        img.src = e.target.result;
-        const docId = input.closest(".question-item").getAttribute("data-id");
-        await db.collection("questions").doc(docId).update({
-          image: e.target.result,
-        });
-        alert("Image saved!");
-      };
-      reader.readAsDataURL(file);
-    };
-  });
-
-  document.querySelectorAll(".delete-img-btn").forEach((btn) => {
-    btn.onclick = async function () {
-      const container = btn.closest(".question-item");
-      const docId = container.getAttribute("data-id");
-      if (!docId) return;
-      if (!confirm("Delete the image from this question?")) return;
-      try {
-        await db.collection("questions").doc(docId).update({
-          image: firebase.firestore.FieldValue.delete(),
-        });
-        fetchAndDisplayQuestions();
-      } catch (err) {
-        alert("Could not delete image: " + err.message);
-      }
-    };
-  });
-
-  if (
-    window.MathJax &&
-    typeof window.MathJax.typesetPromise === "function"
-  ) {
-    window.MathJax.typesetPromise([displayArea]).catch(function (err) {
-      console.error("MathJax rendering error:", err);
-    });
-  }
-} else {
-  displayArea.innerHTML =
-    '<p class="no-questions-message">No questions found matching all filter criteria.</p>';
-}
-} catch (error) {
-  console.error("Error fetching questions: ", error);
-  displayArea.innerHTML =
-    '<p class="no-questions-message">An error occurred while fetching questions.</p>';
-}
-}
     </script>
 </body>
 </html>
