@@ -566,6 +566,7 @@ console.log("Final Firestore query for MCQ:", {
         updateSectionLogicFields(newItem, config.sectionTypeKeys[0]);
         updateMCQTypeDropdownVisibility();
         list.appendChild(newItem);
+        updateMCQTypeDropdownVisibility();
     }
 
     function updateSectionLogicFields(sectionItem, typeKey) {
@@ -662,6 +663,7 @@ console.log("Final Firestore query for MCQ:", {
     createDropdown('subject-dropdown', [], 'Select Class first');
     createDropdown('exam-name-dropdown', config.examNames, 'Select Exam Name');
     createDropdown('exam-type-dropdown', config.examTypes, 'Select Exam Type');
+    document.getElementById('exam-type-dropdown').dataset.value = config.examTypes[0]; // <-- add this line right after
     document.getElementById('exam-type-dropdown').addEventListener('change', handleExamTypeChange);
     document.getElementById('exam-type-dropdown').addEventListener('change', updateMCQTypeDropdownVisibility);
     createDropdown('difficulty-dropdown', config.difficultyLevels, 'Select Difficulty');
@@ -672,18 +674,55 @@ console.log("Final Firestore query for MCQ:", {
     document.getElementById('add-section-btn').addEventListener('click', addSection);
     // --- Automatically manage section(s) based on exam type ---
     function handleExamTypeChange() {
-        const examType = document.getElementById('exam-type-dropdown').dataset.value;
-        const sectionsList = document.getElementById('sections-list');
-        // If MCQs and no sections yet, add Section A
-        if (examType === "MCQs" && sectionsList.children.length === 0) {
-            addSection();
+    const examType = document.getElementById('exam-type-dropdown').dataset.value;
+    const sectionsList = document.getElementById('sections-list');
+
+    // If MCQs and no sections yet, add Section A
+    if (examType === "MCQs" && sectionsList.children.length === 0) {
+        addSection();
+    }
+
+    // If not MCQs, clear all sections so user can start fresh
+    if (examType !== "MCQs") {
+        sectionsList.innerHTML = '';
+    }
+
+    // For all sections, update the MCQ type dropdown (important for visibility and values)
+    document.querySelectorAll('.section-item').forEach(section => {
+        const mcqTypeDropdown = section.querySelector('.mcq-type-dropdown');
+        if (mcqTypeDropdown) {
+            if (examType === "MCQs") {
+                // Update options to ["MCQ (Single)", "MCQ (Multiple)"]
+                mcqTypeDropdown.innerHTML = `
+                  <div class="selected-option">MCQ (Single)</div>
+                  <div class="dropdown-options">
+                    <div data-value="MCQ (Single)">MCQ (Single)</div>
+                    <div data-value="MCQ (Multiple)">MCQ (Multiple)</div>
+                  </div>
+                `;
+                mcqTypeDropdown.style.display = '';
+                mcqTypeDropdown.dataset.value = "MCQ (Single)";
+            } else if (examType === "Both") {
+                mcqTypeDropdown.innerHTML = `
+                  <div class="selected-option">MCQ (Single)</div>
+                  <div class="dropdown-options">
+                    <div data-value="MCQ (Single)">MCQ (Single)</div>
+                    <div data-value="MCQ (Multiple)">MCQ (Multiple)</div>
+                    <div data-value="Descriptive">Descriptive</div>
+                  </div>
+                `;
+                mcqTypeDropdown.style.display = '';
+                mcqTypeDropdown.dataset.value = "MCQ (Single)";
+            } else {
+                mcqTypeDropdown.style.display = 'none';
+                mcqTypeDropdown.dataset.value = "";
+            }
         }
-        // If not MCQs, clear all sections so user can start fresh
-        if (examType !== "MCQs") {
-            sectionsList.innerHTML = '';
-        }
-         updateMCQTypeDropdownVisibility();
-        }
+    });
+
+    updateMCQTypeDropdownVisibility();
+}
+
     // --- Chapter Multiselect ---
     const chapterContainer = document.getElementById('chapters-multiselect');
     chapterContainer.addEventListener('click', (e) => {
@@ -1018,12 +1057,13 @@ function showToast(message, type = 'info') {
         toast.style.display = 'none';
     }, 2300);
 }
-    function updateMCQTypeDropdownVisibility() {
+   function updateMCQTypeDropdownVisibility() {
     const examType = document.getElementById('exam-type-dropdown').dataset.value;
     document.querySelectorAll('.mcq-type-dropdown').forEach(el => {
-        el.style.display = (examType === "MCQs") ? '' : 'none';
+        el.style.display = (examType === "MCQs" || examType === "Both") ? '' : 'none';
     });
 }
+
     function showModalPrompt(message) {
     const modal = document.getElementById('modal-prompt');
     const msgBox = document.getElementById('modal-prompt-message');
