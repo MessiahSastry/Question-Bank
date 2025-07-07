@@ -414,27 +414,34 @@ let lines = html.split('<br>').map(l => l.trim()).filter(Boolean);
 
 // --- START REPLACEMENT BLOCK ---
 // Extract MCQ options (smartly handling labels)
+// --- START REPLACEMENT BLOCK ---
+// This bulletproofs MCQ extraction and labels!
 let options = [];
-if (lines.length > 1) {
-    // Detect if options are already labeled (A) ...)
-    const labeledOption = /^[A-D][\)\.\-]/;
-    const optionsWithLabels = lines.slice(1).filter(l => labeledOption.test(l));
-    if (optionsWithLabels.length === 4) {
-        // Already labeled—keep as-is
-        options = optionsWithLabels;
+console.log("DEBUG PDF options:", { options, lines, isMCQ, questionLine });
+let questionLine = lines[0] || '';
+// Try to get 4 MCQ options from .options or from text lines
+if (Array.isArray(clone.options) && clone.options.length === 4) {
+    // Use the stored options (from Firestore), clean labels if needed
+    options = clone.options.map((opt, i) => {
+        // Remove label if present and add "A) ...", "B) ..." only if missing
+        return /^[A-D][).]/.test(opt) ? opt.trim() : String.fromCharCode(65 + i) + ") " + opt.trim();
+    });
+    questionLine = (clone.question || lines[0] || '').replace(/\s*A\).*/g, '').trim();
+} else if (lines.length > 1) {
+    // If not, parse from the text (lines)
+    const labeledOption = /^[A-D][).]/;
+    const hasLabels = lines.slice(1, 5).every(l => labeledOption.test(l));
+    if (hasLabels) {
+        options = lines.slice(1, 5).map(l => l.trim());
     } else if (lines.slice(1).length === 4) {
-        // Not labeled, so add labels
-        options = lines.slice(1).map((opt, i) => String.fromCharCode(65 + i) + ") " + opt.trim());
+        options = lines.slice(1, 5).map((opt, i) => String.fromCharCode(65 + i) + ") " + opt.trim());
     } else {
-        // Try to extract from a single joined line (A) ... B) ... C) ... D) ...)
-        const joined = lines.slice(1).join(' ');
-        const found = joined.match(/([A-D][\)\.\-][^A-D]*)/g);
-        if (found && found.length === 4) {
-            options = found.map(s => s.trim());
-        }
+        // Try to extract all A)...B)...C)...D)... from a single line
+        let joined = lines.slice(1).join(' ');
+        let found = joined.match(/([A-D][).][^A-D]*)/g);
+        if (found && found.length === 4) options = found.map(s => s.trim());
     }
 }
-let questionLine = lines[0] || '';
 let isMCQ = options.length === 4;
 // --- END REPLACEMENT BLOCK ---
 
