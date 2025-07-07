@@ -416,33 +416,41 @@ let lines = html.split('<br>').map(l => l.trim()).filter(Boolean);
 // Extract MCQ options (smartly handling labels)
 // --- START REPLACEMENT BLOCK ---
 // This bulletproofs MCQ extraction and labels!
+// --- START REPLACEMENT BLOCK ---
+// Universal MCQ extractor for PDF export
 let options = [];
-console.log("DEBUG PDF options:", { options, lines, isMCQ, questionLine });
 let questionLine = lines[0] || '';
-// Try to get 4 MCQ options from .options or from text lines
-if (Array.isArray(clone.options) && clone.options.length === 4) {
-    // Use the stored options (from Firestore), clean labels if needed
-    options = clone.options.map((opt, i) => {
-        // Remove label if present and add "A) ...", "B) ..." only if missing
-        return /^[A-D][).]/.test(opt) ? opt.trim() : String.fromCharCode(65 + i) + ") " + opt.trim();
+if (clone && clone.querySelectorAll) {
+    // Try to get options from .question-text HTML (from Firestore .options or user entry)
+    const optLines = [];
+    const optsInHtml = clone.querySelectorAll('.question-text > div');
+    optsInHtml.forEach(node => {
+        let txt = node.textContent.trim();
+        if (txt && /^[A-D][).]/.test(txt)) optLines.push(txt);
+        else if (txt && txt.length > 0) optLines.push(txt);
     });
-    questionLine = (clone.question || lines[0] || '').replace(/\s*A\).*/g, '').trim();
-} else if (lines.length > 1) {
-    // If not, parse from the text (lines)
-    const labeledOption = /^[A-D][).]/;
-    const hasLabels = lines.slice(1, 5).every(l => labeledOption.test(l));
-    if (hasLabels) {
-        options = lines.slice(1, 5).map(l => l.trim());
-    } else if (lines.slice(1).length === 4) {
-        options = lines.slice(1, 5).map((opt, i) => String.fromCharCode(65 + i) + ") " + opt.trim());
-    } else {
-        // Try to extract all A)...B)...C)...D)... from a single line
-        let joined = lines.slice(1).join(' ');
-        let found = joined.match(/([A-D][).][^A-D]*)/g);
+    if (optLines.length === 4) {
+        // Standardize: add label if missing
+        options = optLines.map((opt, i) =>
+            /^[A-D][).]/.test(opt) ? opt : String.fromCharCode(65 + i) + ") " + opt.trim()
+        );
+    }
+}
+// Fallback to text lines
+if (options.length !== 4 && lines.length > 1) {
+    // Look for labeled in lines
+    const labeled = lines.slice(1).filter(l => /^[A-D][).]/.test(l));
+    if (labeled.length === 4) options = labeled;
+    else if (lines.slice(1).length === 4) options = lines.slice(1, 5).map((opt, i) => String.fromCharCode(65 + i) + ") " + opt.trim());
+    else {
+        // Try all A)...B)...C)...D)... in one line
+        const joined = lines.slice(1).join(' ');
+        const found = joined.match(/([A-D][).][^A-D]*)/g);
         if (found && found.length === 4) options = found.map(s => s.trim());
     }
 }
 let isMCQ = options.length === 4;
+console.log("DEBUG options", {options, lines, isMCQ, questionLine});
 // --- END REPLACEMENT BLOCK ---
 
 let questionHtml = `
