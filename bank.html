@@ -451,35 +451,58 @@ let questionHtml = `
                     const optionLines = options.map(opt => opt.replace(/\n+/g, ' ').trim());
                     const SHORT_LIMIT = 14;
                     const MEDIUM_LIMIT = 28;
-                   if (options.every(opt => opt.length <= SHORT_LIMIT)) {
-                    // All short: one line, 4 columns
-                   return `<div style="
-                    display: flex;
-                    justify-content: space-between;
-                    margin-left: 8px;
-                    margin-right: 12px;
-                    min-width: 360px;
-                ">${options.map(opt => `<div style="flex:1;text-align:center;min-width:70px;">${opt}</div>`).join('')}
-                </div>`;
-                } else if (options.every(opt => opt.length <= MEDIUM_LIMIT)) {
-                    // Medium: two rows, 2 columns each
-                    return `
-                      <div style="display:flex;gap:32px;margin-left:4px;">
-                        <div style="min-width:120px;">${options[0]}</div>
-                        <div style="min-width:120px;">${options[1]}</div>
-                      </div>
-                      <div style="display:flex;gap:32px;margin-left:4px;">
-                        <div style="min-width:120px;">${options[2]}</div>
-                        <div style="min-width:120px;">${options[3]}</div>
-                      </div>
-                    `;
-                } else {
-                    // Long: each option on its own line
-                    return options.map(opt =>
-                      `<div style="margin-left:8px;margin-bottom:2px;">${opt}</div>`
+                   // Pixel-based layout for MCQ options
+                let optionsHTML = '';
+                if (options.length === 4) {
+                    // Create hidden span to check if all 4 fit in one line
+                    let dummy = document.createElement('span');
+                    dummy.style.cssText = 'visibility:hidden;position:absolute;white-space:nowrap;padding:0;margin:0;border:none;font-family:Times New Roman,Times,serif;font-size:1.11em;';
+                    dummy.innerText = options.join('    ');
+                    document.body.appendChild(dummy);
+                    let fitsFour = dummy.offsetWidth < 440;
+                    document.body.removeChild(dummy);
+                
+                    // Check A+B and C+D for two-row fit
+                    const fitsInLine = (a, b) => {
+                        let d = document.createElement('span');
+                        d.style.cssText = dummy.style.cssText;
+                        d.innerText = a + "    " + b;
+                        document.body.appendChild(d);
+                        let fits = d.offsetWidth < 440;
+                        document.body.removeChild(d);
+                        return fits;
+                    };
+                    let abFits = fitsInLine(options[0], options[1]);
+                    let cdFits = fitsInLine(options[2], options[3]);
+                
+                    if (fitsFour) {
+                        // 1 row
+                        optionsHTML = `<div style="display:flex;gap:32px;flex-wrap:wrap;margin-bottom:3px;margin-left:2px;">
+                            ${options.map(opt => `<span style="min-width:70px;display:inline-block;">${opt.trim()}</span>`).join('')}
+                        </div>`;
+                    } else if (abFits && cdFits) {
+                        // 2 rows
+                        optionsHTML = `
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 32px;margin-bottom:2px;margin-left:2px;width:100%;">
+                            <span style="min-width:70px;display:inline-block;">${options[0]}</span>
+                            <span style="min-width:70px;display:inline-block;">${options[1]}</span>
+                            <span style="min-width:70px;display:inline-block;">${options[2]}</span>
+                            <span style="min-width:70px;display:inline-block;">${options[3]}</span>
+                        </div>
+                        `;
+                    } else {
+                        // 4 rows
+                        optionsHTML = options.map(opt =>
+                            `<div style="margin-bottom:2px;margin-left:2px;">${opt.trim().replace(/\n/g, '<br>')}</div>`
+                        ).join('');
+                    }
+                } else if (options.length > 0) {
+                    // Not exactly 4 options (e.g., 2 or 3)
+                    optionsHTML = options.map(opt =>
+                        `<div style="margin-bottom:2px;margin-left:2px;">${opt.trim().replace(/\n/g, '<br>')}</div>`
                     ).join('');
                 }
-                })()
+               })()
                 : (lines.length > 1
                     ? `<div style="font-size:1.1em;white-space:pre-line;">${lines.slice(1).join('\n')}</div>`
                     : ''
