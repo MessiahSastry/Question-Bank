@@ -405,32 +405,32 @@ async function exportPDF(e) {
     }
 
     // --- QUESTION TEXT + OPTIONS ---
-        const textDiv = clone.querySelector('.question-text');
-        let questionLine = '';
-        let options = [];
-        if (textDiv) {
-            // If question text has <div> children, treat first as question, rest as options
-            const divs = Array.from(textDiv.querySelectorAll(':scope > div'));
-            if (divs.length >= 1) {
-                questionLine = divs[0].innerText.trim();
-                options = divs.slice(1).map(div => div.innerText.trim());
-            } else {
-                // Fallback: extract via <br> split
-                let html = textDiv.innerHTML.replace(/<img[^>]*>/gi, '').replace(/^\s*<br\s*\/?>|<br\s*\/?>\s*$/gi, '');
-                let parts = html.split('<br>').map(l => l.trim()).filter(Boolean);
-                questionLine = parts[0] || '';
-                options = parts.slice(1);
-            }
-            // Add option labels if missing (A) B) ...)
-            if (options.length === 4) {
-                options = options.map((opt, i) =>
-                    /^[A-D][).]/.test(opt) ? opt : String.fromCharCode(65 + i) + ") " + opt
-                );
-            }
+        // --- UNIVERSAL QUESTION TEXT + OPTIONS EXTRACTION ---
+const textDiv = clone.querySelector('.question-text');
+let questionLine = '';
+let options = [];
+if (textDiv) {
+    // Remove any images first
+    let html = textDiv.innerHTML.replace(/<img[^>]*>/gi, '');
+    // Split by <br> and also treat <div> as split (for legacy format)
+    let parts = html.split(/<br\s*\/?>|<\/div>|<div[^>]*>/gi).map(s => s.replace(/&nbsp;/g,' ').trim()).filter(Boolean);
+
+    // Remove any empty lines or lines that are just <br>
+    parts = parts.filter(line => line && !/^<br\s*\/?>$/i.test(line));
+
+    if (parts.length > 0) {
+        questionLine = parts[0];
+        options = parts.slice(1).filter(opt => opt); // All lines after first = options
+        // Add option labels if missing (A) B) ...)
+        if (options.length === 4) {
+            options = options.map((opt, i) =>
+                /^[A-D][).]/.test(opt) ? opt : String.fromCharCode(65 + i) + ") " + opt
+            );
         }
-        let isMCQ = options.length === 4;
-        console.log("DEBUG MCQ extraction", {questionLine, options, isMCQ});
-        
+    }
+}
+let isMCQ = options.length === 4;
+console.log("DEBUG MCQ extraction", {questionLine, options, isMCQ});     
         // --- END REPLACEMENT BLOCK ---
 
 let questionHtml = `
