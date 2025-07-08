@@ -188,7 +188,11 @@
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  
   <script>
+    function normalizeExamName(name) {
+   return name.replace(/[\s\.\-]/g, '').toUpperCase();
+}
     // ======================= CONFIG ==============================
     const firebaseConfig = {
       apiKey: "AIzaSyAszVhWXUUOYLQ7VimKmPKf1yEu_CI9RCE",
@@ -522,6 +526,7 @@ function showExamSettingsPopup() {
       showPopup(html, 'addExamForm', function (e) {
         e.preventDefault();
         const name = e.target.examName.value.trim();
+        const nameKey = normalizeExamName(name); // Normalize for comparison
         let subjects = [];
         const container = popupContent.querySelector('#subjectsContainer');
         if (container) {
@@ -541,12 +546,22 @@ function showExamSettingsPopup() {
           return;
         }
         db.collection('years').doc(academicYear)
+      .collection('exams').doc('classGroups')
+      .collection(classGroup)
+      .where('nameKey', '==', nameKey)
+      .get()
+      .then(dupSnap => {
+        if (!dupSnap.empty) {
+          alert("Exam with this (or very similar) name already exists!");
+          return;
+        }
+        // If not duplicate, add
+        db.collection('years').doc(academicYear)
           .collection('exams').doc('classGroups')
           .collection(classGroup)
-          .add({ name, subjects })
+          .add({ name, nameKey, subjects })
           .then(() => { closePopup(); showExamSettingsPopup(); });
       });
-
       // --- Subject Fields Logic ---
       const subjectsContainer = popupContent.querySelector('#subjectsContainer');
       const addSubjectBtn = popupContent.querySelector('#addSubjectBtn');
@@ -607,6 +622,7 @@ function showEditExamPopup(examId) {
       `, 'editExamForm', function (e) {
         e.preventDefault();
         const name = e.target.examName.value.trim();
+        const nameKey = normalizeExamName(name);
         let subjects = [];
         const container = popupContent.querySelector('#editSubjectsContainer');
         if (container) {
@@ -622,15 +638,34 @@ function showEditExamPopup(examId) {
           });
         }
         if (!name || !subjects.length) {
-          alert("Please enter exam name and at least one subject!");
-          return;
-        }
-        db.collection('years').doc(academicYear)
-          .collection('exams').doc('classGroups')
-          .collection(classGroup).doc(examId)
-          .update({ name, subjects })
-          .then(() => { closePopup(); showExamSettingsPopup(); });
+  alert("Please enter exam name and at least one subject!");
+  return;
+}
+// Check for duplicates (but exclude this examId itself)
+db.collection('years').doc(academicYear)
+  .collection('exams').doc('classGroups')
+  .collection(classGroup)
+  .where('nameKey', '==', nameKey)
+  .get()
+  .then(dupSnap => {
+    if (!dupSnap.empty) {
+      let isDuplicate = false;
+      dupSnap.forEach(doc => {
+        if (doc.id !== examId) isDuplicate = true;
       });
+      if (isDuplicate) {
+        alert("Another exam with this (or very similar) name already exists!");
+        return;
+      }
+    }
+    // If not duplicate, update
+    db.collection('years').doc(academicYear)
+      .collection('exams').doc('classGroups')
+      .collection(classGroup).doc(examId)
+      .update({ name, nameKey, subjects })
+      .then(() => { closePopup(); showExamSettingsPopup(); });
+  });
+
 
       // --- Subject Fields Logic for Edit ---
       const subjectsContainer = popupContent.querySelector('#editSubjectsContainer');
