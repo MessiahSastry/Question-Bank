@@ -481,7 +481,7 @@ function getClassGroupName(className) {
 // ========== EXAM SETTINGS ===========
 function showExamSettingsPopup() {
   const classGroup = getClassGroupName(currentClassName);
-  // First: fetch all exams for this group
+  // Fetch all exams for this group
   db.collection('years').doc(academicYear)
     .collection('exams').doc('classGroups')
     .collection(classGroup)
@@ -492,18 +492,20 @@ function showExamSettingsPopup() {
       let html = `
         <div class="popup-title">Exam Settings</div>
         <div id="examListArea" style="max-height:240px;overflow-y:auto;margin-bottom:12px;">
-          ${exams.length === 0 ? '<div style="color:#888;font-style:italic;">No exams found.</div>' : exams.map((exam, idx) => `
-            <div style="border-bottom:1px solid #f1f1f1;margin-bottom:7px;padding-bottom:7px;">
-              <strong>${exam.name}</strong>
-              <button type="button" class="popup-action-btn" data-edit="${exam.id}" style="margin-left:10px;padding:2px 8px;font-size:0.9em;">Edit</button>
-              <div style="margin-top:6px;margin-left:8px;font-size:0.99em;">
-                ${Array.isArray(exam.subjects) && exam.subjects.length > 0
-                  ? exam.subjects.map(subj => `${subj.name} <span style="color:#888;">(Max: ${subj.max})</span>`).join(', ')
-                  : '<span style="color:#aaa;">No subjects</span>'
-                }
-              </div>
-            </div>
-          `).join('')}
+          ${exams.length === 0 
+            ? '<div style="color:#888;font-style:italic;">No exams found.</div>' 
+            : exams.map((exam, idx) => `
+                <div style="border-bottom:1px solid #f1f1f1;margin-bottom:7px;padding-bottom:7px;">
+                  <strong>${exam.name}</strong>
+                  <button type="button" class="popup-action-btn" data-edit="${exam.id}" style="margin-left:10px;padding:2px 8px;font-size:0.9em;">Edit</button>
+                  <div style="margin-top:6px;margin-left:8px;font-size:0.99em;">
+                    ${Array.isArray(exam.subjects) && exam.subjects.length > 0
+                      ? exam.subjects.map(subj => `${subj.name} <span style="color:#888;">(Max: ${subj.max})</span>`).join(', ')
+                      : '<span style="color:#aaa;">No subjects</span>'
+                    }
+                  </div>
+                </div>
+              `).join('')}
         </div>
         <form id="addExamForm" style="display:flex; flex-direction:column; max-height:58vh;">
           <div style="flex:1; overflow-y:auto; padding-right:4px;">
@@ -545,23 +547,26 @@ function showExamSettingsPopup() {
           alert("Please enter exam name and at least one subject!");
           return;
         }
-        db.collection('years').doc(academicYear)
-      .collection('exams').doc('classGroups')
-      .collection(classGroup)
-      .where('nameKey', '==', nameKey)
-      .get()
-      .then(dupSnap => {
-        if (!dupSnap.empty) {
-          alert("Exam with this (or very similar) name already exists!");
-          return;
-        }
-        // If not duplicate, add
+        // Check for duplicates before adding
         db.collection('years').doc(academicYear)
           .collection('exams').doc('classGroups')
           .collection(classGroup)
-          .add({ name, nameKey, subjects })
-          .then(() => { closePopup(); showExamSettingsPopup(); });
+          .where('nameKey', '==', nameKey)
+          .get()
+          .then(dupSnap => {
+            if (!dupSnap.empty) {
+              alert("Exam with this (or very similar) name already exists!");
+              return;
+            }
+            // If not duplicate, add
+            db.collection('years').doc(academicYear)
+              .collection('exams').doc('classGroups')
+              .collection(classGroup)
+              .add({ name, nameKey, subjects })
+              .then(() => { closePopup(); showExamSettingsPopup(); });
+          });
       });
+
       // --- Subject Fields Logic ---
       const subjectsContainer = popupContent.querySelector('#subjectsContainer');
       const addSubjectBtn = popupContent.querySelector('#addSubjectBtn');
@@ -591,6 +596,9 @@ function showExamSettingsPopup() {
         });
       }, 200);
     });
+}
+
+// ----------- EDIT EXAM -------------
 function showEditExamPopup(examId) {
   const classGroup = getClassGroupName(currentClassName);
   db.collection('years').doc(academicYear)
@@ -637,36 +645,37 @@ function showEditExamPopup(examId) {
           });
         }
         if (!name || !subjects.length) {
-  alert("Please enter exam name and at least one subject!");
-  return;
-}
-// Check for duplicates (but exclude this examId itself)
-db.collection('years').doc(academicYear)
-  .collection('exams').doc('classGroups')
-  .collection(classGroup)
-  .where('nameKey', '==', nameKey)
-  .get()
-  .then(dupSnap => {
-    let isDuplicate = false;
-    if (!dupSnap.empty) {
-      dupSnap.forEach(doc => {
-        if (doc.id !== examId) isDuplicate = true;
+          alert("Please enter exam name and at least one subject!");
+          return;
+        }
+        // Check for duplicates (but exclude this examId itself)
+        db.collection('years').doc(academicYear)
+          .collection('exams').doc('classGroups')
+          .collection(classGroup)
+          .where('nameKey', '==', nameKey)
+          .get()
+          .then(dupSnap => {
+            let isDuplicate = false;
+            if (!dupSnap.empty) {
+              dupSnap.forEach(doc => {
+                if (doc.id !== examId) isDuplicate = true;
+              });
+              if (isDuplicate) {
+                alert("Another exam with this (or very similar) name already exists!");
+                return;
+              }
+            }
+            // If not duplicate, update
+            db.collection('years').doc(academicYear)
+              .collection('exams').doc('classGroups')
+              .collection(classGroup).doc(examId)
+              .update({ name, nameKey, subjects })
+              .then(() => { 
+                closePopup(); 
+                showExamSettingsPopup(); 
+              });
+          });
       });
-      if (isDuplicate) {
-        alert("Another exam with this (or very similar) name already exists!");
-        return;
-      }
-    }
-    // If not duplicate, update
-    db.collection('years').doc(academicYear)
-      .collection('exams').doc('classGroups')
-      .collection(classGroup).doc(examId)
-      .update({ name, nameKey, subjects })
-      .then(() => { 
-        closePopup(); 
-        showExamSettingsPopup(); 
-      });
-  });
 
       // --- Subject Fields Logic for Edit ---
       const subjectsContainer = popupContent.querySelector('#editSubjectsContainer');
