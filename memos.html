@@ -222,7 +222,6 @@ const COLOR_RED = [220,38,38];
 const COLOR_BROWN = [139,69,19];
 const COLOR_GRADE = COLOR_BROWN;
 
-let memoImgData = null, memoImgFile = "memo-6-7-8-9.png"; // fallback
 
 // FIREBASE CONFIG
 const firebaseConfig = {
@@ -254,7 +253,7 @@ function sleep(ms){return new Promise(res=>setTimeout(res,ms));}
 function loadMemoImg(file) {
   return fetch(file).then(resp => resp.blob()).then(blob => new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = ev => { memoImgData = ev.target.result; resolve(); };
+    reader.onload = ev => { resolve(ev.target.result); };
     reader.onerror = reject;
     reader.readAsDataURL(blob);
   }));
@@ -446,11 +445,9 @@ function formatClass(val) {
 // --- Get memo PNG file and mapping
 async function getMemoAndMapping(student) {
   let cfg = classMemoFile(student.class);
-  if (!memoImgData || memoImgFile!==cfg.file) {
-    memoImgFile = cfg.file;
-    await loadMemoImg(cfg.file);
-  }
-  return cfg;
+  // Always load the PNG for the student's class
+  let memoImgData = await loadMemoImg(cfg.file);
+  return { cfg, memoImgData };
 }
 
 // ======= PDF GENERATION =========
@@ -573,7 +570,7 @@ async function generatePDF(studentArr, isSingle) {
     fullDataArr = [fullDataArr.find(d=>d.name===studentArr[0].name && d.roll==studentArr[0].roll)];
   for (let idx = 0; idx < fullDataArr.length; idx++) {
     let student = fullDataArr[idx];
-    let memoMap = await getMemoAndMapping(student);
+    let { cfg, memoImgData } = await getMemoAndMapping(student);
     if (idx===0 && !isSingle) { pdf = new window.jspdf.jsPDF({orientation: "portrait", unit: "px", format: [2481, 3509]}); }
     else if (idx > 0 || !isSingle) pdf.addPage([2481,3509], 'p');
     pdf.addImage(memoImgData, "PNG", 0, 0, 2481, 3509);
@@ -604,7 +601,7 @@ async function generatePDF(studentArr, isSingle) {
     pdf.setLineWidth(1);
 
     // --- Subject rows: Always PNG template order, AB for missing
-    let memoYArr = customSubjectRowsY[memoImgFile];
+    let memoYArr = customSubjectRowsY[cfg.file];
     let templateSubjects = examObj.subjects || [];
     let totalMarks = 0, totalMax = 0;
     function norm(s) { return (s||'').replace(/[\s.]/g,'').toLowerCase(); }
@@ -654,7 +651,7 @@ async function showPreviewPDF(stuArr) {
   let pdf;
   for (let idx = 0; idx < stuArr.length; idx++) {
     let student = stuArr[idx];
-    let memoMap = await getMemoAndMapping(student);
+    let { cfg, memoImgData } = await getMemoAndMapping(student);
     if (idx===0) { pdf = new window.jspdf.jsPDF({orientation: "portrait", unit: "px", format: [2481, 3509]}); }
     else pdf.addPage([2481,3509], 'p');
     pdf.addImage(memoImgData, "PNG", 0, 0, 2481, 3509);
@@ -682,7 +679,7 @@ async function showPreviewPDF(stuArr) {
     pdf.setLineWidth(1);
 
     // --- Subject rows: Always PNG template order, AB for missing
-    let memoYArr = customSubjectRowsY[memoImgFile];
+    let memoYArr = customSubjectRowsY[cfg.file];
     let templateSubjects = examObj.subjects || [];
     let totalMarks = 0, totalMax = 0;
     function norm(s) { return (s||'').replace(/[\s.]/g,'').toLowerCase(); }
