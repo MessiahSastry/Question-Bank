@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Absentees Report - St. Patrick's School</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- FontAwesome for icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
+  <!-- jsPDF for PDF export -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <!-- Firebase -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+  <style>
+    html, body { margin: 0; padding: 0; font-family: 'Segoe UI', Arial, sans-serif; background: #f4f8fc; min-height: 100vh;}
+    .fixed-header {
+      background: #0f3d6b;
+      color: #fff;
+      text-align: center;
+      padding: 18px 0 8px 0;
+      border-bottom-left-radius: 14px;
+      border-bottom-right-radius: 14px;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      width: 100%;
+    }
+    .fixed-header .school-title { color: #fff; font-size: 1.5em; margin: 0;}
+    .fixed-header .subtitle { color: #c9e4ff; font-size: .99em; font-weight: 400; margin: 0;}
+    .main-content {
+      padding: 22px 10px 60px 10px;
+      max-width: 520px;
+      margin: 0 auto;
+      min-height: 60vh;
+    }
+    .controls-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px;
+      align-items: center;
+      margin: 18px 0 24px 0;
+      justify-content: space-between;
+    }
+    .controls-row label {
+      font-weight: 600;
+      color: #195084;
+      font-size: 1.08em;
+      margin-right: 6px;
+    }
+    .custom-dropdown {
+      border: 1.4px solid #1467b7;
+      border-radius: 7px;
+      background: #f7fafd;
+      width: 130px;
+      font-size: 1.06em;
+      padding: 11px 10px;
+      cursor: pointer;
+    }
+    .date-input {
+      border: 1.4px solid #1467b7;
+      border-radius: 7px;
+      background: #f7fafd;
+      font-size: 1.06em;
+      padding: 10px 11px;
+      width: 152px;
+    }
+    .btn-download {
+      background: #0f3d6b;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 12px 22px;
+      font-weight: bold;
+      cursor: pointer;
+      font-size: 1.07em;
+      margin-top: 2px;
+      transition: background .14s;
+      box-shadow: 0 2px 10px #0f3d6b22;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .btn-download:active { background: #195084; }
+    .report-preview {
+      background: #fff;
+      border-radius: 13px;
+      box-shadow: 0 4px 16px #0f3d6b15;
+      margin: 0 0 25px 0;
+      padding: 22px 14px 18px 14px;
+      font-size: 1.12em;
+      min-height: 80px;
+    }
+    .preview-title {
+      color: #1762a7;
+      font-size: 1.14em;
+      font-weight: bold;
+      margin-bottom: 14px;
+      text-align: left;
+      letter-spacing: 0.2px;
+    }
+    .absentees-block {
+      margin-bottom: 18px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid #e6eaf2;
+    }
+    .absentees-block:last-child { border-bottom: none; }
+    .class-section-title {
+      color: #0f3d6b;
+      font-size: 1.07em;
+      font-weight: bold;
+      margin: 0 0 3px 0;
+    }
+    .session-heading {
+      color: #218c53;
+      font-size: 1em;
+      font-weight: 600;
+      margin: 7px 0 2px 0;
+    }
+    .absentees-list {
+      margin: 0 0 0 15px;
+      padding: 0;
+      font-size: 1.08em;
+    }
+    .absentees-list li {
+      margin-bottom: 2px;
+      font-size: 1em;
+      line-height: 1.55;
+    }
+    .no-absentees-block {
+      color: #888;
+      font-size: 1.08em;
+      margin: 17px 0 0 3px;
+    }
+    @media (max-width: 600px) {
+      .main-content { padding: 14px 3vw 50px 3vw; }
+      .report-preview { padding: 16px 4vw 12px 4vw; }
+      .controls-row { flex-direction: column; align-items: stretch; gap: 11px;}
+    }
+  </style>
+</head>
+<body>
+  <div class="fixed-header" id="header">
+    <!-- Logo here if you want: <img src="schoollogo.png" style="height:45px;margin-bottom:8px;"> -->
+    <div class="school-title">St. Patrick's School</div>
+    <div class="subtitle">IIT & NEET FOUNDATION</div>
+  </div>
+  <div class="main-content">
+    <div class="controls-row">
+      <div>
+        <label for="date">Date</label>
+        <input id="date" class="date-input" type="date">
+      </div>
+      <div>
+        <label for="session">Session</label>
+        <select id="session" class="custom-dropdown">
+          <option value="M" selected>Morning</option>
+          <option value="A">Afternoon</option>
+        </select>
+      </div>
+      <button class="btn-download" id="btnDownload"><i class="fa fa-download"></i>Download Absentees PDF</button>
+    </div>
+    <div class="report-preview" id="preview">
+      <div style="text-align:center;color:#aaa;">Select a date to see absentees preview…</div>
+    </div>
+  </div>
+  <script>
+    // 1. Firebase Config
+    const firebaseConfig = {
+      apiKey: "AIzaSyAszVhWXUUOYLQ7VimKmPKf1yEu_CI9RCE",
+      authDomain: "stpatricks-questionbank.firebaseapp.com",
+      projectId: "stpatricks-questionbank",
+      storageBucket: "stpatricks-questionbank.appspot.com",
+      messagingSenderId: "917615322861",
+      appId: "1:917615322861:web:c6c890aa2184dd395b8ee4"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+    const auth = firebase.auth();
+
+    // 2. Get today for default date picker
+    function getTodayStr() {
+      const d = new Date();
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      const dd = String(d.getDate()).padStart(2, '0');
+      return `${d.getFullYear()}-${mm}-${dd}`;
+    }
+
+    document.getElementById('date').value = getTodayStr();
+    document.getElementById('date').max = getTodayStr();
+
+    // 3. Load absentees for selected date/session
+    const previewDiv = document.getElementById('preview');
+    const btnDownload = document.getElementById('btnDownload');
+    const sessionSelect = document.getElementById('session');
+    const dateInput = document.getElementById('date');
+
+    // Auth required
+    auth.onAuthStateChanged(function(user) {
+      if (!user) window.location.replace("index.html");
+      else loadAndRender();
+    });
+
+    dateInput.onchange = loadAndRender;
+    sessionSelect.onchange = loadAndRender;
+
+    async function loadAndRender() {
+      const date = dateInput.value;
+      const session = sessionSelect.value; // "M" or "A"
+      if (!date) {
+        previewDiv.innerHTML = `<div style="text-align:center;color:#aaa;">Select a date to see absentees preview…</div>`;
+        return;
+      }
+      previewDiv.innerHTML = `<div style="text-align:center;color:#bbb;"><i class="fa fa-spinner fa-spin"></i> Loading absentees…</div>`;
+      const {data, schoolHasAbsentees} = await getSchoolAbsenteesBySession(date, session);
+      previewDiv.innerHTML = renderAbsenteesPreviewHTML(data, schoolHasAbsentees, date, session);
+    }
+
+    // 4. Fetch absentees grouped by class-section for selected session/date
+    async function getSchoolAbsenteesBySession(date, session) {
+      // session = "M" | "A"
+      let allAbs = [];
+      let schoolHasAbsentees = false;
+      let yearsRef = db.collection('years');
+      // get active academic year from localStorage
+      let academicYear = localStorage.getItem('sp_selectedYear') || '';
+      if (!academicYear) {
+        // fallback to latest year
+        let yearsSnap = await yearsRef.get();
+        let latestYear = '';
+        yearsSnap.forEach(doc => { if (doc.id > latestYear) latestYear = doc.id; });
+        academicYear = latestYear;
+      }
+      if (!academicYear) return { data: [], schoolHasAbsentees: false };
+      let classesSnap = await yearsRef.doc(academicYear).collection('classes').orderBy('name').get();
+      let classData = [];
+      for (let clsDoc of classesSnap.docs) {
+        let className = clsDoc.data().name || clsDoc.id;
+        let sectionsSnap = await clsDoc.ref.collection('sections').orderBy('name').get();
+        let sectionData = [];
+        for (let secDoc of sectionsSnap.docs) {
+          let sectionName = secDoc.data().name || secDoc.id;
+          // Get all students in this section
+          let studentsSnap = await secDoc.ref.collection('students').orderBy('roll').get();
+          let students = [];
+          studentsSnap.forEach(stuDoc => {
+            let stu = stuDoc.data();
+            stu.id = stuDoc.id;
+            students.push(stu);
+          });
+          // Get attendance for this date
+          let attDoc = await secDoc.ref.collection('attendance').doc(date).get();
+          let attData = attDoc.exists ? attDoc.data() : {};
+          // Get absentees for session
+          let absentees = [];
+          students.forEach(stu => {
+            if (stu.isDeleted) return;
+            let stat = attData[stu.id] || {};
+            if (stat[session] === 'absent') {
+              absentees.push({
+                roll: stu.roll,
+                name: stu.name,
+                phone: stu.parentPhone || ""
+              });
+            }
+          });
+          if (absentees.length > 0) schoolHasAbsentees = true;
+          sectionData.push({
+            sectionName,
+            absentees
+          });
+        }
+        classData.push({
+          className,
+          sections: sectionData
+        });
+      }
+      return { data: classData, schoolHasAbsentees };
+    }
+
+    // 5. Render preview HTML in page
+    function renderAbsenteesPreviewHTML(data, schoolHasAbsentees, date, session) {
+      const sessionName = (session === "M") ? "Morning" : "Afternoon";
+      let html = `<div class="preview-title">Absentees – ${formatDate(date)} (${sessionName} Session)</div>`;
+      if (!schoolHasAbsentees) {
+        html += `<div class="no-absentees-block">No absentees in the school for the selected session.</div>`;
+        return html;
+      }
+      let foundAny = false;
+      data.forEach(cls => {
+        let classBlock = '';
+        cls.sections.forEach(sec => {
+          if (sec.absentees.length === 0) return;
+          classBlock += `
+            <div class="absentees-block">
+              <div class="class-section-title">${cls.className} – ${sec.sectionName} Section</div>
+              <ul class="absentees-list">
+                ${sec.absentees.map((a, i) => `<li>${i + 1}. ${a.roll ? a.roll + '. ' : ''}${a.name}${a.phone ? ' (' + a.phone + ')' : ''}</li>`).join('')}
+              </ul>
+            </div>
+          `;
+        });
+        if (classBlock) {
+          foundAny = true;
+          html += classBlock;
+        }
+      });
+      if (!foundAny) {
+        html += `<div class="no-absentees-block">No absentees in the school for the selected session.</div>`;
+      }
+      return html;
+    }
+
+    // 6. Format date for header (DD-MM-YYYY)
+    function formatDate(dateStr) {
+      if (!dateStr) return '';
+      const [y, m, d] = dateStr.split('-');
+      return `${d}-${m}-${y}`;
+    }
+
+    // 7. PDF generation
+    btnDownload.onclick = async function () {
+      btnDownload.disabled = true;
+      btnDownload.innerHTML = `<i class="fa fa-spinner fa-spin"></i> Generating...`;
+      try {
+        const date = dateInput.value;
+        const session = sessionSelect.value;
+        const sessionName = (session === "M") ? "Morning" : "Afternoon";
+        const {data, schoolHasAbsentees} = await getSchoolAbsenteesBySession(date, session);
+        // jsPDF setup
+        const { jsPDF } = window.jspdf;
+        const doc = new jsPDF({ orientation: "p", unit: "mm", format: "a4" });
+        let y = 20;
+        // School header
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(17);
+        doc.setTextColor(15, 61, 107);
+        doc.text("St. Patrick's School", 105, y, { align: "center" });
+        y += 8;
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(13);
+        doc.setTextColor(41, 98, 184);
+        doc.text("IIT & NEET FOUNDATION", 105, y, { align: "center" });
+        y += 8;
+        doc.setFontSize(12);
+        doc.setTextColor(120, 120, 120);
+        doc.text(`Absentees List – ${formatDate(date)} (${sessionName} Session)`, 105, y, { align: "center" });
+        y += 8;
+        doc.setDrawColor(180, 180, 180);
+        doc.line(25, y, 185, y);
+        y += 4;
+        // No absentees
+        if (!schoolHasAbsentees) {
+          doc.setFont("helvetica", "normal");
+          doc.setFontSize(13);
+          doc.setTextColor(180, 0, 0);
+          doc.text("No absentees in the school for the selected session.", 105, y+15, { align: "center" });
+          doc.save(`Absentees_${formatDate(date)}_${sessionName}.pdf`);
+          btnDownload.innerHTML = `<i class="fa fa-download"></i>Download Absentees PDF`;
+          btnDownload.disabled = false;
+          return;
+        }
+        // List absentees, grouped by class/section
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(12);
+        let pageNo = 1;
+        data.forEach(cls => {
+          let classHasAbs = false;
+          let secStartY = y;
+          cls.sections.forEach(sec => {
+            if (sec.absentees.length === 0) return;
+            classHasAbs = true;
+            if (y > 260) { doc.addPage(); y = 20; pageNo++; }
+            doc.setTextColor(15, 61, 107);
+            doc.text(`${cls.className} – ${sec.sectionName} Section`, 25, y);
+            y += 6;
+            doc.setFont("helvetica", "normal");
+            doc.setFontSize(11);
+            doc.setTextColor(20, 100, 40);
+            sec.absentees.forEach((a, i) => {
+              let txt = `${i + 1}. ${a.roll ? a.roll + '. ' : ''}${a.name}${a.phone ? ' (' + a.phone + ')' : ''}`;
+              doc.text(txt, 28, y);
+              y += 6;
+              if (y > 275) { doc.addPage(); y = 20; pageNo++; }
+            });
+            y += 3;
+          });
+          if (classHasAbs) y += 2;
+        });
+        doc.save(`Absentees_${formatDate(date)}_${sessionName}.pdf`);
+      } catch (e) {
+        alert("Error generating PDF: " + e.message);
+      }
+      btnDownload.innerHTML = `<i class="fa fa-download"></i>Download Absentees PDF`;
+      btnDownload.disabled = false;
+    };
+
+    // Initial load
+    loadAndRender();
+  </script>
+</body>
+</html>
