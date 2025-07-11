@@ -999,25 +999,54 @@
     const qData = currentSessionQuestions[i];
 
     // If comprehensive, use fullText for duplicate check, else parsedBody
-    let compareText = (qData.parsedMeta && qData.parsedMeta.includes("[Comprehensive]"))
-        ? qData.fullText : qData.parsedBody;
+            // Normalize and join text for MCQ options as well
+    function normalizeQuestion(q) {
+        if (!q) return '';
+        return q.replace(/\s+/g, ' ').replace(/<br\s*\/?>/gi, ' ').trim().toLowerCase();
+    }
+
+    let compareText;
+    if (qData.options && qData.options.length) {
+        // For MCQ, compare question + options as one string
+        compareText = normalizeQuestion((qData.question || '') + ' ' + (qData.options || []).join(' '));
+    } else {
+        // For descriptive/comprehensive
+        compareText = normalizeQuestion(
+            (qData.parsedMeta && qData.parsedMeta.includes("[Comprehensive]"))
+                ? qData.fullText
+                : qData.parsedBody
+        );
+    }
 
     const snapshot = await db.collection("questions")
         .where("subject", "==", qData.subject)
         .where("chapter", "==", qData.chapter)
         .get();
+
     let isDuplicate = false;
     snapshot.forEach(doc => {
-        const existing = doc.data();
-        let existingText = (existing.metaLine && existing.metaLine.includes("[Comprehensive]")) ? existing.text : existing.body;
-        if (getTextSimilarity(compareText, existingText) >= 0.9) {
+        let existingText;
+        if (doc.data().options && doc.data().options.length) {
+            // MCQ: compare question + options
+            existingText = normalizeQuestion((doc.data().question || '') + ' ' + (doc.data().options || []).join(' '));
+        } else {
+            // Descriptive/comprehensive
+            existingText = normalizeQuestion(
+                (doc.data().metaLine && doc.data().metaLine.includes("[Comprehensive]"))
+                    ? doc.data().text
+                    : doc.data().body
+            );
+        }
+        if (compareText === existingText) {
             isDuplicate = true;
         }
     });
+
     if (isDuplicate) {
         skippedCount++;
         continue;
     }
+
 
     const meta = parseMetaLine(qData.parsedMeta);
     const currentQuestionNumber = startNumber + savedCount; // Increment based on successfully saved count
