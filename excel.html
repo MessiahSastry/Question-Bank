@@ -193,7 +193,48 @@
     if (percent >= 40) return 'E';
     return 'F';
   }
-
+// Shorten name as per rules
+function getShortName(name) {
+  if (!name) return '';
+  let words = name.split(/\s+/).filter(Boolean);
+  let out = [];
+  const isSK = (w) => /^sk\.?$/i.test(w) || /^shaik$/i.test(w);
+  const isMD = (w) => /^md\.?$/i.test(w) || /^moham+m[aeod]*$/i.test(w);
+  for (let i = 0; i < words.length; i++) {
+    let w = words[i].replace(/\./g, '').toUpperCase();
+    if (i === 0) {
+      if (isSK(w)) out.push("SK");
+      else if (isMD(w)) out.push("MD");
+      else out.push(words[i]);
+    } else {
+      if (isSK(w)) out.push("SK");
+      else if (isMD(w)) out.push("MD");
+      else out.push(words[i][0].toUpperCase() + ".");
+    }
+  }
+  // Remove duplicates (e.g., SK SK)
+  return Array.from(new Set(out)).join(' ');
+}
+function getShortSubjectName(subj) {
+  const map = {
+    'Telugu': 'T',
+    'Hindi': 'H',
+    'English': 'E',
+    'English 1': 'E1',
+    'English 2': 'E2',
+    'Math': 'M',
+    'Math 1': 'M1',
+    'Math 2': 'M2',
+    'Physical Science': 'PS',
+    'Chemistry': 'C',
+    'Biology': 'B',
+    'Social': 'S',
+    'Spoken English': 'SE'
+    // Add more if needed
+  };
+  // If already short or not mapped, return as is or just first char
+  return map[subj] || subj.charAt(0).toUpperCase();
+}
   // -- App globals --
   let exams = [], examMap = {};
   let students = [];
@@ -337,7 +378,9 @@
 
     // Build headers
     let headers = ['Roll', 'Name'];
-    let subjects = (selectedExamObj.subjects || []).map(s => s.name);
+    let subjectObjs = (selectedExamObj.subjects || []);
+    let subjects = subjectObjs.map(s => s.name);
+    let subjectShorts = subjectObjs.map(s => getShortSubjectName(s.name));
     headers.push(...subjects, 'Total', 'Grade', 'Rank');
     // Build data rows
     let rows = [];
@@ -345,7 +388,7 @@
     let totalArr = [];
     students.forEach(stu => {
       let marks = marksMap[stu.id][selectedExamObj.id] || {};
-      let row = [stu.roll, stu.name];
+      let row = [stu.roll, getShortName(stu.name)];
       let total = 0, tmax = 0;
       for (let subj of subjects) {
         let v = marks[subj];
@@ -388,14 +431,16 @@
     statusDiv.textContent = "Preparing PDF...";
 
     // --- Prepare marks data
-    let subjects = (selectedExamObj.subjects || []).map(s => s.name);
+    let subjectObjs = (selectedExamObj.subjects || []);
+let subjects = subjectObjs.map(s => s.name);
+let subjectShorts = subjectObjs.map(s => getShortSubjectName(s.name));
     let subjMaxs = (selectedExamObj.subjects || []).map(s => s.max || 100);
     // 1. Calculate totals, grades, percent, ranks
     let studentRows = [];
     let totalArr = [];
     students.forEach(stu => {
       let marks = marksMap[stu.id][selectedExamObj.id] || {};
-      let row = [stu.roll, stu.name];
+      let row = [stu.roll, getShortName(stu.name)];
       let total = 0, tmax = 0;
       for (let i = 0; i < subjects.length; ++i) {
         let subj = subjects[i];
@@ -419,9 +464,10 @@
     let rankedRows = totalArr.sort((a,b)=>ranks[a.id]-ranks[b.id]).map(x=>x.row);
 
     // --- Generate HTML for PDF
-    let tableHeaders = `<th>Roll</th><th>Name</th>` +
-      subjects.map(s=>`<th>${s}</th>`).join('') +
-      `<th>Total</th><th>Grade</th><th>Rank</th>`;
+   let shortSubjects = subjects.map(getShortSubjectName);
+let tableHeaders = `<th>Roll</th><th>Name</th>` +
+  shortSubjects.map(s=>`<th>${s}</th>`).join('') +
+  `<th>Total</th><th>Grade</th><th>Rank</th>`;
     // Row HTMLs with alternate colors, red circle for <40%
     let tableRows = rankedRows.map((row, idx) => {
       let tds = '';
