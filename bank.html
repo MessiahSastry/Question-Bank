@@ -765,272 +765,272 @@ function createDropdownHTML(id, options, defaultValueText = 'All') {
 }
 
         function setupDropdowns() {
-            const classDropdown = document.getElementById('class-dropdown');
-            classDropdown.innerHTML = createDropdownHTML('class', filterConfig.classes, 'Select Class');
-            document.getElementById('class-value').value = '';
+    const classDropdown = document.getElementById('class-dropdown');
+    classDropdown.innerHTML = createDropdownHTML('class', filterConfig.classes, 'Select Class');
+    document.getElementById('class-value').value = '';
 
-            const subjectDropdown = document.getElementById('subject-dropdown');
-            subjectDropdown.innerHTML = createDropdownHTML('subject', [], 'Select Subject');
-            document.getElementById('subject-value').value = '';
+    const subjectDropdown = document.getElementById('subject-dropdown');
+    subjectDropdown.innerHTML = createDropdownHTML('subject', [], 'Select Subject');
+    document.getElementById('subject-value').value = '';
 
-            const qtypeDropdown = document.getElementById('qtype-dropdown');
-            qtypeDropdown.innerHTML = createDropdownHTML('qtype', filterConfig.questionTypes);
+    const qtypeDropdown = document.getElementById('qtype-dropdown');
+    qtypeDropdown.innerHTML = createDropdownHTML('qtype', filterConfig.questionTypes);
 
-            const chapterDropdown = document.getElementById('chapter-dropdown');
-            chapterDropdown.innerHTML = createDropdownHTML('chapter', [], 'Select Chapter');
-            document.getElementById('chapter-value').value = '';
+    const chapterDropdown = document.getElementById('chapter-dropdown');
+    chapterDropdown.innerHTML = createDropdownHTML('chapter', [], 'Select Chapter');
+    document.getElementById('chapter-value').value = '';
 
-            const marksDropdown = document.getElementById('marks-dropdown');
-            const marksOptions = filterConfig.marks.map(m => ${m} Mark(s));
-            marksDropdown.innerHTML = createDropdownHTML('marks', marksOptions);
+    const marksDropdown = document.getElementById('marks-dropdown');
+    const marksOptions = filterConfig.marks.map(m => `${m} Mark(s)`);
+    marksDropdown.innerHTML = createDropdownHTML('marks', marksOptions);
 
-            addDropdownListener('class-dropdown', onClassChange);
-            addDropdownListener('subject-dropdown', onSubjectChange);
-            addDropdownListener('qtype-dropdown', fetchAndDisplayQuestions);
-            addDropdownListener('chapter-dropdown', fetchAndDisplayQuestions);
-            addDropdownListener('marks-dropdown', fetchAndDisplayQuestions);
+    addDropdownListener('class-dropdown', onClassChange);
+    addDropdownListener('subject-dropdown', onSubjectChange);
+    addDropdownListener('qtype-dropdown', fetchAndDisplayQuestions);
+    addDropdownListener('chapter-dropdown', fetchAndDisplayQuestions);
+    addDropdownListener('marks-dropdown', fetchAndDisplayQuestions);
+}
+
+function addDropdownListener(dropdownId, callback) {
+    const dropdown = document.getElementById(dropdownId);
+    const input = document.getElementById(`${dropdownId.split('-')[0]}-value`);
+    const selectedDisplay = dropdown.querySelector('.selected-option');
+
+    dropdown.querySelector('.selected-option').addEventListener('click', (e) => {
+        e.stopPropagation();
+        dropdown.classList.toggle('open');
+    });
+
+    dropdown.querySelector('.dropdown-options').addEventListener('click', (e) => {
+        if (e.target && e.target.dataset.value) {
+            const value = e.target.dataset.value;
+            input.value = value;
+            selectedDisplay.textContent = value;
+            dropdown.classList.remove('open');
+            if (callback) callback();
         }
+    });
+}
 
-        function addDropdownListener(dropdownId, callback) {
-            const dropdown = document.getElementById(dropdownId);
-            const input = document.getElementById(${dropdownId.split('-')[0]}-value);
-            const selectedDisplay = dropdown.querySelector('.selected-option');
+function onClassChange() {
+    const className = document.getElementById('class-value').value;
+    const subjects = className && className !== 'All' ? filterConfig.subjectMappings[className] || [] : [];
 
-            dropdown.querySelector('.selected-option').addEventListener('click', (e) => {
-                e.stopPropagation();
-                dropdown.classList.toggle('open');
-            });
+    const subjectDropdown = document.getElementById('subject-dropdown');
+    subjectDropdown.innerHTML = createDropdownHTML('subject', subjects, 'Select Subject');
+    addDropdownListener('subject-dropdown', onSubjectChange);
 
-            dropdown.querySelector('.dropdown-options').addEventListener('click', (e) => {
-                if (e.target && e.target.dataset.value) {
-                    const value = e.target.dataset.value;
-                    input.value = value;
-                    selectedDisplay.textContent = value;
-                    dropdown.classList.remove('open');
-                    if (callback) callback();
-                }
-            });
-        }
+    const subjectInput = document.getElementById('subject-value');
+    const subjectSelected = subjectDropdown.querySelector('.selected-option');
+    if (subjects.length > 0) {
+        subjectInput.value = subjects[0];
+        subjectSelected.textContent = subjects[0];
+    } else {
+        subjectInput.value = '';
+        subjectSelected.textContent = 'Select Subject';
+    }
+    onSubjectChange();
+}
 
-        function onClassChange() {
-            const className = document.getElementById('class-value').value;
-            const subjects = className && className !== 'All' ? filterConfig.subjectMappings[className] || [] : [];
+function onSubjectChange() {
+    updateChapterDropdown();
+    fetchAndDisplayQuestions();
+}
 
-            const subjectDropdown = document.getElementById('subject-dropdown');
-            subjectDropdown.innerHTML = createDropdownHTML('subject', subjects, 'Select Subject');
-            addDropdownListener('subject-dropdown', onSubjectChange);
+async function updateChapterDropdown() {
+    const classVal = document.getElementById('class-value').value;
+    const subjectVal = document.getElementById('subject-value').value;
+    const chapterDropdown = document.getElementById('chapter-dropdown');
 
-            const subjectInput = document.getElementById('subject-value');
-            const subjectSelected = subjectDropdown.querySelector('.selected-option');
-            if (subjects.length > 0) {
-                subjectInput.value = subjects[0];
-                subjectSelected.textContent = subjects[0];
-            } else {
-                subjectInput.value = '';
-                subjectSelected.textContent = 'Select Subject';
+    if (!classVal || classVal === 'All' || !subjectVal || subjectVal === 'All') {
+        chapterDropdown.innerHTML = createDropdownHTML('chapter', [], 'Select Chapter');
+        addDropdownListener('chapter-dropdown', fetchAndDisplayQuestions);
+        return;
+    }
+
+    try {
+        const query = db.collection('questions')
+            .where('class', '==', classVal)
+            .where('subject', '==', subjectVal);
+
+        const snapshot = await query.get();
+        const chapters = new Set();
+        snapshot.forEach(doc => {
+            if (doc.data().chapter) {
+                chapters.add(doc.data().chapter);
             }
-            onSubjectChange();
-        }
+        });
 
-        function onSubjectChange() {
-            updateChapterDropdown();
-            fetchAndDisplayQuestions();
-        }
+        chapterDropdown.innerHTML = createDropdownHTML('chapter', Array.from(chapters));
+        addDropdownListener('chapter-dropdown', fetchAndDisplayQuestions);
 
-        async function updateChapterDropdown() {
-            const classVal = document.getElementById('class-value').value;
-            const subjectVal = document.getElementById('subject-value').value;
-            const chapterDropdown = document.getElementById('chapter-dropdown');
-
-            if (!classVal || classVal === 'All' || !subjectVal || subjectVal === 'All') {
-                chapterDropdown.innerHTML = createDropdownHTML('chapter', [], 'Select Chapter');
-                addDropdownListener('chapter-dropdown', fetchAndDisplayQuestions);
-                return;
-            }
-
-            try {
-                const query = db.collection('questions')
-                    .where('class', '==', classVal)
-                    .where('subject', '==', subjectVal);
-
-                const snapshot = await query.get();
-                const chapters = new Set();
-                snapshot.forEach(doc => {
-                    if (doc.data().chapter) {
-                        chapters.add(doc.data().chapter);
-                    }
-                });
-
-                chapterDropdown.innerHTML = createDropdownHTML('chapter', Array.from(chapters));
-                addDropdownListener('chapter-dropdown', fetchAndDisplayQuestions);
-
-            } catch (error) {
-                console.error("Error fetching chapters: ", error);
-            }
-        }
-
-        async function fetchAndDisplayQuestions() {
-            if (!currentUser) return;
-
-            const displayArea = document.getElementById('questions-display-area');
-            displayArea.innerHTML = '<p class="no-questions-message">Loading questions...</p>';
-
-            try {
-                const classVal = document.getElementById('class-value').value;
-                const subjectVal = document.getElementById('subject-value').value;
-                const qtypeVal = document.getElementById('qtype-value').value;
-                const chapterVal = document.getElementById('chapter-value').value;
-                const marksVal = document.getElementById('marks-value').value;
-                const numericMarks = parseInt(marksVal, 10);
-
-                let query = db.collection('questions');
-                if (classVal && classVal !== 'Select Class' && classVal !== 'All') {
-                    query = query.where('class', '==', classVal);
-                }
-                if (subjectVal && subjectVal !== 'Select Subject' && subjectVal !== 'All') {
-                    query = query.where('subject', '==', subjectVal);
-                }
-                if (chapterVal && chapterVal !== 'Select Chapter' && chapterVal !== 'All') {
-                    query = query.where('chapter', '==', chapterVal);
-                }
-                query = query.orderBy("questionNumber");
-
-                const snapshot = await query.get();
-
-                if (snapshot.empty) {
-                    displayArea.innerHTML = '<p class="no-questions-message">No questions found matching your criteria.</p>';
-                    return;
-                }
-
-                let questionsHTML = '';
-                let questionCount = 0;
-
-                snapshot.forEach(doc => {
-                    const data = doc.data();
-
-                    if (marksVal !== 'All') {
-                        const questionMarks = Number(data.marks);
-                        if (questionMarks !== numericMarks) {
-                            return;
-                        }
-                    }
-                   if (qtypeVal && qtypeVal !== 'All') {
-    if (qtypeVal === 'MCQ (Single)') {
-        // Show if marked as MCQ (Single), OR (for old data) exactly 4 options and not marked Multiple
-        if (
-            (data.mcqType && data.mcqType !== 'MCQ (Single)') ||
-            (!data.mcqType && (!Array.isArray(data.options) || data.options.length !== 4))
-        ) return;
-    } else if (qtypeVal === 'MCQ (Multiple)') {
-        // Show if marked as MCQ (Multiple)
-        if (data.mcqType !== 'MCQ (Multiple)') return;
-    } else if (qtypeVal === 'Descriptive') {
-        // Show if not MCQ (Single) or MCQ (Multiple), OR old data (not 4 options)
-        if (
-            (data.mcqType === 'MCQ (Single)' || data.mcqType === 'MCQ (Multiple)') ||
-            (Array.isArray(data.options) && data.options.length === 4 && (!data.mcqType || data.mcqType === ''))
-        ) return;
+    } catch (error) {
+        console.error("Error fetching chapters: ", error);
     }
 }
-                   questionCount++;
-                    questionsHTML += 
-                        <div class="question-item" data-id="${doc.id}">
-                           <div class="question-meta">
-                        ${data.metaLine || Q${questionCount}: ${data.difficulty || 'N/A'}, ${data.marks || 'N/A'} Mark(s)}
+
+async function fetchAndDisplayQuestions() {
+    if (!currentUser) return;
+
+    const displayArea = document.getElementById('questions-display-area');
+    displayArea.innerHTML = '<p class="no-questions-message">Loading questions...</p>';
+
+    try {
+        const classVal = document.getElementById('class-value').value;
+        const subjectVal = document.getElementById('subject-value').value;
+        const qtypeVal = document.getElementById('qtype-value').value;
+        const chapterVal = document.getElementById('chapter-value').value;
+        const marksVal = document.getElementById('marks-value').value;
+        const numericMarks = parseInt(marksVal, 10);
+
+        let query = db.collection('questions');
+        if (classVal && classVal !== 'Select Class' && classVal !== 'All') {
+            query = query.where('class', '==', classVal);
+        }
+        if (subjectVal && subjectVal !== 'Select Subject' && subjectVal !== 'All') {
+            query = query.where('subject', '==', subjectVal);
+        }
+        if (chapterVal && chapterVal !== 'Select Chapter' && chapterVal !== 'All') {
+            query = query.where('chapter', '==', chapterVal);
+        }
+        query = query.orderBy("questionNumber");
+
+        const snapshot = await query.get();
+
+        if (snapshot.empty) {
+            displayArea.innerHTML = '<p class="no-questions-message">No questions found matching your criteria.</p>';
+            return;
+        }
+
+        let questionsHTML = '';
+        let questionCount = 0;
+
+        snapshot.forEach(doc => {
+            const data = doc.data();
+
+            if (marksVal !== 'All') {
+                const questionMarks = Number(data.marks);
+                if (questionMarks !== numericMarks) {
+                    return;
+                }
+            }
+            if (qtypeVal && qtypeVal !== 'All') {
+                if (qtypeVal === 'MCQ (Single)') {
+                    // Show if marked as MCQ (Single), OR (for old data) exactly 4 options and not marked Multiple
+                    if (
+                        (data.mcqType && data.mcqType !== 'MCQ (Single)') ||
+                        (!data.mcqType && (!Array.isArray(data.options) || data.options.length !== 4))
+                    ) return;
+                } else if (qtypeVal === 'MCQ (Multiple)') {
+                    // Show if marked as MCQ (Multiple)
+                    if (data.mcqType !== 'MCQ (Multiple)') return;
+                } else if (qtypeVal === 'Descriptive') {
+                    // Show if not MCQ (Single) or MCQ (Multiple), OR old data (not 4 options)
+                    if (
+                        (data.mcqType === 'MCQ (Single)' || data.mcqType === 'MCQ (Multiple)') ||
+                        (Array.isArray(data.options) && data.options.length === 4 && (!data.mcqType || data.mcqType === ''))
+                    ) return;
+                }
+            }
+            questionCount++;
+            questionsHTML += `
+                <div class="question-item" data-id="${doc.id}">
+                    <div class="question-meta">
+                        ${data.metaLine || `Q${questionCount}: ${data.difficulty || 'N/A'}, ${data.marks || 'N/A'} Mark(s)`}
                         ${(data.mcqType && (data.mcqType === 'MCQ (Single)' || data.mcqType === 'MCQ (Multiple)'))
-                          ? <span style="color:#126c30;font-weight:600;margin-left:10px;">[${data.mcqType}]</span> : ''}
+                          ? `<span style="color:#126c30;font-weight:600;margin-left:10px;">[${data.mcqType}]</span>` : ''}
                     </div>
-                            <div class="question-text">
-                    ${
-                        Array.isArray(data.options) && data.options.length === 4
-                        ? 
+                    <div class="question-text">
+                        ${
+                            Array.isArray(data.options) && data.options.length === 4
+                            ? `
                                 <div style="font-weight:bold;margin-bottom:0;padding-bottom:0;">${data.question}</div>
                                 <div style="margin-left:18px;">
-                                <div>${data.options[0]}</div>
-                                <div>${data.options[1]}</div>
-                                <div>${data.options[2]}</div>
-                                <div>${data.options[3]}</div>
-                            </div>
-                        
-                        : (data.body || data.text)
-                    }
-                    ${data.image
-                        ? <img src="${data.image}">
-                           <button type="button" class="delete-img-btn" style="margin-left:12px; color:#c82333; background:none; border:none; cursor:pointer;">❌ Delete Image</button>
-                        : ''
-                    }
-                </div>
+                                    <div>${data.options[0]}</div>
+                                    <div>${data.options[1]}</div>
+                                    <div>${data.options[2]}</div>
+                                    <div>${data.options[3]}</div>
+                                </div>
+                            `
+                            : (data.body || data.text)
+                        }
+                        ${data.image
+                            ? `<img src="${data.image}">
+                               <button type="button" class="delete-img-btn" style="margin-left:12px; color:#c82333; background:none; border:none; cursor:pointer;">❌ Delete Image</button>`
+                            : ''
+                        }
+                    </div>
                     <input type="file" accept="image/*" style="display:none;" class="question-image-input">
-                            <button type="button" class="question-img-btn">📷 Add/Edit Image</button>
-                        </div>
-                    ;
-                });
+                    <button type="button" class="question-img-btn">📷 Add/Edit Image</button>
+                </div>
+            `;
+        });
 
-                if (questionCount > 0) {
-                    displayArea.innerHTML = questionsHTML;
+        if (questionCount > 0) {
+            displayArea.innerHTML = questionsHTML;
 
-                    document.querySelectorAll('.question-img-btn').forEach(btn => {
-                        btn.onclick = function() {
-                            const container = btn.closest('.question-item');
-                            const input = container.querySelector('.question-image-input');
-                            input.click();
-                        };
-                    });
-                    document.querySelectorAll('.question-image-input').forEach(input => {
-                        input.onchange = async function() {
-                            const file = input.files[0];
-                            if (!file) return;
-                            const reader = new FileReader();
-                            reader.onload = async function(e) {
-                                let img = input.closest('.question-item').querySelector('img');
-                                if (!img) {
-                                    img = document.createElement('img');
-                                    img.style.maxWidth = '100%';
-                                    img.style.marginTop = '8px';
-                                    input.closest('.question-item').appendChild(img);
-                                }
-                                img.src = e.target.result;
-                                const docId = input.closest('.question-item').getAttribute('data-id');
-                                await db.collection('questions').doc(docId).update({
-                                    image: e.target.result
-                                });
-                                alert('Image saved!');
-                            };
-                            reader.readAsDataURL(file);
-                        };
-                    });
-
-                    document.querySelectorAll('.delete-img-btn').forEach(btn => {
-                        btn.onclick = async function() {
-                            const container = btn.closest('.question-item');
-                            const docId = container.getAttribute('data-id');
-                            if (!docId) return;
-                            if (!confirm("Delete the image from this question?")) return;
-                            try {
-                                await db.collection('questions').doc(docId).update({
-                                    image: firebase.firestore.FieldValue.delete()
-                                });
-                                fetchAndDisplayQuestions();
-                            } catch (err) {
-                                alert("Could not delete image: " + err.message);
-                            }
-                        };
-                    });
-                    
-                    if (window.MathJax && typeof window.MathJax.typesetPromise === 'function') {
-                        window.MathJax.typesetPromise([displayArea]).catch(function (err) {
-                            console.error('MathJax rendering error:', err);
+            document.querySelectorAll('.question-img-btn').forEach(btn => {
+                btn.onclick = function() {
+                    const container = btn.closest('.question-item');
+                    const input = container.querySelector('.question-image-input');
+                    input.click();
+                };
+            });
+            document.querySelectorAll('.question-image-input').forEach(input => {
+                input.onchange = async function() {
+                    const file = input.files[0];
+                    if (!file) return;
+                    const reader = new FileReader();
+                    reader.onload = async function(e) {
+                        let img = input.closest('.question-item').querySelector('img');
+                        if (!img) {
+                            img = document.createElement('img');
+                            img.style.maxWidth = '100%';
+                            img.style.marginTop = '8px';
+                            input.closest('.question-item').appendChild(img);
+                        }
+                        img.src = e.target.result;
+                        const docId = input.closest('.question-item').getAttribute('data-id');
+                        await db.collection('questions').doc(docId).update({
+                            image: e.target.result
                         });
-                    }
+                        alert('Image saved!');
+                    };
+                    reader.readAsDataURL(file);
+                };
+            });
 
-                } else {
-                    displayArea.innerHTML = '<p class="no-questions-message">No questions found matching all filter criteria.</p>';
-                }
-            } catch (error) {
-                console.error("Error fetching questions: ", error);
-                displayArea.innerHTML = '<p class="no-questions-message">An error occurred while fetching questions.</p>';
+            document.querySelectorAll('.delete-img-btn').forEach(btn => {
+                btn.onclick = async function() {
+                    const container = btn.closest('.question-item');
+                    const docId = container.getAttribute('data-id');
+                    if (!docId) return;
+                    if (!confirm("Delete the image from this question?")) return;
+                    try {
+                        await db.collection('questions').doc(docId).update({
+                            image: firebase.firestore.FieldValue.delete()
+                        });
+                        fetchAndDisplayQuestions();
+                    } catch (err) {
+                        alert("Could not delete image: " + err.message);
+                    }
+                };
+            });
+
+            if (window.MathJax && typeof window.MathJax.typesetPromise === 'function') {
+                window.MathJax.typesetPromise([displayArea]).catch(function (err) {
+                    console.error('MathJax rendering error:', err);
+                });
             }
+
+        } else {
+            displayArea.innerHTML = '<p class="no-questions-message">No questions found matching all filter criteria.</p>';
         }
+    } catch (error) {
+        console.error("Error fetching questions: ", error);
+        displayArea.innerHTML = '<p class="no-questions-message">An error occurred while fetching questions.</p>';
+    }
+}
     </script>
 </body>
 </html>
