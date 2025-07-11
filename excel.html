@@ -59,11 +59,54 @@
     .form-row { margin-bottom: 18px; display: flex; flex-direction: column; gap: 7px;}
     .form-label { text-align:left; font-weight:600; color:#185496; margin-bottom:3px;}
     .custom-dropdown {
-      display:inline-block; background:#f7fafd; border:1.3px solid #bcd6ef;
-      border-radius: 6px; min-width:170px; padding:10px 13px; font-size:1.08em;
-      color:#12416c; font-weight:500; cursor:pointer; transition:border .17s;
+      border: 1.4px solid #1467b7;
+      border-radius: 7px;
+      background: #f7fafd;
+      margin-bottom: 15px;
+      width: 100%;
+      position: relative;
+      font-size: 1.09em;
+      min-width: 170px;
+      display: inline-block;
     }
-    .custom-dropdown:focus { border:1.7px solid #1762a7; outline:none;}
+    .dropdown-selected {
+      padding: 13px 14px;
+      cursor: pointer;
+      user-select: none;
+      border-radius: 7px;
+      font-weight: 500;
+      color: #12416c;
+      background: #f7fafd;
+    }
+    .dropdown-list {
+      position: absolute;
+      top: 100%; left: 0; right: 0;
+      background: #fff;
+      border: 1.2px solid #1467b7;
+      border-top: none;
+      border-radius: 0 0 7px 7px;
+      box-shadow: 0 8px 24px #1467b720;
+      z-index: 9;
+      max-height: 220px;
+      overflow-y: auto;
+      display: none;
+    }
+    .dropdown-option {
+      padding: 13px 14px;
+      cursor: pointer;
+      color: #1762a7;
+      font-size: 1.05em;
+      background: #fff;
+      transition: background 0.15s;
+    }
+    .dropdown-option:hover {
+      background: #e3f2fd;
+    }
+    .dropdown-selected.disabled {
+      color: #b6b6b6 !important;
+      background: #f0f0f0 !important;
+      pointer-events: none;
+    }
     .download-btn {
       width: 100%;
       background: var(--primary);
@@ -99,7 +142,10 @@
       <h2>Download Class Marks</h2>
       <div class="form-row">
         <div class="form-label">Select Exam:</div>
-        <select id="examDropdown" class="custom-dropdown"><option>Loading...</option></select>
+        <div class="custom-dropdown" id="examDropdown" tabindex="0" style="margin-bottom: 18px;">
+          <div class="dropdown-selected" id="examSelected" data-value="">--Select--</div>
+          <div class="dropdown-list" id="examList"></div>
+        </div>
       </div>
       <button class="download-btn" id="excelBtn" disabled>
         <i class="fa-solid fa-file-excel"></i> Download Excel
@@ -155,6 +201,8 @@
 
   // -- DOM refs --
   const examDropdown = document.getElementById('examDropdown');
+  const examSelected = document.getElementById('examSelected');
+  const examList = document.getElementById('examList');
   const excelBtn = document.getElementById('excelBtn');
   const pdfBtn = document.getElementById('pdfBtn');
   const statusDiv = document.getElementById('status');
@@ -181,12 +229,18 @@
   });
 
   async function loadExams() {
-    examDropdown.innerHTML = `<option>Loading...</option>`;
+    // Show loading in dropdown
+    examSelected.textContent = 'Loading...';
+    examSelected.dataset.value = '';
+    examList.innerHTML = '';
+    examSelected.classList.add('disabled');
     excelBtn.disabled = pdfBtn.disabled = true;
     statusDiv.textContent = "";
 
     if (!academicYear || !classId || !sectionId) {
       statusDiv.textContent = "Class or section not selected.";
+      examSelected.textContent = "--Select--";
+      examSelected.classList.add('disabled');
       return;
     }
     try {
@@ -205,12 +259,18 @@
       });
       if (!exams.length) {
         statusDiv.textContent = "No exams found for this class group.";
-        examDropdown.innerHTML = `<option>No exams</option>`;
+        examList.innerHTML = `<div class="dropdown-option" style="color:#aaa;cursor:default;">No exams</div>`;
+        examSelected.textContent = "--Select--";
+        examSelected.classList.add('disabled');
         return;
       }
       // 2. List exams in dropdown
-      examDropdown.innerHTML = exams.map(ex => `<option value="${ex.id}">${ex.name}</option>`).join('');
-      examDropdown.selectedIndex = 0;
+      examList.innerHTML = exams.map(ex => 
+        `<div class="dropdown-option" data-id="${ex.id}">${ex.name}</div>`
+      ).join('');
+      examSelected.textContent = "--Select--";
+      examSelected.dataset.value = '';
+      examSelected.classList.remove('disabled');
       // 3. Students for section
       let studentsSnap = await db.collection('years').doc(academicYear)
         .collection('classes').doc(classId)
@@ -238,17 +298,36 @@
       excelBtn.disabled = pdfBtn.disabled = false;
     } catch (err) {
       statusDiv.textContent = "Error: " + err.message;
+      examSelected.textContent = "--Select--";
+      examSelected.classList.add('disabled');
     }
   }
 
-  examDropdown.onchange = function() {
-    selectedExam = examDropdown.value;
-    selectedExamObj = examMap[selectedExam] || null;
+  // ---- Modern Dropdown Logic ----
+  examSelected.onclick = function(e) {
+    if (examSelected.classList.contains('disabled')) return;
+    examList.style.display = (examList.style.display === 'block') ? 'none' : 'block';
+    e.stopPropagation();
+  };
+  document.addEventListener('click', function(e) {
+    examList.style.display = 'none';
+  });
+  examList.onclick = function(e) {
+    const opt = e.target.closest('.dropdown-option');
+    if (!opt) return;
+    examSelected.textContent = opt.textContent;
+    examSelected.dataset.value = opt.dataset.id;
+    examList.style.display = 'none';
+    selectedExam = opt.dataset.id;
+    selectedExamObj = examMap[selectedExam];
   };
 
   // ------------- EXCEL EXPORT -------------
   excelBtn.onclick = function() {
-    if (!selectedExamObj) { selectedExam = examDropdown.value; selectedExamObj = examMap[selectedExam]; }
+    if (!selectedExamObj) {
+      selectedExam = examSelected.dataset.value;
+      selectedExamObj = examMap[selectedExam];
+    }
     if (!selectedExamObj) { statusDiv.textContent = "Select an exam."; return; }
     statusDiv.textContent = "Preparing Excel...";
 
@@ -297,7 +376,10 @@
 
   // --------- PDF EXPORT -----------
   pdfBtn.onclick = function() {
-    if (!selectedExamObj) { selectedExam = examDropdown.value; selectedExamObj = examMap[selectedExam]; }
+    if (!selectedExamObj) {
+      selectedExam = examSelected.dataset.value;
+      selectedExamObj = examMap[selectedExam];
+    }
     if (!selectedExamObj) { statusDiv.textContent = "Select an exam."; return; }
     statusDiv.textContent = "Preparing PDF...";
 
@@ -316,7 +398,7 @@
         let v = marks[subj];
         row.push(v !== undefined && v !== null ? v : '');
         let mmax = subjMaxs[i];
-        if (typeof v === 'number' && !isNaN(v)) { total += v; tmax += mmax; }
+        if (typeof v === 'number' && !isNaN(v)) { total += mmax ? v : 0; tmax += mmax; }
         else { tmax += mmax; }
       }
       let percent = tmax ? (total / tmax) * 100 : 0;
