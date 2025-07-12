@@ -432,24 +432,47 @@ if (hasShuffledOptions) {
         .map(s => s.replace(/&nbsp;/g, ' ').trim())
         .filter(Boolean);
 
-    if (parts.length > 0) {
-        questionContentHTML = parts[0];
-        for (let i = 1; i < parts.length; i++) {
-            let line = parts[i];
-            let inlineOpts = line.match(/([A-D][).][^A-D]*)/g);
-            if (inlineOpts && inlineOpts.length >= 2) {
-                optionLines.push(...inlineOpts.map(opt => opt.trim()));
-            } else if (line) {
-                optionLines.push(line);
+   if (parts.length > 0) {
+    // Helper to auto-wrap all math in $...$
+    function autoLatexAll(str) {
+        // Matrices: E = ( -1 2 3 -4 ) or [ ... ]
+        str = str.replace(/([A-Za-z])\s*=\s*[\[\(]([\s\d\-\+]+)[\]\)]/g, function(match, name, nums) {
+            let rows = nums.trim().split(/\s+/);
+            let latexMatrix = '';
+            if (rows.length === 4) {
+                latexMatrix = `\\begin{pmatrix} ${rows[0]} & ${rows[1]} \\\\ ${rows[2]} & ${rows[3]} \\end{pmatrix}`;
+            } else if (rows.length === 6) {
+                latexMatrix = `\\begin{pmatrix} ${rows[0]} & ${rows[1]} & ${rows[2]} \\\\ ${rows[3]} & ${rows[4]} & ${rows[5]} \\end{pmatrix}`;
+            } else {
+                latexMatrix = nums;
             }
-        }
-        if (optionLines.length === 4) {
-            optionLines = optionLines.map((opt, i) =>
-                /^[A-D][).]/.test(opt) ? opt : String.fromCharCode(65 + i) + ") " + opt
-            );
-            isMCQ = true;
+            return `${name} = $${latexMatrix}$`;
+        });
+        // All likely equations: wrap with $...$
+        str = str.replace(/([A-Za-z0-9\+\-\*\/\^\=\(\)]{3,})/g, function(m) {
+            if (m.match(/\$/)) return m;
+            if (/[=\^\/]/.test(m)) return `$${m}$`;
+            return m;
+        });
+        return str;
+    }
+    questionContentHTML = autoLatexAll(parts[0]);
+    for (let i = 1; i < parts.length; i++) {
+        let line = parts[i];
+        let inlineOpts = line.match(/([A-D][).][^A-D]*)/g);
+        if (inlineOpts && inlineOpts.length >= 2) {
+            optionLines.push(...inlineOpts.map(opt => opt.trim()));
+        } else if (line) {
+            optionLines.push(line);
         }
     }
+    if (optionLines.length === 4) {
+        optionLines = optionLines.map((opt, i) =>
+            /^[A-D][).]/.test(opt) ? opt : String.fromCharCode(65 + i) + ") " + opt
+        );
+        isMCQ = true;
+    }
+}
 }
                 if (optionLines.length === 4) {
                 // Check for MathJax/LaTeX or force four in a row for complex options
