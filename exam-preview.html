@@ -388,24 +388,12 @@ function renderPrintPreview() {
     const page = document.createElement('div');
     page.className = 'a4-page';
 
-    // Define autoLatexAll function with explicit LaTeX wrapping
-    function autoLatexAll(str) {
-        // Convert matrices (e.g., [1 2; 3 4]) to LaTeX
-        str = str.replace(/\[(-?\d+)\s+(-?\d+)\s*;\s*(-?\d+)\s+(-?\d+)\]/g,
-            function(_, a, b, c, d) {
-                return `$\\begin{pmatrix} ${a} & ${b} \\\\ ${c} & ${d} \\end{pmatrix}$`;
-            });
-        // Convert equations with =, <, or >
-        str = str.replace(/([a-zA-Z0-9\+\-\*\/\^]+\s*[=<>]\s*[a-zA-Z0-9\+\-\*\/\^]+)/g, function(m) {
-            return `$ ${m} $`;
-        });
-        // Convert square roots
-        str = str.replace(/sqrt\(([^)]+)\)/g, `$\\sqrt{${1}}$`);
-        // Convert fractions
-        str = str.replace(/(\d+)\/(\d+)/g, `$\\frac{${1}}{${2}}$`);
-        // Return with proper wrapping
-        return str.trim();
-    }
+    // Define autoLatexAll function here
+    function renderPrintPreview() {
+    const container = document.getElementById('print-preview');
+    container.innerHTML = '';
+    const page = document.createElement('div');
+    page.className = 'a4-page';
 
     page.innerHTML = `
         <div class="heading-row">
@@ -433,69 +421,143 @@ function renderPrintPreview() {
 
     let contentHTML = '';
     let qNum = 1;
-    for (const section of (exam.sections || [])) {
+    for (const section of(exam.sections || [])) {
         if (section.name || section.instructions) {
             contentHTML += `<div class="section-header">${section.name || ''}${(section.instructions ? ': ' + section.instructions : '')}</div>`;
         }
 
         if (section.questions && section.questions.length > 0) {
-            const questionsHTML = section.questions.map((q, index) => {
-                const currentQNum = qNum + index;
-                let questionContentHTML = autoLatexAll(q.text || q.question || '');
-                let optionLines = [];
-                let isMCQ = false;
-                let optionsHTML = "";
-                const hasShuffledOptions = Array.isArray(q.options) && q.options.length === 4;
-
-                if (hasShuffledOptions) {
-                    questionContentHTML = autoLatexAll((q.question || q.text || '').replace(/\s*A\).*/g, '').trim());
-                    optionLines = q.options.map((opt, idx) => {
-                        let cleanOpt = opt.replace(/^[A-D][).]?\s*/, '');
-                        return String.fromCharCode(65 + idx) + ") " + autoLatexAll(cleanOpt.trim());
+           const questionsHTML = section.questions.map((q, index) => {
+        const currentQNum = qNum + index;
+        let questionContentHTML = '';
+        let optionLines = [];
+        let isMCQ = false;
+        let optionsHTML = "";
+        const hasShuffledOptions = Array.isArray(q.options) && q.options.length === 4;
+    
+        if (hasShuffledOptions) {
+            // Use pre-shuffled options, normalize display
+            questionContentHTML = autoLatexAll((q.question || q.text || '').replace(/\s*A\).*/g, '').trim());
+            optionLines = q.options.map((opt, idx) => {
+                let cleanOpt = opt.replace(/^[A-D][).]?\s*/, '');
+                return String.fromCharCode(65 + idx) + ") " + cleanOpt.trim();
+            });
+            isMCQ = true;
+        } else {
+            // Universal fallback for text MCQs
+            let html = (q.text || q.question || '').replace(/<img[^>]*>/gi, '');
+            let parts = html.split(/<br\s*\/?>|<\/div>|<div[^>]*>/gi)
+                .map(s => s.replace(/ /g, ' ').trim())
+                .filter(Boolean);
+    
+            if (parts.length > 0) {
+                function autoLatexAll(str) {
+                    // Convert matrices (2x2, or expand as needed)
+                    str = str.replace(/([\[\(])\s*(-?\d+)\s+(-?\d+)\s+(-?\d+)\s+(-?\d+)\s*([\]\)])/g,
+                        function(_, open, a, b, c, d, close) {
+                            return `$\\begin{pmatrix} ${a} & ${b} \\\\ ${c} & ${d} \\end{pmatrix}$`;
+                        });
+                    // Convert numbers or variables with power
+                    str = str.replace(/([a-zA-Z]\^\d+)/g, function(m) { return `$${m}$`; });
+                    // Convert basic inline equations (avoid duplicating existing $...$)
+                    str = str.replace(/([a-zA-Z0-9\+\-\*\/\^]+ ?[=<>] ?[a-zA-Z0-9\+\-\*\/\^]+)/g, function(m) {
+                        if (m.includes('\\begin{pmatrix)') || m.startsWith('$')) return m; // skip
+                        return `$${m}$`;
                     });
-                    isMCQ = true;
-                } else {
-                    let html = (q.text || q.question || '').replace(/<img[^>]*>/gi, '');
-                    let parts = html.split(/<br\s*\/?>|<\/div>|<div[^>]*>/gi)
-                        .map(s => s.replace(/ /g, ' ').trim())
-                        .filter(Boolean);
+                    // Convert simple square/cube roots and fractions
+                    str = str.replace(/sqrt\(([^)]+)\)/g, '\\sqrt{$1}');
+                    str = str.replace(/([0-9]+)\/([0-9]+)/g, '\\frac{$1}{$2}');
+                    // Try to wrap any [A-Za-z0-9()+\-\^=]+ between spaces with $...$ if not already
+                    str = str.replace(/([A-Za-z]\([^)]+\)|[A-Za-z]+\^\d+|[A-Za-z]+\_\d+|[A-Za-z]+)/g, function(m) {
+                        if (m.startsWith('$') || m.length <= 1) return m;
+                        return `$${m}$`;
+                    });
+                    return str;
+                }
+                questionContentHTML = autoLatexAll(q.text || q.question || '');
 
-                    if (parts.length > 0) {
-                        questionContentHTML = autoLatexAll(q.text || q.question || '');
-                        for (let i = 1; i < parts.length; i++) {
-                            let line = autoLatexAll(parts[i]);
-                            let inlineOpts = line.match(/([A-D][).][^A-D]*)/g);
-                            if (inlineOpts && inlineOpts.length >= 2) {
-                                optionLines.push(...inlineOpts.map(opt => autoLatexAll(opt.trim())));
-                            } else if (line) {
-                                optionLines.push(autoLatexAll(line));
-                            }
-                        }
-                        if (optionLines.length === 4) {
-                            optionLines = optionLines.map((opt, i) =>
-                                /^[A-D][).]/.test(opt) ? opt : String.fromCharCode(65 + i) + ") " + opt
-                            );
-                            isMCQ = true;
-                        }
+        for (let i = 1; i < parts.length; i++) {
+        let line = autoLatexAll(parts[i]);
+        let inlineOpts = line.match(/([A-D][).][^A-D]*)/g);
+        if (inlineOpts && inlineOpts.length >= 2) {
+            // Make sure each option goes through autoLatexAll too!
+            optionLines.push(...inlineOpts.map(opt => autoLatexAll(opt.trim())));
+        } else if (line) {
+            optionLines.push(autoLatexAll(line));
+        }
+    }
+    if (optionLines.length === 4) {
+        optionLines = optionLines.map((opt, i) =>
+            /^[A-D][).]/.test(opt) ? opt : String.fromCharCode(65 + i) + ") " + opt
+        );
+        isMCQ = true;
+    }
+}
+}
+                if (optionLines.length === 4) {
+                // Check for MathJax/LaTeX or force four in a row for complex options
+                const containsMath = optionLines.some(opt =>
+                    opt.includes('mjx-container') || opt.includes('$') || opt.includes('\\(') || opt.includes('\\[')
+                );
+              
+                if (containsMath) {
+                    // Always show four in a row for math options
+                    optionsHTML = `<div style="display:flex;gap:32px;flex-wrap:wrap;margin-bottom:3px;margin-left:2px;">
+                        ${optionLines.map(opt => `<span style="min-width:70px;display:inline-block;">${opt.trim()}</span>`).join('')}
+                    </div>`;
+                } else {
+                    // Original fit logic for plain text
+                    let dummy = document.createElement('span');
+                    dummy.style.cssText = 'visibility:hidden;position:absolute;white-space:nowrap;padding:0;margin:0;border:none;font-family:Times New Roman,Times,serif;font-size:1.11em;';
+                    dummy.innerText = optionLines.join('    ');
+                    document.body.appendChild(dummy);
+                    let fitsFour = dummy.offsetWidth < 440;
+                    document.body.removeChild(dummy);
+              
+                    // Try A+B, C+D on separate lines
+                    let abFits = fitsInLine(optionLines[0], optionLines[1]);
+                    let cdFits = fitsInLine(optionLines[2], optionLines[3]);
+              
+                    if (fitsFour) {
+                        optionsHTML = `<div style="display:flex;gap:32px;flex-wrap:wrap;margin-bottom:3px;margin-left:2px;">
+                            ${optionLines.map(opt => `<span style="min-width:70px;display:inline-block;">${opt.trim()}</span>`).join('')}
+                        </div>`;
+                    } else if (abFits && cdFits) {
+                        optionsHTML = `
+                    <div style="
+                        display: grid;
+                        grid-template-columns: 1fr 1fr;
+                        gap: 10px 32px;
+                        margin-bottom: 2px;
+                        margin-left: 2px;
+                        width: 100%;
+                    ">
+                        <span style="min-width:70px;display:inline-block;">${optionLines[0]}</span>
+                        <span style="min-width:70px;display:inline-block;">${optionLines[1]}</span>
+                        <span style="min-width:70px;display:inline-block;">${optionLines[2]}</span>
+                        <span style="min-width:70px;display:inline-block;">${optionLines[3]}</span>
+                    </div>
+                    `;
+                    } else {
+                        optionsHTML = optionLines.map(opt =>
+                            `<div style="margin-bottom:2px;margin-left:2px;">${opt.trim().replace(/\n/g, '<br>')}</div>`
+                        ).join('');
                     }
                 }
-
-                if (optionLines.length === 4) {
-                    optionsHTML = `<div style="display:flex;gap:32px;flex-wrap:wrap;margin-bottom:3px;margin-left:2px;">
-                        ${optionLines.map(opt => `<span style="min-width:70px;display:inline-block;">${opt}</span>`).join('')}
-                    </div>`;
                 } else if (optionLines.length > 0) {
-                    optionsHTML = optionLines.map(opt =>
-                        `<div style="margin-bottom:2px;margin-left:2px;">${opt}</div>`
-                    ).join('');
-                }
-
+                  // Not exactly 4 options (e.g. 2 or 3)
+                  optionsHTML = optionLines.map(opt =>
+                      `<div style="margin-bottom:2px;margin-left:2px;">${opt.trim().replace(/\n/g, '<br>')}</div>`
+                  ).join('');
+              } else {
+                  // Not MCQ: nothing to render here
+              }
                 const imageHTML = q.image ? `<div class="question-img-block"><img class="question-img" src="${q.image}" alt="Question Image" /></div>` : '';
                 return `
                     <div class="question-container">
                         <div class="question-number">${currentQNum}.</div>
                         <div class="question-body">
-                            <div class="question-text">${questionContentHTML}</div>
+                            <div class="question-text" style="font-size:1.15em;">${q.question || q.text || ''}</div>
                             ${imageHTML}
                             <div class="options-block">${optionsHTML}</div>
                         </div>
@@ -511,10 +573,13 @@ function renderPrintPreview() {
     page.innerHTML += `<div class="print-footer-spacer"></div>`;
     container.appendChild(page);
     setTimeout(() => {
-        if (window.MathJax && typeof window.MathJax.typesetPromise === "function") {
-            window.MathJax.typesetPromise([document.getElementById('print-preview')]);
-        }
-    }, 50);
+    if (window.MathJax && typeof window.MathJax.typesetPromise === "function") {
+    window.MathJax.typesetPromise().then(() => {
+      // Just to be safe, run it again after 100ms (helps slow devices/browsers)
+      setTimeout(() => window.MathJax.typesetPromise(), 100);
+    });
+  }
+}, 50);
 }
 renderPrintPreview();
 
