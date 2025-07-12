@@ -433,47 +433,43 @@ if (hasShuffledOptions) {
         .filter(Boolean);
 
       if (parts.length > 0) {
-        // AUTO-LATEX CONVERTER FOR ALL QUESTIONS
-        function autoLatexAll(str) {
-            // Matrix [a b c d] or (a b c d) or [a b; c d] → LaTeX pmatrix
-            str = str.replace(/([\[\(])\s*(-?\d+)\s+(-?\d+)\s+(-?\d+)\s+(-?\d+)\s*([\]\)])/g,
-                function(_, open, a, b, c, d, close) {
-                    // 2x2 matrix
-                    return `$\\begin{pmatrix} ${a} & ${b} \\\\ ${c} & ${d} \\end{pmatrix}$`;
-                });
-            // 3x1, 1x3, etc: you can add more patterns as needed
-
-            // x^2, x_2, x/y, etc, equations: wrap only if = or ^ or _ or /
-            str = str.replace(/([A-Za-z0-9\^\_\+\-\*\/\= ]{4,})/g, function(m) {
-                if (m.includes('$')) return m; // already wrapped
-                if (/[=^_\/]/.test(m)) return `$${m.trim()}$`;
-                return m;
+    // AUTO-LATEX CONVERTER FOR ALL QUESTIONS
+    function autoLatexAll(str) {
+        // 2x2 matrix like [a b c d] or (a b c d)
+        str = str.replace(/([\[\(])\s*(-?\d+)\s+(-?\d+)\s+(-?\d+)\s+(-?\d+)\s*([\]\)])/g,
+            function(_, open, a, b, c, d, close) {
+                return `$\\begin{pmatrix} ${a} & ${b} \\\\ ${c} & ${d} \\end{pmatrix}$`;
             });
+        // Common equations, powers, fractions, etc.
+        str = str.replace(/([A-Za-z0-9\^\_\+\-\*\/\= ]{4,})/g, function(m) {
+            if (m.includes('$')) return m;
+            if (/[=^_\/]/.test(m)) return `$${m.trim()}$`;
+            return m;
+        });
+        // Square roots, etc.
+        str = str.replace(/√/g, '\\sqrt{}');
+        return str;
+    }
 
-            // Common math symbols (auto): (optional, add more if you want)
-            str = str.replace(/√/g, '\\sqrt{}');
+    questionContentHTML = autoLatexAll(parts[0]);
 
-            return str;
-        }
-
-        questionContentHTML = autoLatexAll(parts[0]);
-
-        for (let i = 1; i < parts.length; i++) {
-            let line = autoLatexAll(parts[i]);
-            let inlineOpts = line.match(/([A-D][).][^A-D]*)/g);
-            if (inlineOpts && inlineOpts.length >= 2) {
-                optionLines.push(...inlineOpts.map(opt => opt.trim()));
-            } else if (line) {
-                optionLines.push(line);
-            }
-        }
-        if (optionLines.length === 4) {
-            optionLines = optionLines.map((opt, i) =>
-                /^[A-D][).]/.test(opt) ? opt : String.fromCharCode(65 + i) + ") " + opt
-            );
-            isMCQ = true;
+    for (let i = 1; i < parts.length; i++) {
+        let line = autoLatexAll(parts[i]);
+        let inlineOpts = line.match(/([A-D][).][^A-D]*)/g);
+        if (inlineOpts && inlineOpts.length >= 2) {
+            // Make sure each option goes through autoLatexAll too!
+            optionLines.push(...inlineOpts.map(opt => autoLatexAll(opt.trim())));
+        } else if (line) {
+            optionLines.push(autoLatexAll(line));
         }
     }
+    if (optionLines.length === 4) {
+        optionLines = optionLines.map((opt, i) =>
+            /^[A-D][).]/.test(opt) ? opt : String.fromCharCode(65 + i) + ") " + opt
+        );
+        isMCQ = true;
+    }
+}
 }
                 if (optionLines.length === 4) {
                 // Check for MathJax/LaTeX or force four in a row for complex options
