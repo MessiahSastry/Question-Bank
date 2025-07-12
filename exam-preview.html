@@ -413,32 +413,44 @@ function renderPrintPreview() {
             const questionsHTML = section.questions.map((q, index) => {
                 const currentQNum = qNum + index;
                 let questionContentHTML = '';
-                let optionsHTML = '';
-                let optionLines = [];
-                // Calculate optionLines for both MCQ-from-bank and parsed
-                const hasShuffledOptions = Array.isArray(q.options) && q.options.length === 4;
+let optionLines = [];
+let isMCQ = false;
+const hasShuffledOptions = Array.isArray(q.options) && q.options.length === 4;
 
-                if (hasShuffledOptions) {
-                questionContentHTML = (q.question || q.text || '').replace(/\s*A\).*/g, '').trim();
-                // Remove any leading A) B) C) D) from stored options so they are not doubled
-                optionLines = q.options.map((opt, idx) => {
-                    // Remove starting A) or B) etc. if present
-                    let cleanOpt = opt.replace(/^[A-D]\)\s*/, '');
-                    return String.fromCharCode(65 + idx) + ") " + cleanOpt.trim();
-                });
-            } else {
-                    const formatted = formatQuestionText(q.text || '');
-                    const parts = formatted.split(/\n(?=\s*[A-D]\))/);
-                    const isMCQ = parts.length > 1;
-                    if (isMCQ) {
-                        questionContentHTML = parts[0];
-                        optionLines = parts.slice(1).map(opt => opt.replace(/\n+/g, ' ').trim());
-                    } else {
-                        questionContentHTML = formatted.replace(/\n/g, ' ');
-                        optionLines = [];
-                    }
-                }
+if (hasShuffledOptions) {
+    // Use pre-shuffled options, normalize display
+    questionContentHTML = (q.question || q.text || '').replace(/\s*A\).*/g, '').trim();
+    optionLines = q.options.map((opt, idx) => {
+        let cleanOpt = opt.replace(/^[A-D][).]?\s*/, '');
+        return String.fromCharCode(65 + idx) + ") " + cleanOpt.trim();
+    });
+    isMCQ = true;
+} else {
+    // Universal fallback for text MCQs
+    let html = (q.text || q.question || '').replace(/<img[^>]*>/gi, '');
+    let parts = html.split(/<br\s*\/?>|<\/div>|<div[^>]*>/gi)
+        .map(s => s.replace(/&nbsp;/g, ' ').trim())
+        .filter(Boolean);
 
+    if (parts.length > 0) {
+        questionContentHTML = parts[0];
+        for (let i = 1; i < parts.length; i++) {
+            let line = parts[i];
+            let inlineOpts = line.match(/([A-D][).][^A-D]*)/g);
+            if (inlineOpts && inlineOpts.length >= 2) {
+                optionLines.push(...inlineOpts.map(opt => opt.trim()));
+            } else if (line) {
+                optionLines.push(line);
+            }
+        }
+        if (optionLines.length === 4) {
+            optionLines = optionLines.map((opt, i) =>
+                /^[A-D][).]/.test(opt) ? opt : String.fromCharCode(65 + i) + ") " + opt
+            );
+            isMCQ = true;
+        }
+    }
+}
                 if (optionLines.length === 4) {
                   let dummy = document.createElement('span');
                   dummy.style.cssText = 'visibility:hidden;position:absolute;white-space:nowrap;padding:0;margin:0;border:none;font-family:Times New Roman,Times,serif;font-size:1.11em;';
