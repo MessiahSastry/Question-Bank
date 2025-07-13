@@ -115,6 +115,47 @@
       max-width: 100vw;
       overflow-x: hidden;
     }
+    /* --- Custom Dropdown (Blue Border) --- */
+.custom-dropdown {
+  border: 1.4px solid #1467b7;
+  border-radius: 7px;
+  background: #f7fafd;
+  font-size: 1.08em;
+  padding: 11px 10px;
+  cursor: pointer;
+  position: relative;
+  width: 100%;
+  margin-bottom: 2px;
+}
+.dropdown-selected {
+  padding: 2px 0;
+  min-height: 1.5em;
+  user-select: none;
+}
+.dropdown-list {
+  display: none;
+  position: absolute;
+  left: 0; right: 0; top: 100%;
+  background: #fff;
+  border: 1.2px solid #1467b7;
+  border-top: none;
+  border-radius: 0 0 7px 7px;
+  z-index: 100;
+  box-shadow: 0 2px 6px #0f3d6b22;
+  max-height: 170px;
+  overflow-y: auto;
+}
+.dropdown-option {
+  padding: 9px 14px;
+  cursor: pointer;
+  transition: background 0.14s;
+  font-size: 1em;
+  color: #195084;
+}
+.dropdown-option:hover,
+.dropdown-option.selected {
+  background: #e7f1fd;
+}
   </style>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/choices.js/public/assets/styles/choices.min.css" />
 </head>
@@ -224,11 +265,42 @@ function getClassGroupName(className) {
   // ---- Popup Logic ----
   let subjectsForHallTicket = [];
 
-  function showSubjectDatePopup() {
-  // Start with current values or one empty row
+ async function showSubjectDatePopup() {
+  // Get selected year, class, section, exam
+  const year = yearSel.value;
+  const classId = classSel.value;
+  const sectionId = sectionSel.value;
+  const examId = examSel.value;
+  if (!year || !classId || !sectionId || !examId) {
+    alert("Select Year, Class, Section, Exam first!");
+    return;
+  }
+
+  // Fetch subject list from Firestore for the selected exam
+  let classObj = classes.find(c => c.id === classId);
+  let className = classObj ? classObj.name : '';
+  let classGroup = getClassGroupName(className);
+
+  let examDoc = await db.collection('years').doc(year)
+    .collection('exams').doc('classGroups')
+    .collection(classGroup).doc(examId).get();
+
+  let subjectsArr = [];
+  if (examDoc.exists) {
+    let data = examDoc.data();
+    if (data.subjects && Array.isArray(data.subjects)) {
+      subjectsArr = data.subjects.map(s => s.name);
+    }
+  }
+  if (!subjectsArr.length) {
+    alert('No subjects found for this exam in Firestore!');
+    return;
+  }
+
+  // Initialize with current or empty
   let current = (subjectsForHallTicket && subjectsForHallTicket.length)
     ? JSON.parse(JSON.stringify(subjectsForHallTicket))
-    : [{ subject: '', date: '' }];
+    : [{ subject: subjectsArr[0], date: '' }];
 
   let html = `
     <div class="popup-title">Enter Subjects & Dates</div>
@@ -245,36 +317,86 @@ function getClassGroupName(className) {
   `;
   document.getElementById('popup-content').innerHTML = html;
   document.getElementById('popup-bg').classList.add('show');
-  const subjectsList = document.getElementById('subjectsList');
+  const subjectsListDiv = document.getElementById('subjectsList');
 
   function renderRows() {
-    subjectsList.innerHTML = '';
+    subjectsListDiv.innerHTML = '';
     current.forEach((row, i) => {
+      // Prevent duplicate subjects
+      let usedSubjects = current.map(r => r.subject);
+      let availableSubjects = subjectsArr.filter(subj => subj === row.subject || !usedSubjects.includes(subj));
+
+      // --- Build custom dropdown HTML ---
+      let optionsHTML = subjectsArr.map(subj => `
+        <div class="dropdown-option${subj === row.subject ? ' selected' : ''}${usedSubjects.includes(subj) && subj !== row.subject ? ' disabled' : ''}" data-value="${subj}" style="${usedSubjects.includes(subj) && subj !== row.subject ? 'color:#bbb;pointer-events:none;' : ''}">
+          ${subj}
+        </div>
+      `).join('');
+
       const div = document.createElement('div');
       div.className = "subject-row";
-      div.style = "display:flex;align-items:center;gap:8px;margin-bottom:7px;";
       div.innerHTML = `
-        <input type="text" placeholder="Subject Name" value="${row.subject || ''}" required style="flex:2 1 0; min-width:0; padding: 10px; border-radius: 6px; border: 1px solid #c7d7ea; background: #f7fafd;" />
+        <div class="custom-dropdown subject-dropdown" tabindex="0" data-index="${i}" style="flex:2 1 0;">
+          <div class="dropdown-selected">${row.subject || 'Select Subject'}</div>
+          <div class="dropdown-list" style="display:none;">
+            ${optionsHTML}
+          </div>
+        </div>
         <input type="date" value="${row.date || ''}" required style="flex:1 1 0; min-width:0; padding: 10px; border-radius: 6px; border: 1px solid #c7d7ea; background: #f7fafd;" />
         <button type="button" class="remove-btn" style="flex:0 0 auto; min-width:64px; padding:8px 0; font-size:1em;${current.length <= 1 ? 'display:none;' : ''}">Remove</button>
       `;
-      div.querySelector('input[type="text"]').oninput = e => { current[i].subject = e.target.value; };
-      div.querySelector('input[type="date"]').oninput = e => { current[i].date = e.target.value; };
-      div.querySelector('.remove-btn').onclick = () => { current.splice(i, 1); renderRows(); };
-      subjectsList.appendChild(div);
+
+      // --- Dropdown JS Logic for this row ---
+      const dd = div.querySelector('.subject-dropdown');
+      const selected = dd.querySelector('.dropdown-selected');
+      const list = dd.querySelector('.dropdown-list');
+      dd.onclick = function(e) {
+        list.style.display = list.style.display === "none" ? "block" : "none";
+        e.stopPropagation();
+      };
+      // Option select logic
+      list.querySelectorAll('.dropdown-option').forEach(opt => {
+        opt.onclick = function(e) {
+          row.subject = this.getAttribute('data-value');
+          renderRows();
+          e.stopPropagation();
+        }
+      });
+      // Hide dropdown if clicked outside
+      document.addEventListener('click', function hideDD(ev) {
+        if (!dd.contains(ev.target)) {
+          list.style.display = "none";
+          document.removeEventListener('click', hideDD);
+        }
+      });
+
+      // Date input
+      div.querySelector('input[type="date"]').oninput = e => {
+        current[i].date = e.target.value;
+      };
+      // Remove button
+      div.querySelector('.remove-btn').onclick = () => {
+        current.splice(i, 1);
+        renderRows();
+      };
+      subjectsListDiv.appendChild(div);
     });
   }
+
   renderRows();
 
   document.getElementById('addSubjectBtn').onclick = () => {
-    current.push({ subject: '', date: '' });
+    // Find first unused subject
+    let unused = subjectsArr.find(subj => !current.some(row => row.subject === subj));
+    if (!unused) return;
+    current.push({ subject: unused, date: '' });
     renderRows();
   };
 
   document.getElementById('subjectForm').onsubmit = function (e) {
     e.preventDefault();
-    if (current.some(s => !s.subject.trim() || !s.date)) {
-      alert('Please fill all subject names and dates!');
+    if (current.some(s => !s.subject || !s.date)) {
+      alert('Please select all subjects and dates!');
       return;
     }
     subjectsForHallTicket = JSON.parse(JSON.stringify(current));
@@ -282,6 +404,7 @@ function getClassGroupName(className) {
   };
   document.querySelector('.popup-cancel-btn').onclick = closePopup;
 }
+
   function closePopup(){
     document.getElementById('popup-bg').classList.remove('show');
     document.getElementById('popup-content').innerHTML = '';
