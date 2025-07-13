@@ -158,6 +158,14 @@
           <option value="A">Afternoon</option>
         </select>
       </div>
+      <div>
+        <label for="branch">Branch</label>
+        <select id="branch" class="custom-dropdown">
+          <option value="all" selected>All</option>
+          <option value="main">Main</option>
+          <option value="ipd">IPD</option>
+        </select>
+      </div>
       <button class="btn-download" id="btnDownload"><i class="fa fa-download"></i>Download Absentees PDF</button>
     </div>
     <div class="report-preview" id="preview">
@@ -204,20 +212,21 @@
     dateInput.onchange = loadAndRender;
     sessionSelect.onchange = loadAndRender;
 
-    async function loadAndRender() {
+       async function loadAndRender() {
       const date = dateInput.value;
       const session = sessionSelect.value; // "M" or "A"
+      const branch = branchSelect.value;   // "all", "main", or "ipd"
       if (!date) {
         previewDiv.innerHTML = `<div style="text-align:center;color:#aaa;">Select a date to see absentees preview…</div>`;
         return;
       }
       previewDiv.innerHTML = `<div style="text-align:center;color:#bbb;"><i class="fa fa-spinner fa-spin"></i> Loading absentees…</div>`;
-      const {data, schoolHasAbsentees} = await getSchoolAbsenteesBySession(date, session);
+      const {data, schoolHasAbsentees} = await getSchoolAbsenteesBySession(date, session, branch);
       previewDiv.innerHTML = renderAbsenteesPreviewHTML(data, schoolHasAbsentees, date, session);
     }
 
     // 4. Fetch absentees grouped by class-section for selected session/date
-    async function getSchoolAbsenteesBySession(date, session) {
+    async function getSchoolAbsenteesBySession(date, session, branch = "all") {
       // session = "M" | "A"
       let allAbs = [];
       let schoolHasAbsentees = false;
@@ -240,7 +249,10 @@
         let sectionData = [];
         for (let secDoc of sectionsSnap.docs) {
           let sectionName = secDoc.data().name || secDoc.id;
-          // Get all students in this section
+          
+          // --- Branch filter logic ---
+          if (branch === "main" && sectionName.endsWith("(IPD)")) continue;
+          if (branch === "ipd" && !sectionName.endsWith("(IPD)")) continue;
           let studentsSnap = await secDoc.ref.collection('students').orderBy('roll').get();
           let students = [];
           studentsSnap.forEach(stuDoc => {
@@ -319,15 +331,16 @@
     }
 
     // 7. PDF generation
-    btnDownload.onclick = async function () {
+       btnDownload.onclick = async function () {
       btnDownload.disabled = true;
       btnDownload.innerHTML = `<i class="fa fa-spinner fa-spin"></i> Generating...`;
       try {
         const date = dateInput.value;
         const session = sessionSelect.value;
+        const branch = branchSelect.value;
         const sessionName = (session === "M") ? "Morning" : "Afternoon";
-        const {data, schoolHasAbsentees} = await getSchoolAbsenteesBySession(date, session);
-        // jsPDF setup
+        const {data, schoolHasAbsentees} = await getSchoolAbsenteesBySession(date, session, branch);
+           // jsPDF setup
         const { jsPDF } = window.jspdf;
         const doc = new jsPDF({ orientation: "p", unit: "mm", format: "a4" });
         let y = 20;
