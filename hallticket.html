@@ -524,7 +524,14 @@ function getClassGroupName(className) {
   let clsShort = getClassShortCode(cls);
   return `SPS${clsShort}${examShort}${yearShort}${rollStr}`;
 }
-
+function sortSubjectsByDate(subjs) {
+  // Make a copy, then sort by date ascending
+  return subjs.slice().sort((a, b) => {
+    if (!a.date) return 1;
+    if (!b.date) return -1;
+    return new Date(a.date) - new Date(b.date);
+  });
+}
   // ---- Download PDF logic ----
   document.getElementById('downloadBtn').onclick = async () => {
   let students = await getStudents();
@@ -584,45 +591,48 @@ function getClassGroupName(className) {
     pdf.text((cls+"").toUpperCase(), COORDS.class[0], COORDS.class[1], { align: "left" });
     pdf.text((hallNo+"").toUpperCase(), COORDS.hall[0], COORDS.hall[1], { align: "left" });
 
-    // Subjects & Dates (Two columns)
-      // Subjects & Dates (Two columns)
-      pdf.setFont("courier", "bold");
-      pdf.setTextColor(0, 0, 0);  // PURE BLACK
-      
-      const totalSubjects = subjectsForHallTicket.length;
-      const split = Math.ceil(totalSubjects / 2);
-      
-      // --- NEW: Calculate line positions --- //
-      const gap = 160;
-      const leftX = COORDS.subjCol1[0];
-      const rightX = COORDS.subjCol2[0];
-      const lineX = 400; // vertical line between columns (adjust +5 for best center)
-      
-      // Find top Y (first subject row) and bottom Y (last row)
-      const topY = COORDS.subjCol1[1] - 8;
-      const maxRows = Math.max(split, totalSubjects - split);
-      const bottomY = COORDS.subjCol1[1] + (maxRows - 1) * COORDS.subjGapY + 15;
-      
-      // --- DRAW VERTICAL LINE ---
-      pdf.setDrawColor(0,0,0); // blue line, use (0,0,0) for black
-      pdf.setLineWidth(1.1);
-      pdf.line(lineX, topY, lineX, bottomY);
-           
-    // First column
-      for (let i = 0; i < split; i++) {
-        const subj = subjectsForHallTicket[i];
-        const y = COORDS.subjCol1[1] + i * COORDS.subjGapY;
-        pdf.text((subj.subject+"").toUpperCase(), COORDS.subjCol1[0], y, { align: "left" });
-        pdf.text("- " + formatDate(subj.date), COORDS.subjCol1[0] + gap, y, { align: "left" });
-      }
-      // Second column
-      for (let i = split; i < totalSubjects; i++) {
-        const subj = subjectsForHallTicket[i];
-        const y = COORDS.subjCol2[1] + (i - split) * COORDS.subjGapY;
-        pdf.text((subj.subject+"").toUpperCase(), COORDS.subjCol2[0], y, { align: "left" });
-        pdf.text("- " + formatDate(subj.date), COORDS.subjCol2[0] + gap, y, { align: "left" });
-      }
+       // Subjects & Dates (Two columns)
+      // --- Sort subjects by date first ---
+const sortedSubjects = sortSubjectsByDate(subjectsForHallTicket);
+
+// --- Now alternate fill: left, right, left, right ---
+const leftCol = [], rightCol = [];
+for (let i = 0; i < sortedSubjects.length; i++) {
+  if (i % 2 === 0) leftCol.push(sortedSubjects[i]);
+  else rightCol.push(sortedSubjects[i]);
+}
+const numRows = Math.max(leftCol.length, rightCol.length);
+
+const gap = 160;
+const lineX = 400;
+
+// Find top Y (first subject row) and bottom Y (last row)
+const topY = COORDS.subjCol1[1] - 8;
+const bottomY = COORDS.subjCol1[1] + (numRows - 1) * COORDS.subjGapY + 15;
+
+// --- DRAW VERTICAL LINE ---
+pdf.setDrawColor(0,0,0);
+pdf.setLineWidth(1.1);
+pdf.line(lineX, topY, lineX, bottomY);
+
+// --- Draw left and right columns BY DATE ---
+for (let i = 0; i < numRows; i++) {
+  // Left column
+  if (leftCol[i]) {
+    const subj = leftCol[i];
+    const y = COORDS.subjCol1[1] + i * COORDS.subjGapY;
+    pdf.text((subj.subject + '').toUpperCase(), COORDS.subjCol1[0], y, { align: "left" });
+    pdf.text("- " + formatDate(subj.date), COORDS.subjCol1[0] + gap, y, { align: "left" });
   }
+  // Right column
+  if (rightCol[i]) {
+    const subj = rightCol[i];
+    const y = COORDS.subjCol2[1] + i * COORDS.subjGapY;
+    pdf.text((subj.subject + '').toUpperCase(), COORDS.subjCol2[0], y, { align: "left" });
+    pdf.text("- " + formatDate(subj.date), COORDS.subjCol2[0] + gap, y, { align: "left" });
+  }
+}
+}
 
   pdf.save(`HallTickets_${cls}_${sec}_${exam}.pdf`);
 };
@@ -708,39 +718,46 @@ function getClassGroupName(className) {
   pdf.text((hallNo+"").toUpperCase(), COORDS.hall[0], COORDS.hall[1], { align: "left" });
 
   // --- SUBJECTS AND DATES with vertical line and gap ---
-  pdf.setFont("courier", "bold");
-  pdf.setTextColor(0, 0, 0);
+  // --- Sort subjects by date first ---
+const sortedSubjects = sortSubjectsByDate(subjectsForHallTicket);
 
-  const totalSubjects = subjectsForHallTicket.length;
-  const split = Math.ceil(totalSubjects / 2);
+// --- Now alternate fill: left, right, left, right ---
+const leftCol = [], rightCol = [];
+for (let i = 0; i < sortedSubjects.length; i++) {
+  if (i % 2 === 0) leftCol.push(sortedSubjects[i]);
+  else rightCol.push(sortedSubjects[i]);
+}
+const numRows = Math.max(leftCol.length, rightCol.length);
 
-  const gap = 160;
-  const lineX = 400; // Same as bulk download
+const gap = 160;
+const lineX = 400;
 
-  const topY = COORDS.subjCol1[1] - 8;
-  const maxRows = Math.max(split, totalSubjects - split);
-  const bottomY = COORDS.subjCol1[1] + (maxRows - 1) * COORDS.subjGapY + 15;
+// Find top Y (first subject row) and bottom Y (last row)
+const topY = COORDS.subjCol1[1] - 8;
+const bottomY = COORDS.subjCol1[1] + (numRows - 1) * COORDS.subjGapY + 15;
 
-  // Draw vertical line between columns
-  pdf.setDrawColor(0,0,0);
-  pdf.setLineWidth(1.1);
-  pdf.line(lineX, topY, lineX, bottomY);
+// --- DRAW VERTICAL LINE ---
+pdf.setDrawColor(0,0,0);
+pdf.setLineWidth(1.1);
+pdf.line(lineX, topY, lineX, bottomY);
 
-  // First column
-  for (let i = 0; i < split; i++) {
-    const subj = subjectsForHallTicket[i];
+// --- Draw left and right columns BY DATE ---
+for (let i = 0; i < numRows; i++) {
+  // Left column
+  if (leftCol[i]) {
+    const subj = leftCol[i];
     const y = COORDS.subjCol1[1] + i * COORDS.subjGapY;
-    pdf.text((subj.subject+"").toUpperCase(), COORDS.subjCol1[0], y, { align: "left" });
+    pdf.text((subj.subject + '').toUpperCase(), COORDS.subjCol1[0], y, { align: "left" });
     pdf.text("- " + formatDate(subj.date), COORDS.subjCol1[0] + gap, y, { align: "left" });
   }
-  // Second column
-  for (let i = split; i < totalSubjects; i++) {
-    const subj = subjectsForHallTicket[i];
-    const y = COORDS.subjCol2[1] + (i - split) * COORDS.subjGapY;
-    pdf.text((subj.subject+"").toUpperCase(), COORDS.subjCol2[0], y, { align: "left" });
+  // Right column
+  if (rightCol[i]) {
+    const subj = rightCol[i];
+    const y = COORDS.subjCol2[1] + i * COORDS.subjGapY;
+    pdf.text((subj.subject + '').toUpperCase(), COORDS.subjCol2[0], y, { align: "left" });
     pdf.text("- " + formatDate(subj.date), COORDS.subjCol2[0] + gap, y, { align: "left" });
   }
-
+}
   pdf.save(`HallTicket_${cls}_${sec}_${exam}_Roll${stu.roll}.pdf`);
 };
 </script>
