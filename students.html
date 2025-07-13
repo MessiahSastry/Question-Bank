@@ -1074,18 +1074,43 @@ setTimeout(() => {
  // WhatsApp button event (unchanged)
           setTimeout(() => {
             popupContent.querySelectorAll('.wa-btn').forEach(btn => {
-              btn.onclick = function() {
-                let ph = btn.dataset.ph.replace(/^0+/, '');
-                let name = btn.dataset.name;
-                let msg = encodeURIComponent(
-                  `*Dear Parent,*\n\n` +
-                  `your child *${name}* is absent today at school. Kindly send reason for absence.\n\n` +
-                  `*${name}* ఈ రోజు స్కూల్‌కు హాజరు కాలేదు. హాజరు కాకపోవడానికి గల కారణం తెలియజేయగలరు.\n\n` +
-                  `Thank you\n` +
-                  `*St. Patrick's School*`
-                );
-                window.open(`https://wa.me/91${ph}?text=${msg}`,'_blank');
-              }
+              btn.onclick = async function() {
+  let ph = btn.dataset.ph.replace(/^0+/, '');
+  let name = btn.dataset.name;
+  let stuid = btn.dataset.stuid;
+
+  // Fetch all attendance records for this section to count absents
+  let attSnap = await db.collection('years').doc(academicYear)
+    .collection('classes').doc(currentClassId)
+    .collection('sections').doc(currentSectionId)
+    .collection('attendance').get();
+
+  let daysAbsent = 0;
+  attSnap.forEach(doc => {
+    let data = doc.data()[stuid];
+    if (data) {
+      let absentM = data.M === 'absent';
+      let absentA = data.A === 'absent';
+      if (absentM && absentA) {
+        daysAbsent += 1;      // full day
+      } else if (absentM || absentA) {
+        daysAbsent += 0.5;    // half day
+      }
+    }
+  });
+
+  let daysAbsentStr = (Math.round(daysAbsent * 10) / 10).toString();
+
+  let msg = encodeURIComponent(
+  `*Dear Parent,*\n\n` +
+  `Your child *${name}* is absent today at school. Kindly send reason for absence. *${name}* has been absent for ${daysAbsentStr} day(s) so far this academic year.\n\n` + 
+  `*${name}* ఈ రోజు స్కూల్‌కు హాజరు కాలేదు. హాజరు కాకపోవడానికి గల కారణం తెలియజేయగలరు. ఇప్పటి వరకు మొత్తం ${daysAbsentStr} రోజులు అబ్సెంట్ అయ్యారు.\n\n` +
+  `Thank you\n` +
+  `*St. Patrick's School*`
+);
+  window.open(`https://wa.me/91${ph}?text=${msg}`,'_blank');
+}
+
             });
           }, 400);
     });
