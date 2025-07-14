@@ -427,106 +427,99 @@ function renderPrintPreview() {
 
     let contentHTML = '';
     let qNum = 1;
-    for (const section of(exam.sections || [])) {
-        if (section.name || section.instructions) {
-    // Extract instructions and marks part (split at last '(')
-    let instr = section.instructions || '';
-    let instrMain = instr;
-    let marksPart = '';
-    let lastParen = instr.lastIndexOf('(');
-    if (lastParen > 0 && instr.endsWith(')')) {
-      instrMain = instr.slice(0, lastParen).trim();
-      marksPart = instr.slice(lastParen).trim();
-    }
-    contentHTML += `
-      <div class="section-block" style="margin-bottom: 6px;">
-        <div style="text-align:center; font-weight:bold; font-size:1.17em; margin-bottom:2px;">
-          ${section.name || ''}
+   for (const subjectBlock of (exam.subjects || [])) {
+    contentHTML += `<div style="text-align:center;font-weight:bold;font-size:1.14em;margin:22px 0 7px 0;color:#0f3d6b;">Subject: ${subjectBlock.subject || ""}</div>`;
+    let secNum = 1;
+    for (const section of (subjectBlock.sections || [])) {
+        // Section heading and instructions
+        let instr = section.instructions || '';
+        let instrMain = instr;
+        let marksPart = '';
+        let lastParen = instr.lastIndexOf('(');
+        if (lastParen > 0 && instr.endsWith(')')) {
+            instrMain = instr.slice(0, lastParen).trim();
+            marksPart = instr.slice(lastParen).trim();
+        }
+        contentHTML += `
+        <div class="section-block" style="margin-bottom: 6px;">
+            <div style="text-align:center; font-weight:bold; font-size:1.17em; margin-bottom:2px;">
+            ${section.label || section.name || ""}
+            </div>
+            <div style="display: flex; align-items: center; justify-content: space-between; font-weight: bold; font-size: 1em; margin-bottom: 8px;">
+            <span style="text-align:left;">${instrMain || ''}</span>
+            <span style="text-align:right;">${marksPart || ''}</span>
+            </div>
         </div>
-        <div style="display: flex; align-items: center; justify-content: space-between; font-weight: bold; font-size: 1em; margin-bottom: 8px;">
-          <span style="text-align:left;">${instrMain || ''}</span>
-          <span style="text-align:right;">${marksPart || ''}</span>
-        </div>
-      </div>
-    `;
-}
+        `;
 
+        // Questions and options
         if (section.questions && section.questions.length > 0) {
             const questionsHTML = section.questions.map((q, index) => {
-                const currentQNum = qNum + index;
+                const currentQNum = q.number || (secNum++);
                 let questionContentHTML = '';
                 let optionLines = [];
                 let isMCQ = false;
                 let optionsHTML = "";
                 const hasShuffledOptions = Array.isArray(q.options) && q.options.length === 4;
 
-if (hasShuffledOptions) {
-    // Use pre-shuffled options, normalize display
-    questionContentHTML = (q.question || q.text || '').replace(/\s*A\).*/g, '').trim();
-    console.log("OPTION LINES:", optionLines);
-    optionLines = q.options.map((opt, idx) => {
-        let cleanOpt = opt.replace(/^[A-D][).]?\s*/, '');
-        return String.fromCharCode(65 + idx) + ") " + cleanOpt.trim();
-    });
-    isMCQ = true;
-} else {
-    // Universal fallback for text MCQs
-    let html = (q.text || q.question || '').replace(/<img[^>]*>/gi, '');
-    let parts = html.split(/<br\s*\/?>|<\/div>|<div[^>]*>/gi)
-        .map(s => s.replace(/ /g, ' ').trim())
-        .filter(Boolean);
+                if (hasShuffledOptions) {
+                    questionContentHTML = (q.question || q.text || '').replace(/\s*A\).*/g, '').trim();
+                    optionLines = q.options.map((opt, idx) => {
+                        let cleanOpt = opt.replace(/^[A-D][).]?\s*/, '');
+                        return String.fromCharCode(65 + idx) + ") " + cleanOpt.trim();
+                    });
+                    isMCQ = true;
+                } else {
+                    let html = (q.text || q.question || '').replace(/<img[^>]*>/gi, '');
+                    let parts = html.split(/<br\s*\/?>|<\/div>|<div[^>]*>/gi)
+                        .map(s => s.replace(/ /g, ' ').trim())
+                        .filter(Boolean);
 
-      if (parts.length > 0) {
-       questionContentHTML = autoLatexAll(q.text || q.question || '');
+                    if (parts.length > 0) {
+                        questionContentHTML = autoLatexAll(q.text || q.question || '');
+                        for (let i = 1; i < parts.length; i++) {
+                            let line = autoLatexAll(parts[i]);
+                            let inlineOpts = line.match(/([A-D][).][^A-D]*)/g);
+                            if (inlineOpts && inlineOpts.length >= 2) {
+                                optionLines.push(...inlineOpts.map(opt => autoLatexAll(opt.trim())));
+                            } else if (line) {
+                                optionLines.push(autoLatexAll(line));
+                            }
+                        }
+                        if (optionLines.length === 4) {
+                            optionLines = optionLines.map((opt, i) =>
+                                /^[A-D][).]/.test(opt) ? opt : String.fromCharCode(65 + i) + ") " + opt
+                            );
+                            isMCQ = true;
+                        }
+                    }
+                }
 
-        for (let i = 1; i < parts.length; i++) {
-        let line = autoLatexAll(parts[i]);
-        let inlineOpts = line.match(/([A-D][).][^A-D]*)/g);
-        if (inlineOpts && inlineOpts.length >= 2) {
-            // Make sure each option goes through autoLatexAll too!
-            optionLines.push(...inlineOpts.map(opt => autoLatexAll(opt.trim())));
-        } else if (line) {
-            optionLines.push(autoLatexAll(line));
-        }
-    }
-    if (optionLines.length === 4) {
-        optionLines = optionLines.map((opt, i) =>
-            /^[A-D][).]/.test(opt) ? opt : String.fromCharCode(65 + i) + ") " + opt
-        );
-        isMCQ = true;
-    }
-}
-}
-               if (optionLines.length === 4) {
+                if (optionLines.length === 4) {
                     // Check for MathJax/LaTeX or force four in a row for complex options
                     const containsMath = optionLines.some(opt =>
                         opt.includes('mjx-container') || opt.includes('$') || opt.includes('\\(') || opt.includes('\\[')
                     );
                     if (containsMath) {
-                        // Always show four in a row for math options
                         optionsHTML = `<div style="display:flex;gap:32px;flex-wrap:wrap;margin-bottom:3px;margin-left:2px;">
                             ${optionLines.map(opt => `<span style="min-width:70px;display:inline-block;vertical-align:top;">${opt.trim()}</span>`).join('')}
                         </div>`;
                     } else {
-                        // Plain text options: follow fit logic (1 row, 2 rows, or 4 rows)
                         let dummy = document.createElement('span');
                         dummy.style.cssText = 'visibility:hidden;position:absolute;white-space:nowrap;padding:0;margin:0;border:none;font-family:Times New Roman,Times,serif;font-size:1.11em;';
                         dummy.innerText = optionLines.join('    ');
                         document.body.appendChild(dummy);
                         let fitsFour = dummy.offsetWidth < 700;
                         document.body.removeChild(dummy);
-                
-                        // Try A+B, C+D on separate lines
+
                         let abFits = fitsInLine(optionLines[0], optionLines[1]);
                         let cdFits = fitsInLine(optionLines[2], optionLines[3]);
-                
+
                         if (fitsFour) {
-                            // All options in a single row
                             optionsHTML = `<div style="display:flex;gap:32px;flex-wrap:wrap;margin-bottom:3px;margin-left:2px;">
                                 ${optionLines.map(opt => `<span style="min-width:70px;display:inline-block;vertical-align:top;">${opt.trim()}</span>`).join('')}
                             </div>`;
                         } else if (abFits && cdFits) {
-                            // Two rows (A+B), (C+D)
                             optionsHTML = `
                                 <div style="display:grid;grid-template-columns:1fr 1fr;column-gap:32px;row-gap:0;margin-bottom:0;margin-left:2px;width:max-content;">
                                     <span style="min-width:70px;display:inline-block;">${optionLines[0]}</span>
@@ -536,7 +529,6 @@ if (hasShuffledOptions) {
                                 </div>
                             `;
                         } else {
-                            // Four rows
                             optionsHTML = `
                                 <div>
                                     <div style="margin-bottom:2px;margin-left:2px;">${optionLines[0].trim().replace(/\n/g, '<br>')}</div>
@@ -548,19 +540,17 @@ if (hasShuffledOptions) {
                         }
                     }
                 } else if (optionLines.length > 0) {
-                    // Not exactly 4 options (e.g. 2 or 3)
                     optionsHTML = optionLines.map(opt =>
                         `<div style="margin-bottom:2px;margin-left:2px;">${opt.trim().replace(/\n/g, '<br>')}</div>`
                     ).join('');
-                } else {
-                    // Not MCQ: nothing to render here
                 }
+
                 const imageHTML = q.image ? `<div class="question-img-block"><img class="question-img" src="${q.image}" alt="Question Image" /></div>` : '';
                 return `
                     <div class="question-container">
                         <div class="question-number">${currentQNum}.</div>
                         <div class="question-body">
-                        <div class="question-text" style="font-size:1.15em;">${autoLatexAll(q.text || q.question || '')}</div>
+                            <div class="question-text" style="font-size:1.15em;">${autoLatexAll(q.text || q.question || '')}</div>
                             ${imageHTML}
                             <div class="options-block">${optionsHTML}</div>
                         </div>
@@ -568,10 +558,9 @@ if (hasShuffledOptions) {
                 `;
             }).join('');
             contentHTML += questionsHTML;
-            qNum += section.questions.length;
         }
     }
-
+}
        page.innerHTML += contentHTML;
     page.innerHTML += `<div class="print-footer-spacer"></div>`;
     container.appendChild(page);
