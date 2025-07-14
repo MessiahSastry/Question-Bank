@@ -243,6 +243,10 @@
                         <label>Date</label>
                         <input type="date" id="date-input">
                     </div>
+                    <div class="form-group">
+                        <label>Difficulty Level</label>
+                        <div id="difficulty-dropdown" class="custom-dropdown"></div>
+                    </div>
                     <div id="subjects-sections-area">
                         <!-- JS will generate subject blocks here, one per selected subject -->
                     </div>
@@ -669,6 +673,7 @@ document.addEventListener('DOMContentLoaded', () => {
         // DROPDOWNS
         createDropdown('class-dropdown', config.classes, 'Select Class');
         createDropdown('exam-name-dropdown', config.examNames, 'Select Exam Name');
+        createDropdown('difficulty-dropdown', config.difficultyLevels, 'Select Difficulty');
         document.getElementById('date-input').valueAsDate = new Date();
 
         // Multi-Subject Dropdown Logic
@@ -701,7 +706,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const time = document.getElementById('time-input').value;
                 const date = document.getElementById('date-input').value;
                 const instructions = document.getElementById('instructions-input').value;
-
+                const difficultyValue = document.getElementById('difficulty-dropdown').dataset.value;
                 // Collect subjects and sections
                 const subjectBlocks = document.querySelectorAll('.subject-block');
                 const subjectsData = [];
@@ -753,66 +758,145 @@ document.addEventListener('DOMContentLoaded', () => {
                 };
 
                 // --- Build all subjects and sections and fetch questions for each
-                for (let subjData of subjectsData) {
-                    let subjectBlock = { subject: subjData.subject, chapters: subjData.chapters, sections: [] };
-                    for (let sec of subjData.sections) {
-                        let questions = [];
-                        if (sec.type === "all" || sec.type === "any") {
-                            questions = await fetchQuestions({
-                                selectedClass, selectedSubject: subjData.subject,
-                                chapters: subjData.chapters, marksPerQuestion: sec.marksPerQuestion,
-                                mcqType: sec.mcqType, count: sec.numQuestions
-                            });
-                            questions = questions.map((q, idx) => {
-                                let optionsArr = extractMCQOptions(q);
-                                let stem = q.question || q.text || '';
-                                if ((sec.mcqType === "MCQ (Single)" || sec.mcqType === "MCQ (Multiple)") && Array.isArray(optionsArr) && optionsArr.length === 4) {
-                                    const cleanOptionsArr = optionsArr.map(opt => opt.replace(/^[A-D][).]?\s*/, '').trim());
-                                    const shuffled = shuffleMCQQuestion({ ...q, options: cleanOptionsArr, question: stem });
-                                    return {
-                                        number: idx + 1,
-                                        text: shuffled.question || shuffled.text || "",
-                                        marks: sec.marksPerQuestion,
-                                        options: shuffled.options || [],
-                                        answer: shuffled.answer || ""
-                                    };
-                                } else {
-                                    return {
-                                        number: idx + 1,
-                                        text: stem,
-                                        marks: sec.marksPerQuestion,
-                                        options: optionsArr || [],
-                                        answer: q.answer || ""
-                                    };
-                                }
-                            });
-                        } else if (sec.type === "internal") {
-                            for (let p = 0; p < sec.pairs.length; p++) {
-                                let qA = await fetchQuestions({
-                                    selectedClass, selectedSubject: subjData.subject,
-                                    chapters: [sec.pairs[p].chapterA], marksPerQuestion: sec.marksPerQuestion, count: 1
-                                });
-                                let qB = await fetchQuestions({
-                                    selectedClass, selectedSubject: subjData.subject,
-                                    chapters: [sec.pairs[p].chapterB], marksPerQuestion: sec.marksPerQuestion, count: 1
-                                });
-                                if (qA.length && qB.length) {
-                                    questions.push({
-                                        number: p + 1,
-                                        text: `a) ${qA[0].question || qA[0].text}<br>b) ${qB[0].question || qB[0].text}`,
-                                        marks: sec.marksPerQuestion,
-                                        image: qA[0].image || qB[0].image || null
-                                    });
-                                }
-                            }
-                        }
-                        subjectBlock.sections.push({ ...sec, questions });
+               let allSectionErrors = []; // collect all errors
+
+for (let subjData of subjectsData) {
+    let subjectBlock = { subject: subjData.subject, chapters: subjData.chapters, sections: [] };
+    for (let secIdx = 0; secIdx < subjData.sections.length; secIdx++) {
+        const sec = subjData.sections[secIdx];
+        let questions = [];
+        let sectionErrors = [];
+        if (sec.type === "all" || sec.type === "any") {
+            let requestedCount = sec.numQuestions;
+            if (difficultyValue === "Mixed") {
+                const difficultyLevels = ["Level 1", "Level 2", "Level 3"];
+                const percentages = [40, 30, 30];
+                const counts = splitCounts(requestedCount, percentages);
+                for (let d = 0; d < difficultyLevels.length; d++) {
+                    if (counts[d] > 0) {
+                        let qs = await fetchQuestions({
+                            selectedClass,
+                            selectedSubject: subjData.subject,
+                            chapters: subjData.chapters,
+                            marksPerQuestion: sec.marksPerQuestion,
+                            mcqType: sec.mcqType,
+                            count: counts[d],
+                            forceDifficulty: difficultyLevels[d]
+                        });
+                        questions = questions.concat(qs);
                     }
-                    finalPaper.subjects.push(subjectBlock);
                 }
-                // Save and continue
-                sessionStorage.setItem('examPaper', JSON.stringify(finalPaper));
-                window.location.href = 'exam-review.html';
+                shuffleArray(questions);
+                questions = questions.slice(0, requestedCount);
+            } else if (difficultyValue && difficultyValue !== "Mixed") {
+                questions = await fetchQuestions({
+                    selectedClass,
+                    selectedSubject: subjData.subject,
+                    chapters: subjData.chapters,
+                    marksPerQuestion: sec.marksPerQuestion,
+                    mcqType: sec.mcqType,
+                    count: requestedCount,
+                    forceDifficulty: difficultyValue
+                });
+            } else {
+                questions = await fetchQuestions({
+                    selectedClass,
+                    selectedSubject: subjData.subject,
+                    chapters: subjData.chapters,
+                    marksPerQuestion: sec.marksPerQuestion,
+                    mcqType: sec.mcqType,
+                    count: requestedCount
+                });
+            }
+            if (questions.length < requestedCount) {
+                sectionErrors.push(
+                    `${subjData.subject} - ${sec.label} (${sec.mcqType}): Only ${questions.length} of ${requestedCount} questions found.`
+                );
+                continue; // skip this section
+            }
+            questions = questions.map((q, idx) => {
+                let optionsArr = extractMCQOptions(q);
+                let stem = q.question || q.text || '';
+                if ((sec.mcqType === "MCQ (Single)" || sec.mcqType === "MCQ (Multiple)") && Array.isArray(optionsArr) && optionsArr.length === 4) {
+                    const cleanOptionsArr = optionsArr.map(opt => opt.replace(/^[A-D][).]?\s*/, '').trim());
+                    const shuffled = shuffleMCQQuestion({ ...q, options: cleanOptionsArr, question: stem });
+                    return {
+                        number: idx + 1,
+                        text: shuffled.question || shuffled.text || "",
+                        marks: sec.marksPerQuestion,
+                        options: shuffled.options || [],
+                        answer: shuffled.answer || ""
+                    };
+                } else {
+                    return {
+                        number: idx + 1,
+                        text: stem,
+                        marks: sec.marksPerQuestion,
+                        options: optionsArr || [],
+                        answer: q.answer || ""
+                    };
+                }
+            });
+        } else if (sec.type === "internal") {
+            let missingPairs = 0;
+            for (let p = 0; p < sec.pairs.length; p++) {
+                let qA = await fetchQuestions({
+                    selectedClass,
+                    selectedSubject: subjData.subject,
+                    chapters: [sec.pairs[p].chapterA],
+                    marksPerQuestion: sec.marksPerQuestion,
+                    count: 1
+                });
+                let qB = await fetchQuestions({
+                    selectedClass,
+                    selectedSubject: subjData.subject,
+                    chapters: [sec.pairs[p].chapterB],
+                    marksPerQuestion: sec.marksPerQuestion,
+                    count: 1
+                });
+                if (!qA.length || !qB.length) {
+                    sectionErrors.push(
+                        `${subjData.subject} - ${sec.label} (Pair ${p + 1}): Missing question(s) for selected chapters.`
+                    );
+                    missingPairs++;
+                    continue; // skip this pair
+                }
+                questions.push({
+                    number: p + 1,
+                    text: `a) ${qA[0].question || qA[0].text}<br>b) ${qB[0].question || qB[0].text}`,
+                    marks: sec.marksPerQuestion,
+                    image: qA[0].image || qB[0].image || null
+                });
+            }
+            if (missingPairs > 0 || questions.length < sec.numPairs) {
+                sectionErrors.push(
+                    `${subjData.subject} - ${sec.label}: Only ${questions.length} of ${sec.numPairs} pairs found.`
+                );
+                continue; // skip this section
+            }
+        }
+        // Only push if NO sectionErrors for this section
+        if (sectionErrors.length === 0) {
+            subjectBlock.sections.push({ ...sec, questions });
+        } else {
+            allSectionErrors = allSectionErrors.concat(sectionErrors);
+        }
+    }
+    finalPaper.subjects.push(subjectBlock);
+}
+
+// Show errors if any
+if (allSectionErrors.length > 0) {
+    showModalPrompt(
+        `<b>Some sections could not be added:</b><br><ul style="text-align:left">${allSectionErrors.map(e => `<li>${e}</li>`).join('')}</ul>`
+    );
+    btn.disabled = false; btn.textContent = "Build Exam Draft";
+    return; // stop!
+}
+
+// Save and continue as before
+sessionStorage.setItem('examPaper', JSON.stringify(finalPaper));
+window.location.href = 'exam-review.html';
             } catch (err) {
                 showToast("Error building exam: " + (err.message || err), "error");
             }
