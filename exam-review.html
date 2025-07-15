@@ -49,11 +49,17 @@
     }
     .edit-icon { color:#888; margin-left:4px; cursor:pointer; }
     .question-row {
-      display:flex; align-items:flex-start; gap:10px; margin-bottom:18px; background:#f7fafd;
-      padding:13px 13px 10px 13px; border-radius:9px;
-      border:1.1px solid #bcd6ef;
-      font-size:1.07em;
-      box-sizing:border-box;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 14px;
+      background: #f7fafd;
+      padding: 13px 13px 10px 13px;
+      border-radius: 9px;
+      border: 1.1px solid #bcd6ef;
+      font-size: 1.07em;
+      box-sizing: border-box;
+      min-height: 38px;
     }
     .question-number { font-weight:700; color:#185496; margin-right:8px; }
     .question-text[contenteditable] { background:#f3f7fe; border-radius:6px; outline:2px solid #0f3d6b30;}
@@ -102,6 +108,18 @@
   </main>
 </div>
 <script>
+  function buildSectionInstructions(sec) {
+    if (sec.type === "all") {
+        return `Answer all the questions (${sec.numQuestions} x ${sec.marksPerQuestion} = ${sec.numQuestions * sec.marksPerQuestion} Marks)`;
+    }
+    if (sec.type === "any") {
+        return `Answer any ${sec.attemptAny} questions (${sec.attemptAny} x ${sec.marksPerQuestion} = ${sec.attemptAny * sec.marksPerQuestion} Marks)`;
+    }
+    if (sec.type === "internal") {
+        return `Answer any (${sec.numPairs} question pairs x ${sec.marksPerQuestion} = ${sec.numPairs * sec.marksPerQuestion} Marks)`;
+    }
+    return "";
+}
 function getExamPaper() {
   try {
     return JSON.parse(sessionStorage.getItem("examPaper") || "null");
@@ -139,7 +157,11 @@ function renderExam() {
               (section.mcqType === "MCQ (Single)" || section.mcqType === "MCQ (Multiple)") 
                 ? `${section.label || 'Section'} (${section.mcqType.toUpperCase()})`
                 : `${section.label || 'Section'}`
-            } <i class="fas fa-pen edit-icon"></i>
+            }
+            <span style="font-size:1em;font-weight:normal;margin-left:8px;color:#365a7b;">
+              ${buildSectionInstructions(section)}
+            </span>
+            <i class="fas fa-pen edit-icon"></i>
           </div>
           <div class="section-instructions"
               contenteditable="true"
@@ -150,11 +172,39 @@ function renderExam() {
             ${section.instructions || ""}
           </div>
       `;
+            // Show summary: "Answer all" or "Answer any", and total marks (using section info)
+      html += `
+        <div style="background:#eaf4fd;border-radius:7px;padding:8px 11px 7px 14px;
+                    margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;">
+          <span>
+            ${
+              section.type === "all"
+                ? `Answer all <b>${section.numQuestions}</b> questions`
+                : section.type === "any"
+                  ? `Answer any <b>${section.attemptAny || section.numQuestions}</b> out of <b>${section.numQuestions}</b> questions`
+                  : section.type === "internal"
+                    ? `Internal Choice: <b>${section.numPairs}</b> pairs`
+                    : ""
+            }
+          </span>
+          <span style="font-weight:bold;color:#185496;">
+            Total: ${
+              section.type === "all"
+                ? (section.numQuestions * section.marksPerQuestion)
+                : section.type === "any"
+                  ? ((section.attemptAny || section.numQuestions) * section.marksPerQuestion)
+                  : section.type === "internal"
+                    ? (section.numPairs * section.marksPerQuestion)
+                    : ""
+            } Marks
+          </span>
+        </div>
+      `;
       (section.questions || []).forEach((q, qIdx) => {
         html += `<div class="question-row" data-subject="${subjIdx}" data-section="${sIdx}" data-question="${qIdx}">
           <span class="question-number">${q.number ? q.number : (qIdx+1)}.</span>
           <span class="question-text">${q.text}</span>
-          <span class="marks-box" contenteditable="true">${q.marks || ''}</span>
+          <span class="marks-box" contenteditable="true">${q.marks || section.marksPerQuestion || ''}</span>
           <span class="marks-label">Marks</span>
         </div>`;
       });
