@@ -276,12 +276,19 @@
                         <div id="chapter-dropdown" class="custom-dropdown"></div>
                     </div>
                     <div class="form-group">
+                    <label>Level:</label>
+                    <div id="level-dropdown" class="custom-dropdown"></div>
+                </div>
+                    <div class="form-group">
                         <label>Marks:</label>
                         <div id="marks-dropdown" class="custom-dropdown"></div>
                     </div>
                 </form>
                 <div id="export-btns">
               <button id="download-pdf-btn"><i class="fa-solid fa-file-pdf"></i> Download Worksheet</button>
+             <button id="create-quiz-btn" style="margin-left:12px;">
+              <i class="fa-solid fa-pen-to-square"></i> Create Practice Quiz
+            </button>
             </div>
 
             </div>
@@ -324,6 +331,7 @@
             marks: Array.from({
                 length: 10
             }, (_, i) => i + 1)
+            levels: ["Level 1", "Level 2", "Level 3", "Mixed"]
         };
 
         document.addEventListener('DOMContentLoaded', () => {
@@ -841,6 +849,9 @@ function createDropdownHTML(id, options, defaultValueText = 'All') {
     const marksDropdown = document.getElementById('marks-dropdown');
     const marksOptions = filterConfig.marks.map(m => `${m} Mark(s)`);
     marksDropdown.innerHTML = createDropdownHTML('marks', marksOptions);
+    const levelDropdown = document.getElementById('level-dropdown');
+    levelDropdown.innerHTML = createDropdownHTML('level', filterConfig.levels, 'Select Level');
+    addDropdownListener('level-dropdown', fetchAndDisplayQuestions);
 
     addDropdownListener('class-dropdown', onClassChange);
     addDropdownListener('subject-dropdown', onSubjectChange);
@@ -939,6 +950,7 @@ async function fetchAndDisplayQuestions() {
         const qtypeVal = document.getElementById('qtype-value').value;
         const chapterVal = document.getElementById('chapter-value').value;
         const marksVal = document.getElementById('marks-value').value;
+        const levelVal = document.getElementById('level-value').value;
         const numericMarks = parseInt(marksVal, 10);
 
         let query = db.collection('questions');
@@ -951,6 +963,10 @@ async function fetchAndDisplayQuestions() {
         if (chapterVal && chapterVal !== 'Select Chapter' && chapterVal !== 'All') {
             query = query.where('chapter', '==', chapterVal);
         }
+        if (levelVal && levelVal !== 'Select Level' && levelVal !== 'All' && levelVal !== 'Mixed') {
+            query = query.where('level', '==', levelVal);
+        }
+
         query = query.orderBy("questionNumber");
 
         const snapshot = await query.get();
@@ -1277,6 +1293,40 @@ async function fetchAndDisplayQuestions() {
         fetchAndDisplayQuestions();
     };
 }
+        // --- Create Practice Quiz Button Handler ---
+document.getElementById('create-quiz-btn').addEventListener('click', async function() {
+    const displayArea = document.getElementById('questions-display-area');
+    const nodes = displayArea.querySelectorAll('.question-item');
+    if (nodes.length < 1) {
+        alert("No questions found for this quiz!");
+        return;
+    }
+
+    // Build quiz questions array
+    const questions = [];
+    for (let item of nodes) {
+        const docId = item.getAttribute('data-id');
+        const snap = await db.collection('questions').doc(docId).get();
+        const data = snap.data();
+        questions.push({
+            question: data.question,
+            options: data.options,
+            answer: data.parsedAnswer || data.answer || "",
+            level: data.level || ""
+        });
+    }
+
+    // Create quiz doc in Firestore
+    const quizDoc = await db.collection('quizzes').add({
+        createdBy: currentUser.uid,
+        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+        level: document.getElementById('level-value').value || "Mixed",
+        questions: questions
+    });
+    const quizId = quizDoc.id;
+    const quizLink = `${window.location.origin.replace(/\/$/, "")}/quiz.html?quiz=${quizId}`;
+    prompt("Share this link with students:", quizLink);
+});
       </script>
 </body>
 </html>
