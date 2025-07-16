@@ -195,6 +195,44 @@
   color: #218c53 !important;
   text-decoration: none !important;
 }
+    /* Hide default checkbox, style custom look */
+.attendance-checkbox {
+  display: none;
+}
+.attendance-custom {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 2px solid #bbb;
+  border-radius: 4px;
+  background: #fff;
+  cursor: pointer;
+  position: relative;
+  transition: border 0.16s, background 0.16s;
+  font-size: 1.15em;
+  user-select: none;
+}
+
+.attendance-checkbox:checked + .attendance-custom {
+  border: 2px solid #d43f3a;
+  background: #fff0f1;
+  color: #d43f3a;
+}
+.attendance-checkbox:checked + .attendance-custom::after {
+  content: "a";
+  font-size: 1.05em;
+  color: #d43f3a;
+  font-weight: bold;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
+.attendance-custom::after {
+  content: "";
+}
   </style>
 </head>
 <body>
@@ -998,8 +1036,14 @@ db.collection('years').doc(academicYear)
                       <span style="font-size:0.96em;font-weight:600;">A</span>
                     </div>
                     <div style="display:flex;gap:14px;">
-                      <input type="checkbox" name="absentM_${stu.id}" style="width:22px;height:22px;accent-color:#0f3d6b;" ${mChecked}>
-                      <input type="checkbox" name="absentA_${stu.id}" style="width:22px;height:22px;accent-color:#0f3d6b;" ${aChecked}>
+                      <label style="margin-right:2px;">
+                    <input type="checkbox" class="attendance-checkbox" name="absentM_${stu.id}" ${mChecked}>
+                    <span class="attendance-custom"></span>
+                  </label>
+                  <label>
+                    <input type="checkbox" class="attendance-checkbox" name="absentA_${stu.id}" ${aChecked}>
+                    <span class="attendance-custom"></span>
+                  </label>
                     </div>
                   </div>
                   ${
@@ -1035,23 +1079,64 @@ db.collection('years').doc(academicYear)
           showPopup(html, 'attendanceForm', function(e){
             e.preventDefault();
             let form = e.target;
-            // Build attendance object per student: { [stu.id]: {M: 'present'|'absent', A: 'present'|'absent'} }
             let attObj = {};
+            let absentees = [];
             students.forEach(stu => {
               let m = form[`absentM_${stu.id}`] && form[`absentM_${stu.id}`].checked ? 'absent' : 'present';
               let a = form[`absentA_${stu.id}`] && form[`absentA_${stu.id}`].checked ? 'absent' : 'present';
               attObj[stu.id] = { M: m, A: a };
+              if (m === 'absent' || a === 'absent') {
+                absentees.push({
+                  roll: stu.roll,
+                  name: stu.name,
+                  absentM: m === 'absent',
+                  absentA: a === 'absent'
+                });
+              }
             });
-            let attDoc = db.collection('years').doc(academicYear)
-              .collection('classes').doc(currentClassId)
-              .collection('sections').doc(currentSectionId)
-              .collection('attendance').doc(date);
-            attDoc.set(attObj).then(() => {
-              alert("Attendance saved!");
-              closePopup();
-            });
+          
+            // Build absentees list HTML
+            let absenteesHtml = absentees.length === 0
+              ? `<div style="color:green;font-weight:600;padding:14px;">No absentees. Save attendance?</div>`
+              : `<div style="padding:14px 0 0 0;">
+                   <ul style="padding-left:18px;">
+                     ${absentees.map(stu => `
+                       <li>
+                         <b>${stu.roll ? stu.roll + '. ' : ''}${stu.name}</b>
+                         (${[
+                           stu.absentM ? 'M' : null,
+                           stu.absentA ? 'A' : null
+                         ].filter(Boolean).join(', ')})
+                       </li>
+                     `).join('')}
+                   </ul>
+                 </div>`;
+          
+            // Show confirmation popup
+            showPopup(`
+              <div class="popup-title">Confirm Absentees for ${formatDate(date)}</div>
+              ${absenteesHtml}
+              <div class="popup-btn-row" style="margin-top:10px;">
+                <button type="button" class="popup-cancel-btn">Cancel</button>
+                <button type="button" id="confirmSaveBtn" class="popup-action-btn">Confirm & Save</button>
+              </div>
+            `);
+          
+            // On Confirm & Save, actually save attendance
+            setTimeout(() => {
+              document.getElementById('confirmSaveBtn').onclick = function() {
+                let attDoc = db.collection('years').doc(academicYear)
+                  .collection('classes').doc(currentClassId)
+                  .collection('sections').doc(currentSectionId)
+                  .collection('attendance').doc(date);
+                attDoc.set(attObj).then(() => {
+                  alert("Attendance saved!");
+                  closePopup();
+                });
+              };
+            }, 100);
           });
-            // --- Show/Hide WhatsApp icon based on absent checkbox ---
+           // --- Show/Hide WhatsApp icon based on absent checkbox ---
 setTimeout(() => {
   students.forEach(stu => {
     const mBox = popupContent.querySelector(`input[name="absentM_${stu.id}"]`);
