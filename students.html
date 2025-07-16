@@ -1034,27 +1034,84 @@ db.collection('years').doc(academicYear)
             Tick M for Morning Absentees, A for Afternoon. WhatsApp will message parent.
           </div>
           `;
-          showPopup(html, 'attendanceForm', function(e){
-      e.preventDefault();
-      let form = e.target;
-      // Build attendance object per student: { [stu.id]: {M: 'present'|'absent', A: 'present'|'absent'} }
-      let attObj = {};
-      students.forEach(stu => {
-        let mBox = popupContent.querySelector(`.att-box[data-stu="${stu.id}"][data-type="M"]`);
-        let aBox = popupContent.querySelector(`.att-box[data-stu="${stu.id}"][data-type="A"]`);
-        let m = (mBox && mBox.textContent === 'a') ? 'absent' : 'present';
-        let a = (aBox && aBox.textContent === 'a') ? 'absent' : 'present';
-        attObj[stu.id] = { M: m, A: a };
-      });
-      let attDoc = db.collection('years').doc(academicYear)
-        .collection('classes').doc(currentClassId)
-        .collection('sections').doc(currentSectionId)
-        .collection('attendance').doc(date);
-      attDoc.set(attObj).then(() => {
-        alert("Attendance saved!");
-        closePopup();
-      });
-    });
+         showPopup(html, 'attendanceForm', function(e){
+          e.preventDefault();
+          let form = e.target;
+          let attObj = {};
+          let absentees = [];
+          students.forEach(stu => {
+            let mBox = popupContent.querySelector(`.att-box[data-stu="${stu.id}"][data-type="M"]`);
+            let aBox = popupContent.querySelector(`.att-box[data-stu="${stu.id}"][data-type="A"]`);
+            let m = (mBox && mBox.textContent === 'a') ? 'absent' : 'present';
+            let a = (aBox && aBox.textContent === 'a') ? 'absent' : 'present';
+            attObj[stu.id] = { M: m, A: a };
+            if (m === 'absent' || a === 'absent') {
+              absentees.push({
+                roll: stu.roll,
+                name: stu.name,
+                absentM: m === 'absent',
+                absentA: a === 'absent'
+              });
+            }
+          });
+        
+          // If any absentees, show confirmation
+          if (absentees.length > 0) {
+            let absentHtml = `
+              <div class="popup-title">Confirm Absentees</div>
+              <div style="max-height:240px;overflow-y:auto;">
+                <table style="width:100%;border-collapse:collapse;">
+                  <tr style="font-weight:bold;">
+                    <td style="border-bottom:1px solid #eee;">Roll</td>
+                    <td style="border-bottom:1px solid #eee;">Name</td>
+                    <td style="border-bottom:1px solid #eee;">Session</td>
+                  </tr>
+                  ${
+                    absentees.map(stu =>
+                      `<tr>
+                        <td>${stu.roll || ''}</td>
+                        <td>${stu.name}</td>
+                        <td>
+                          ${stu.absentM ? 'M' : ''}${(stu.absentM && stu.absentA) ? '/' : ''}${stu.absentA ? 'A' : ''}
+                        </td>
+                      </tr>`
+                    ).join('')
+                  }
+                </table>
+                <div style="margin:16px 0;color:#d43f3a;">Are you sure you want to mark these students as absent?</div>
+              </div>
+              <div class="popup-btn-row">
+                <button type="button" class="popup-cancel-btn">No, Go Back</button>
+                <button type="button" class="popup-action-btn" id="confirmSaveAttendanceBtn">Yes, Save</button>
+              </div>
+            `;
+            showPopup(absentHtml);
+            // On confirm, save to Firestore
+            setTimeout(() => {
+              let btn = popupContent.querySelector('#confirmSaveAttendanceBtn');
+              if (btn) btn.onclick = function() {
+                let attDoc = db.collection('years').doc(academicYear)
+                  .collection('classes').doc(currentClassId)
+                  .collection('sections').doc(currentSectionId)
+                  .collection('attendance').doc(date);
+                attDoc.set(attObj).then(() => {
+                  alert("Attendance saved!");
+                  closePopup();
+                });
+              }
+            }, 120);
+          } else {
+            // No absentees, just save
+            let attDoc = db.collection('years').doc(academicYear)
+              .collection('classes').doc(currentClassId)
+              .collection('sections').doc(currentSectionId)
+              .collection('attendance').doc(date);
+            attDoc.set(attObj).then(() => {
+              alert("Attendance saved!");
+              closePopup();
+            });
+          }
+        });
     
     // --- Clickable attendance boxes ("a" toggle) and WhatsApp logic ---
     setTimeout(() => {
