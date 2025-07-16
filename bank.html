@@ -286,11 +286,8 @@
                 </form>
                 <div id="export-btns">
               <button id="download-pdf-btn"><i class="fa-solid fa-file-pdf"></i> Download Worksheet</button>
-             <button id="create-quiz-btn" style="margin-left:12px;">
-              <i class="fa-solid fa-pen-to-square"></i> Create Practice Quiz
-            </button>
+              <button id="create-quiz-btn" class="main-btn"><i class="fa-solid fa-pen-to-square"></i> Create Practice Quiz</button>
             </div>
-
             </div>
             <div id="questions-display-area">
                 <p class="no-questions-message">Select filters to view questions.</p>
@@ -1294,13 +1291,112 @@ async function fetchAndDisplayQuestions() {
     };
 }
         // --- Create Practice Quiz Button Handler ---
-document.getElementById('create-quiz-btn').addEventListener('click', async function() {
-    const displayArea = document.getElementById('questions-display-area');
-    const nodes = displayArea.querySelectorAll('.question-item');
-    if (nodes.length < 1) {
-        alert("No questions found for this quiz!");
-        return;
-    }
+    document.getElementById('create-quiz-btn').addEventListener('click', async function() {
+        // Show spinner overlay
+        document.getElementById('quiz-spinner').style.display = 'flex';
+    
+        try {
+            const displayArea = document.getElementById('questions-display-area');
+            const nodes = displayArea.querySelectorAll('.question-item');
+            if (nodes.length < 1) {
+                alert("No questions found for this quiz!");
+                document.getElementById('quiz-spinner').style.display = 'none';
+                return;
+            }
+    
+            // Build quiz questions array
+            const questions = [];
+            for (let item of nodes) {
+                const docId = item.getAttribute('data-id');
+                const snap = await db.collection('questions').doc(docId).get();
+                const data = snap.data();
+                questions.push({
+                    question: data.question,
+                    options: data.options,
+                    answer: data.parsedAnswer || data.answer || "",
+                    level: data.level || ""
+                });
+            }
+    
+            // Create quiz doc in Firestore
+            const quizDoc = await db.collection('quizzes').add({
+                createdBy: currentUser.uid,
+                createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                level: document.getElementById('level-value').value || "Mixed",
+                questions: questions
+            });
+            const quizId = quizDoc.id;
+            const quizLink = `${window.location.origin.replace(/\/$/, "")}/quiz.html?quiz=${quizId}`;
+            // Build the message
+        const classVal = document.getElementById('class-value').value;
+        const chapterVal = document.getElementById('chapter-value').value;
+        const levelVal = document.getElementById('level-value').value;
+        const message = 
+        `St. Patrick’s School Online Quiz Invitation
+        
+        Dear Student,
+        
+        You have a new online practice quiz!
+        
+        - Class: ${classVal}
+        - Subject/Chapter: ${chapterVal}
+        - Level: ${levelVal}
+        
+        Please click the link below to start your quiz:
+        ${quizLink}
+        
+        Best wishes,
+        St. Patrick’s School
+        IIT & NEET Foundation`;
+        
+        // Remove any old modal
+        document.querySelectorAll('.quiz-share-modal').forEach(el => el.remove());
+        
+        // Create modal HTML
+        const modal = document.createElement('div');
+        modal.className = 'quiz-share-modal';
+        modal.innerHTML = `
+          <div style="position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:9999;background:rgba(12,29,68,0.12);display:flex;align-items:center;justify-content:center;">
+            <div style="background:#fff;padding:28px 22px 18px 22px;border-radius:14px;max-width:94vw;width:410px;box-shadow:0 6px 22px rgba(23,98,167,0.14);display:flex;flex-direction:column;align-items:center;">
+              <div style="font-weight:bold;font-size:1.19em;color:#175799;text-align:center;margin-bottom:16px;">Share this message with students</div>
+              <textarea id="quiz-share-textarea" style="width:100%;height:210px;font-size:1em;padding:10px 8px;border-radius:8px;border:1.1px solid #bcd6ef;background:#f9fcff;resize:none;margin-bottom:18px;" readonly>${message}</textarea>
+              <button id="copy-quiz-message-btn" style="padding:10px 24px;font-size:1em;border:none;border-radius:7px;background:#1762a7;color:#fff;font-weight:600;cursor:pointer;margin-bottom:8px;">Copy</button>
+              <button id="close-quiz-message-btn" style="background:#eee;border:none;border-radius:7px;padding:7px 20px;font-weight:500;color:#134579;cursor:pointer;">Close</button>
+            </div>
+          </div>
+        `;
+        
+        // Add modal to body
+        document.body.appendChild(modal);
+        
+        // Copy functionality
+        document.getElementById('copy-quiz-message-btn').onclick = function() {
+          const textarea = document.getElementById('quiz-share-textarea');
+          textarea.select();
+          textarea.setSelectionRange(0, 99999);
+          document.execCommand('copy');
+          this.textContent = "Copied!";
+          setTimeout(() => { this.textContent = "Copy"; }, 1300);
+        };
+        
+        // Close functionality
+        document.getElementById('close-quiz-message-btn').onclick = function() {
+          modal.remove();
+        };
+
+            } catch (err) {
+            alert("Quiz creation failed: " + err.message);
+        }
+    
+        // Hide spinner overlay
+        document.getElementById('quiz-spinner').style.display = 'none';
+    });
+        const displayArea = document.getElementById('questions-display-area');
+        const nodes = displayArea.querySelectorAll('.question-item');
+        if (nodes.length < 1) {
+            alert("No questions found for this quiz!");
+            return;
+        }
 
     // Build quiz questions array
     const questions = [];
@@ -1328,5 +1424,28 @@ document.getElementById('create-quiz-btn').addEventListener('click', async funct
     prompt("Share this link with students:", quizLink);
 });
       </script>
+    <!-- Quiz Creation Spinner -->
+<div id="quiz-spinner" style="
+  display:none;
+  position:fixed;
+  top:0; left:0; width:100vw; height:100vh;
+  background:rgba(0, 0, 0, 0.15);
+  z-index:9999;
+  align-items:center;
+  justify-content:center;
+">
+  <div style="
+    background:#fff;
+    padding:32px 28px;
+    border-radius:18px;
+    box-shadow:0 4px 24px #0f3d6b25;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+  ">
+    <i class="fa fa-spinner fa-spin" style="font-size:2.6em;color:#1762a7;margin-bottom:12px;"></i>
+    <span style="color:#1762a7;font-weight:bold;font-size:1.13em;">Creating Quiz... Please wait</span>
+  </div>
+</div>
 </body>
 </html>
