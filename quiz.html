@@ -147,6 +147,13 @@
     </div>
 
     <script>
+        function shuffleArray(array) {
+        for (let i = array.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [array[i], array[j]] = [array[j], array[i]];
+        }
+        return array;
+    }
     // Firebase config (reuse from your app)
     const firebaseConfig = {
         apiKey: "AIzaSyAszVhWXUUOYLQ7VimKmPKf1yEu_CI9RCE",
@@ -202,6 +209,25 @@
             return;
         }
         quiz = snap.data();
+// Shuffle options for each question and update answer index
+quiz.questions.forEach(q => {
+    // Make a copy of options and find the correct answer's index in the original list
+    const origOptions = q.options.map(opt => opt);
+    const correctIdx = letterToIdx(q.answer);
+
+    // Create a shuffled array of {opt, i} objects
+    const paired = origOptions.map((opt, i) => ({ opt, i }));
+    shuffleArray(paired);
+
+    // Save the shuffled options
+    q.shuffledOptions = paired.map(p => p.opt);
+
+    // Find the new index of the correct answer
+    const newCorrectIdx = paired.findIndex(p => p.i === correctIdx);
+
+    // Store for use in rendering
+    q.shuffledAnswerIdx = newCorrectIdx;
+});
         console.log("Quiz loaded:", quiz);
         if (!quiz.questions || quiz.questions.length === 0) {
             document.getElementById("quiz-main").innerHTML = "<div style='color:#c82333;text-align:center;'>No questions found in this quiz.</div>";
@@ -239,14 +265,17 @@
 
     // MCQ options with letters
     let optionsHTML = '';
-    if (Array.isArray(q.options)) {
-        optionsHTML = q.options.map((opt, idx) => {
+    const opts = q.shuffledOptions || q.options; // fallback if not shuffled
+    const answerIdx = (typeof q.shuffledAnswerIdx === "number") ? q.shuffledAnswerIdx : letterToIdx(q.answer);
+    
+    if (Array.isArray(opts)) {
+        optionsHTML = opts.map((opt, idx) => {
             let selected = userAnswers[currentIdx] === idx ? "selected" : "";
-            let correct = (isRevealed && idx === letterToIdx(q.answer)) ? "correct" : "";
-            let wrong = (isRevealed && userAnswers[currentIdx] === idx && userAnswers[currentIdx] !== letterToIdx(q.answer)) ? "wrong" : "";
+            let correct = (isRevealed && idx === answerIdx) ? "correct" : "";
+            let wrong = (isRevealed && userAnswers[currentIdx] === idx && userAnswers[currentIdx] !== answerIdx) ? "wrong" : "";
             return `<label class="option-label ${selected} ${correct} ${wrong}" data-idx="${idx}">
                 <input type="radio" class="option-radio" name="opt" value="${idx}" ${userAnswers[currentIdx] === idx ? "checked" : ""} ${(isRevealed) ? "disabled" : ""}>
-                <span style="font-weight:600;">${String.fromCharCode(65+idx)})</span> &nbsp; ${opt}
+                <span style="font-weight:600;">${String.fromCharCode(65+idx)})</span> &nbsp; ${opt.replace(/^[A-D]\)\s*/, '')}
             </label>`;
         }).join("");
     }
@@ -318,32 +347,31 @@
     // --- Result block ---
     function renderResult() {
         let correct = 0, wrong = 0, missed = 0;
-        quiz.questions.forEach((q, i) => {
-            let ansIdx = letterToIdx(q.answer);
-            if (userAnswers[i] === ansIdx) correct++;
-            else if (userAnswers[i] === null) missed++;
-            else wrong++;
-        });
-        let html = `<div class="result-block">
-            <div class="score-line">Your Score: ${correct} / ${quiz.questions.length}</div>
-            <div class="answer-review">`;
-        quiz.questions.forEach((q, i) => {
-            let user = userAnswers[i], ans = letterToIdx(q.answer);
-            html += `<div>
-                Q${i+1}: `;
-            if (user === ans) {
-                html += `<span class="correct">Correct</span>`;
-            } else if (user === null) {
-                html += `<span class="missed">Not Answered</span> (Answer: <b>${String.fromCharCode(65+ans)})</b>)`;
-            } else {
-                html += `<span class="wrong">Wrong</span> (Your: <b>${String.fromCharCode(65+user)})</b>, Answer: <b>${String.fromCharCode(65+ans)})</b>)`;
-            }
-            html += `</div>`;
-        });
-        html += `</div></div>`;
-        return html;
+    quiz.questions.forEach((q, i) => {
+        let ansIdx = (typeof q.shuffledAnswerIdx === "number") ? q.shuffledAnswerIdx : letterToIdx(q.answer);
+        if (userAnswers[i] === ansIdx) correct++;
+        else if (userAnswers[i] === null) missed++;
+        else wrong++;
+    });
+    let html = `<div class="result-block">
+        <div class="score-line">Your Score: ${correct} / ${quiz.questions.length}</div>
+        <div class="answer-review">`;
+    quiz.questions.forEach((q, i) => {
+        let user = userAnswers[i], ans = (typeof q.shuffledAnswerIdx === "number") ? q.shuffledAnswerIdx : letterToIdx(q.answer);
+        html += `<div>
+            Q${i+1}: `;
+        if (user === ans) {
+            html += `<span class="correct">Correct</span>`;
+        } else if (user === null) {
+            html += `<span class="missed">Not Answered</span> (Answer: <b>${String.fromCharCode(65+ans)})</b>)`;
+        } else {
+            html += `<span class="wrong">Wrong</span> (Your: <b>${String.fromCharCode(65+user)})</b>, Answer: <b>${String.fromCharCode(65+ans)})</b>)`;
+        }
+        html += `</div>`;
+    });
+    html += `</div></div>`;
+    return html;
     }
-
     // --- Load on page ---
     window.onload = loadQuiz;
     </script>
