@@ -117,8 +117,13 @@
         .answer-review .wrong { color: #c82333; font-weight: bold; }
         .answer-review .missed { color: #f39c12; font-weight: bold; }
     </style>
-    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+        <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+    <!-- ADD MATHJAX -->
+    <script>
+      window.MathJax = { tex: { inlineMath: [['$', '$'], ['\\(', '\\)']] } };
+    </script>
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
 </head>
 <body>
     <header id="main-header">
@@ -151,6 +156,7 @@
     // --- Quiz State ---
     let quiz = null;
     let userAnswers = [];
+    let revealed = [];
     let currentIdx = 0;
     let quizStart = null;
     let timerInterval = null;
@@ -197,11 +203,12 @@
         }
         document.getElementById("quiz-level").textContent = quiz.level ? ("Level: " + quiz.level) : "";
         userAnswers = Array(quiz.questions.length).fill(null);
+        revealed = Array(quiz.questions.length).fill(false);
         currentIdx = 0;
         renderQuestionNumbers();
         renderQuestion();
         startTimer();
-    }
+        }
 
     // --- Render Question Numbers ---
     function renderQuestionNumbers() {
@@ -218,66 +225,69 @@
 
     // --- Render One Question ---
     function renderQuestion(showResult = false) {
-        const q = quiz.questions[currentIdx];
-        const main = document.getElementById("quiz-main");
-        if (!q) return;
+    const q = quiz.questions[currentIdx];
+    const main = document.getElementById("quiz-main");
+    if (!q) return;
 
-        // MCQ options with letters
-        let optionsHTML = '';
-        if (Array.isArray(q.options)) {
-            optionsHTML = q.options.map((opt, idx) => {
-                let selected = userAnswers[currentIdx] === idx ? "selected" : "";
-                let correct = (showResult && idx === letterToIdx(q.answer)) ? "correct" : "";
-                let wrong = (showResult && userAnswers[currentIdx] === idx && userAnswers[currentIdx] !== letterToIdx(q.answer)) ? "wrong" : "";
-                return `<label class="option-label ${selected} ${correct} ${wrong}" data-idx="${idx}">
-                    <input type="radio" class="option-radio" name="opt" value="${idx}" ${userAnswers[currentIdx] === idx ? "checked" : ""} ${showResult ? "disabled" : ""}>
-                    <span style="font-weight:600;">${String.fromCharCode(65+idx)})</span> &nbsp; ${opt}
-                </label>`;
-            }).join("");
-        }
-        main.innerHTML = `
-            <div class="question-block">
-                <div style="margin-bottom:7px;font-weight:600;color:#777;">Question ${currentIdx+1} of ${quiz.questions.length}</div>
-                <div class="question-text">${q.question}</div>
-                <form id="opt-form" class="option-block">${optionsHTML}</form>
-            </div>
-            <div class="nav-btns">
-                <button class="nav-btn" id="prev-btn" ${currentIdx === 0 ? "disabled" : ""}><i class="fa fa-arrow-left"></i> Previous</button>
-                <button class="nav-btn" id="next-btn" ${currentIdx === quiz.questions.length-1 ? "disabled" : ""}>Next <i class="fa fa-arrow-right"></i></button>
-            </div>
-            <button class="submit-btn" id="finish-btn" ${showResult ? "disabled" : ""}>Finish & See Result</button>
-        `;
+    let isRevealed = showResult || revealed[currentIdx];
 
-        // Option selection
-        if (!showResult) {
-            main.querySelectorAll('.option-label').forEach(lbl => {
-                lbl.onclick = (e) => {
-                    if (showResult) return;
-                    const idx = Number(lbl.getAttribute("data-idx"));
-                    userAnswers[currentIdx] = idx;
-                    renderQuestionNumbers();
-                    renderQuestion();
-                };
-            });
-        }
+    // MCQ options with letters
+    let optionsHTML = '';
+    if (Array.isArray(q.options)) {
+        optionsHTML = q.options.map((opt, idx) => {
+            let selected = userAnswers[currentIdx] === idx ? "selected" : "";
+            let correct = (isRevealed && idx === letterToIdx(q.answer)) ? "correct" : "";
+            let wrong = (isRevealed && userAnswers[currentIdx] === idx && userAnswers[currentIdx] !== letterToIdx(q.answer)) ? "wrong" : "";
+            return `<label class="option-label ${selected} ${correct} ${wrong}" data-idx="${idx}">
+                <input type="radio" class="option-radio" name="opt" value="${idx}" ${userAnswers[currentIdx] === idx ? "checked" : ""} ${(isRevealed) ? "disabled" : ""}>
+                <span style="font-weight:600;">${String.fromCharCode(65+idx)})</span> &nbsp; ${opt}
+            </label>`;
+        }).join("");
+    }
+    main.innerHTML = `
+           <div class="question-block">
+            <div style="margin-bottom:7px;font-weight:600;color:#777;">Question ${currentIdx+1} of ${quiz.questions.length}</div>
+            <div class="question-text">${q.question}</div>
+            <form id="opt-form" class="option-block">${optionsHTML}</form>
+        </div>
+        <div class="nav-btns">
+            <button class="nav-btn" id="prev-btn" ${currentIdx === 0 ? "disabled" : ""}><i class="fa fa-arrow-left"></i> Previous</button>
+            <button class="nav-btn" id="next-btn" ${currentIdx === quiz.questions.length-1 ? "disabled" : ""}>Next <i class="fa fa-arrow-right"></i></button>
+        </div>
+        <button class="submit-btn" id="finish-btn" ${showResult ? "disabled" : ""}>Finish & See Result</button>
+    `;
+    if (window.MathJax) MathJax.typeset();
 
-        // Navigation
-        document.getElementById("prev-btn").onclick = (e) => {
-            e.preventDefault();
-            if (currentIdx > 0) { currentIdx--; renderQuestionNumbers(); renderQuestion(); }
-        };
-        document.getElementById("next-btn").onclick = (e) => {
-            e.preventDefault();
-            if (currentIdx < quiz.questions.length-1) { currentIdx++; renderQuestionNumbers(); renderQuestion(); }
-        };
-
-        // Finish button
-        document.getElementById("finish-btn").onclick = (e) => {
-            e.preventDefault();
-            finishQuiz();
-        };
+    // Option selection - only if not revealed for this question
+    if (!showResult && !revealed[currentIdx]) {
+        main.querySelectorAll('.option-label').forEach(lbl => {
+            lbl.onclick = (e) => {
+                if (revealed[currentIdx]) return;
+                const idx = Number(lbl.getAttribute("data-idx"));
+                userAnswers[currentIdx] = idx;
+                revealed[currentIdx] = true; // lock and reveal!
+                renderQuestionNumbers();
+                renderQuestion();
+            };
+        });
     }
 
+    // Navigation
+    document.getElementById("prev-btn").onclick = (e) => {
+        e.preventDefault();
+        if (currentIdx > 0) { currentIdx--; renderQuestionNumbers(); renderQuestion(); }
+    };
+    document.getElementById("next-btn").onclick = (e) => {
+        e.preventDefault();
+        if (currentIdx < quiz.questions.length-1) { currentIdx++; renderQuestionNumbers(); renderQuestion(); }
+    };
+
+    // Finish button
+    document.getElementById("finish-btn").onclick = (e) => {
+        e.preventDefault();
+        finishQuiz();
+    };
+}
     // --- Letter (A/B/C/D) to index ---
     function letterToIdx(ans) {
         if (!ans) return null;
