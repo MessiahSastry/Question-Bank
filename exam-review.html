@@ -302,6 +302,7 @@ document.getElementById('randomize-numbers-btn').onclick = async function() {
     alert('No exam paper found!');
     return;
   }
+  // Gather all eligible questions
   let allQuestions = [];
   paper.subjects.forEach((subjectBlock, subjIdx) => {
     (subjectBlock.sections || []).forEach((section, sIdx) => {
@@ -322,83 +323,85 @@ document.getElementById('randomize-numbers-btn').onclick = async function() {
       });
     });
   });
+
   if (allQuestions.length === 0) {
     alert("No numerical problem-solving questions found in Math/Physics/Chemistry.");
     return;
   }
-  const prompt = `
-For each question below, if it is a numerical/problem-solving question, change all numbers in the question and all options to new reasonable values, without changing the concept or difficulty. Make sure the correct answer and distractors match the new numbers. Do not change anything for theory or conceptual questions.
 
-Input:
-${allQuestions.map((q, idx) => 
-`Q${idx+1} (Subject: ${q.subject}, Section: ${q.sectionLabel}):
-${q.question}
-${q.options && q.options.length ? q.options.map((o,i)=>String.fromCharCode(65+i)+') '+o).join('\n') : ''}`
-).join('\n\n')}
-
-Return exactly the same number of questions as input, in the same order. 
-For each question, keep the Q number and Subject/Section as in the input. 
-For each question with options, show options as: 
-A) option1
-B) option2
-C) option3
-D) option4
-
-Do not add any extra text or explanations. Do not skip or merge any questions. 
-Output must match input order and count, or it will be rejected.`;
+  // --- Batch processing ---
+  const BATCH_SIZE = 10;
+  const totalBatches = Math.ceil(allQuestions.length / BATCH_SIZE);
+  let updatedBlocks = [];
+  let aiFailed = false;
 
   const btn = document.getElementById('randomize-numbers-btn');
   btn.disabled = true;
   btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Randomizing...';
-  let aiResult;
-  try {
-    const response = await fetch('https://question-bank-lqsu.onrender.com/api/v1/generate', {
-      method: 'POST',
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt })
-    });
-    const data = await response.json();
-    if (!response.ok || !data.result) throw new Error(data.error || "AI Error");
-    aiResult = data.result;
-    console.log('AI Output:', aiResult);
-  } catch (e) {
-    alert("AI error: " + e.message);
-    btn.disabled = false;
-    btn.innerHTML = '<i class="fas fa-random"></i> Randomize Numbers in Problems';
-    return;
-  }
-  // Correctly split and keep all question blocks including Q1
-const qBlocks = aiResult
-  .split(/(?:^|\n)(Q\d+ \(Subject:)/)
-  .reduce((acc, cur, i, arr) => {
-    if (cur && cur.startsWith('Q')) {
-      acc.push(cur + (arr[i + 1] ? '\n' + arr[i + 1] : ''));
+
+  for (let b = 0; b < totalBatches; b++) {
+    const batchQuestions = allQuestions.slice(b * BATCH_SIZE, (b + 1) * BATCH_SIZE);
+    const prompt = `
+For each question below, if it is a numerical/problem-solving question, change all numbers in the question and all options to new reasonable values, without changing the concept or difficulty. Make sure the correct answer and distractors match the new numbers. Do not change anything for theory or conceptual questions.
+
+Input:
+${batchQuestions.map((q, idx) => 
+`Q${idx+1} (Subject: ${q.subject}, Section: ${q.sectionLabel}):
+${q.question}
+${q.options && q.options.length ? q.options.map((o,i)=>String.fromCharCode(65+i)+') '+o).join('\n') : ''}` 
+).join('\n\n')}
+
+Return ONLY the updated questions in the same order and format as above.`;
+
+    let aiResult;
+    try {
+      const response = await fetch('https://question-bank-lqsu.onrender.com/api/v1/generate', {
+        method: 'POST',
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt })
+      });
+      const data = await response.json();
+      if (!response.ok || !data.result) throw new Error(data.error || "AI Error");
+      aiResult = data.result;
+    } catch (e) {
+      alert("AI error: " + e.message);
+      aiFailed = true;
+      break;
     }
-    return acc;
-  }, []);
-  if (qBlocks.length !== allQuestions.length) {
-    alert("Number of returned questions from AI does not match. Please check AI output.");
-    btn.disabled = false;
-    btn.innerHTML = '<i class="fas fa-random"></i> Randomize Numbers in Problems';
-    return;
-  }
-  if (!confirm("AI has generated new numbers for all problem-solving questions. Apply these changes?")) {
-    btn.disabled = false;
-    btn.innerHTML = '<i class="fas fa-random"></i> Randomize Numbers in Problems';
-    return;
-  }
-  for (let i = 0; i < allQuestions.length; i++) {
-    const { subjIdx, sIdx, qIdx } = allQuestions[i];
-    const lines = qBlocks[i].split('\n').filter(x=>x.trim());
-    if (/^Q\d+ \(Subject:/i.test(lines[0])) lines.shift();
-    const questionText = lines[0];
-    let options = [];
-    for (let j=1;j<lines.length;j++) {
-      const m = lines[j].match(/^[A-D]\)\s*(.+)$/);
-      if (m) options.push(m[1]);
+    const qBlocks = aiResult.split(/\nQ\d+ \(Subject:/).map((q, i) => (i === 0 && q.startsWith("Q")) ? q : "Q"+(i)+(q ? "\n"+q : "")).filter(q=>q.trim());
+
+    if (qBlocks.length !== batchQuestions.length) {
+      alert(`Number of returned questions from AI does not match for batch ${b+1}. Please check AI output.`);
+      aiFailed = true;
+      break;
     }
-    paper.subjects[subjIdx].sections[sIdx].questions[qIdx].text = questionText;
-    if (options.length) paper.subjects[subjIdx].sections[sIdx].questions[qIdx].options = options;
+    updatedBlocks.push(qBlocks);
+  }
+
+  if (aiFailed) {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="fas fa-random"></i> Randomize Numbers in Problems';
+    return;
+  }
+
+  // Apply AI results back to paper
+  let applied = 0;
+  for (let b = 0; b < updatedBlocks.length; b++) {
+    let batchQuestions = allQuestions.slice(b * BATCH_SIZE, (b + 1) * BATCH_SIZE);
+    for (let i = 0; i < updatedBlocks[b].length; i++) {
+      const { subjIdx, sIdx, qIdx } = batchQuestions[i];
+      const lines = updatedBlocks[b][i].split('\n').filter(x=>x.trim());
+      if (/^Q\d+ \(Subject:/i.test(lines[0])) lines.shift();
+      const questionText = lines[0];
+      let options = [];
+      for (let j=1;j<lines.length;j++) {
+        const m = lines[j].match(/^[A-D]\)\s*(.+)$/);
+        if (m) options.push(m[1]);
+      }
+      paper.subjects[subjIdx].sections[sIdx].questions[qIdx].text = questionText;
+      if (options.length) paper.subjects[subjIdx].sections[sIdx].questions[qIdx].options = options;
+      applied++;
+    }
   }
   setExamPaper(paper);
   renderExam();
