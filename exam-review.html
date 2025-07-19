@@ -135,6 +135,9 @@
       <h2>Review & Edit Exam Paper</h2>
       <div id="exam-review-area"></div>
       <div style="display: flex; flex-direction: column; align-items: center; gap: 14px; margin-top: 24px; width: 100%;">
+         <button class="save-btn" id="randomize-numbers-btn" style="background:#f08035;">
+        <i class="fas fa-random"></i> Randomize Numbers in Problems
+        </button>
         <button class="save-btn" id="save-review-btn">
           <i class="fas fa-save"></i> Save Changes
         </button>
@@ -291,6 +294,93 @@
       alert('No exam paper found!');
     }
   };
+  // --- Add this code at the end of your <script> ---
+document.getElementById('randomize-numbers-btn').onclick = async function() {
+  saveEdits();
+  const paper = getExamPaper();
+  if (!paper) {
+    alert('No exam paper found!');
+    return;
+  }
+  let allQuestions = [];
+  paper.subjects.forEach((subjectBlock, subjIdx) => {
+    (subjectBlock.sections || []).forEach((section, sIdx) => {
+      (section.questions || []).forEach((q, qIdx) => {
+        const isProbSubject = ["math", "math 1", "math 2", "physics", "chemistry"].some(
+          s => subjectBlock.subject.toLowerCase().includes(s)
+        );
+        if (!isProbSubject) return;
+        const hasNumber = /\d/.test(q.text);
+        if (!hasNumber) return;
+        allQuestions.push({
+          subjIdx, sIdx, qIdx,
+          subject: subjectBlock.subject,
+          sectionLabel: section.label,
+          question: q.text,
+          options: q.options || [],
+        });
+      });
+    });
+  });
+  if (allQuestions.length === 0) {
+    alert("No numerical problem-solving questions found in Math/Physics/Chemistry.");
+    return;
+  }
+  const prompt = `
+For each question below, if it is a numerical/problem-solving question, change all numbers in the question and all options to new reasonable values, without changing the concept or difficulty. Make sure the correct answer and distractors match the new numbers. Do not change anything for theory or conceptual questions.
+
+Input:
+${allQuestions.map((q, idx) => 
+`Q${idx+1} (Subject: ${q.subject}, Section: ${q.sectionLabel}):
+${q.question}
+${q.options && q.options.length ? q.options.map((o,i)=>String.fromCharCode(65+i)+') '+o).join('\n') : ''}`
+).join('\n\n')}
+
+Return ONLY the updated questions in the same order and format as above.`;
+
+  const btn = document.getElementById('randomize-numbers-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Randomizing...';
+  let aiResult;
+  try {
+    const response = await fetch('https://question-bank-lqsu.onrender.com/api/v1/generate', {
+      method: 'POST',
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt })
+    });
+    const data = await response.json();
+    if (!response.ok || !data.result) throw new Error(data.error || "AI Error");
+    aiResult = data.result;
+  } catch (e) {
+    alert("AI error: " + e.message);
+    btn.disabled = false;
+    btn.innerHTML = '<i class="fas fa-random"></i> Randomize Numbers in Problems';
+    return;
+  }
+  const qBlocks = aiResult.split(/\nQ\d+ \(Subject:/).map((q, i) => (i === 0 && q.startsWith("Q")) ? q : "Q"+(i)+(q ? "\n"+q : "")).filter(q=>q.trim());
+  if (qBlocks.length !== allQuestions.length) {
+    alert("Number of returned questions from AI does not match. Please check AI output.");
+    btn.disabled = false;
+    btn.innerHTML = '<i class="fas fa-random"></i> Randomize Numbers in Problems';
+    return;
+  }
+  if (!confirm("AI has generated new numbers for all problem-solving questions. Apply these changes?")) {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="fas fa-random"></i> Randomize Numbers in Problems';
+    return;
+  }
+  for (let i = 0; i < allQuestions.length; i++) {
+    const { subjIdx, sIdx, qIdx } = allQuestions[i];
+    const lines = qBlocks[i].split('\n').filter(x=>x.trim());
+    if (/^Q\d+ \(Subject:/i.test(lines[0])) lines.shift();
+    const questionText = lines[0];
+    let options = [];
+    for (let j=1;j<lines.length;j++) {
+      const m = lines[j].match(/^[A-D]\)\s*(.+)$/);
+      if (m) options.push(m[1]);
+    }
+    paper.subjects[subjIdx].sections[sIdx].questions[qIdx].text = questionText;
+    if (options.length) paper.subjects[subjIdx].se
 </script>
 </body>
 </html>
