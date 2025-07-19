@@ -392,8 +392,17 @@ Return ONLY the updated questions in the same order and format as above.`;
     const { subjIdx, sIdx, qIdx } = batchQuestions[i];
     const lines = updatedBlocks[b][i].split('\n').filter(x => x.trim());
     // Defensive: Remove header lines like "Q1 (Subject..." if present
-    while (lines.length && /^Q\d+(\s*\(.*\))?/i.test(lines[0])) lines.shift();
-    // Only update if there's real content
+        // Remove all lines that are clearly just metadata or AI header
+    while (
+      lines.length &&
+      (
+        /^Q\d+(\s*\(.*\))?/i.test(lines[0]) || 
+        /^Math [^:]+:.*Section/i.test(lines[0]) || // Catches the "Math 1 IIT, Section: Section A..." junk
+        /Section:.*\(MCQ/.test(lines[0])            // Catches lines with "Section: ... (MCQ"
+      )
+    ) {
+      lines.shift();
+    }
     if (lines.length === 0) continue;
     const questionText = lines[0];
     let options = [];
@@ -401,9 +410,16 @@ Return ONLY the updated questions in the same order and format as above.`;
       const m = lines[j].match(/^[A-D]\)\s*(.+)$/);
       if (m) options.push(m[1]);
     }
-    // Don't overwrite with "Q1" or other junk
-    if (questionText && questionText.length > 7 && !/^Q\d+/.test(questionText))
+    // Only update with real questions (not metadata)
+    if (
+      questionText &&
+      questionText.length > 10 &&
+      !/^Q\d+/.test(questionText) &&
+      !/^Math [^:]+:.*Section/i.test(questionText) &&
+      !/Section:.*\(MCQ/.test(questionText)
+    ) {
       paper.subjects[subjIdx].sections[sIdx].questions[qIdx].text = questionText;
+    }
     if (options.length)
       paper.subjects[subjIdx].sections[sIdx].questions[qIdx].options = options;
     applied++;
