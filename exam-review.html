@@ -189,7 +189,9 @@
         spellcheck="true"
         data-subject="${subjIdx}"
         data-section="${sIdx}">
-      ${section.label || 'Section'}${section.mcqType ? ` (${section.mcqType.toUpperCase()})` : ""}
+      ${section.label && section.mcqType && !section.label.toUpperCase().includes(section.mcqType.toUpperCase())
+      ? section.label + ` (${section.mcqType.toUpperCase()})`
+      : (section.label || 'Section')}
       <i class="fas fa-pen edit-icon"></i>
     </div>
     <!-- Instructions and Total in one row -->
@@ -342,17 +344,28 @@ document.getElementById('randomize-numbers-btn').onclick = async function() {
   for (let b = 0; b < totalBatches; b++) {
     const batchQuestions = allQuestions.slice(b * BATCH_SIZE, (b + 1) * BATCH_SIZE);
     const prompt = `
-For each question below, if it is a numerical/problem-solving question, change all numbers in the question and all options to new reasonable values, without changing the concept or difficulty. Make sure the correct answer and distractors match the new numbers. Do not change anything for theory or conceptual questions.
+For each question below, if it is a numerical/problem-solving question, change all numbers in the question and all options to new reasonable values, without changing the concept or difficulty.
+
+**Instructions for MCQs:**
+- For "MCQ (Single)": Ensure only one correct answer is present, and shuffle the options. Randomly place the correct answer.
+- For "MCQ (Multiple)": Randomly assign the number of correct options for each question as follows:
+    - 20% questions: 1 correct option
+    - 30% questions: 2 correct options
+    - 30% questions: 3 correct options
+    - 20% questions: 4 correct options (all correct)
+  Shuffle the options and the correct answer(s) every time. Make sure the answer key matches.
+- For all questions, double-check that the answer key matches the new numbers and options, and that only the specified number of answers is marked correct.
+- Do not change anything for theory or conceptual questions.
 
 Input:
 ${batchQuestions.map((q, idx) => 
-`Q${idx+1} (Subject: ${q.subject}, Section: ${q.sectionLabel}):
+`Q${idx+1} (Subject: ${q.subject}, Section: ${q.sectionLabel}${q.options.length === 4 ? (q.options.filter(opt => opt.includes("(Multiple)")).length ? ", MCQ (Multiple)" : ", MCQ (Single)") : ""}):
 ${q.question}
 ${q.options && q.options.length ? q.options.map((o,i)=>String.fromCharCode(65+i)+') '+o).join('\n') : ''}` 
 ).join('\n\n')}
 
-Return ONLY the updated questions in the same order and format as above.`;
-
+Return ONLY the updated questions in the same order and format as above. For each MCQ, at the end, add a line: "Answer: A,B" (for multiple correct), or "Answer: C" (for single correct).
+`;
     let aiResult;
     try {
       const response = await fetch('https://question-bank-lqsu.onrender.com/api/v1/generate', {
