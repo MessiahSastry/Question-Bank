@@ -408,26 +408,39 @@ Return ONLY the updated questions in the same order and format as above. For eac
   let batchQuestions = allQuestions.slice(b * BATCH_SIZE, (b + 1) * BATCH_SIZE);
   for (let i = 0; i < updatedBlocks[b].length; i++) {
     const { subjIdx, sIdx, qIdx } = batchQuestions[i];
-    const lines = updatedBlocks[b][i].split('\n').filter(x => x.trim());
-    // Defensive: Remove header lines like "Q1 (Subject..." if present
-        // Remove all lines that are clearly just metadata or AI header
-    while (
-      lines.length &&
-      (
-        /^Q\d+(\s*\(.*\))?/i.test(lines[0]) || 
-        /^Math [^:]+:.*Section/i.test(lines[0]) || // Catches the "Math 1 IIT, Section: Section A..." junk
-        /Section:.*\(MCQ/.test(lines[0])            // Catches lines with "Section: ... (MCQ"
-      )
-    ) {
-      lines.shift();
-    }
-    if (lines.length === 0) continue;
-    const questionText = lines[0];
-    let options = [];
-    for (let j = 1; j < lines.length; j++) {
-      const m = lines[j].match(/^[A-D]\)\s*(.+)$/);
-      if (m) options.push(m[1]);
-    }
+    let lines = updatedBlocks[b][i].split('\n').filter(x => x.trim());
+// Remove any AI metadata/header lines before the real question
+while (
+  lines.length &&
+  (
+    /^Q\d+(\s*\(.*\))?/i.test(lines[0]) || 
+    /^Math [^:]+:.*Section/i.test(lines[0]) || // Catches the "Math 1 IIT, Section: Section A..." junk
+    /Section:.*\(MCQ/.test(lines[0]) ||
+    /^[A-Za-z0-9 ]+, Section:.*$/i.test(lines[0]) // General catch for any "Subject, Section:" junk
+  )
+) {
+  lines.shift();
+}
+// Additional: If still not a question, keep shifting until a line looks like a question
+while (
+  lines.length && (
+    lines[0].length < 8 ||
+    /^[A-Za-z0-9 ]+, Section:.*$/i.test(lines[0]) ||
+    /^[A-Z][a-zA-Z0-9 ]*:$/.test(lines[0]) ||
+    /^[A-Z ]+\(.*\):$/i.test(lines[0]) ||
+    !/[\?\.\)]/.test(lines[0])
+  )
+) {
+  lines.shift();
+}
+
+if (lines.length === 0) continue;
+const questionText = lines[0].trim();
+let options = [];
+for (let j = 1; j < lines.length; j++) {
+  const m = lines[j].match(/^[A-D]\)\s*(.+)$/);
+  if (m) options.push(m[1].trim());
+}
     // Only update with real questions (not metadata)
     if (
       questionText &&
