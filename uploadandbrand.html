@@ -341,33 +341,47 @@ document.getElementById('class-dropdown').addEventListener('change', () => {
     const pdfFile = document.getElementById('pdfFile').files[0];
     if (!pdfFile) { hideSpinner(); return alert("Please select a PDF to brand!"); }
     const pdfBytes = await pdfFile.arrayBuffer();
-    const origPdf = await PDFLib.PDFDocument.load(pdfBytes);
-    const outPdf = await PDFLib.PDFDocument.create();
-    const a4Width = 595.28, a4Height = 841.89; // A4 points
+const origPdf = await PDFLib.PDFDocument.load(pdfBytes);
 
-    for (let i = 0; i < origPdf.getPageCount(); i++) {
-      const [p1] = await outPdf.copyPages(origPdf, [i]);
-      const [p2] = await outPdf.copyPages(origPdf, [i]);
-      const newPage = outPdf.addPage([a4Width, a4Height]);
-      // Calculate scale for two side-by-side
-      const { width: pw, height: ph } = p1.getSize();
-      const scale = Math.min((a4Width / 2 - 40) / pw, (a4Height - 60) / ph);
+// Check for empty or unreadable PDF
+if (!origPdf || origPdf.getPageCount() === 0) {
+  hideSpinner();
+  return alert("The PDF is empty or couldn't be read. Try another file.");
+}
 
-      // Left
-      newPage.drawPage(p1, {
-        x: 20,
-        y: (a4Height - ph * scale) / 2,
-        xScale: scale,
-        yScale: scale
-      });
-      // Right
-      newPage.drawPage(p2, {
-        x: a4Width / 2 + 20,
-        y: (a4Height - ph * scale) / 2,
-        xScale: scale,
-        yScale: scale
-      });
-    }
+const outPdf = await PDFLib.PDFDocument.create();
+const a4Width = 595.28, a4Height = 841.89; // A4 points
+
+for (let i = 0; i < origPdf.getPageCount(); i++) {
+  let p1, p2;
+  try {
+    [p1] = await outPdf.copyPages(origPdf, [i]);
+    [p2] = await outPdf.copyPages(origPdf, [i]);
+  } catch (err) {
+    hideSpinner();
+    alert("PDF page could not be processed. This PDF might be encrypted or not supported. Try another file or use a simple PDF.");
+    return;
+  }
+  const newPage = outPdf.addPage([a4Width, a4Height]);
+  // Calculate scale for two side-by-side
+  const { width: pw, height: ph } = p1.getSize();
+  const scale = Math.min((a4Width / 2 - 40) / pw, (a4Height - 60) / ph);
+
+  // Left
+  newPage.drawPage(p1, {
+    x: 20,
+    y: (a4Height - ph * scale) / 2,
+    xScale: scale,
+    yScale: scale
+  });
+  // Right
+  newPage.drawPage(p2, {
+    x: a4Width / 2 + 20,
+    y: (a4Height - ph * scale) / 2,
+    xScale: scale,
+    yScale: scale
+  });
+}
 
     const newPdfBytes = await outPdf.save();
     const blob = new Blob([newPdfBytes], { type: 'application/pdf' });
