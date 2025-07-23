@@ -245,11 +245,15 @@ async function processBranding() {
     if (!pdfFile) { hideSpinner(); return alert("Please select a PDF to brand!"); }
 
     const pdfBytes = await pdfFile.arrayBuffer();
-    const origPdfDoc = await PDFLib.PDFDocument.load(pdfBytes);
-
-    // New PDF for final output with A4 pages
+    let origPdfDoc;
+    try {
+      origPdfDoc = await PDFLib.PDFDocument.load(pdfBytes);
+    } catch (e) {
+      hideSpinner();
+      alert("Failed to read the uploaded PDF. It may be corrupted or encrypted.\n\n" + (e.message || e));
+      return;
+    }
     const outPdfDoc = await PDFLib.PDFDocument.create();
-
     const fontBold = await outPdfDoc.embedFont(PDFLib.StandardFonts.TimesRomanBold);
     const fontReg = await outPdfDoc.embedFont(PDFLib.StandardFonts.TimesRoman);
 
@@ -262,175 +266,109 @@ async function processBranding() {
     const logo2Img = await fetchLogo('schoollogo2.png');
     const logo1Dims = logo1Img.scale(66 / logo1Img.height);
     const logo2Dims = logo2Img.scale(66 / logo2Img.height);
-
-    // A4 size
-    const a4Width = 595.28, a4Height = 841.89; // points (A4 portrait)
+    const a4Width = 595.28, a4Height = 841.89;
 
     if (sheetPerPage === 1) {
-      // One original page per A4 page
       for (let i = 0; i < origPdfDoc.getPageCount(); i++) {
-        const importedPages = await outPdfDoc.copyPages(origPdfDoc, [i]);
+        let importedPages;
+        try {
+          importedPages = await outPdfDoc.copyPages(origPdfDoc, [i]);
+        } catch (e) {
+          hideSpinner();
+          alert("Error importing page " + (i + 1) + " from the uploaded PDF. Try another PDF.\n\n" + (e.message || e));
+          return;
+        }
         if (!importedPages || !Array.isArray(importedPages) || importedPages.length === 0) {
           hideSpinner();
-          alert("Error: Could not import page " + (i+1) + " from the uploaded PDF. Is the PDF valid?");
+          alert("Page " + (i + 1) + " of the PDF could not be imported. Please try a different PDF.");
           return;
         }
         const importedPage = importedPages[0];
         const page = outPdfDoc.addPage([a4Width, a4Height]);
-
-        // Draw header (unchanged)
+        // -- Header drawing (no change) --
         const margin = 45, headH = 170;
         page.drawRectangle({ x: 0, y: a4Height - headH, width: a4Width, height: headH, color: PDFLib.rgb(1,1,1), opacity: 1 });
         const logoY = a4Height - 100;
-
         page.drawImage(logo1Img, { x: 50, y: logoY, width: logo1Dims.width, height: logo1Dims.height });
         page.drawImage(logo2Img, { x: a4Width - 50 - logo2Dims.width, y: logoY, width: logo2Dims.width, height: logo2Dims.height });
-
         const headingY = logoY + 15;
-        page.drawText(schoolName, {
-          x: a4Width / 2 - fontBold.widthOfTextAtSize(schoolName, 24) / 2,
-          y: headingY + 30,
-          size: 24,
-          font: fontBold,
-          color: PDFLib.rgb(0.10, 0.18, 0.5)
-        });
-        page.drawText('IIT & NEET FOUNDATION', {
-          x: a4Width / 2 - fontReg.widthOfTextAtSize('IIT & NEET FOUNDATION', 15) / 2,
-          y: headingY + 10,
-          size: 15,
-          font: fontReg,
-          color: PDFLib.rgb(0.08, 0.25, 0.48)
-        });
-        page.drawText(examName, {
-          x: a4Width / 2 - fontBold.widthOfTextAtSize(examName, 15) / 2,
-          y: headingY - 10,
-          size: 15,
-          font: fontBold,
-          color: PDFLib.rgb(0.12, 0.12, 0.16)
-        });
-
-        // Box for class/subject/date/time/marks
+        page.drawText(schoolName, { x: a4Width / 2 - fontBold.widthOfTextAtSize(schoolName, 24) / 2, y: headingY + 30, size: 24, font: fontBold, color: PDFLib.rgb(0.10, 0.18, 0.5)});
+        page.drawText('IIT & NEET FOUNDATION', { x: a4Width / 2 - fontReg.widthOfTextAtSize('IIT & NEET FOUNDATION', 15) / 2, y: headingY + 10, size: 15, font: fontReg, color: PDFLib.rgb(0.08, 0.25, 0.48)});
+        page.drawText(examName, { x: a4Width / 2 - fontBold.widthOfTextAtSize(examName, 15) / 2, y: headingY - 10, size: 15, font: fontBold, color: PDFLib.rgb(0.12, 0.12, 0.16)});
         const boxY = a4Height - 165;
         const boxW = a4Width - 100;
         const boxH = 55;
-        page.drawRectangle({
-          x: 50, y: boxY, width: boxW, height: boxH,
-          borderColor: PDFLib.rgb(0.24, 0.60, 0.96),
-          color: PDFLib.rgb(0.98, 0.99, 1),
-          borderWidth: 2,
-        });
+        page.drawRectangle({ x: 50, y: boxY, width: boxW, height: boxH, borderColor: PDFLib.rgb(0.24, 0.60, 0.96), color: PDFLib.rgb(0.98, 0.99, 1), borderWidth: 2 });
         const subj = subject.toUpperCase();
         page.drawText("Class: " + className, { x: 68, y: boxY + boxH - 22, size: 12.5, font: fontBold, color: PDFLib.rgb(0.11, 0.23, 0.53) });
         page.drawText(subj, { x: a4Width / 2 - fontBold.widthOfTextAtSize(subj, 17) / 2, y: boxY + boxH - 20, size: 17, font: fontBold, color: PDFLib.rgb(0.07, 0.18, 0.5) });
         page.drawText("Date: " + formatDate(date), { x: a4Width - 168, y: boxY + boxH - 22, size: 12.5, font: fontBold, color: PDFLib.rgb(0.11, 0.23, 0.53) });
         page.drawText("Time: " + time + " min", { x: 68, y: boxY + 13, size: 12.5, font: fontBold, color: PDFLib.rgb(0.15, 0.24, 0.35) });
         page.drawText("Max Marks: " + maxMarks, { x: a4Width - 168, y: boxY + 13, size: 12.5, font: fontBold, color: PDFLib.rgb(0.15, 0.24, 0.35) });
-
-        // Draw imported original page (scaling)
         const [origWidth, origHeight] = importedPage.getSize();
-        const scale = Math.min(
-          (a4Width - 60) / origWidth,
-          (a4Height - headH - 60) / origHeight
-        );
-        page.drawPage(importedPage, {
-          x: 30,
-          y: 30,
-          xScale: scale,
-          yScale: scale,
-        });
+        const scale = Math.min((a4Width - 60) / origWidth, (a4Height - headH - 60) / origHeight);
+        page.drawPage(importedPage, { x: 30, y: 30, xScale: scale, yScale: scale });
       }
     } else {
-      // Two original pages per A4 page
       let i = 0;
       while (i < origPdfDoc.getPageCount()) {
         const page = outPdfDoc.addPage([a4Width, a4Height]);
-        const importedPages1 = await outPdfDoc.copyPages(origPdfDoc, [i]);
+        let importedPages1;
+        try {
+          importedPages1 = await outPdfDoc.copyPages(origPdfDoc, [i]);
+        } catch (e) {
+          hideSpinner();
+          alert("Error importing page " + (i + 1) + " from the uploaded PDF. Try another PDF.\n\n" + (e.message || e));
+          return;
+        }
         if (!importedPages1 || !Array.isArray(importedPages1) || importedPages1.length === 0) {
           hideSpinner();
-          alert("Error: Could not import page " + (i+1) + " from the uploaded PDF. Is the PDF valid?");
+          alert("Page " + (i + 1) + " of the PDF could not be imported. Please try a different PDF.");
           return;
         }
         const importedPage1 = importedPages1[0];
         const [origWidth1, origHeight1] = importedPage1.getSize();
-        // Draw header (unchanged)
+        // -- header --
         const margin = 45, headH = 170;
         page.drawRectangle({ x: 0, y: a4Height - headH, width: a4Width, height: headH, color: PDFLib.rgb(1,1,1), opacity: 1 });
         const logoY = a4Height - 100;
-
         page.drawImage(logo1Img, { x: 50, y: logoY, width: logo1Dims.width, height: logo1Dims.height });
         page.drawImage(logo2Img, { x: a4Width - 50 - logo2Dims.width, y: logoY, width: logo2Dims.width, height: logo2Dims.height });
-
         const headingY = logoY + 15;
-        page.drawText(schoolName, {
-          x: a4Width / 2 - fontBold.widthOfTextAtSize(schoolName, 24) / 2,
-          y: headingY + 30,
-          size: 24,
-          font: fontBold,
-          color: PDFLib.rgb(0.10, 0.18, 0.5)
-        });
-        page.drawText('IIT & NEET FOUNDATION', {
-          x: a4Width / 2 - fontReg.widthOfTextAtSize('IIT & NEET FOUNDATION', 15) / 2,
-          y: headingY + 10,
-          size: 15,
-          font: fontReg,
-          color: PDFLib.rgb(0.08, 0.25, 0.48)
-        });
-        page.drawText(examName, {
-          x: a4Width / 2 - fontBold.widthOfTextAtSize(examName, 15) / 2,
-          y: headingY - 10,
-          size: 15,
-          font: fontBold,
-          color: PDFLib.rgb(0.12, 0.12, 0.16)
-        });
-
-        // Box for class/subject/date/time/marks
+        page.drawText(schoolName, { x: a4Width / 2 - fontBold.widthOfTextAtSize(schoolName, 24) / 2, y: headingY + 30, size: 24, font: fontBold, color: PDFLib.rgb(0.10, 0.18, 0.5)});
+        page.drawText('IIT & NEET FOUNDATION', { x: a4Width / 2 - fontReg.widthOfTextAtSize('IIT & NEET FOUNDATION', 15) / 2, y: headingY + 10, size: 15, font: fontReg, color: PDFLib.rgb(0.08, 0.25, 0.48)});
+        page.drawText(examName, { x: a4Width / 2 - fontBold.widthOfTextAtSize(examName, 15) / 2, y: headingY - 10, size: 15, font: fontBold, color: PDFLib.rgb(0.12, 0.12, 0.16)});
         const boxY = a4Height - 165;
         const boxW = a4Width - 100;
         const boxH = 55;
-        page.drawRectangle({
-          x: 50, y: boxY, width: boxW, height: boxH,
-          borderColor: PDFLib.rgb(0.24, 0.60, 0.96),
-          color: PDFLib.rgb(0.98, 0.99, 1),
-          borderWidth: 2,
-        });
+        page.drawRectangle({ x: 50, y: boxY, width: boxW, height: boxH, borderColor: PDFLib.rgb(0.24, 0.60, 0.96), color: PDFLib.rgb(0.98, 0.99, 1), borderWidth: 2 });
         const subj = subject.toUpperCase();
         page.drawText("Class: " + className, { x: 68, y: boxY + boxH - 22, size: 12.5, font: fontBold, color: PDFLib.rgb(0.11, 0.23, 0.53) });
         page.drawText(subj, { x: a4Width / 2 - fontBold.widthOfTextAtSize(subj, 17) / 2, y: boxY + boxH - 20, size: 17, font: fontBold, color: PDFLib.rgb(0.07, 0.18, 0.5) });
         page.drawText("Date: " + formatDate(date), { x: a4Width - 168, y: boxY + boxH - 22, size: 12.5, font: fontBold, color: PDFLib.rgb(0.11, 0.23, 0.53) });
         page.drawText("Time: " + time + " min", { x: 68, y: boxY + 13, size: 12.5, font: fontBold, color: PDFLib.rgb(0.15, 0.24, 0.35) });
         page.drawText("Max Marks: " + maxMarks, { x: a4Width - 168, y: boxY + 13, size: 12.5, font: fontBold, color: PDFLib.rgb(0.15, 0.24, 0.35) });
-
-        // Draw two imported pages
-        const scale = Math.min(
-          (a4Width - 60) / origWidth1,
-          ((a4Height - headH - 60) / 2) / origHeight1
-        );
-        page.drawPage(importedPage1, {
-          x: 30,
-          y: (a4Height / 2) + 15,
-          xScale: scale,
-          yScale: scale,
-        });
+        const scale = Math.min((a4Width - 60) / origWidth1, ((a4Height - headH - 60) / 2) / origHeight1);
+        page.drawPage(importedPage1, { x: 30, y: (a4Height / 2) + 15, xScale: scale, yScale: scale });
         i++;
         if (i < origPdfDoc.getPageCount()) {
-          const importedPages2 = await outPdfDoc.copyPages(origPdfDoc, [i]);
+          let importedPages2;
+          try {
+            importedPages2 = await outPdfDoc.copyPages(origPdfDoc, [i]);
+          } catch (e) {
+            hideSpinner();
+            alert("Error importing page " + (i + 1) + " from the uploaded PDF. Try another PDF.\n\n" + (e.message || e));
+            return;
+          }
           if (!importedPages2 || !Array.isArray(importedPages2) || importedPages2.length === 0) {
             hideSpinner();
-            alert("Error: Could not import page " + (i+1) + " from the uploaded PDF. Is the PDF valid?");
+            alert("Page " + (i + 1) + " of the PDF could not be imported. Please try a different PDF.");
             return;
           }
           const importedPage2 = importedPages2[0];
           const [origWidth2, origHeight2] = importedPage2.getSize();
-          const scale2 = Math.min(
-            (a4Width - 60) / origWidth2,
-            ((a4Height - headH - 60) / 2) / origHeight2
-          );
-          page.drawPage(importedPage2, {
-            x: 30,
-            y: 30,
-            xScale: scale2,
-            yScale: scale2,
-          });
+          const scale2 = Math.min((a4Width - 60) / origWidth2, ((a4Height - headH - 60) / 2) / origHeight2);
+          page.drawPage(importedPage2, { x: 30, y: 30, xScale: scale2, yScale: scale2 });
           i++;
         }
       }
@@ -439,21 +377,19 @@ async function processBranding() {
     const newPdfBytes = await outPdfDoc.save();
     const blob = new Blob([newPdfBytes], { type: 'application/pdf' });
     const url = URL.createObjectURL(blob);
-
-    // Directly trigger download
     const a = document.createElement('a');
     a.href = url;
     a.download = 'QuestionPaper_Branded.pdf';
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-    // Open the PDF in a new tab for viewing/sharing/printing
     window.open(url, '_blank');
   } catch (e) {
     alert("Error while branding PDF: " + (e.message || e));
   }
   hideSpinner();
 }
+
 flatpickr("#date", {
   dateFormat: "d-m-Y",
   allowInput: false,      // disables typing, popup only
