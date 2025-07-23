@@ -217,70 +217,108 @@ function formatDate(dateStr) {
   return `${d}/${m}/${y}`;
 }
 
-let sheetPerPage = 1; // Default, will be set by popup
-
-document.getElementById('processBtn').onclick = function () {
-  document.getElementById('sheet-popup').style.display = 'flex';
-};
-
-window.selectSheetOption = function(opt) {
-  sheetPerPage = opt;
-  document.getElementById('sheet-popup').style.display = 'none';
-  processBranding();
-};
-
-async function processBranding() {
+document.getElementById('processBtn').onclick = async function () {
   const showSpinner = () => document.getElementById('spinner-overlay').style.display = "flex";
   const hideSpinner = () => document.getElementById('spinner-overlay').style.display = "none";
+
   showSpinner();
   try {
     const pdfFile = document.getElementById('pdfFile').files[0];
+    const schoolName = "St. Patrick's School";
+    const examName = document.getElementById('examName').value.trim();
+    const className = document.getElementById('class-dropdown').dataset.value;
+    const subject = document.getElementById('subject-dropdown').dataset.value;
+    const date = document.getElementById('date').value;
+    const time = document.getElementById('time').value.trim();
+    const maxMarks = document.getElementById('maxMarks').value.trim();
     if (!pdfFile) { hideSpinner(); return alert("Please select a PDF to brand!"); }
 
     const pdfBytes = await pdfFile.arrayBuffer();
-    // Open the original PDF
-    const origPdfDoc = await PDFLib.PDFDocument.load(pdfBytes);
-    const firstPage = origPdfDoc.getPage(0);
+    const pdfDoc = await PDFLib.PDFDocument.load(pdfBytes);
 
-    // Add header to original first page (in-place branding, like your code)
-    // -- your branding logic here (drawRectangle, drawText, drawImage, etc.) --
-    // (Omitted for brevity – you can keep your header-drawing code for branding the page)
+    const fontBold = await pdfDoc.embedFont(PDFLib.StandardFonts.TimesRomanBold);
+    const fontReg = await pdfDoc.embedFont(PDFLib.StandardFonts.TimesRoman);
 
-    // Now export this single branded page as an image
-    const brandedPdfBytes = await origPdfDoc.save();
-    const brandedPdfDoc = await PDFLib.PDFDocument.load(brandedPdfBytes);
-    const [brandedPage] = await brandedPdfDoc.copyPages(brandedPdfDoc, [0]);
+    const fetchLogo = async (path) => {
+      const res = await fetch(path);
+      const imgBytes = await res.arrayBuffer();
+      return await pdfDoc.embedPng(imgBytes);
+    };
+    const logo1Img = await fetchLogo('schoollogo1.png');
+    const logo2Img = await fetchLogo('schoollogo2.png');
+    const logo1Dims = logo1Img.scale(66 / logo1Img.height);
+    const logo2Dims = logo2Img.scale(66 / logo2Img.height);
 
-    // New output PDF with A4 landscape page
-    const outPdfDoc = await PDFLib.PDFDocument.create();
-    const a4Width = 841.89, a4Height = 595.28; // A4 landscape
+    const page = pdfDoc.getPage(0);
+    const { width, height } = page.getSize();
+    const margin = 45, headH = 170;
 
-    const outPage = outPdfDoc.addPage([a4Width, a4Height]);
-    const [origWidth, origHeight] = brandedPage.getSize();
-    const gap = 20;
-    const halfWidth = (a4Width - gap) / 2;
-    const scale = Math.min(halfWidth / origWidth, a4Height / origHeight);
+    page.drawRectangle({ x: 0, y: height - headH, width: width, height: headH, color: PDFLib.rgb(1,1,1), opacity: 1 });
+    const logoY = height - 100;
 
-    // Left copy
-    outPage.drawPage(brandedPage, { x: 0, y: 0, xScale: scale, yScale: scale });
-    // Right copy
-    outPage.drawPage(brandedPage, { x: halfWidth + gap, y: 0, xScale: scale, yScale: scale });
+    page.drawImage(logo1Img, { x: 50, y: logoY, width: logo1Dims.width, height: logo1Dims.height });
+    page.drawImage(logo2Img, { x: width - 50 - logo2Dims.width, y: logoY, width: logo2Dims.width, height: logo2Dims.height });
 
-    const newPdfBytes = await outPdfDoc.save();
+    const headingY = logoY + 15;
+    page.drawText(schoolName, {
+      x: width / 2 - fontBold.widthOfTextAtSize(schoolName, 24) / 2,
+      y: headingY + 30,
+      size: 24,
+      font: fontBold,
+      color: PDFLib.rgb(0.10, 0.18, 0.5)
+    });
+    page.drawText('IIT & NEET FOUNDATION', {
+      x: width / 2 - fontReg.widthOfTextAtSize('IIT & NEET FOUNDATION', 15) / 2,
+      y: headingY + 10,
+      size: 15,
+      font: fontReg,
+      color: PDFLib.rgb(0.08, 0.25, 0.48)
+    });
+    page.drawText(examName, {
+      x: width / 2 - fontBold.widthOfTextAtSize(examName, 15) / 2,
+      y: headingY - 10,
+      size: 15,
+      font: fontBold,
+      color: PDFLib.rgb(0.12, 0.12, 0.16)
+    });
+
+    // Box for class/subject/date/time/marks
+    const boxX = 50;
+    const boxY = height - 165;
+    const boxW = width - 100;
+    const boxH = 55;
+    page.drawRectangle({
+      x: 50, y: boxY, width: boxW, height: boxH,
+      borderColor: PDFLib.rgb(0.24, 0.60, 0.96),
+      color: PDFLib.rgb(0.98, 0.99, 1),
+      borderWidth: 2,
+      borderRadius: 10, // Doesn't work in pdf-lib
+    });
+    const subj = subject.toUpperCase();
+    page.drawText("Class: " + className, { x: 68, y: boxY + boxH - 22, size: 12.5, font: fontBold, color: PDFLib.rgb(0.11, 0.23, 0.53) });
+    page.drawText(subj, { x: width / 2 - fontBold.widthOfTextAtSize(subj, 17) / 2, y: boxY + boxH - 20, size: 17, font: fontBold, color: PDFLib.rgb(0.07, 0.18, 0.5) });
+    page.drawText("Date: " + formatDate(date), { x: width - 168, y: boxY + boxH - 22, size: 12.5, font: fontBold, color: PDFLib.rgb(0.11, 0.23, 0.53) });
+    page.drawText("Time: " + time + " min", { x: 68, y: boxY + 13, size: 12.5, font: fontBold, color: PDFLib.rgb(0.15, 0.24, 0.35) });
+    page.drawText("Max Marks: " + maxMarks, { x: width - 168, y: boxY + 13, size: 12.5, font: fontBold, color: PDFLib.rgb(0.15, 0.24, 0.35) });
+
+    const newPdfBytes = await pdfDoc.save();
     const blob = new Blob([newPdfBytes], { type: 'application/pdf' });
     const url = URL.createObjectURL(blob);
+
+    // Directly trigger download
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'QuestionPaper_DuplicateSideBySide.pdf';
+    a.download = 'QuestionPaper_Branded.pdf';
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
+    // Open the PDF in a new tab for viewing/sharing/printing
     window.open(url, '_blank');
   } catch (e) {
     alert("Error while branding PDF: " + (e.message || e));
   }
   hideSpinner();
-}
+};
 
 flatpickr("#date", {
   dateFormat: "d-m-Y",
@@ -299,14 +337,6 @@ document.getElementById('class-dropdown').addEventListener('change', () => {
   <div style="display:flex;flex-direction:column;align-items:center;gap:16px;">
     <div class="spinner" style="width:52px;height:52px;border:6px solid #1762a7;border-top:6px solid #bcd6ef;border-radius:50%;animation:spin 1s linear infinite;"></div>
     <div style="font-size:1.1em;color:#1762a7;font-weight:600;">Branding PDF, please wait...</div>
-  </div>
-</div>
-  <!-- Sheet Selection Popup -->
-<div id="sheet-popup" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.30); z-index:10001; align-items:center; justify-content:center;">
-  <div style="background:#fff; border-radius:14px; box-shadow:0 4px 20px #12416c33; padding:28px 24px 20px 24px; min-width:260px; display:flex; flex-direction:column; align-items:center;">
-    <div style="font-size:1.13em; font-weight:600; color:#0f3d6b; margin-bottom:20px;">How many sheets per page?</div>
-    <button class="submit-btn" style="margin-bottom:15px; width:180px;" onclick="selectSheetOption(1)">One sheet per page</button>
-    <button class="submit-btn" style="width:180px; background:#185496;" onclick="selectSheetOption(2)">Two sheets per page</button>
   </div>
 </div>
 </body>
