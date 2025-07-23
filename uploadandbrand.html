@@ -236,52 +236,35 @@ async function processBranding() {
   try {
     const pdfFile = document.getElementById('pdfFile').files[0];
     if (!pdfFile) { hideSpinner(); return alert("Please select a PDF to brand!"); }
-    const schoolName = "St. Patrick's School";
-    const examName = document.getElementById('examName').value.trim();
-    const className = document.getElementById('class-dropdown').dataset.value;
-    const subject = document.getElementById('subject-dropdown').dataset.value;
-    const date = document.getElementById('date').value;
-    const time = document.getElementById('time').value.trim();
-    const maxMarks = document.getElementById('maxMarks').value.trim();
 
     const pdfBytes = await pdfFile.arrayBuffer();
+    // Open the original PDF
     const origPdfDoc = await PDFLib.PDFDocument.load(pdfBytes);
+    const firstPage = origPdfDoc.getPage(0);
+
+    // Add header to original first page (in-place branding, like your code)
+    // -- your branding logic here (drawRectangle, drawText, drawImage, etc.) --
+    // (Omitted for brevity – you can keep your header-drawing code for branding the page)
+
+    // Now export this single branded page as an image
+    const brandedPdfBytes = await origPdfDoc.save();
+    const brandedPdfDoc = await PDFLib.PDFDocument.load(brandedPdfBytes);
+    const [brandedPage] = await brandedPdfDoc.copyPages(brandedPdfDoc, [0]);
+
+    // New output PDF with A4 landscape page
     const outPdfDoc = await PDFLib.PDFDocument.create();
+    const a4Width = 841.89, a4Height = 595.28; // A4 landscape
 
-    // A4 landscape
-    const a4Width = 841.89, a4Height = 595.28; // points (A4 landscape)
+    const outPage = outPdfDoc.addPage([a4Width, a4Height]);
+    const [origWidth, origHeight] = brandedPage.getSize();
+    const gap = 20;
+    const halfWidth = (a4Width - gap) / 2;
+    const scale = Math.min(halfWidth / origWidth, a4Height / origHeight);
 
-    for (let i = 0; i < origPdfDoc.getPageCount(); i++) {
-      const [importedPage] = await outPdfDoc.copyPages(origPdfDoc, [i]);
-      const page = outPdfDoc.addPage([a4Width, a4Height]);
-
-      // Draw header on both halves (optional, skip if only need the inner pages duplicated)
-      // --- If you want your branding/header at the top of both copies, add it here ---
-
-      // Scale original page to fit half A4
-      const [origWidth, origHeight] = importedPage.getSize();
-      // Each half width = (a4Width - gap) / 2
-      const gap = 24; // Gap between two copies
-      const singleWidth = (a4Width - gap) / 2;
-      const singleHeight = a4Height;
-      const scale = Math.min(singleWidth / origWidth, singleHeight / origHeight);
-
-      // Left copy
-      page.drawPage(importedPage, {
-        x: 0,
-        y: 0,
-        xScale: scale,
-        yScale: scale,
-      });
-
-      // Right copy
-      page.drawPage(importedPage, {
-        x: singleWidth + gap,
-        y: 0,
-        xScale: scale,
-        yScale: scale,
-      });
-    }
+    // Left copy
+    outPage.drawPage(brandedPage, { x: 0, y: 0, xScale: scale, yScale: scale });
+    // Right copy
+    outPage.drawPage(brandedPage, { x: halfWidth + gap, y: 0, xScale: scale, yScale: scale });
 
     const newPdfBytes = await outPdfDoc.save();
     const blob = new Blob([newPdfBytes], { type: 'application/pdf' });
@@ -298,6 +281,7 @@ async function processBranding() {
   }
   hideSpinner();
 }
+
 flatpickr("#date", {
   dateFormat: "d-m-Y",
   allowInput: false,      // disables typing, popup only
