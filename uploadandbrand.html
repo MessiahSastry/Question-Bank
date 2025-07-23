@@ -173,6 +173,7 @@
           <input type="text" id="maxMarks">
         </div>
         <button class="submit-btn" id="processBtn">Add Header & Download</button>
+        <button class="submit-btn" id="duplicateBtn" style="margin-top:10px;">Duplicate Side by Side (2 copies per A4)</button>
         <a id="downloadLink">Download Branded PDF</a>
       </div>
     </main>
@@ -332,6 +333,57 @@ document.getElementById('class-dropdown').addEventListener('change', () => {
   const subjects = config.subjectMappings[selectedClass] || [];
   createDropdown('subject-dropdown', subjects, 'Select Subject');
 });
+  document.getElementById('duplicateBtn').onclick = async function () {
+  const showSpinner = () => document.getElementById('spinner-overlay').style.display = "flex";
+  const hideSpinner = () => document.getElementById('spinner-overlay').style.display = "none";
+  showSpinner();
+  try {
+    const pdfFile = document.getElementById('pdfFile').files[0];
+    if (!pdfFile) { hideSpinner(); return alert("Please select a PDF to brand!"); }
+    const pdfBytes = await pdfFile.arrayBuffer();
+    const origPdf = await PDFLib.PDFDocument.load(pdfBytes);
+    const outPdf = await PDFLib.PDFDocument.create();
+    const a4Width = 595.28, a4Height = 841.89; // A4 points
+
+    for (let i = 0; i < origPdf.getPageCount(); i++) {
+      const [p1] = await outPdf.copyPages(origPdf, [i]);
+      const [p2] = await outPdf.copyPages(origPdf, [i]);
+      const newPage = outPdf.addPage([a4Width, a4Height]);
+      // Calculate scale for two side-by-side
+      const { width: pw, height: ph } = p1.getSize();
+      const scale = Math.min((a4Width / 2 - 40) / pw, (a4Height - 60) / ph);
+
+      // Left
+      newPage.drawPage(p1, {
+        x: 20,
+        y: (a4Height - ph * scale) / 2,
+        xScale: scale,
+        yScale: scale
+      });
+      // Right
+      newPage.drawPage(p2, {
+        x: a4Width / 2 + 20,
+        y: (a4Height - ph * scale) / 2,
+        xScale: scale,
+        yScale: scale
+      });
+    }
+
+    const newPdfBytes = await outPdf.save();
+    const blob = new Blob([newPdfBytes], { type: 'application/pdf' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'QuestionPaper_Duplicate_SideBySide.pdf';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.open(url, '_blank');
+  } catch (e) {
+    alert("Error while duplicating PDF: " + (e.message || e));
+  }
+  hideSpinner();
+};
 </script>
 <div id="spinner-overlay" style="display:none;position:fixed;z-index:9999;top:0;left:0;width:100vw;height:100vh;background:rgba(255,255,255,0.80);align-items:center;justify-content:center;">
   <div style="display:flex;flex-direction:column;align-items:center;gap:16px;">
