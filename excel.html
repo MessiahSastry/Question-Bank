@@ -155,17 +155,6 @@
         <i class="fa-solid fa-file-pdf"></i> Download PDF
       </button>
       <div class="status" id="status"></div>
-<!-- PDF Preview Controls and Area -->
-<div style="margin-top:22px;">
-  <div>
-    <label>Font Size: <input type="number" id="fontSizeInput" value="0.78" step="0.01" min="0.3" max="1.2" style="width:56px;"> em</label>
-    <label style="margin-left:12px;">Row Height: <input type="number" id="rowHeightInput" value="13" step="1" min="5" max="30" style="width:48px;"> px</label>
-    <label style="margin-left:12px;">Margin: <input type="number" id="marginInput" value="1.0" step="0.1" min="0.8" max="2" style="width:36px;">
-   cm</label>
-    <button id="updatePreviewBtn" style="margin-left:14px;">Update Preview</button>
-  </div>
-  <div id="pdfPreview" style="margin-top:16px; border:1.5px solid #bcd6ef; border-radius:10px; background:#fff; box-shadow:0 2px 18px #0f3d6b12; overflow-x:auto; padding:14px;"></div>
-</div>
  </div>
   </main>
 </div>
@@ -251,10 +240,7 @@ function getShortSubjectName(subj) {
   let students = [];
   let marksMap = {}; // [studentId][examId]={subj:mark,...}
   let selectedExam = null, selectedExamObj = null;
-  // --- PDF Preview Settings ---
-  let previewFontSize = 0.78; // em
-  let previewRowHeight = 13; // px
-  let previewMargin = 0.3; // cm
+  
   // -- DOM refs --
   const examDropdown = document.getElementById('examDropdown');
   const examSelected = document.getElementById('examSelected');
@@ -379,7 +365,6 @@ function getShortSubjectName(subj) {
     examList.style.display = 'none';
     selectedExam = opt.dataset.id;
     selectedExamObj = examMap[selectedExam];
-    renderPdfPreview();
   };
 
   // ------------- EXCEL EXPORT -------------
@@ -527,17 +512,38 @@ let tableHeaders = `<th>Roll</th><th style="text-align:left;padding-left:10px;mi
     }).join('');
   // Step 1: Set font size and row height based on number of students
       // Use custom preview settings for PDF
-let tableFontSize = previewFontSize;
-let rowHeight = previewRowHeight;
+let studentCount = students.length;
+let tableFontSize = 1.10; // default em
+let rowHeight = 26;       // default px
+
+if (studentCount <= 35) {
+  tableFontSize = 1.13;
+  rowHeight = 26;
+} else if (studentCount <= 40) {
+  tableFontSize = 0.93;
+  rowHeight = 17;
+} else if (studentCount <= 45) {
+  tableFontSize = 0.79;
+  rowHeight = 13;
+} else if (studentCount <= 50) {
+  tableFontSize = 0.68;
+  rowHeight = 9.5;
+} else if (studentCount <= 60) {
+  tableFontSize = 0.57;
+  rowHeight = 7.6;
+} else {
+  tableFontSize = 0.46;
+  rowHeight = 5.8;
+}
     let pdfHTML = `
     <div style="font-family:'Times New Roman', Times, serif; color:#1a1a1a; max-width:690px; width:98%; margin:0 auto; padding:0;">
         <style>
                 tr { page-break-inside: avoid !important; }
         thead { display: table-header-group; }
         tfoot { display: table-footer-group; }
-        td, th { border: 1px solid #444 !important; height: ${rowHeight}px; min-height:12px; padding: 2px 3px; font-size: ${tableFontSize}em; }
+        td, th { border: 1px solid #444 !important; height: ${rowHeight}px; padding: 2px 4px; }
       </style>
-        <div style="width:100%;text-align:center;margin-bottom:10px;min-height:120px;">
+        <div style="width:100%;text-align:center;margin-bottom:2px;">
           <div style="display:inline-flex;align-items:center;justify-content:center;">
             <img src="schoollogo1.png" style="height:110px;width:auto;max-width:140px;border-radius:8px;margin-right:10px;" onerror="this.style.display='none';">
             <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:110px;line-height:1.09;">
@@ -572,10 +578,10 @@ let rowHeight = previewRowHeight;
     printable.innerHTML = pdfHTML;
     document.body.appendChild(printable);
     html2pdf().set({
-      margin: [previewMargin, previewMargin, previewMargin, previewMargin],
+      margin: [1.27, 1.27, 1.27, 1.27], // cm: top, right, bottom, left
       filename: `Marks_${className}_${sectionName}_${selectedExamObj.name}_${academicYear}.pdf`,
       html2canvas: { scale: 2, useCORS: true },
-      jsPDF: { unit: 'cm', format: 'a4', orientation: 'portrait' }
+      jsPDF: { unit: 'cm', format: 'a4', orientation: 'portrait'}
     })
     .from(printable)
     .save()
@@ -588,121 +594,6 @@ let rowHeight = previewRowHeight;
       statusDiv.textContent = "Error generating PDF: " + err;
     });
   };
-function renderPdfPreview() {
-  const pdfPreview = document.getElementById('pdfPreview');
-  if (!selectedExamObj) {
-    pdfPreview.innerHTML = '<em>Select an exam to preview.</em>';
-    return;
-  }
-  // --- Data prep (same as in PDF) ---
-  let subjectObjs = (selectedExamObj.subjects || []);
-  let subjects = subjectObjs.map(s => s.name);
-  let subjectShorts = subjectObjs.map(s => getShortSubjectName(s.name));
-  let subjMaxs = (selectedExamObj.subjects || []).map(s => s.max || 100);
-
-  // Calculate rows (same logic as PDF export)
-  let studentRows = [];
-  let totalArr = [];
-  students.forEach(stu => {
-    let marks = marksMap[stu.id][selectedExamObj.id] || {};
-    let row = [stu.roll, stu.name];
-    let total = 0, tmax = 0;
-    for (let i = 0; i < subjects.length; ++i) {
-      let subj = subjects[i];
-      let v = marks[subj];
-      row.push((v !== undefined && v !== null && v !== '') ? v : 'Ab');
-      let mmax = subjMaxs[i];
-      if (typeof v === 'number' && !isNaN(v)) { total += mmax ? v : 0; tmax += mmax; }
-      else { tmax += mmax; }
-    }
-    let percent = tmax ? (total / tmax) * 100 : 0;
-    let grade = getGrade(percent);
-    row.push(total, grade, ''); // rank later
-    totalArr.push({ id: stu.id, total, percent, row });
-  });
-  // Rank
-  let sortedTotals = Array.from(new Set(totalArr.map(x => x.total))).sort((a, b) => b - a);
-  let ranks = {};
-  totalArr.forEach(x => { ranks[x.id] = sortedTotals.indexOf(x.total) + 1; });
-  for (let x of totalArr) x.row[x.row.length-1] = ranks[x.id];
-  // By rank
-  let rankedRows = totalArr.sort((a,b)=>ranks[a.id]-ranks[b.id]).map(x=>x.row);
-
-  let tableHeaders = `<th>Roll</th><th style="text-align:left;padding-left:10px;min-width:90px;max-width:180px;width:22%;">Name</th>` +
-    subjectShorts.map(s=>`<th>${s}</th>`).join('') +
-    `<th>Total</th><th>Grade</th><th>Rank</th>`;
-
-  let tableRows = rankedRows.map((row, idx) => {
-    let tds = '';
-    for (let j = 0; j < row.length; ++j) {
-      if (j === 1) {
-        let name = row[j] || '';
-        let fsize = "1.14em";
-        if (name.length > 18) fsize = "1.05em";
-        if (name.length > 24) fsize = "0.93em";
-        if (name.length > 30) fsize = "0.83em";
-        if (name.length > 36) fsize = "0.73em";
-        tds += `<td style="text-align:left;padding-left:10px;font-size:${fsize};white-space:nowrap;">${name}</td>`;
-      } else if (j >= 2 && j < 2 + subjects.length) {
-        let v = row[j];
-        let subjMax = subjMaxs[j-2];
-        if (
-          v !== undefined &&
-          v !== null &&
-          v !== "" &&
-          typeof v === "number" &&
-          !isNaN(v) &&
-          subjMax &&
-          ((v / subjMax) * 100) < 40
-        ) {
-          tds += `<td style="padding:0;vertical-align:middle;">
-            <div style="display:flex;align-items:center;justify-content:center;position:relative;min-height:20px;min-width:20px;">
-              <span style="font-weight:bold;z-index:2;font-size:1.05em;">${v}</span>
-              <span style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-size:1.10em;color:#c81929;z-index:1;">◯</span>
-            </div>
-          </td>`;
-        } else {
-          tds += `<td>${(v !== undefined && v !== null && v !== "") ? v : 'Ab'}</td>`;
-        }
-      } else {
-        tds += `<td>${row[j]}</td>`;
-      }
-    }
-    let bgcolor = idx%2 ? "#eaf1fa" : "#f8fbff";
-    return `<tr style="background:${bgcolor};height:${previewRowHeight}px;">${tds}</tr>`;
-  }).join('');
-
-  pdfPreview.innerHTML = `
-    <div style="text-align:center;">
-      <b style="font-size:1.4em;color:#c81929;">${className} ${sectionName} - ${selectedExamObj.name} (Preview)</b>
-    </div>
-    <table style="border-collapse:collapse;width:100%;font-size:${previewFontSize}em;margin-top:8px;text-align:center;line-height:1.13;table-layout:fixed;word-break:break-all;margin-bottom:10px;">
-      <thead>
-        <tr style="background:#1762a7;color:#fff;font-weight:bold;">${tableHeaders}</tr>
-      </thead>
-      <tbody>
-        ${tableRows}
-      </tbody>
-    </table>
-    <div style="font-size:0.95em;color:#555;text-align:right;">Font: ${previewFontSize}em, Row Height: ${previewRowHeight}px, Margin: ${previewMargin}cm</div>
-  `;
-}
-  // -- Handle PDF Preview Controls --
-document.getElementById('fontSizeInput').addEventListener('input', function() {
-  previewFontSize = parseFloat(this.value);
-  if (previewFontSize < 0.65) previewFontSize = 0.65; // minimum font size
-});
-
-document.getElementById('rowHeightInput').addEventListener('input', function() {
-  previewRowHeight = parseFloat(this.value);
-  if (previewRowHeight < 12) previewRowHeight = 12; // minimum row height
-});
-
-document.getElementById('marginInput').addEventListener('input', function() {
-  previewMargin = parseFloat(this.value);
-  if (previewMargin < 0.8) previewMargin = 0.8; // minimum margin
-});
-document.getElementById('updatePreviewBtn').onclick = renderPdfPreview;
-</script>
+ </script>
 </body>
 </html>
