@@ -479,6 +479,7 @@ function getClassGroupName(className) {
       <button class="popup-action-btn" id="uploadStudentsBtn">Upload Students (Excel)</button>
       <button class="popup-action-btn" id="yearPlanBtn">Year Plan</button>
       <button class="popup-action-btn" id="examSettingsBtn">Exam Settings</button>
+      <button class="popup-action-btn" id="uploadMarksBtn">Upload Marks (Excel)</button>
       <button class="popup-action-btn" id="enterMarksBtn">Enter Marks</button>
       <button class="popup-action-btn" id="attendanceBtn">Take Attendance (WhatsApp)</button>
       <button class="popup-action-btn" id="viewAttendanceBtn">View Attendance</button>
@@ -493,6 +494,7 @@ function getClassGroupName(className) {
   `);
   document.getElementById('uploadStudentsBtn').onclick = showBulkStudentUploadPopup;
   document.getElementById('examSettingsBtn').onclick = showExamSettingsPopup;
+  document.getElementById('uploadMarksBtn').onclick = showBulkMarksUploadPopup;
   document.getElementById('enterMarksBtn').onclick = showEnterMarksPopup;
   document.getElementById('attendanceBtn').onclick = showAttendancePopup;
   document.getElementById('viewAttendanceBtn').onclick = showAttendanceHistoryPopup;
@@ -1732,6 +1734,175 @@ function closeAbsenteesModal() {
   document.getElementById('absenteesModalBg').onclick = function(e) {
     if (e.target === this) closeAbsenteesModal();
   };
+    function showBulkMarksUploadPopup() {
+  db.collection('years').doc(academicYear)
+    .collection('exams').doc('classGroups')
+    .collection(getClassGroupName(currentClassName)).orderBy('name').get()
+    .then(examSnap => {
+      let exams = [];
+      examSnap.forEach(doc => exams.push({ id: doc.id, ...doc.data() }));
+      if (exams.length === 0) {
+        showPopup(`<div class="popup-title">Upload Marks</div>
+          <div style="margin:16px 0;">No exams found! Please add exams first.</div>
+          <div class="popup-btn-row"><button class="popup-cancel-btn">Close</button></div>
+        `);
+        return;
+      }
+      let html = `
+        <div class="popup-title">Upload Marks (Excel)</div>
+        <label>Select Exam</label>
+        <div class="custom-dropdown" id="examDropdown" tabindex="0">
+          <div class="dropdown-selected" id="examSelected" data-value="">--Select--</div>
+          <div class="dropdown-list" id="examList" style="display:none;"></div>
+        </div>
+        <input type="file" id="marksFileInput" accept=".xls,.xlsx" style="margin:12px 0 15px 0;" />
+        <div style="font-size:0.97em; color:#555; margin-bottom:10px;">
+          Please upload the Evalbee Excel file.<br>
+          Only <b>Roll number</b> is matched; subject marks will be updated for this exam only.
+        </div>
+        <div class="popup-btn-row">
+          <button type="button" class="popup-cancel-btn">Cancel</button>
+          <button type="button" class="popup-action-btn" id="doBulkMarksUploadBtn">Upload</button>
+        </div>
+      `;
+      showPopup(html);
+
+      // Populate exam dropdown
+      const examDropdown = popupContent.querySelector('#examDropdown');
+      const examSelected = popupContent.querySelector('#examSelected');
+      const examList = popupContent.querySelector('#examList');
+      examList.innerHTML = exams.map(e => `
+        <div class="dropdown-option" data-id="${e.id}" style="padding:10px 12px;cursor:pointer;">
+          ${e.name}
+        </div>
+      `).join('');
+      examSelected.onclick = function () {
+        examList.style.display = (examList.style.display === 'none' || examList.style.display === '') ? 'block' : 'none';
+      };
+      document.addEventListener('click', function handler(e) {
+        if (!examDropdown.contains(e.target)) {
+          examList.style.display = 'none';
+          document.removeEventListener('click', handler);
+        }
+      });
+      let selectedExam = null;
+      examList.querySelectorAll('.dropdown-option').forEach(opt => {
+        opt.onclick = function () {
+          examSelected.textContent = this.textContent;
+          examSelected.dataset.value = this.dataset.id;
+          examList.style.display = 'none';
+          selectedExam = exams.find(e => e.id === this.dataset.id);
+        };
+      });
+
+      document.getElementById('doBulkMarksUploadBtn').onclick = async function() {
+        const fileInput = document.getElementById('marksFileInput');
+        if (!fileInput.files.length) return alert('Please select a file!');
+        if (!selectedExam) return alert('Please select an exam!');
+        const file = fileInput.files[0];
+        const reader = new FileReader();
+        reader.onload = async function(e) {
+          let data = new Uint8Array(e.target.result);
+          let workbook = XLSX.read(data, {type: 'array'});
+          let sheet = workbook.Sheets[workbook.SheetNames[0]];
+          let rows = XLSX.utils.sheet_to_json(sheet, {header:1, defval: ''});
+
+          // Map Excel columns
+          let headers = rows[0].map(x => x.toString().trim().toLowerCase());
+          let rollIdx = 2; // Usually column C (index 2)
+          // let rollIdx = headers.findIndex(h => h === 'roll' || h.startsWith('roll'));
+          let colIndexes = {};
+          let missingSubjects = [];
+          selectedExam.subjects.forEach(subj => {
+            let idx = headers.findIndex(h => h.includes(subj.name.toLowerCase()));
+            if (idx === -1) {
+              // Fallback mapping
+              if (subj.name.toLowerCase() === 'math') idx = 10;
+              if (subj.name.toLowerCase() === 'physics') idx = 11;
+              if (subj.name.toLowerCase() === 'chemistry') idx = 12;
+              if (subj.name.toLowerCase() === 'biology') idx = 13;
+            }
+            colIndexes[subj.name] = idx;
+            if (idx === -1) missingSubjects.push(subj.name);
+          });
+
+          // Get all students for this section
+          let stuSnap = await db.collection('years').doc(academicYear)
+            .collection('classes').doc(currentClassId)
+            .collection('sections').doc(currentSectionId)
+            .collection('students').orderBy('roll').get();
+          let students = [];
+          stuSnap.forEach(doc => students.push({ id: doc.id, ...doc.data() }));
+
+          let batch = db.batch();
+          let updates = 0;
+          let matchedRolls = [];
+          let notFoundRolls = [];
+          let foundRollSet = new Set(students.map(s => parseInt(s.roll)));
+
+          for (let i = 1; i < rows.length; i++) {
+            let row = rows[i];
+            let roll = parseInt(row[rollIdx]);
+            if (isNaN(roll)) continue;
+            let stu = students.find(s => parseInt(s.roll) === roll);
+            if (!stu) {
+              notFoundRolls.push(roll);
+              continue;
+            }
+            matchedRolls.push(roll);
+
+            // Build marks object for this exam's subjects
+            let marksObj = {};
+            selectedExam.subjects.forEach(subj => {
+              let idx = colIndexes[subj.name];
+              if (typeof idx === "number" && idx >= 0) {
+                let val = row[idx];
+                marksObj[subj.name] = isNaN(val) ? 0 : Number(val);
+              }
+            });
+
+            // Save under students/{id}/marks/{examId}
+            let markRef = db.collection('years').doc(academicYear)
+              .collection('classes').doc(currentClassId)
+              .collection('sections').doc(currentSectionId)
+              .collection('students').doc(stu.id)
+              .collection('marks').doc(selectedExam.id);
+
+            batch.set(markRef, marksObj, { merge: true });
+            updates++;
+          }
+          if (updates === 0) {
+            alert('No matching students found by roll number!');
+            return;
+          }
+          await batch.commit();
+
+          // --- Build the Summary Message ---
+          let summary = `<div class="popup-title">Upload Summary</div>
+            <div style="font-size:1.1em;margin-bottom:7px;"><b>${updates}</b> students updated!</div>`;
+
+          if (matchedRolls.length > 0) {
+            summary += `<div><b>Matched Roll Numbers:</b><br>
+              <span style="font-size:.97em;">${matchedRolls.sort((a,b)=>a-b).join(', ')}</span></div>`;
+          }
+          if (notFoundRolls.length > 0) {
+            summary += `<div style="margin-top:9px;"><b>Roll Numbers NOT found:</b><br>
+              <span style="color:#d43f3a;">${notFoundRolls.sort((a,b)=>a-b).join(', ')}</span></div>`;
+          }
+          if (missingSubjects.length > 0) {
+            summary += `<div style="margin-top:10px;"><b>Subjects in Exam <span style="color:#0f3d6b;">not found in Excel header</span>:</b><br>
+              <span style="color:#d43f3a;">${missingSubjects.join(', ')}</span>
+              <br><span style="font-size:.97em;color:#999;">Check spelling or header row in Excel.</span>
+              </div>`;
+          }
+          summary += `<div class="popup-btn-row" style="margin-top:18px;"><button class="popup-action-btn">Close</button></div>`;
+
+          showPopup(summary);
+        };
+        reader.readAsArrayBuffer(file);
+      }
+    });
+}
 </script>
 </body>
 </html>
