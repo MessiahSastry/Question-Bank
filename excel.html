@@ -389,19 +389,36 @@ function getShortSubjectName(subj) {
     students.forEach(stu => {
       let marks = marksMap[stu.id][selectedExamObj.id] || {};
       let row = [stu.roll, stu.name];
+      let rowStyles = [null, null]; // For custom styles in SheetJS
       let total = 0, tmax = 0;
-      for (let subj of subjects) {
+      for (let i = 0; i < subjects.length; ++i) {
+        let subj = subjects[i];
         let v = marks[subj];
-        row.push((v !== undefined && v !== null && v !== '') ? v : 'Ab');
         let subjMax = (selectedExamObj.subjects.find(s => s.name === subj)?.max) || 100;
+        let percentMark = (typeof v === 'number' && subjMax) ? (v / subjMax) * 100 : null;
+    
+        // Red fill + white font for marks < 40%
+        if (typeof v === 'number' && !isNaN(v) && percentMark < 40) {
+          row.push(v);
+          rowStyles.push({
+            fill: { fgColor: { rgb: "FF0000" } },
+            font: { color: { rgb: "FFFFFF" } }
+          });
+        } else {
+          row.push((v !== undefined && v !== null && v !== '') ? v : 'Ab');
+          rowStyles.push(null);
+        }
+    
         if (typeof v === 'number' && !isNaN(v)) { total += v; tmax += subjMax; }
         else { tmax += subjMax; }
       }
       let percent = tmax ? (total / tmax) * 100 : 0;
       let grade = getGrade(percent);
       row.push(total, grade, ''); // Rank filled later
+      rowStyles.push(null, null, null);
+    
       totalArr.push({ id: stu.id, total });
-      rows.push(row);
+      rows.push({ values: row, styles: rowStyles });
     });
     // Ranks
     let scores = totalArr.map(x => x.total);
@@ -412,8 +429,22 @@ function getShortSubjectName(subj) {
     // Sort by rank
     rows = rows.sort((a, b) => a[headers.length-1] - b[headers.length-1]);
     // SheetJS export
-    let data = [headers, ...rows];
+    let data = [headers, ...rows.map(r => r.values)];
     let ws = XLSX.utils.aoa_to_sheet(data);
+    
+    // Apply cell styles (red fill + white font for <40%)
+    for (let i = 1; i < rows.length + 1; ++i) { // Skip header row (i=0)
+      let rowObj = rows[i-1];
+      if (!rowObj.styles) continue;
+      for (let j = 0; j < rowObj.styles.length; ++j) {
+        let style = rowObj.styles[j];
+        if (style) {
+          let cellAddr = XLSX.utils.encode_cell({ r: i, c: j });
+          if (!ws[cellAddr]) continue;
+          ws[cellAddr].s = style;
+        }
+      }
+    }
     let wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, (selectedExamObj.name || "Exam"));
     let fname = `Marks_${className}_${sectionName}_${selectedExamObj.name}_${academicYear}.xlsx`;
