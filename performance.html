@@ -189,31 +189,32 @@
       
       // Fill subjectTotals with marks for only chartSubjects
       for (let stu of students) {
-        for (let exam of relevantExams) {
-          if (!Array.isArray(exam.subjects)) continue;
-          let markDoc = await db.collection('years').doc(academicYear)
-            .collection('classes').doc(classId)
-            .collection('sections').doc(sectionId)
-            .collection('students').doc(stu.id)
-            .collection('marks').doc(exam.id).get();
-          let marksObj = markDoc.exists ? markDoc.data() : {};
-          for (let subj of exam.subjects) {
-            if (!subj || !subj.name) continue;
-            let subjName = subj.name;
-            if (!chartSubjects.includes(subjName)) continue; // <--- Only chart subjects!
-            let val = marksObj[subjName];
-            if (typeof val === 'number' && !isNaN(val)) {
-              subjectTotals[subjName].total += val;
-              subjectTotals[subjName].max += (subj.max || 100);
-              subjectTotals[subjName].count += 1;
-            } else {
-              subjectTotals[subjName].total += 0;
-              subjectTotals[subjName].max += (subj.max || 100);
-              subjectTotals[subjName].count += 1;
+          for (let exam of relevantExams) {
+            if (!Array.isArray(exam.subjects)) continue;
+            let markDoc = await db.collection('years').doc(academicYear)
+              .collection('classes').doc(classId)
+              .collection('sections').doc(sectionId)
+              .collection('students').doc(stu.id)
+              .collection('marks').doc(exam.id).get();
+            let marksObj = markDoc.exists ? markDoc.data() : {};
+            // Loop only through chartSubjects (not all subjects in exam)
+            for (let subjName of chartSubjects) {
+              // Find the subj object in exam.subjects, if needed for max
+              let subjObj = exam.subjects.find(s => s && s.name === subjName);
+              let subjMax = (subjObj && subjObj.max) ? subjObj.max : 100;
+              let val = marksObj[subjName];
+              if (typeof val === 'number' && !isNaN(val)) {
+                subjectTotals[subjName].total += val;
+                subjectTotals[subjName].max += subjMax;
+                subjectTotals[subjName].count += 1;
+              } else {
+                subjectTotals[subjName].total += 0;
+                subjectTotals[subjName].max += subjMax;
+                subjectTotals[subjName].count += 1;
+              }
             }
           }
         }
-      }
       subjectNames.length = 0;
       subjectPercents.length = 0;
       for (let subj of chartSubjects) {
