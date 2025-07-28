@@ -390,44 +390,55 @@ function getShortSubjectName(subj) {
       let marks = marksMap[stu.id][selectedExamObj.id] || {};
       let row = [stu.roll, stu.name];
       let rowStyles = [null, null]; // For custom styles in SheetJS
-      let total = 0, tmax = 0;
+      let total = 0, tmax = 0, allAbsent = true;
       for (let i = 0; i < subjects.length; ++i) {
         let subj = subjects[i];
         let v = marks[subj];
         let subjMax = (selectedExamObj.subjects.find(s => s.name === subj)?.max) || 100;
         let percentMark = (typeof v === 'number' && subjMax) ? (v / subjMax) * 100 : null;
-    
-        // Red fill + white font for marks < 40%
-        if (typeof v === 'number' && !isNaN(v) && percentMark < 40) {
+      
+        if (typeof v === 'number' && !isNaN(v)) {
           row.push(v);
-          rowStyles.push({
+          rowStyles.push(percentMark < 40 ? {
             fill: { fgColor: { rgb: "FF0000" } },
             font: { color: { rgb: "FFFFFF" } }
-          });
+          } : null);
+          total += v;
+          tmax += subjMax;
+          allAbsent = false;
         } else {
-          row.push((v !== undefined && v !== null && v !== '') ? v : 'Ab');
+          row.push('Ab');
           rowStyles.push(null);
+          tmax += subjMax;
         }
-    
-        if (typeof v === 'number' && !isNaN(v)) { total += v; tmax += subjMax; }
-        else { tmax += subjMax; }
       }
+      // After loop:
       let percent = tmax ? (total / tmax) * 100 : 0;
-      let grade = getGrade(percent);
-      row.push(total, grade, ''); // Rank filled later
+      let grade = allAbsent ? '-' : getGrade(percent);
+      let totalDisplay = allAbsent ? '-' : total;
+      row.push(totalDisplay, grade, ''); // Rank filled later
       rowStyles.push(null, null, null);
-    
+   
       totalArr.push({ id: stu.id, total });
       rows.push({ values: row, styles: rowStyles });
     });
     // Ranks
-    let scores = totalArr.map(x => x.total);
-    let sorted = Array.from(new Set(scores)).sort((a, b) => b - a);
-    let ranks = {};
-    totalArr.forEach(x => { ranks[x.id] = sorted.indexOf(x.total) + 1; });
-    for (let i = 0; i < rows.length; ++i) rows[i][headers.length-1] = ranks[students[i].id];
-    // Sort by rank
-    rows = rows.sort((a, b) => a[headers.length-1] - b[headers.length-1]);
+          let scores = totalArr.map(x => x.total).filter(x => x !== '-');
+      let sorted = Array.from(new Set(scores)).sort((a, b) => b - a);
+      let ranks = {};
+      totalArr.forEach(x => {
+        if (x.total === '-') ranks[x.id] = '-';
+        else ranks[x.id] = sorted.indexOf(x.total) + 1;
+      });
+      for (let i = 0; i < rows.length; ++i) rows[i].values[headers.length-1] = ranks[students[i].id];
+      // Sort: put rank '-' (all absent) students at the end
+      rows = rows.sort((a, b) => {
+        let rA = a.values[headers.length-1], rB = b.values[headers.length-1];
+        if (rA === '-' && rB !== '-') return 1;
+        if (rA !== '-' && rB === '-') return -1;
+        if (rA === '-' && rB === '-') return 0;
+        return rA - rB;
+      });
     // SheetJS export
     let data = [headers, ...rows.map(r => r.values)];
     let ws = XLSX.utils.aoa_to_sheet(data);
@@ -472,27 +483,42 @@ let subjectShorts = subjectObjs.map(s => getShortSubjectName(s.name));
     students.forEach(stu => {
       let marks = marksMap[stu.id][selectedExamObj.id] || {};
       let row = [stu.roll, stu.name];
-      let total = 0, tmax = 0;
+      let total = 0, tmax = 0, allAbsent = true;
       for (let i = 0; i < subjects.length; ++i) {
         let subj = subjects[i];
         let v = marks[subj];
+        if (v !== undefined && v !== null && v !== '' && typeof v === 'number' && !isNaN(v)) {
+          allAbsent = false;
+        }
         row.push((v !== undefined && v !== null && v !== '') ? v : 'Ab');
         let mmax = subjMaxs[i];
         if (typeof v === 'number' && !isNaN(v)) { total += mmax ? v : 0; tmax += mmax; }
         else { tmax += mmax; }
       }
       let percent = tmax ? (total / tmax) * 100 : 0;
-      let grade = getGrade(percent);
-      row.push(total, grade, ''); // rank later
-      totalArr.push({ id: stu.id, total, percent, row });
+      let grade = allAbsent ? '-' : getGrade(percent);
+      let totalDisplay = allAbsent ? '-' : total;
+      row.push(totalDisplay, grade, ''); // rank later
+      totalArr.push({ id: stu.id, total: totalDisplay, percent, allAbsent, row });
     });
     // Rank
-    let sortedTotals = Array.from(new Set(totalArr.map(x => x.total))).sort((a, b) => b - a);
-    let ranks = {};
-    totalArr.forEach(x => { ranks[x.id] = sortedTotals.indexOf(x.total) + 1; });
-    for (let x of totalArr) x.row[x.row.length-1] = ranks[x.id];
-    // By rank
-    let rankedRows = totalArr.sort((a,b)=>ranks[a.id]-ranks[b.id]).map(x=>x.row);
+   // Rank
+let validTotals = totalArr.filter(x => x.total !== '-').map(x => x.total);
+let sortedTotals = Array.from(new Set(validTotals)).sort((a, b) => b - a);
+let ranks = {};
+totalArr.forEach(x => {
+  if (x.total === '-') ranks[x.id] = '-';
+  else ranks[x.id] = sortedTotals.indexOf(x.total) + 1;
+});
+for (let x of totalArr) x.row[x.row.length-1] = ranks[x.id];
+// By rank, place all-ab students at the end
+let rankedRows = totalArr.sort((a, b) => {
+  let rA = ranks[a.id], rB = ranks[b.id];
+  if (rA === '-' && rB !== '-') return 1;
+  if (rA !== '-' && rB === '-') return -1;
+  if (rA === '-' && rB === '-') return 0;
+  return rA - rB;
+}).map(x => x.row);
 
     // --- Generate HTML for PDF
     let tableHeaders = `<th>ROLL</th><th style="text-align:left;padding-left:10px;min-width:110px;">NAME</th>` +
