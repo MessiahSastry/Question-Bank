@@ -160,15 +160,34 @@
       let relevantExams = (selectedExamId === 'all') ? exams : exams.filter(ex => ex.id === selectedExamId);
     
       // Prepare subjectTotals
+      // Prepare subjectTotals
       let subjectTotals = {};
-      for (let exam of relevantExams) {
-        if (!Array.isArray(exam.subjects)) continue;
-        for (let subj of exam.subjects) {
-          if (!subj || !subj.name) continue;
-          let subjName = subj.name;
-          if (!subjectTotals[subjName]) subjectTotals[subjName] = { total: 0, max: 0, count: 0 };
+      let chartSubjects = []; // Only subjects of selected exam(s)
+      
+      if (selectedExamId === 'all') {
+        // All Exams Combined: use all subjects from all exams (as before)
+        for (let exam of relevantExams) {
+          if (!Array.isArray(exam.subjects)) continue;
+          for (let subj of exam.subjects) {
+            if (!subj || !subj.name) continue;
+            let subjName = subj.name;
+            if (!subjectTotals[subjName]) subjectTotals[subjName] = { total: 0, max: 0, count: 0 };
+            if (!chartSubjects.includes(subjName)) chartSubjects.push(subjName);
+          }
+        }
+      } else {
+        // Single exam: ONLY use that exam's subjects
+        if (relevantExams[0] && Array.isArray(relevantExams[0].subjects)) {
+          for (let subj of relevantExams[0].subjects) {
+            if (!subj || !subj.name) continue;
+            let subjName = subj.name;
+            subjectTotals[subjName] = { total: 0, max: 0, count: 0 };
+            chartSubjects.push(subjName);
+          }
         }
       }
+      
+      // Fill subjectTotals with marks for only chartSubjects
       for (let stu of students) {
         for (let exam of relevantExams) {
           if (!Array.isArray(exam.subjects)) continue;
@@ -180,22 +199,24 @@
           let marksObj = markDoc.exists ? markDoc.data() : {};
           for (let subj of exam.subjects) {
             if (!subj || !subj.name) continue;
-            let val = marksObj[subj.name];
+            let subjName = subj.name;
+            if (!chartSubjects.includes(subjName)) continue; // <--- Only chart subjects!
+            let val = marksObj[subjName];
             if (typeof val === 'number' && !isNaN(val)) {
-              subjectTotals[subj.name].total += val;
-              subjectTotals[subj.name].max += (subj.max || 100);
-              subjectTotals[subj.name].count += 1;
+              subjectTotals[subjName].total += val;
+              subjectTotals[subjName].max += (subj.max || 100);
+              subjectTotals[subjName].count += 1;
             } else {
-              subjectTotals[subj.name].total += 0;
-              subjectTotals[subj.name].max += (subj.max || 100);
-              subjectTotals[subj.name].count += 1;
+              subjectTotals[subjName].total += 0;
+              subjectTotals[subjName].max += (subj.max || 100);
+              subjectTotals[subjName].count += 1;
             }
           }
         }
       }
       subjectNames.length = 0;
       subjectPercents.length = 0;
-      for (let subj in subjectTotals) {
+      for (let subj of chartSubjects) {
         subjectNames.push(subj);
         let obj = subjectTotals[subj];
         let percent = obj.max > 0 ? (obj.total / obj.max) * 100 : 0;
