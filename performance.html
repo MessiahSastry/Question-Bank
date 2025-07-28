@@ -63,6 +63,12 @@
   <div class="container">
     <div class="title">St. Patrick's School</div>
     <div class="subtitle" id="classSec"></div>
+    <div style="margin-bottom:18px;">
+      <label style="color:#185496;font-weight:600;margin-right:10px;" for="examDropdown">Select Exam:</label>
+      <select id="examDropdown" style="font-size:1.07em;padding:7px 16px;border-radius:7px;border:1.2px solid #1467b7;">
+        <option value="all">All Exams (Combined)</option>
+      </select>
+    </div>
     <div id="chartContainer">
       <canvas id="barChart" width="430" height="360"></canvas>
     </div>
@@ -108,162 +114,180 @@
     let subjectPercents = [];
     // Main logic (no auth check as per your last request)
     window.onload = async function () {
-      if (!academicYear || !classId || !sectionId) {
-        statusDiv.textContent = "Error: Class or section not selected.";
-        return;
+  if (!academicYear || !classId || !sectionId) {
+    statusDiv.textContent = "Error: Class or section not selected.";
+    return;
+  }
+  try {
+    statusDiv.textContent = "Loading data...";
+    // Get all students (not deleted)
+    let stuSnap = await db.collection('years').doc(academicYear)
+      .collection('classes').doc(classId)
+      .collection('sections').doc(sectionId)
+      .collection('students').orderBy('roll').get();
+    let students = [];
+    stuSnap.forEach(doc => { let d = doc.data(); if (!d.isDeleted) students.push({ id: doc.id, ...d }); });
+    if (students.length === 0) {
+      statusDiv.textContent = "No students found in this section.";
+      return;
+    }
+
+    // Get all exams for this class group
+    const classGroup = getClassGroupName(className);
+    let examsSnap = await db.collection('years').doc(academicYear)
+      .collection('exams').doc('classGroups')
+      .collection(classGroup).orderBy('name').get();
+    let exams = [];
+    examsSnap.forEach(doc => {
+      let ex = doc.data();
+      ex.id = doc.id;
+      exams.push(ex);
+    });
+    if (exams.length === 0) {
+      statusDiv.textContent = "No exams found for this class group.";
+      return;
+    }
+
+    // === NEW CODE: Fill dropdown ===
+    const examDropdown = document.getElementById('examDropdown');
+    examDropdown.innerHTML = `<option value="all">All Exams (Combined)</option>` +
+      exams.map(ex => `<option value="${ex.id}">${ex.name}</option>`).join('');
+
+    // --- NEW CODE: Function to render chart ---
+    async function renderChart(selectedExamId) {
+      statusDiv.textContent = "Loading chart data...";
+      // Pick exams for the chart
+      let relevantExams = (selectedExamId === 'all') ? exams : exams.filter(ex => ex.id === selectedExamId);
+    
+      // Prepare subjectTotals
+      let subjectTotals = {};
+      for (let exam of relevantExams) {
+        if (!Array.isArray(exam.subjects)) continue;
+        for (let subj of exam.subjects) {
+          if (!subj || !subj.name) continue;
+          let subjName = subj.name;
+          if (!subjectTotals[subjName]) subjectTotals[subjName] = { total: 0, max: 0, count: 0 };
+        }
       }
-      try {
-        statusDiv.textContent = "Loading data...";
-        // 1. Get all students (not deleted)
-        let stuSnap = await db.collection('years').doc(academicYear)
-          .collection('classes').doc(classId)
-          .collection('sections').doc(sectionId)
-          .collection('students').orderBy('roll').get();
-        let students = [];
-        stuSnap.forEach(doc => { let d = doc.data(); if (!d.isDeleted) students.push({ id: doc.id, ...d }); });
-        if (students.length === 0) {
-          statusDiv.textContent = "No students found in this section.";
-          return;
-        }
-
-        // 2. Get all exams for this class group
-        const classGroup = getClassGroupName(className);
-        let examsSnap = await db.collection('years').doc(academicYear)
-          .collection('exams').doc('classGroups')
-          .collection(classGroup).orderBy('name').get();
-        let exams = [];
-        examsSnap.forEach(doc => {
-          let ex = doc.data();
-          ex.id = doc.id;
-          exams.push(ex);
-        });
-        if (exams.length === 0) {
-          statusDiv.textContent = "No exams found for this class group.";
-          return;
-        }
-
-        // 3. For each subject in all exams, compute class average percentage
-        let subjectTotals = {};
-        for (let exam of exams) {
+      for (let stu of students) {
+        for (let exam of relevantExams) {
           if (!Array.isArray(exam.subjects)) continue;
+          let markDoc = await db.collection('years').doc(academicYear)
+            .collection('classes').doc(classId)
+            .collection('sections').doc(sectionId)
+            .collection('students').doc(stu.id)
+            .collection('marks').doc(exam.id).get();
+          let marksObj = markDoc.exists ? markDoc.data() : {};
           for (let subj of exam.subjects) {
             if (!subj || !subj.name) continue;
-            let subjName = subj.name;
-            if (!subjectTotals[subjName]) subjectTotals[subjName] = { total: 0, max: 0, count: 0 };
-          }
-        }
-        for (let stu of students) {
-          for (let exam of exams) {
-            if (!Array.isArray(exam.subjects)) continue;
-            let markDoc = await db.collection('years').doc(academicYear)
-              .collection('classes').doc(classId)
-              .collection('sections').doc(sectionId)
-              .collection('students').doc(stu.id)
-              .collection('marks').doc(exam.id).get();
-            let marksObj = markDoc.exists ? markDoc.data() : {};
-            for (let subj of exam.subjects) {
-              if (!subj || !subj.name) continue;
-              let val = marksObj[subj.name];
-              if (typeof val === 'number' && !isNaN(val)) {
-                subjectTotals[subj.name].total += val;
-                subjectTotals[subj.name].max += (subj.max || 100);
-                subjectTotals[subj.name].count += 1;
-              } else {
-                subjectTotals[subj.name].total += 0;
-                subjectTotals[subj.name].max += (subj.max || 100);
-                subjectTotals[subj.name].count += 1;
-              }
+            let val = marksObj[subj.name];
+            if (typeof val === 'number' && !isNaN(val)) {
+              subjectTotals[subj.name].total += val;
+              subjectTotals[subj.name].max += (subj.max || 100);
+              subjectTotals[subj.name].count += 1;
+            } else {
+              subjectTotals[subj.name].total += 0;
+              subjectTotals[subj.name].max += (subj.max || 100);
+              subjectTotals[subj.name].count += 1;
             }
           }
         }
-
-       subjectNames.length = 0;
+      }
+      subjectNames.length = 0;
       subjectPercents.length = 0;
       for (let subj in subjectTotals) {
         subjectNames.push(subj);
-   let obj = subjectTotals[subj];
-          let percent = obj.max > 0 ? (obj.total / obj.max) * 100 : 0;
-          subjectPercents.push(Math.round(percent * 10) / 10);
-        }
-        if (subjectNames.length === 0) {
-          statusDiv.textContent = "No subject data available.";
-          return;
-        }
-
-        // Chart.js - remove x axis labels, use custom plugin for inside bar text
-        if (chartInstance) chartInstance.destroy();
-        chartInstance = new Chart(chartCanvas, {
-          type: 'bar',
-          data: {
-            labels: subjectNames.map(() => ''), // remove x labels
-            datasets: [{
-              label: 'Average Percentage',
-              data: subjectPercents,
-              backgroundColor: [
-                '#1762a7', '#eb6877', '#5db5e6', '#fdc600', '#24b47e',
-                '#f97d09', '#8661d1', '#b8336a', '#03a87c', '#e14c53',
-                '#3369e7', '#cfb019'
-              ],
-              borderWidth: 2,
-              borderRadius: 10
-            }]
-          },
-          options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-              legend: { display: false },
-              title: {
-              display: false
-            },
-              tooltip: {
-                callbacks: {
-                  label: function(ctx) { return ctx.parsed.y + "%"; }
-                }
-              }
-            },
-            scales: {
-              y: {
-                beginAtZero: true,
-                max: 100,
-                title: { display: true, text: "Average (%)", color: "#0f3d6b" },
-                ticks: { color: "#1467b7", font: { size: 18 } }
-              },
-              x: {
-                grid: { display: false },
-                ticks: { display: false }
-              }
-            }
-          },
-          plugins: [{
-            id: 'subjectLabelPlugin',
-            afterDatasetsDraw: function(chart) {
-              const {ctx} = chart;
-              chart.getDatasetMeta(0).data.forEach((bar, i) => {
-                // Subject name (vertical, centered)
-                ctx.save();
-                ctx.font = "bold 20px 'Segoe UI', Arial, sans-serif";
-                ctx.fillStyle = "#fff";
-                ctx.textAlign = "center";
-                ctx.textBaseline = "middle";
-                // Draw subject name inside vertical bar
-                ctx.translate(bar.x, bar.y + bar.height / 2);
-                ctx.rotate(-Math.PI / 2);
-                ctx.fillText(subjectNames[i], 0, 0);
-                ctx.restore();
-
-                // Draw percentage on top of bar
-                ctx.save();
-                ctx.font = "bold 22px 'Segoe UI', Arial, sans-serif";
-                ctx.fillStyle = "#1762a7";
-                ctx.textAlign = "center";
-                ctx.textBaseline = "bottom";
-                ctx.fillText(subjectPercents[i] + "%", bar.x, bar.y - 10);
-                ctx.restore();
-              });
-            }
+        let obj = subjectTotals[subj];
+        let percent = obj.max > 0 ? (obj.total / obj.max) * 100 : 0;
+        subjectPercents.push(Math.round(percent * 10) / 10);
+      }
+      if (subjectNames.length === 0) {
+        statusDiv.textContent = "No subject data available.";
+        return;
+      }
+      // --- CHART DRAW CODE (full config here) ---
+      if (chartInstance) chartInstance.destroy();
+      chartInstance = new Chart(chartCanvas, {
+        type: 'bar',
+        data: {
+          labels: subjectNames.map(() => ''), // remove x labels
+          datasets: [{
+            label: 'Average Percentage',
+            data: subjectPercents,
+            backgroundColor: [
+              '#1762a7', '#eb6877', '#5db5e6', '#fdc600', '#24b47e',
+              '#f97d09', '#8661d1', '#b8336a', '#03a87c', '#e14c53',
+              '#3369e7', '#cfb019'
+            ],
+            borderWidth: 2,
+            borderRadius: 10
           }]
-        });
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            title: { display: false },
+            tooltip: {
+              callbacks: {
+                label: function(ctx) { return ctx.parsed.y + "%"; }
+              }
+            }
+          },
+          scales: {
+            y: {
+              beginAtZero: true,
+              max: 100,
+              title: { display: true, text: "Average (%)", color: "#0f3d6b" },
+              ticks: { color: "#1467b7", font: { size: 18 } }
+            },
+            x: {
+              grid: { display: false },
+              ticks: { display: false }
+            }
+          }
+        },
+        plugins: [{
+          id: 'subjectLabelPlugin',
+          afterDatasetsDraw: function(chart) {
+            const {ctx} = chart;
+            chart.getDatasetMeta(0).data.forEach((bar, i) => {
+              // Subject name (vertical, centered)
+              ctx.save();
+              ctx.font = "bold 20px 'Segoe UI', Arial, sans-serif";
+              ctx.fillStyle = "#fff";
+              ctx.textAlign = "center";
+              ctx.textBaseline = "middle";
+              // Draw subject name inside vertical bar
+              ctx.translate(bar.x, bar.y + bar.height / 2);
+              ctx.rotate(-Math.PI / 2);
+              ctx.fillText(subjectNames[i], 0, 0);
+              ctx.restore();
+    
+              // Draw percentage on top of bar
+              ctx.save();
+              ctx.font = "bold 22px 'Segoe UI', Arial, sans-serif";
+              ctx.fillStyle = "#1762a7";
+              ctx.textAlign = "center";
+              ctx.textBaseline = "bottom";
+              ctx.fillText(subjectPercents[i] + "%", bar.x, bar.y - 10);
+              ctx.restore();
+            });
+          }
+        }]
+      });
+      statusDiv.textContent = "";
+    }
+    
+        // Render initial chart (All Exams)
+        await renderChart('all');
+    
+        // Add handler for dropdown change
+        examDropdown.onchange = function () {
+          renderChart(this.value);
+        };
+    
         statusDiv.textContent = "";
       } catch (err) {
         statusDiv.textContent = "Error: " + err.message;
