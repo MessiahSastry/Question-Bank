@@ -311,7 +311,13 @@
         this.value = this.value.toUpperCase();
       });
     });
-
+// Attach fetchAndShowExistingSyllabus to all dropdowns after DOM is ready
+document.addEventListener('DOMContentLoaded', function() {
+  ['year-value', 'class-value', 'exam-value', 'subject-value'].forEach(id => {
+    document.getElementById(id).addEventListener('change', fetchAndShowExistingSyllabus);
+  });
+  fetchAndShowExistingSyllabus();
+});
     // ====== Init Page (after Firestore loads) ======
     async function initPage() {
       // Load academic years from Firestore
@@ -358,19 +364,34 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     // Save to Firestore
-    try {
-      await db.collection("year_plan").add({
-        year, class: className, exam: examName, subject, syllabus,
-        created: new Date()
-      });
-      // Show success message
-      showSavedMessage("Saved!");
-      // Reset fields
-      document.getElementById('syllabus').value = "";
-    } catch (e) {
-      alert("Error saving. Try again.");
-    }
-  };
+    // Save to Firestore (Update if exists, else Add new)
+try {
+  const snap = await db.collection("year_plan")
+    .where("year", "==", year)
+    .where("class", "==", className)
+    .where("exam", "==", examName)
+    .where("subject", "==", subject)
+    .limit(1).get();
+
+  if (!snap.empty) {
+    // Update existing document
+    await db.collection("year_plan").doc(snap.docs[0].id).update({
+      syllabus,
+      updated: new Date()
+    });
+  } else {
+    // Add new document
+    await db.collection("year_plan").add({
+      year, class: className, exam: examName, subject, syllabus,
+      created: new Date()
+    });
+  }
+  // Show success message
+  showSavedMessage("Saved!");
+} catch (e) {
+  alert("Error saving. Try again.");
+}
+};
 
   // Message function
   window.showSavedMessage = function(msg) {
@@ -451,6 +472,32 @@ document.addEventListener('DOMContentLoaded', function() {
   doc.save(`${className}_${exam}_syllabus.pdf`);
 };
 });
+    // --- Fetch and show existing syllabus for current dropdown values ---
+async function fetchAndShowExistingSyllabus() {
+  const year = document.getElementById('year-value').value;
+  const className = document.getElementById('class-value').value;
+  const examName = document.getElementById('exam-value').value;
+  const subject = document.getElementById('subject-value').value;
+
+  if (!(year && className && examName && subject)) {
+    document.getElementById('syllabus').value = "";
+    return;
+  }
+
+  const snap = await db.collection('year_plan')
+    .where('year', '==', year)
+    .where('class', '==', className)
+    .where('exam', '==', examName)
+    .where('subject', '==', subject)
+    .limit(1).get();
+
+  if (!snap.empty) {
+    const data = snap.docs[0].data();
+    document.getElementById('syllabus').value = data.syllabus || "";
+  } else {
+    document.getElementById('syllabus').value = "";
+  }
+}
   </script>
 </body>
 </html>
