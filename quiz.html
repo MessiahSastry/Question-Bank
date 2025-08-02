@@ -335,28 +335,53 @@ function fetchAndShowStudentName() {
     const msg = document.getElementById('student-name-msg');
 
     if (cls && sec && ph.length === 10) {
-        db.collection('students')
-            .where('class', '==', cls)
-            .where('section', '==', sec)
-            .where('phone', '==', ph)
-            .limit(1)
-            .get()
-            .then(snapshot => {
-                if (!snapshot.empty) {
-                    const name = snapshot.docs[0].data().name || "Student";
-                    msg.style.color = '#126c30';
-                    msg.textContent = "Welcome, " + name;
-                    window.studentName = name;
-                } else {
+        // 1. Find the class doc with matching name
+        db.collection('classes').where('name', '==', cls).limit(1).get()
+            .then(classSnap => {
+                if (classSnap.empty) {
                     msg.style.color = '#c82333';
-                    msg.textContent = "No student found for given details.";
+                    msg.textContent = "Class not found.";
                     window.studentName = "Student";
+                    return;
                 }
-            })
-            .catch(() => {
-                msg.style.color = '#c82333';
-                msg.textContent = "Error fetching student name.";
-                window.studentName = "Student";
+                const classDocId = classSnap.docs[0].id;
+                // 2. Find the section doc under class with matching name
+                db.collection('classes').doc(classDocId).collection('sections')
+                  .where('name', '==', sec).limit(1).get()
+                  .then(sectionSnap => {
+                      if (sectionSnap.empty) {
+                          msg.style.color = '#c82333';
+                          msg.textContent = "Section not found.";
+                          window.studentName = "Student";
+                          return;
+                      }
+                      const sectionDocId = sectionSnap.docs[0].id;
+                      // 3. Find student under this section
+                      db.collection('classes').doc(classDocId)
+                        .collection('sections').doc(sectionDocId)
+                        .collection('students')
+                        .where('phone', '==', ph)
+                        .limit(1)
+                        .get()
+                        .then(studentSnap => {
+                            if (!studentSnap.empty) {
+                                const name = studentSnap.docs[0].data().name || "Student";
+                                msg.style.color = '#126c30';
+                                msg.textContent = "Welcome, " + name;
+                                window.studentName = name;
+                                // Optionally, store studentSnap.docs[0].data() in window for later
+                            } else {
+                                msg.style.color = '#c82333';
+                                msg.textContent = "No student found for given details.";
+                                window.studentName = "Student";
+                            }
+                        })
+                        .catch(() => {
+                            msg.style.color = '#c82333';
+                            msg.textContent = "Error fetching student.";
+                            window.studentName = "Student";
+                        });
+                  });
             });
     } else {
         msg.textContent = "";
@@ -675,4 +700,5 @@ document.getElementById('close-leaderboard-btn').onclick = function() {
     </script>
 </body>
 </html>
+
 
