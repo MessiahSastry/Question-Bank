@@ -512,9 +512,14 @@
                         renderQuestion();
             
                         // --- Show leaderboard after each question (except last) ---
-                        if (currentIdx < quiz.questions.length - 1) {
-                            setTimeout(fetchAndShowLeaderboard, 350);
-                        }
+                        // --- Save progress after each answer ---
+                    saveCurrentProgress();
+                    
+                    // --- Show leaderboard after each question (except last) ---
+                    if (currentIdx < quiz.questions.length - 1) {
+                        setTimeout(fetchAndShowLeaderboard, 350);
+                    }
+
                     };
                 });
             }
@@ -696,10 +701,51 @@ function showLeaderboard(html) {
 document.getElementById('close-leaderboard-btn').onclick = function() {
     document.getElementById('leaderboard-modal').style.display = 'none';
 };
+function saveCurrentProgress() {
+    const classVal = document.getElementById('selected-class').dataset.value;
+    const sectionVal = document.getElementById('selected-section').dataset.value;
+    const phoneVal = document.getElementById('student-phone').value;
+    const quizId = new URLSearchParams(window.location.search).get("quiz");
+    let correct = 0;
+    quiz.questions.forEach((q, i) => {
+        let ansIdx = (typeof q.shuffledAnswerIdx === "number") ? q.shuffledAnswerIdx : letterToIdx(q.answer);
+        if (userAnswers[i] === ansIdx) correct++;
+    });
+
+    // This will update the user's result after every question
+    db.collection("quizResults")
+      .where("quizId", "==", quizId)
+      .where("phone", "==", phoneVal)
+      .get()
+      .then(snapshot => {
+          if (!snapshot.empty) {
+              // Update the existing result (keep only latest one per user)
+              snapshot.docs[0].ref.update({
+                  name: window.studentName,
+                  class: classVal,
+                  section: sectionVal,
+                  score: correct,
+                  timestamp: firebase.firestore.FieldValue.serverTimestamp()
+              });
+          } else {
+              // Add a new result (first time answering)
+              db.collection("quizResults").add({
+                  quizId: quizId,
+                  class: classVal,
+                  section: sectionVal,
+                  phone: phoneVal,
+                  name: window.studentName,
+                  score: correct,
+                  timestamp: firebase.firestore.FieldValue.serverTimestamp()
+              });
+          }
+      });
+}
 
     </script>
 </body>
 </html>
+
 
 
 
