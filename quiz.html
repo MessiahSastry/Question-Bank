@@ -807,30 +807,77 @@ function fetchAndShowLeaderboard() {
         .where("quizId", "==", quizId)
         .orderBy("score", "desc")
         .orderBy("timestamp", "asc")
-        .limit(10)
         .get()
         .then((querySnapshot) => {
-            let rows = [];
-            let rank = 1;
+            // Group all attempts per student (by phone)
+            let byPhone = {};
             querySnapshot.forEach(doc => {
                 const d = doc.data();
-                let medal = "";
-                if (rank === 1) medal = '<span style="font-size:1.5em;">🥇</span>';
-                else if (rank === 2) medal = '<span style="font-size:1.5em;">🥈</span>';
-                else if (rank === 3) medal = '<span style="font-size:1.5em;">🥉</span>';
-                else medal = `<span style="font-size:1.25em;font-weight:bold;color:#fff;background:#1e65d8;border-radius:50%;display:inline-block;width:1.8em;height:1.8em;text-align:center;line-height:1.8em;">${rank}</span>`;
-                rows.push(`
-                  <div class="leader-row">
-                    <div class="leader-rank">${medal}</div>
-                    <div class="leader-name">${d.name ? d.name : "Student"}</div>
-                    <div class="leader-score">${d.score}</div>
-                  </div>
-                `);
-                rank++;
+                const key = d.phone || d.name; // fallback if phone is missing
+                if (!byPhone[key]) byPhone[key] = [];
+                byPhone[key].push({ ...d, _timestamp: doc.data().timestamp?.toDate?.() || new Date(0) });
             });
+
+            // Get best attempt for each student
+            let leaderboard = Object.values(byPhone).map(attemptsArr => {
+                // Sort by score DESC, then by fastest time (lowest), then by earliest timestamp
+                attemptsArr.sort((a, b) => {
+                    if (b.score !== a.score) return b.score - a.score;
+                    if ((a.time || 99999) !== (b.time || 99999)) return (a.time || 99999) - (b.time || 99999);
+                    return (a._timestamp - b._timestamp);
+                });
+                let best = attemptsArr[0];
+                // Only first two words of the name
+                let shortName = (best.name || "Student").split(" ").slice(0, 2).join(" ");
+                // Format time
+                let timeTaken = best.time || best.timeTaken || best.timer || 0; // adjust as per your field
+                let min = Math.floor(timeTaken / 60);
+                let sec = timeTaken % 60;
+                let timeDisplay = min > 0 ? `${min}m ${sec}s` : `${sec}s`;
+                return {
+                    name: shortName,
+                    score: best.score,
+                    attempts: attemptsArr.length,
+                    timeDisplay
+                };
+            });
+
+            // Sort leaderboard by score DESC, then time ASC
+            leaderboard.sort((a, b) => {
+                if (b.score !== a.score) return b.score - a.score;
+                // For ties, show fastest time first
+                let aTime = a.timeDisplay.split(" ").reduce((acc, t) => acc * 60 + parseInt(t), 0);
+                let bTime = b.timeDisplay.split(" ").reduce((acc, t) => acc * 60 + parseInt(t), 0);
+                return aTime - bTime;
+            });
+
+            // Render rows
+            function getMedal(rank) {
+                if (rank === 1) return '<span style="font-size:1.5em;">🥇</span>';
+                if (rank === 2) return '<span style="font-size:1.5em;">🥈</span>';
+                if (rank === 3) return '<span style="font-size:1.5em;">🥉</span>';
+                return `<span style="font-size:1.3em;font-weight:bold;color:#fff;background:#0f3d6b;border-radius:50%;display:inline-block;width:1.8em;height:1.8em;text-align:center;line-height:1.8em;">${rank}</span>`;
+            }
+
+            let rows = leaderboard.map((d, idx) => `
+              <div class="leader-row" style="display:flex;align-items:center;">
+                <div class="leader-rank">${getMedal(idx+1)}</div>
+                <div class="leader-name" style="flex:1;font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                  ${d.name}
+                </div>
+                <div class="leader-score" style="display:flex;align-items:center;gap:11px;font-size:1.13em;">
+                  ${d.score} <span style="font-size:1.13em;margin-left:4px;">⏱${d.timeDisplay}</span> <span style="font-size:1.13em;margin-left:4px;">🔄${d.attempts}</span>
+                </div>
+              </div>
+            `);
+
+            // Show with new title and header color
             const html = `
               <div class="leaderboard-box">
                 <div class="leaderboard-title">St. Patrick's Challengers</div>
+                <div style="margin-bottom:7px;font-size:1em;color:#e0eaff;text-align:left;font-weight:400;">
+                  <b>Score</b>  <span style="margin-left:22px;">⏱Time</span>  <span style="margin-left:18px;">🔄Attempts</span>
+                </div>
                 <div class="leaderboard-list">
                   ${rows.join("")}
                 </div>
@@ -891,3 +938,4 @@ function saveCurrentProgress() {
     </script>
 </body>
 </html>
+
