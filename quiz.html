@@ -255,7 +255,8 @@
         </div>
         <label style="display:block;text-align:left;margin-bottom:8px;">Phone Number</label>
         <input type="tel" id="student-phone" maxlength="10" pattern="[0-9]{10}" placeholder="Enter 10-digit number">
-        <button id="send-otp-btn">Send OTP</button>
+        <div id="student-name-msg" style="margin:6px 0 0 0; font-size:1.07em; min-height:24px;"></div>
+        <button id="send-otp-btn">Verify & Enter</button>
         <div id="otp-status-msg" style="color:#c82333;margin:9px 0 0 0;font-size:1em;display:none;"></div>
       </div>
     </div>
@@ -299,6 +300,7 @@
                     selected.textContent = this.textContent;
                     selected.dataset.value = this.dataset.value;
                     list.style.display = 'none';
+                    fetchAndShowStudentName();
                 };
             });
             // Hide on outside click
@@ -312,8 +314,8 @@
         document.addEventListener("DOMContentLoaded", function() {
             setupModernDropdown('dropdown-class', 'selected-class', 'dropdown-class-list');
             setupModernDropdown('dropdown-section', 'selected-section', 'dropdown-section-list');
+            document.getElementById('student-phone').addEventListener('input', fetchAndShowStudentName);
         });
-
         // Firebase config (reuse from your app)
         const firebaseConfig = {
             apiKey: "AIzaSyAszVhWXUUOYLQ7VimKmPKf1yEu_CI9RCE",
@@ -325,7 +327,42 @@
         };
         firebase.initializeApp(firebaseConfig);
         const db = firebase.firestore();
+        // --- Add this function below! ---
+function fetchAndShowStudentName() {
+    const cls = document.getElementById('selected-class').dataset.value || "";
+    const sec = document.getElementById('selected-section').dataset.value || "";
+    const ph = document.getElementById('student-phone').value.trim() || "";
+    const msg = document.getElementById('student-name-msg');
 
+    if (cls && sec && ph.length === 10) {
+        db.collection('students')
+            .where('class', '==', cls)
+            .where('section', '==', sec)
+            .where('phone', '==', ph)
+            .limit(1)
+            .get()
+            .then(snapshot => {
+                if (!snapshot.empty) {
+                    const name = snapshot.docs[0].data().name || "Student";
+                    msg.style.color = '#126c30';
+                    msg.textContent = "Welcome, " + name;
+                    window.studentName = name;
+                } else {
+                    msg.style.color = '#c82333';
+                    msg.textContent = "No student found for given details.";
+                    window.studentName = "Student";
+                }
+            })
+            .catch(() => {
+                msg.style.color = '#c82333';
+                msg.textContent = "Error fetching student name.";
+                window.studentName = "Student";
+            });
+    } else {
+        msg.textContent = "";
+        window.studentName = "Student";
+    }
+}
         // --- Quiz State ---
         let quiz = null;
         let userAnswers = [];
@@ -560,42 +597,31 @@ window.onload = function() {
 
     let confirmationResult = null;
     document.getElementById('send-otp-btn').onclick = function() {
-        var cls = document.getElementById('selected-class').dataset.value || "";
-        var sec = document.getElementById('selected-section').dataset.value || "";
-        var ph = document.getElementById('student-phone').value.trim() || "";
-        const msg = document.getElementById('otp-status-msg');
+    var cls = document.getElementById('selected-class').dataset.value || "";
+    var sec = document.getElementById('selected-section').dataset.value || "";
+    var ph = document.getElementById('student-phone').value.trim() || "";
+    const msg = document.getElementById('otp-status-msg');
 
-        if (!cls || !sec || !ph || ph.length !== 10) {
-            msg.style.display = '';
-            msg.textContent = "Please fill all details correctly!";
-            return;
-        }
-        msg.style.display = 'none';
+    if (!cls || !sec || !ph || ph.length !== 10) {
+        msg.style.display = '';
+        msg.textContent = "Please fill all details correctly!";
+        return;
+    }
+    msg.style.display = 'none';
 
-        // Fetch student name from Firestore for the entered class, section, and phone
-        db.collection('students')
-          .where('class', '==', cls)
-          .where('section', '==', sec)
-          .where('phone', '==', ph)
-          .limit(1)
-          .get()
-          .then(snapshot => {
-            if (!snapshot.empty) {
-              window.studentName = snapshot.docs[0].data().name || "Student";
-            } else {
-              window.studentName = "Student"; // fallback
-            }
-            document.getElementById('quiz-auth-modal').style.display = "none";
-            loadQuiz();
-          })
-          .catch(() => {
-            window.studentName = "Student"; // fallback
-            document.getElementById('quiz-auth-modal').style.display = "none";
-            loadQuiz();
-          });
+    // At this point, fetchAndShowStudentName already ran, so we have window.studentName.
+    // If you want, you can check and show error if not found:
+    if (window.studentName === "Student" || !window.studentName) {
+        msg.style.display = '';
+        msg.textContent = "Student not found for given details!";
+        return;
+    }
 
-        // No OTP sending or verification here (temporary bypass for testing)
-    };
+    document.getElementById('quiz-auth-modal').style.display = "none";
+    loadQuiz();
+
+    // No OTP sending, only student verification here
+};
 };
 
 // --- Leaderboard logic (no changes needed) ---
@@ -649,3 +675,4 @@ document.getElementById('close-leaderboard-btn').onclick = function() {
     </script>
 </body>
 </html>
+
