@@ -546,13 +546,13 @@
             return html;
         }
 
-        // --- Gatekeep with Modal (NEXT STEP: Add OTP logic here) ---
-        window.onload = function() {
+    // --- Gatekeep with Modal (fetch student name from Firestore, bypass OTP for testing) ---
+window.onload = function() {
     // Setup dropdowns (optional if already done)
     setupModernDropdown('dropdown-class', 'selected-class', 'dropdown-class-list');
     setupModernDropdown('dropdown-section', 'selected-section', 'dropdown-section-list');
 
-    // Recaptcha for Firebase phone auth
+    // Recaptcha for Firebase phone auth (not used in bypass, but kept for future use)
     let recaptchaVerifier = new firebase.auth.RecaptchaVerifier('send-otp-btn', {
         size: 'invisible',
         callback: function(response) {}
@@ -560,26 +560,46 @@
 
     let confirmationResult = null;
     document.getElementById('send-otp-btn').onclick = function() {
-    var cls = document.getElementById('selected-class').dataset.value || "";
-    var sec = document.getElementById('selected-section').dataset.value || "";
-    var ph = document.getElementById('student-phone').value.trim() || "";
-    const msg = document.getElementById('otp-status-msg');
+        var cls = document.getElementById('selected-class').dataset.value || "";
+        var sec = document.getElementById('selected-section').dataset.value || "";
+        var ph = document.getElementById('student-phone').value.trim() || "";
+        const msg = document.getElementById('otp-status-msg');
 
-    if (!cls || !sec || !ph || ph.length !== 10) {
-        msg.style.display = '';
-        msg.textContent = "Please fill all details correctly!";
-        return;
-    }
-    msg.style.display = 'none';
+        if (!cls || !sec || !ph || ph.length !== 10) {
+            msg.style.display = '';
+            msg.textContent = "Please fill all details correctly!";
+            return;
+        }
+        msg.style.display = 'none';
 
-    // *** TEMPORARY BYPASS: Directly close modal and load quiz ***
-    document.getElementById('quiz-auth-modal').style.display = "none";
-    loadQuiz();
+        // Fetch student name from Firestore for the entered class, section, and phone
+        db.collection('students')
+          .where('class', '==', cls)
+          .where('section', '==', sec)
+          .where('phone', '==', ph)
+          .limit(1)
+          .get()
+          .then(snapshot => {
+            if (!snapshot.empty) {
+              window.studentName = snapshot.docs[0].data().name || "Student";
+            } else {
+              window.studentName = "Student"; // fallback
+            }
+            document.getElementById('quiz-auth-modal').style.display = "none";
+            loadQuiz();
+          })
+          .catch(() => {
+            window.studentName = "Student"; // fallback
+            document.getElementById('quiz-auth-modal').style.display = "none";
+            loadQuiz();
+          });
 
-    // No OTP sending or verification here
+        // No OTP sending or verification here (temporary bypass for testing)
+    };
 };
-};
-        function fetchAndShowLeaderboard() {
+
+// --- Leaderboard logic (no changes needed) ---
+function fetchAndShowLeaderboard() {
     const quizId = new URLSearchParams(window.location.search).get("quiz");
     db.collection("quizResults")
         .where("quizId", "==", quizId)
@@ -592,19 +612,19 @@
             let rank = 1;
             querySnapshot.forEach(doc => {
                 const d = doc.data();
-               let medal = "";
-            if (rank === 1) medal = '<span style="font-size:1.5em;">🥇</span>';
-            else if (rank === 2) medal = '<span style="font-size:1.5em;">🥈</span>';
-            else if (rank === 3) medal = '<span style="font-size:1.5em;">🥉</span>';
-            else medal = `<span style="font-size:1.25em;font-weight:bold;color:#fff;background:#1e65d8;border-radius:50%;display:inline-block;width:1.8em;height:1.8em;text-align:center;line-height:1.8em;">${rank}</span>`;
-            rows.push(`
-              <div class="leader-row">
-                <div class="leader-rank">${medal}</div>
-                <div class="leader-name">${d.name ? d.name : "Student"}</div>
-                <div class="leader-score">${d.score}</div>
-              </div>
-            `);
-            rank++;
+                let medal = "";
+                if (rank === 1) medal = '<span style="font-size:1.5em;">🥇</span>';
+                else if (rank === 2) medal = '<span style="font-size:1.5em;">🥈</span>';
+                else if (rank === 3) medal = '<span style="font-size:1.5em;">🥉</span>';
+                else medal = `<span style="font-size:1.25em;font-weight:bold;color:#fff;background:#1e65d8;border-radius:50%;display:inline-block;width:1.8em;height:1.8em;text-align:center;line-height:1.8em;">${rank}</span>`;
+                rows.push(`
+                  <div class="leader-row">
+                    <div class="leader-rank">${medal}</div>
+                    <div class="leader-name">${d.name ? d.name : "Student"}</div>
+                    <div class="leader-score">${d.score}</div>
+                  </div>
+                `);
+                rank++;
             });
             const html = `
               <div class="leaderboard-box">
@@ -617,19 +637,15 @@
             showLeaderboard(html);
         });
 }
-            // ---- Leaderboard Modal Show/Hide ----
-        function showLeaderboard(html) {
-            document.getElementById('leaderboard-popup-block').innerHTML = html || '';
-            document.getElementById('leaderboard-modal').style.display = 'flex';
-        }
-        document.getElementById('close-leaderboard-btn').onclick = function() {
-            document.getElementById('leaderboard-modal').style.display = 'none';
-        };
+// ---- Leaderboard Modal Show/Hide ----
+function showLeaderboard(html) {
+    document.getElementById('leaderboard-popup-block').innerHTML = html || '';
+    document.getElementById('leaderboard-modal').style.display = 'flex';
+}
+document.getElementById('close-leaderboard-btn').onclick = function() {
+    document.getElementById('leaderboard-modal').style.display = 'none';
+};
+
     </script>
 </body>
 </html>
-
-
-
-
-
