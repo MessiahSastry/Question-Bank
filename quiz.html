@@ -881,31 +881,56 @@ window.onload = function() {
     });
 
     let confirmationResult = null;
+let recaptchaVerifier = null;
+
+window.onload = function() {
+    setupModernDropdown('dropdown-class', 'selected-class', 'dropdown-class-list');
+    setupModernDropdown('dropdown-section', 'selected-section', 'dropdown-section-list');
+
+    recaptchaVerifier = new firebase.auth.RecaptchaVerifier('send-otp-btn', {
+        size: 'invisible'
+    });
+
     document.getElementById('send-otp-btn').onclick = function() {
-    var cls = document.getElementById('selected-class').dataset.value || "";
-    var sec = document.getElementById('selected-section').dataset.value || "";
-    var ph = document.getElementById('student-phone').value.trim() || "";
-    const msg = document.getElementById('otp-status-msg');
+        var cls = document.getElementById('selected-class').dataset.value || "";
+        var sec = document.getElementById('selected-section').dataset.value || "";
+        var ph = document.getElementById('student-phone').value.trim() || "";
+        const msg = document.getElementById('otp-status-msg');
 
-    if (!cls || !sec || !ph || ph.length !== 10) {
-        msg.style.display = '';
-        msg.textContent = "Please fill all details correctly!";
-        return;
-    }
-    msg.style.display = 'none';
+        if (!cls || !sec || !ph || ph.length !== 10) {
+            msg.style.display = '';
+            msg.textContent = "Please fill all details correctly!";
+            return;
+        }
+        msg.style.display = 'none';
 
-    // At this point, fetchAndShowStudentName already ran, so we have window.studentName.
-    // If you want, you can check and show error if not found:
-    if (window.studentName === "Student" || !window.studentName) {
-        msg.style.display = '';
-        msg.textContent = "Student not found for given details!";
-        return;
-    }
+        // If student not found, stop
+        if (window.studentName === "Student" || !window.studentName) {
+            msg.style.display = '';
+            msg.textContent = "Student not found for given details!";
+            return;
+        }
 
-    document.getElementById('quiz-auth-modal').style.display = "none";
-    loadQuiz();
-
-    // No OTP sending, only student verification here
+        // Send OTP
+        const phoneWithCode = "+91" + ph;
+        firebase.auth().signInWithPhoneNumber(phoneWithCode, recaptchaVerifier)
+            .then(function (result) {
+                confirmationResult = result;
+                msg.style.display = '';
+                msg.style.color = '#126c30';
+                msg.textContent = "OTP sent! Please enter OTP.";
+                // Show input for OTP (add this in your HTML)
+                showOtpInput();
+            })
+            .catch(function (error) {
+                msg.style.display = '';
+                msg.style.color = '#c82333';
+                msg.textContent = error.message || "OTP sending failed.";
+                recaptchaVerifier.render().then(function(widgetId) {
+                    grecaptcha.reset(widgetId);
+                });
+            });
+    };
 };
 };
 
@@ -1050,10 +1075,50 @@ function saveCurrentProgress() {
           }
       });
 }
+    function showOtpInput() {
+    // Only add OTP field once!
+    if (document.getElementById('otp-input')) return;
+    const inner = document.getElementById('quiz-auth-modal-inner');
+    const otpField = document.createElement('input');
+    otpField.type = "text";
+    otpField.id = "otp-input";
+    otpField.placeholder = "Enter OTP";
+    otpField.style.marginTop = "10px";
+    otpField.maxLength = 6;
+    inner.appendChild(otpField);
+
+    const verifyBtn = document.createElement('button');
+    verifyBtn.textContent = "Verify OTP";
+    verifyBtn.style.marginTop = "10px";
+    verifyBtn.onclick = verifyOtpCode;
+    inner.appendChild(verifyBtn);
+}
+
+function verifyOtpCode() {
+    const code = document.getElementById('otp-input').value;
+    const msg = document.getElementById('otp-status-msg');
+    if (!confirmationResult) {
+        msg.style.display = '';
+        msg.textContent = "Please request OTP first.";
+        return;
+    }
+    confirmationResult.confirm(code)
+        .then(function(result) {
+            // Auth successful
+            document.getElementById('quiz-auth-modal').style.display = "none";
+            loadQuiz();
+        })
+        .catch(function(error) {
+            msg.style.display = '';
+            msg.style.color = '#c82333';
+            msg.textContent = error.message || "Invalid OTP.";
+        });
+}
 
     </script>
 </body>
 </html>
+
 
 
 
