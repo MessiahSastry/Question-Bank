@@ -162,13 +162,6 @@
   </style>
 </head>
 <body>
-  <div id="syllabus-print" style="position:fixed; top:-5000px; left:-5000px; font-family: 'Noto Sans Telugu', Arial, sans-serif;">
-  <h2 style="text-align:center;">St. Patrick's School</h2>
-  <h4 style="text-align:center;">IIT & NEET Foundation</h4>
-  <h4 style="text-align:center;" id="print-exam"></h4>
-  <h3 style="text-align:center;" id="print-class"></h3>
-  <div id="print-syllabus"></div>
-</div>
   <div class="header-bar">Year Plan Entry</div>
   <div class="section-container">
     <h2><i class="fa-solid fa-calendar"></i> Year Plan Entry</h2>
@@ -233,13 +226,11 @@
       <i class="fa-solid fa-file-pdf"></i> Download Exam Syllabus PDF
     </button>
   </div>
-
   <!-- Firebase (v9 compat) -->
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
   <script>
     
     // ====== Your Data Mapping ======
@@ -411,85 +402,136 @@ document.getElementById('syllabus').value = "";
   alert("Error saving. Try again.");
 }
 };
-
-  // Message function
-  window.showSavedMessage = function(msg) {
-    let m = document.createElement('div');
-    m.innerText = msg;
-    m.style.cssText = "position:fixed;top:22px;left:50%;transform:translateX(-50%);background:#16aa47;color:#fff;font-weight:700;padding:13px 26px;border-radius:10px;font-size:1.12em;z-index:2000;box-shadow:0 6px 32px #0002;transition:opacity 0.2s;";
-    document.body.appendChild(m);
-    setTimeout(()=>{m.style.opacity='0';}, 950);
-    setTimeout(()=>{m.remove();}, 1450);
-  };
-});
+  });
     document.addEventListener('DOMContentLoaded', function() {
   document.getElementById('download-btn').onclick = async function () {
-    // 1. Get dropdown values
-    const year = document.getElementById('pdf-year-value').value;
-    const className = document.getElementById('pdf-class-value').value;
-    const exam = document.getElementById('pdf-exam-value').value;
+  const year = document.getElementById('pdf-year-value').value;
+  const className = document.getElementById('pdf-class-value').value;
+  const exam = document.getElementById('pdf-exam-value').value;
 
-    // 2. Fetch all syllabus for this class/year/exam
-    const snap = await db.collection('year_plan')
-      .where('year', '==', year)
-      .where('class', '==', className)
-      .where('exam', '==', exam)
-      .get();
+  // Fetch ALL subjects for this class/year/exam
+  const snap = await db.collection('year_plan')
+    .where('year', '==', year)
+    .where('class', '==', className)
+    .where('exam', '==', exam)
+    .get();
 
-    if (snap.empty) {
-      alert('No syllabus found for this selection.');
-      return;
-    }
+  if (snap.empty) {
+    alert('No syllabus found for this selection.');
+    return;
+  }
 
-    // 3. Prepare printable HTML (including Telugu/Hindi/Unicode)
-    let syllabusHtml = "";
-    const subjectOrder = [
-      "Telugu", "Hindi", "English 1", "English 2", "Math 1", "Math 2", "Physics", "Chemistry", "Biology", "Social"
-    ];
+  // Prepare data
+    // Prepare data in fixed order
+  const subjectOrder = [
+    "Telugu",
+    "Hindi",
+    "English 1",
+    "English 2",
+    "Math 1",
+    "Math 2",
+    "Physics",
+    "Chemistry",
+    "Biology",
+    "Social"
+  ];
 
-    // Create a map for quick lookup
-    const syllabusMap = {};
-    snap.forEach(doc => {
-      const d = doc.data();
-      syllabusMap[(d.subject || "").trim().toLowerCase()] = d.syllabus || "";
-    });
+  // Create a map for quick lookup
+  const syllabusMap = {};
+  snap.forEach(doc => {
+    const d = doc.data();
+    syllabusMap[(d.subject || "").trim().toLowerCase()] = d.syllabus || "";
+  });
 
-    subjectOrder.forEach(sub => {
+  // Build ordered data array, only if subject exists for this selection
+  const data = subjectOrder
+    .map(sub => {
       const key = sub.trim().toLowerCase();
       if (syllabusMap[key]) {
-        syllabusHtml += `<b>${sub}:</b><br><pre style="font-family:inherit;margin:0 0 12px 0;white-space:pre-wrap;">${syllabusMap[key]}</pre>`;
+        return {subject: sub, syllabus: syllabusMap[key]};
       }
-    });
+      return null;
+    })
+    .filter(Boolean);
 
-    // Fill hidden print section
-    // Fill hidden print section
-    // Fill hidden print section
-document.getElementById('print-exam').innerText = exam;
-document.getElementById('print-class').innerText = className.toUpperCase() + " - SYLLABUS";
-document.getElementById('print-syllabus').innerHTML = syllabusHtml;
+    // ======= jsPDF Part =======
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  let pageWidth = doc.internal.pageSize.getWidth();
+  let y = 18;
 
-// STEP 1: Make visible before PDF
-var printArea = document.getElementById('syllabus-print');
-printArea.style.display = "block";
-printArea.style.position = "static";     // <--- ADD THIS LINE
+  // 1. School Name (centered, big)
+  doc.setFontSize(18);
+  doc.setFont(undefined, 'bold');
+  doc.text('St. Patrick\'s School', pageWidth / 2, y, { align: 'center' });
+  y += 9;
 
-var opt = {
-  margin: 0.6,
-  filename: `${className}_${exam}_syllabus.pdf`,
-  image: { type: 'jpeg', quality: 0.98 },
-  html2canvas: { scale: 2, useCORS: true },
-  jsPDF: { unit: 'in', format: 'a4', orientation: 'portrait' }
+  // 2. Subheading (center, normal)
+  doc.setFontSize(14);
+  doc.setFont(undefined, 'normal');
+  doc.text('IIT & NEET Foundation', pageWidth / 2, y, { align: 'center' });
+  y += 8;
+
+  // 3. Exam Name (center, normal)
+  doc.setFontSize(13);
+  doc.setFont(undefined, 'bold');
+  doc.text(`${exam}`, pageWidth / 2, y, { align: 'center' });
+  y += 11;
+
+  // 4. Class Line: centered, bold, all caps, with hyphen
+  // 4. Class Line: Centered, bold, with superscript for "th"/"nd"/"st"/"rd"
+  doc.setFontSize(13);
+  doc.setFont(undefined, 'bold');
+  const classNum = className.split(' ')[0];          // "9th"
+  let classText = classNum.toUpperCase(); // "9TH", "10TH", etc.
+  let match = classText.match(/^(\d+)(ST|ND|RD|TH)$/);
+
+  if (match) {
+    // Simulate superscript for "TH"/"ST"/"ND"/"RD"
+    let mainNum = match[1];                  // "9"
+    let sup = match[2].toLowerCase();        // "th"
+    let afterText = " CLASS - SYLLABUS";
+
+    // Measure width for perfect centering
+    let beforeWidth = doc.getTextWidth(mainNum);
+    let supWidth = doc.getTextWidth(sup);
+    let afterWidth = doc.getTextWidth(afterText);
+    let totalWidth = beforeWidth + supWidth + afterWidth;
+
+    let startX = pageWidth / 2 - totalWidth / 2;
+
+    // Draw main number
+    doc.setFontSize(13);
+    doc.text(mainNum, startX, y);
+
+    // Draw superscript
+    doc.setFontSize(9);
+    doc.text(sup, startX + beforeWidth, y - 2.3);
+
+    // Draw after text
+    doc.setFontSize(13);
+    doc.text(afterText, startX + beforeWidth + supWidth, y);
+
+    y += 11;
+  } else {
+    // Fallback for non-matching class names
+    doc.setFontSize(13);
+    doc.text(`${className.toUpperCase()} - SYLLABUS`, pageWidth / 2, y, { align: 'center' });
+    y += 11;
+  }
+
+  data.forEach(d => {
+    doc.setFont(undefined, 'bold');
+    doc.text(`${d.subject}:`, 10, y); y += 7;
+    doc.setFont(undefined, 'normal');
+    let lines = doc.splitTextToSize(d.syllabus, 180);
+    doc.text(lines, 16, y);
+    y += lines.length * 7 + 2;
+    if (y > 270) { doc.addPage(); y = 14; }
+  });
+
+  doc.save(`${className}_${exam}_syllabus.pdf`);
 };
-await html2pdf().set(opt).from(printArea).save();
-
-// Hide and move away again
-printArea.style.display = "none";
-printArea.style.position = "fixed";     // <--- RESTORE
-
-    
-      // Hide again after print
-      document.getElementById('syllabus-print').style.display = "none";
-    };
 });
     // --- Fetch and show existing syllabus for current dropdown values ---
 async function fetchAndShowExistingSyllabus() {
@@ -520,11 +562,3 @@ async function fetchAndShowExistingSyllabus() {
   </script>
 </body>
 </html>
-
-
-
-
-
-
-
-
