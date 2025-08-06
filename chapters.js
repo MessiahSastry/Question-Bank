@@ -47,14 +47,14 @@ window.textbooks = {
       "Tables, Squares and Cubes",
       "Knowing Our Numbers",
       "Roman Numerals",
-      "Whole Numbers",
-      "Playing With Numbers",
-      "LCM and HCF",
-      "Basic Geometrical Ideas",
-      "Measures of Lines and Angles",
       "Integers",
       "Fractions and Decimals",
-      "Rational Numbers"
+      "Rational Numbers",
+      "Factorization",
+      "Linear Equations in One Variable",
+      "Ratio and Proportion",
+      "Square Roots and Cube Roots",
+      "Simple Intrest, Time - Distance, Time - Work"
     ],
     "Math 2": [
       "Fractions",
@@ -66,7 +66,18 @@ window.textbooks = {
       "Symmetry",
       "Practical Geometry"
     ],
-    "Math IIT": [],
+    "Math 2 IIT": [
+    "Whole Numbers",
+    "Playing With Numbers",
+    "LCM and HCF",
+    "Inroduction to Algebra",
+    "Algebraic Expressions",
+    "Basic Geometrical Ideas",
+    "Measures of lines and Angles",
+    "Data Handling",
+    "Exponents and Powers",
+    "Perimeter and Area"
+    ],
     "Physics": [
       "Our Food",
       "Materials and Their Properties",
@@ -689,3 +700,4 @@ window.textbooks = {
     ]
   }
 };
+
