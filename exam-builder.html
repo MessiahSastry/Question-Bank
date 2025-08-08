@@ -435,7 +435,122 @@ async function fetchQuestions({ selectedClass, selectedSubject, chapters, marksP
     shuffleArray(allQuestions);
     return allQuestions.slice(0, count);
 }
+async function fetchQuestionsWithMarksFallback({
+    selectedClass,
+    selectedSubject,
+    chapters,
+    marksPerQuestion,
+    mcqType,
+    count,
+    forceDifficulty
+}) {
+    const firestore = firebase.firestore();
+    let all = [];
 
+    // 1. Try exact marks first
+    let query = firestore.collection("questions")
+        .where("class", "==", selectedClass)
+        .where("subject", "==", selectedSubject);
+    if (forceDifficulty) query = query.where("difficulty", "==", forceDifficulty);
+    if (chapters && chapters.length) query = query.where("chapter", "in", chapters.slice(0, 10));
+    if (marksPerQuestion) query = query.where("marks", "==", parseInt(marksPerQuestion));
+    if (mcqType === "MCQ (Single)") query = query.where("mcqType", "==", "MCQ (Single)");
+    else if (mcqType === "MCQ (Multiple)") query = query.where("mcqType", "==", "MCQ (Multiple)");
+    let snap = await query.get();
+    snap.forEach(doc => all.push({ id: doc.id, ...doc.data(), marks: marksPerQuestion }));
+
+    // If enough, return
+    if (all.length >= count) return all.slice(0, count);
+
+    let needed = count - all.length;
+
+    // 2. Marks fallback rules
+    // 1 mark fallback: use 2-mark as 1-mark
+    if (marksPerQuestion == 1 && needed > 0) {
+        let q2 = await firestore.collection("questions")
+            .where("class", "==", selectedClass)
+            .where("subject", "==", selectedSubject)
+            .where("marks", "==", 2)
+            .get();
+        let arr2 = [];
+        q2.forEach(doc => arr2.push({ id: doc.id, ...doc.data(), marks: 1 }));
+        arr2 = arr2.filter(q => !all.some(x => x.id === q.id));
+        let add = arr2.slice(0, needed);
+        all = all.concat(add);
+        needed -= add.length;
+    }
+    // 2 mark fallback: group two 1-mark as 2 mark
+    if (marksPerQuestion == 2 && needed > 0) {
+        let q1 = await firestore.collection("questions")
+            .where("class", "==", selectedClass)
+            .where("subject", "==", selectedSubject)
+            .where("marks", "==", 1)
+            .get();
+        let arr1 = [];
+        q1.forEach(doc => arr1.push({ id: doc.id, ...doc.data(), marks: 1 }));
+        arr1 = arr1.filter(q => !all.some(x => x.id === q.id));
+        let pairs = [];
+        for (let i = 0; i < arr1.length - 1 && pairs.length < needed; i += 2) {
+            pairs.push([arr1[i], arr1[i + 1]]);
+        }
+        all = all.concat(pairs.map(pair => ({
+            id: pair[0].id + "_" + pair[1].id,
+            text: pair[0].text + "<br>" + pair[1].text,
+            marks: 2
+        })));
+        needed -= pairs.length;
+    }
+    // 4 mark fallback: group two 2-mark as 4 mark
+    if (marksPerQuestion == 4 && needed > 0) {
+        let q2 = await firestore.collection("questions")
+            .where("class", "==", selectedClass)
+            .where("subject", "==", selectedSubject)
+            .where("marks", "==", 2)
+            .get();
+        let arr2 = [];
+        q2.forEach(doc => arr2.push({ id: doc.id, ...doc.data(), marks: 2 }));
+        arr2 = arr2.filter(q => !all.some(x => x.id === q.id));
+        let pairs = [];
+        for (let i = 0; i < arr2.length - 1 && pairs.length < needed; i += 2) {
+            pairs.push([arr2[i], arr2[i + 1]]);
+        }
+        all = all.concat(pairs.map(pair => ({
+            id: pair[0].id + "_" + pair[1].id,
+            text: pair[0].text + "<br>" + pair[1].text,
+            marks: 4
+        })));
+        needed -= pairs.length;
+    }
+    // 3 mark fallback: use 2-mark as 3-mark
+    if (marksPerQuestion == 3 && needed > 0) {
+        let q2 = await firestore.collection("questions")
+            .where("class", "==", selectedClass)
+            .where("subject", "==", selectedSubject)
+            .where("marks", "==", 2)
+            .get();
+        let arr2 = [];
+        q2.forEach(doc => arr2.push({ id: doc.id, ...doc.data(), marks: 3 }));
+        arr2 = arr2.filter(q => !all.some(x => x.id === q.id));
+        let add = arr2.slice(0, needed);
+        all = all.concat(add);
+        needed -= add.length;
+    }
+    // 5 mark fallback: use 4-mark as 5-mark
+    if (marksPerQuestion == 5 && needed > 0) {
+        let q4 = await firestore.collection("questions")
+            .where("class", "==", selectedClass)
+            .where("subject", "==", selectedSubject)
+            .where("marks", "==", 4)
+            .get();
+        let arr4 = [];
+        q4.forEach(doc => arr4.push({ id: doc.id, ...doc.data(), marks: 5 }));
+        arr4 = arr4.filter(q => !all.some(x => x.id === q.id));
+        let add = arr4.slice(0, needed);
+        all = all.concat(add);
+        needed -= add.length;
+    }
+    return all.slice(0, count);
+}
 // --- DROPDOWN HELPERS (multi, single, sections, etc.) ---
 function createDropdown(containerId, options, placeholder) {
     const container = document.getElementById(containerId);
@@ -810,26 +925,81 @@ for (let subjData of subjectsData) {
         if (sec.type === "all" || sec.type === "any") {
             let requestedCount = sec.numQuestions;
             if (difficultyValue === "Mixed") {
-                const difficultyLevels = ["Level 1", "Level 2", "Level 3"];
-                const percentages = [40, 30, 30];
-                const counts = splitCounts(requestedCount, percentages);
-                for (let d = 0; d < difficultyLevels.length; d++) {
-                    if (counts[d] > 0) {
-                        let qs = await fetchQuestions({
-                            selectedClass,
-                            selectedSubject: subjData.subject,
-                            chapters: subjData.chapters,
-                            marksPerQuestion: sec.marksPerQuestion,
-                            mcqType: sec.mcqType,
-                            count: counts[d],
-                            forceDifficulty: difficultyLevels[d]
-                        });
-                        questions = questions.concat(qs);
-                    }
-                }
-                shuffleArray(questions);
-                questions = questions.slice(0, requestedCount);
-            } else if (difficultyValue && difficultyValue !== "Mixed") {
+    const difficultyLevels = ["Level 1", "Level 2", "Level 3"];
+    const percentages = [40, 30, 30];
+    const counts = splitCounts(requestedCount, percentages);
+
+    let byLevel = {"Level 1": [], "Level 2": [], "Level 3": []};
+    let usedIds = new Set();
+
+    // Step 1: Fetch each level with fallback marks logic
+    for (let i = 0; i < difficultyLevels.length; i++) {
+        let level = difficultyLevels[i];
+        let needed = counts[i];
+        let qs = await fetchQuestionsWithMarksFallback({
+            selectedClass,
+            selectedSubject: subjData.subject,
+            chapters: subjData.chapters,
+            marksPerQuestion: sec.marksPerQuestion,
+            mcqType: sec.mcqType,
+            count: needed,
+            forceDifficulty: level
+        });
+        // Remove duplicates
+        qs = qs.filter(q => {
+            if (usedIds.has(q.id)) return false;
+            usedIds.add(q.id);
+            return true;
+        });
+        byLevel[level] = qs;
+    }
+
+    // Step 2: Fallback across levels (as per your priority rules)
+    // If Level 1 missing, take from Level 2, then 3
+    let short1 = counts[0] - byLevel["Level 1"].length;
+    if (short1 > 0) {
+        let from2 = byLevel["Level 2"].slice(0, short1);
+        byLevel["Level 1"] = byLevel["Level 1"].concat(from2);
+        short1 -= from2.length;
+        if (short1 > 0) {
+            let from3 = byLevel["Level 3"].slice(0, short1);
+            byLevel["Level 1"] = byLevel["Level 1"].concat(from3);
+        }
+    }
+    // If Level 2 missing, take from Level 1, then 3
+    let short2 = counts[1] - byLevel["Level 2"].length;
+    if (short2 > 0) {
+        let from1 = byLevel["Level 1"].slice(byLevel["Level 2"].length, byLevel["Level 2"].length + short2);
+        byLevel["Level 2"] = byLevel["Level 2"].concat(from1);
+        short2 -= from1.length;
+        if (short2 > 0) {
+            let from3 = byLevel["Level 3"].slice(byLevel["Level 2"].length, byLevel["Level 2"].length + short2);
+            byLevel["Level 2"] = byLevel["Level 2"].concat(from3);
+        }
+    }
+    // If Level 3 missing, take from Level 2, then 1
+    let short3 = counts[2] - byLevel["Level 3"].length;
+    if (short3 > 0) {
+        let from2 = byLevel["Level 2"].slice(byLevel["Level 3"].length, byLevel["Level 3"].length + short3);
+        byLevel["Level 3"] = byLevel["Level 3"].concat(from2);
+        short3 -= from2.length;
+        if (short3 > 0) {
+            let from1 = byLevel["Level 1"].slice(byLevel["Level 3"].length, byLevel["Level 3"].length + short3);
+            byLevel["Level 3"] = byLevel["Level 3"].concat(from1);
+        }
+    }
+
+    // Step 3: Merge all and shuffle
+    let questionsArr = byLevel["Level 1"].concat(byLevel["Level 2"]).concat(byLevel["Level 3"]);
+    shuffleArray(questionsArr);
+
+    if (questionsArr.length < requestedCount) {
+        sectionErrors.push(
+            `${subjData.subject} - ${sec.label} (${sec.mcqType}): Only ${questionsArr.length} of ${requestedCount} questions found. Please add more questions to the bank.`
+        );
+    }
+    questions = questionsArr.slice(0, requestedCount);
+} else if (difficultyValue && difficultyValue !== "Mixed") {
                 questions = await fetchQuestions({
                     selectedClass,
                     selectedSubject: subjData.subject,
@@ -953,3 +1123,4 @@ window.location.href = 'exam-review.html';
 </script>
 </body>
 </html>
+
