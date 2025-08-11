@@ -515,6 +515,7 @@
          <div id="student-name-msg" style="margin:6px 0 0 0; font-size:1.07em; min-height:24px;"></div>
           <button id="send-otp-btn">Send OTP</button>
           <div id="otp-status-msg" style="color:#c82333;margin:9px 0 0 0;font-size:1em;display:none;"></div>
+        <div id="recaptcha-container" style="display:none;"></div>
         </div>
     </div>
         <!-- LEADERBOARD POPUP -->
@@ -909,11 +910,10 @@ window.onload = function() {
     setupModernDropdown('dropdown-class', 'selected-class', 'dropdown-class-list');
     setupModernDropdown('dropdown-section', 'selected-section', 'dropdown-section-list');
 
-    // Recaptcha for Firebase phone auth (not used in bypass, but kept for future use)
-    recaptchaVerifier = new firebase.auth.RecaptchaVerifier('send-otp-btn', {
-        size: 'invisible',
-        callback: function(response) {}
-    });
+       // Render reCAPTCHA once on a hidden container
+    recaptchaVerifier = new firebase.auth.RecaptchaVerifier('recaptcha-container', { size: 'invisible' });
+    recaptchaVerifier.render().then(function(id){ window.__recaptchaId = id; });
+
 
     // All code that should run after the page loads MUST be inside window.onload!
     document.getElementById('send-otp-btn').onclick = function() {
@@ -939,14 +939,11 @@ window.onload = function() {
         // Send OTP
         const phoneWithCode = "+91" + ph;
         console.log("Attempting to send OTP to: ", phoneWithCode);
-        if (recaptchaVerifier) {
-            try { recaptchaVerifier.clear(); } catch(e){}
+        if (typeof grecaptcha !== 'undefined' && window.__recaptchaId != null) {
+            grecaptcha.reset(window.__recaptchaId);
         }
-        recaptchaVerifier = new firebase.auth.RecaptchaVerifier('send-otp-btn', {
-            size: 'invisible',
-            callback: function(response) {}
-        });
         firebase.auth().signInWithPhoneNumber(phoneWithCode, recaptchaVerifier)
+
             .then(function (result) {
                 confirmationResult = result;
                 msg.style.display = '';
@@ -959,10 +956,7 @@ window.onload = function() {
                 msg.style.display = '';
                 msg.style.color = '#c82333';
                 msg.textContent = error.message || "OTP sending failed.";
-                recaptchaVerifier.render().then(function(widgetId) {
-                    grecaptcha.reset(widgetId);
-                });
-            });
+                 });
     };
 }; // <--- This closes window.onload (ONLY ONE closing brace here)
 
@@ -1191,13 +1185,3 @@ function verifyOtpCode() {
     </script>
 </body>
 </html>
-
-
-
-
-
-
-
-
-
-
