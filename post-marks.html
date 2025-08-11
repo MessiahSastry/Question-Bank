@@ -538,10 +538,15 @@ sectionSel.addEventListener('change', async () => {
   }
 
   function openWhatsApp(phoneIntl, message) {
-    const encoded = encodeURIComponent(message);
-    const url = `https://wa.me/${phoneIntl}?text=${encoded}`;
-    window.open(url, '_blank');
+  const url = `https://wa.me/${phoneIntl}?text=${encodeURIComponent(message)}`;
+  const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+  if (isMobile) {
+    // use same tab on phones (less likely to be blocked)
+    window.location.href = url;
+  } else {
+    window.open(url, '_blank', 'noopener');
   }
+}
 
   function sendOneWhatsApp(row){
     if (!row.phoneIntl){
@@ -552,33 +557,50 @@ sectionSel.addEventListener('change', async () => {
     openWhatsApp(row.phoneIntl, msg);
   }
 
-  async function sendAllWhatsApp(){
-    if (!ROWS || !ROWS.length) { showToast('No students to send.'); return; }
+ let BULK = { list: [], i: 0 };
 
-    const valid = ROWS.filter(r => !!r.phoneIntl);
-    const invalid = ROWS.filter(r => !r.phoneIntl);
+function updateBulkUI(){
+  const st = document.getElementById('bulkStatus');
+  if (!st) return;
+  st.textContent = (BULK.i >= BULK.list.length)
+    ? 'All done.'
+    : `Ready: ${BULK.i}/${BULK.list.length}`;
+}
 
-    if (!valid.length) { showToast('No valid phone numbers.'); return; }
+async function sendAllWhatsApp(){
+  if (!ROWS || !ROWS.length) { showToast('No students to send.'); return; }
+  const valid = ROWS.filter(r => !!r.phoneIntl);
+  const invalid = ROWS.filter(r => !r.phoneIntl);
+  if (!valid.length) { showToast('No valid phone numbers.'); return; }
 
-    const ok = confirm(`Open WhatsApp chats for ${valid.length} student(s)? (Your browser may ask to allow pop-ups.)`);
-    if (!ok) return;
+  BULK = { list: valid, i: 0 };
+  const overlay = document.getElementById('bulkOverlay');
+  overlay.style.display = 'flex';
+  updateBulkUI();
+  showToast(`Tap "Open Next" to send ${valid.length} chats. Skipped ${invalid.length}.`);
+}
 
-    let sent = 0;
-    showToast(`Starting... 0/${valid.length}`);
-
-    // Sequential open with small delay to reduce popup blocking
-    for (const r of valid) {
-      const msg = composeMessage(r);
-      openWhatsApp(r.phoneIntl, msg);
-      sent++;
-      showToast(`Opened ${sent}/${valid.length}`);
-      // eslint-disable-next-line no-await-in-loop
-      await sleep(800);
-    }
-
-    // Final summary toast
-    showToast(`Done. Opened ${sent}/${valid.length}. Skipped ${invalid.length}.`);
+function openNextInQueue(){
+  if (!BULK.list.length) return;
+  if (BULK.i >= BULK.list.length){
+    document.getElementById('bulkOverlay').style.display = 'none';
+    showToast('All chats opened.');
+    return;
   }
+  const r = BULK.list[BULK.i];
+  openWhatsApp(r.phoneIntl, composeMessage(r)); // opened by user click -> not blocked
+  BULK.i++;
+  updateBulkUI();
+}
+
+function cancelBulk(){
+  BULK = { list: [], i: 0 };
+  document.getElementById('bulkOverlay').style.display = 'none';
+}
+
+// wire overlay buttons once
+document.getElementById('bulkNext').onclick = openNextInQueue;
+document.getElementById('bulkCancel').onclick = cancelBulk;
 
   function copySummary(){
     if (!ROWS || !ROWS.length) { showToast('Nothing to copy.'); return; }
@@ -619,6 +641,14 @@ sectionSel.addEventListener('change', async () => {
     renderTable();
   })();
 </script>
+  <div id="bulkOverlay" style="display:none;position:fixed;left:50%;bottom:20px;transform:translateX(-50%);
+ background:#0f3d6b;color:#fff;padding:10px 12px;border-radius:10px;box-shadow:0 8px 20px #0003;
+ z-index:99999;display:flex;gap:8px;align-items:center;">
+  <span id="bulkStatus" style="font-weight:700;"></span>
+  <button id="bulkNext" class="btn" style="padding:8px 12px;">Open Next</button>
+  <button id="bulkCancel" class="btn secondary" style="padding:8px 12px;">Stop</button>
+</div>
 </body>
 </html>
+
 
