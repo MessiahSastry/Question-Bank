@@ -419,18 +419,23 @@ function getShortSubjectName(subj) {
       row.push(totalDisplay, grade, ''); // Rank filled later
       rowStyles.push(null, null, null);
    
-      totalArr.push({ id: stu.id, total });
+      totalArr.push({ id: stu.id, total: totalDisplay });
       rows.push({ values: row, styles: rowStyles });
     });
-    // Ranks
-          let scores = totalArr.map(x => x.total).filter(x => x !== '-');
-      let sorted = Array.from(new Set(scores)).sort((a, b) => b - a);
-      let ranks = {};
-      totalArr.forEach(x => {
-        if (x.total === '-') ranks[x.id] = '-';
-        else ranks[x.id] = sorted.indexOf(x.total) + 1;
-      });
-      for (let i = 0; i < rows.length; ++i) rows[i].values[headers.length-1] = ranks[students[i].id];
+    // Ranks (competition style: 1,2,2,4)
+let ranks = {};
+let valid = totalArr.filter(x => x.total !== '-').sort((a, b) => Number(b.total) - Number(a.total));
+let currRank = 0, prevTotal = null, countSeen = 0;
+for (let item of valid) {
+  countSeen += 1;
+  if (item.total !== prevTotal) { currRank = countSeen; prevTotal = item.total; }
+  ranks[item.id] = currRank;
+}
+totalArr.filter(x => x.total === '-').forEach(x => { ranks[x.id] = '-'; });
+for (let i = 0; i < rows.length; ++i) {
+  rows[i].values[headers.length - 1] = ranks[students[i].id];
+}
+
       // Sort: put rank '-' (all absent) students at the end
       rows = rows.sort((a, b) => {
         let rA = a.values[headers.length-1], rB = b.values[headers.length-1];
@@ -502,15 +507,17 @@ let subjectShorts = subjectObjs.map(s => getShortSubjectName(s.name));
       totalArr.push({ id: stu.id, total: totalDisplay, percent, allAbsent, row });
     });
     // Rank
-   // Rank
-let validTotals = totalArr.filter(x => x.total !== '-').map(x => x.total);
-let sortedTotals = Array.from(new Set(validTotals)).sort((a, b) => b - a);
+// Rank (competition style: 1,2,2,4)
 let ranks = {};
-totalArr.forEach(x => {
-  if (x.total === '-') ranks[x.id] = '-';
-  else ranks[x.id] = sortedTotals.indexOf(x.total) + 1;
-});
-for (let x of totalArr) x.row[x.row.length-1] = ranks[x.id];
+let valid = totalArr.filter(x => x.total !== '-').sort((a, b) => Number(b.total) - Number(a.total));
+let currRank = 0, prevTotal = null, countSeen = 0;
+for (let item of valid) {
+  countSeen += 1;
+  if (item.total !== prevTotal) { currRank = countSeen; prevTotal = item.total; }
+  ranks[item.id] = currRank;
+}
+totalArr.filter(x => x.total === '-').forEach(x => { ranks[x.id] = '-'; });
+for (let x of totalArr) x.row[x.row.length - 1] = ranks[x.id];
 // By rank, place all-ab students at the end
 let rankedRows = totalArr.sort((a, b) => {
   let rA = ranks[a.id], rB = ranks[b.id];
@@ -673,3 +680,4 @@ let pdfHTML = `
  </script>
 </body>
 </html>
+
