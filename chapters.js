@@ -582,6 +582,8 @@ window.textbooks = {
     ],
     "Social": [
       "India: Size and Location",
+      "The French revolution",
+      " A Story of Village Palampur",
       "Physical Features of India",
       "Drainage",
       "Climate",
@@ -700,4 +702,5 @@ window.textbooks = {
     ]
   }
 };
+
 
