@@ -1,0 +1,791 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Create Certificates | St. Patrick's School</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+
+  <!-- Icons / libs -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
+
+  <!-- Firebase (compat) -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js"></script>
+
+  <!-- PDF + XLSX -->
+  <script src="https://unpkg.com/pdf-lib/dist/pdf-lib.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+  <style>
+    :root{
+      --primary-blue:#0f3d6b;
+      --secondary-blue:#1762a7;
+      --light-blue-bg:#f4f8fc;
+      --border:#bcd6ef;
+      --ink:#12416c;
+    }
+    html{height:-webkit-fill-available;}
+    body{
+      margin:0; padding:0; font-family:'Segoe UI',Arial,sans-serif;
+      background:#f4f8fc; min-height:100vh; height:-webkit-fill-available;
+    }
+    .page{display:flex; flex-direction:column; min-height:100vh;}
+    header{
+      background:linear-gradient(90deg,#1762a7,#0f3d6b); color:#fff;
+      border-bottom-left-radius:28px; border-bottom-right-radius:28px;
+      min-height:84px; display:flex; flex-direction:column; align-items:center; justify-content:center;
+      padding:15px 10px 18px; position:sticky; top:0; z-index:10;
+    }
+    header .title{font-size:1.8em; font-weight:700; margin:0;}
+    header .sub{font-size:1.05em; color:#e0eaff; margin-top:5px;}
+    main{flex:1 1 0%; min-height:0; overflow:auto; padding:18px; display:grid; gap:18px;}
+    .card{
+      background:#fff; border-radius:16px; box-shadow:0 4px 18px rgba(0,27,68,.11);
+      padding:20px 16px; max-width:980px; margin:0 auto;
+    }
+    .card h2{margin:0 0 14px 0; color:var(--primary-blue); font-size:1.2em}
+    .row{display:grid; grid-template-columns:1fr 1fr; gap:14px;}
+    .row-3{display:grid; grid-template-columns:1fr 1fr 1fr; gap:14px;}
+    .fg{display:flex; flex-direction:column; gap:6px;}
+    .fg label{font-weight:600; color:#185496; font-size:.95em}
+    input[type="text"], input[type="number"], input[type="file"], textarea, select{
+      width:100%; box-sizing:border-box; border:1.3px solid var(--border); border-radius:8px;
+      background:#f7fafd; padding:10px 12px; font-size:1em;
+    }
+    input[type="color"]{height:42px; padding:2px}
+    textarea{min-height:90px; resize:vertical}
+    .btn{
+      background:linear-gradient(90deg,#1762a7,#0f3d6b); color:#fff; font-weight:700; border:none;
+      padding:10px 14px; border-radius:8px; cursor:pointer;
+      box-shadow:0 2px 8px rgba(15,61,107,.15);
+    }
+    .btn:active{transform:scale(.98)}
+    .btn-ghost{background:#e9f2fb; color:#0f3d6b; border:1px solid #cfe3f7}
+    .btn-danger{background:#c0392b}
+    .hint{color:#54656f; font-size:.9em}
+    .table{width:100%; border-collapse:collapse}
+    .table th,.table td{border:1px solid #eef3f9; padding:8px 10px; text-align:left}
+    .table th{background:#f4f8fc}
+    .bar{display:flex; gap:8px; flex-wrap:wrap}
+    .right{display:flex; justify-content:flex-end}
+    .split{display:grid; grid-template-columns:1fr 480px; gap:18px;}
+    .preview-wrap{background:#fff; border-radius:16px; box-shadow:0 4px 18px rgba(0,27,68,.11); padding:12px}
+    canvas{width:100%; height:auto; background:#fff; border-radius:12px; border:1px solid #e7eef7}
+    /* spinner overlay */
+    #spinner{display:none; position:fixed; z-index:9999; inset:0; background:rgba(255,255,255,.8); align-items:center; justify-content:center}
+    #spinner .dot{width:52px;height:52px;border:6px solid #1762a7;border-top:6px solid #bcd6ef;border-radius:50%;animation:spin 1s linear infinite}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    @media (max-width:980px){ .split{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header>
+      <h1 class="title">St. Patrick's School</h1>
+      <div class="sub">IIT & NEET FOUNDATION</div>
+    </header>
+
+    <main class="split">
+      <!-- LEFT: Controls -->
+      <div>
+        <!-- PARTS BELOW will insert cards -->
+        <!-- Template & Style -->
+        <div class="card">
+          <h2>1) Template & Style</h2>
+          <div class="row">
+            <div class="fg">
+              <label>Background (A4 Landscape JPG/PNG)</label>
+              <input type="file" id="bgFile" accept="image/*">
+              <div class="hint">Use ~2000–3000 px width for clarity.</div>
+            </div>
+            <div class="fg">
+              <label>Logo for Watermark (PNG preferred)</label>
+              <input type="file" id="wmFile" accept="image/*">
+              <div class="row">
+                <div class="fg">
+                  <label>Watermark Size %</label>
+                  <input type="number" id="wmScale" value="50" min="10" max="150">
+                </div>
+                <div class="fg">
+                  <label>Watermark Opacity %</label>
+                  <input type="number" id="wmOpacity" value="12" min="3" max="60">
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="row-3" style="margin-top:10px">
+            <div class="fg">
+              <label>School Name</label>
+              <input type="text" id="tSchool" placeholder="St. Patrick's School">
+              <div class="bar">
+                <input type="color" id="cSchool" value="#0f3d6b">
+                <input type="number" id="ySchool" min="0" max="210" value="25" title="Y (mm)">
+                <select id="aSchool"><option>center</option><option>left</option><option>right</option></select>
+              </div>
+            </div>
+            <div class="fg">
+              <label>Subheading</label>
+              <input type="text" id="tSub" placeholder="IIT & NEET FOUNDATION">
+              <div class="bar">
+                <input type="color" id="cSub" value="#1467b7">
+                <input type="number" id="ySub" min="0" max="210" value="33">
+                <select id="aSub"><option>center</option><option>left</option><option>right</option></select>
+              </div>
+            </div>
+            <div class="fg">
+              <label>Certificate Title</label>
+              <input type="text" id="tTitle" placeholder="Certificate of Merit">
+              <div class="bar">
+                <input type="color" id="cTitle" value="#0f3d6b">
+                <input type="number" id="yTitle" min="0" max="210" value="45">
+                <select id="aTitle"><option>center</option><option>left</option><option>right</option></select>
+              </div>
+            </div>
+          </div>
+
+          <div class="row-3" style="margin-top:8px">
+            <div class="fg">
+              <label>Student Name color/pos</label>
+              <div class="bar">
+                <input type="color" id="cName" value="#111111">
+                <input type="number" id="yName" min="0" max="210" value="90">
+                <select id="aName"><option>center</option><option>left</option><option>right</option></select>
+              </div>
+            </div>
+            <div class="fg">
+              <label>Father line color/pos</label>
+              <div class="bar">
+                <input type="color" id="cFather" value="#333333">
+                <input type="number" id="yFather" min="0" max="210" value="105">
+                <select id="aFather"><option>center</option><option>left</option><option>right</option></select>
+              </div>
+            </div>
+            <div class="fg">
+              <label>Class & Section color/pos</label>
+              <div class="bar">
+                <input type="color" id="cClass" value="#333333">
+                <input type="number" id="yClass" min="0" max="210" value="115">
+                <select id="aClass"><option>center</option><option>left</option><option>right</option></select>
+              </div>
+            </div>
+          </div>
+
+          <div class="row" style="margin-top:8px">
+            <div class="fg">
+              <label>Wording color/pos</label>
+              <div class="bar">
+                <input type="color" id="cWording" value="#222222">
+                <input type="number" id="yWording" min="0" max="210" value="135">
+                <select id="aWording"><option>center</option><option>left</option><option>right</option></select>
+              </div>
+            </div>
+            <div class="fg">
+              <label>Alignment margins (mm)</label>
+              <div class="row">
+                <div class="fg">
+                  <label class="hint">Left margin</label>
+                  <input type="number" id="mLeft" min="0" max="40" value="10">
+                </div>
+                <div class="fg">
+                  <label class="hint">Right margin</label>
+                  <input type="number" id="mRight" min="0" max="40" value="10">
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="bar" style="margin-top:10px">
+            <select id="templateSelect" style="min-width:220px">
+              <option value="">-- Load Template --</option>
+            </select>
+            <input type="text" id="templateName" placeholder="Template name (for Save)">
+            <button class="btn" id="saveTemplateBtn" title="Admins only">Save Template</button>
+            <button class="btn-ghost" id="reloadTemplatesBtn">Reload</button>
+          </div>
+          <div class="hint" id="adminHint" style="margin-top:6px"></div>
+        </div>
+        <!-- Recipients -->
+        <div class="card">
+          <h2>2) Recipients</h2>
+          <div class="bar">
+            <button class="btn" id="loadSectionBtn" title="Load students of current section">Load Current Section</button>
+            <button class="btn-ghost" id="addRowBtn">Add Row</button>
+            <button class="btn-ghost" id="clearRowsBtn">Clear</button>
+            <button class="btn-ghost" id="downloadCsvSampleBtn">CSV Sample</button>
+            <label class="btn-ghost" style="display:inline-flex; align-items:center; gap:8px; cursor:pointer;">
+              <i class="fa fa-file-import"></i> Import CSV/XLSX
+              <input type="file" id="importCsvInput" accept=".csv,.xlsx,.xls" style="display:none">
+            </label>
+          </div>
+          <div style="overflow:auto; margin-top:10px">
+            <table class="table" id="recipientsTable">
+              <thead>
+                <tr>
+                  <th>#</th><th>Name</th><th>Father (optional)</th><th>Class</th><th>Section</th><th></th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Wording -->
+        <div class="card">
+          <h2>3) Wording</h2>
+          <div class="fg">
+            <label>Use tokens: {SCHOOL} {SUBHEADING} {TITLE} {NAME} {FATHER} {CLASS} {SECTION}</label>
+            <textarea id="wording" placeholder="This is to certify that {NAME}, {FATHER} of Class {CLASS}-{SECTION}, has ..."></textarea>
+            <div class="hint">If FATHER is empty, related phrase is auto-removed.</div>
+          </div>
+        </div>
+      </div>
+      <!-- RIGHT: Preview & Generate -->
+      <div>
+        <div class="preview-wrap">
+          <h2 style="margin:0 0 8px 6px; color:#0f3d6b">Preview</h2>
+          <canvas id="previewCanvas" width="2480" height="1754"></canvas>
+          <div class="bar right" style="margin-top:10px">
+            <button class="btn-ghost" id="prevBtn">Prev</button>
+            <button class="btn-ghost" id="nextBtn">Next</button>
+            <span id="previewIndex" class="hint" style="align-self:center">0 / 0</span>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:12px">
+          <h2>4) Generate PDF</h2>
+          <div class="bar">
+            <button class="btn" id="genOnePdfBtn">Generate One PDF (all)</button>
+            <button class="btn-ghost" id="genManyPdfBtn">Generate Separate PDFs</button>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- Spinner -->
+  <div id="spinner"><div class="dot"></div></div>
+<script>
+/* ---------- Firebase Init (same project as app) ---------- */
+const firebaseConfig = {
+  apiKey: "AIzaSyAszVhWXUUOYLQ7VimKmPKf1yEu_CI9RCE",
+  authDomain: "stpatricks-questionbank.firebaseapp.com",
+  projectId: "stpatricks-questionbank",
+  storageBucket: "stpatricks-questionbank.appspot.com",
+  messagingSenderId: "917615322861",
+  appId: "1:917615322861:web:c6c890aa2184dd395b8ee4"
+};
+if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+const storage = firebase.storage();
+const auth = firebase.auth();
+
+const academicYear = localStorage.getItem('sp_selectedYear') || '';
+const currentClassId = localStorage.getItem('sp_selectedClassId') || '';
+const currentClassName = localStorage.getItem('sp_selectedClassName') || '';
+const currentSectionId = localStorage.getItem('sp_selectedSectionId') || '';
+const currentSectionName = localStorage.getItem('sp_selectedSectionName') || '';
+
+let signedInEmail = '';
+let isAdmin = false;
+auth.onAuthStateChanged(u=>{
+  signedInEmail = u?.email || '';
+  isAdmin = (signedInEmail === "messiah.sastry@stpatricksschool.com");
+  document.getElementById('adminHint').textContent =
+    isAdmin ? "Admin rights enabled: you can Save templates." :
+              "Read-only for templates (loading & use). Saving requires admin.";
+});
+
+const $ = sel => document.querySelector(sel);
+const $$ = sel => document.querySelectorAll(sel);
+const showSpinner = flag => $('#spinner').style.display = flag ? 'flex' : 'none';
+
+/* in-memory assets */
+let bgImage = null;     // HTMLImageElement
+let wmImage = null;     // HTMLImageElement
+let recipients = [];    // [{name,father,cls,sec}]
+let previewIndex = 0;
+
+function readImageFile(file){
+  return new Promise((resolve,reject)=>{
+    const img = new Image();
+    img.onload = ()=>resolve(img);
+    img.onerror = reject;
+    const url = URL.createObjectURL(file);
+    img.src = url;
+  });
+}
+$('#bgFile').addEventListener('change', async e=>{
+  if (!e.target.files[0]) return;
+  bgImage = await readImageFile(e.target.files[0]);
+  renderPreview();
+});
+$('#wmFile').addEventListener('change', async e=>{
+  if (!e.target.files[0]) return;
+  wmImage = await readImageFile(e.target.files[0]);
+  renderPreview();
+});
+
+/* ---------- Template Save / Load ---------- */
+async function listTemplates(){
+  $('#templateSelect').innerHTML = `<option value="">-- Load Template --</option>`;
+  if (!academicYear) return;
+  const snap = await db.collection('years').doc(academicYear)
+    .collection('certificates').collection('templates').orderBy('createdAt','desc').get();
+  snap.forEach(doc=>{
+    const opt = document.createElement('option');
+    opt.value = doc.id;
+    opt.textContent = doc.data().name || doc.id;
+    $('#templateSelect').appendChild(opt);
+  });
+}
+$('#reloadTemplatesBtn').onclick = listTemplates;
+
+async function saveTemplate(){
+  if (!isAdmin) return alert("Only admin can save templates.");
+  const name = $('#templateName').value.trim();
+  if (!name) return alert("Enter a template name.");
+  if (!academicYear) return alert("Academic year missing.");
+  showSpinner(true);
+  try{
+    // create doc first
+    const ref = await db.collection('years').doc(academicYear)
+      .collection('certificates').collection('templates').add({
+        name, createdBy: signedInEmail, createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+        style: collectStyle(), watermark: collectWatermark(), version: 1
+      });
+    const base = `templates/${academicYear}/${ref.id}`;
+    // upload images if present
+    const uploads = [];
+    if ($('#bgFile').files[0]){
+      uploads.push(storage.ref(`${base}/background.jpg`).put($('#bgFile').files[0]).then(s=>s.ref.fullPath));
+    } else uploads.push(Promise.resolve(null));
+    if ($('#wmFile').files[0]){
+      uploads.push(storage.ref(`${base}/watermark.png`).put($('#wmFile').files[0]).then(s=>s.ref.fullPath));
+    } else uploads.push(Promise.resolve(null));
+    const [bgPath, wmPath] = await Promise.all(uploads);
+
+    await ref.update({ backgroundPath:bgPath, watermarkPath:wmPath });
+    alert("Template saved.");
+    await listTemplates();
+    $('#templateSelect').value = ref.id;
+  }catch(e){ alert("Save failed: "+(e.message||e)); }
+  showSpinner(false);
+}
+$('#saveTemplateBtn').onclick = saveTemplate;
+
+async function loadTemplate(id){
+  if (!id) return;
+  showSpinner(true);
+  try{
+    const doc = await db.collection('years').doc(academicYear)
+      .collection('certificates').collection('templates').doc(id).get();
+    if (!doc.exists) throw new Error("Template not found.");
+    const t = doc.data();
+
+    // set style / watermark
+    applyStyle(t.style || {});
+    applyWatermark(t.watermark || {});
+
+    // fetch images (optional)
+    const p = [];
+    if (t.backgroundPath){
+      p.push(storage.ref(t.backgroundPath).getDownloadURL().then(u=>fetch(u).then(r=>r.blob()).then(readImageFileFromBlob)));
+    } else p.push(Promise.resolve(null));
+    if (t.watermarkPath){
+      p.push(storage.ref(t.watermarkPath).getDownloadURL().then(u=>fetch(u).then(r=>r.blob()).then(readImageFileFromBlob)));
+    } else p.push(Promise.resolve(null));
+
+    const [bg, wm] = await Promise.all(p);
+    bgImage = bg; wmImage = wm;
+    renderPreview();
+  }catch(e){ alert("Load failed: "+(e.message||e)); }
+  showSpinner(false);
+}
+function readImageFileFromBlob(blob){
+  return new Promise((resolve,reject)=>{
+    const img = new Image();
+    img.onload = ()=>resolve(img);
+    img.onerror = reject;
+    img.src = URL.createObjectURL(blob);
+  });
+}
+$('#templateSelect').addEventListener('change', e=> loadTemplate(e.target.value));
+
+/* helpers to collect/apply ui values */
+function collectStyle(){
+  return {
+    school:{ y:+$('#ySchool').value, align:$('#aSchool').value, color:$('#cSchool').value },
+    subheading:{ y:+$('#ySub').value, align:$('#aSub').value, color:$('#cSub').value },
+    title:{ y:+$('#yTitle').value, align:$('#aTitle').value, color:$('#cTitle').value },
+    name:{ y:+$('#yName').value, align:$('#aName').value, color:$('#cName').value },
+    father:{ y:+$('#yFather').value, align:$('#aFather').value, color:$('#cFather').value },
+    classSec:{ y:+$('#yClass').value, align:$('#aClass').value, color:$('#cClass').value },
+    wording:{ y:+$('#yWording').value, align:$('#aWording').value, color:$('#cWording').value },
+    margins:{ left:+$('#mLeft').value, right:+$('#mRight').value }
+  };
+}
+function applyStyle(s){
+  if (!s) return;
+  const set = (id,val)=>{ if ($(id)) $(id).value = val; };
+  set('#ySchool', s.school?.y ?? 25); set('#aSchool', s.school?.align ?? 'center'); set('#cSchool', s.school?.color ?? '#0f3d6b');
+  set('#ySub', s.subheading?.y ?? 33); set('#aSub', s.subheading?.align ?? 'center'); set('#cSub', s.subheading?.color ?? '#1467b7');
+  set('#yTitle', s.title?.y ?? 45); set('#aTitle', s.title?.align ?? 'center'); set('#cTitle', s.title?.color ?? '#0f3d6b');
+  set('#yName', s.name?.y ?? 90); set('#aName', s.name?.align ?? 'center'); set('#cName', s.name?.color ?? '#111111');
+  set('#yFather', s.father?.y ?? 105); set('#aFather', s.father?.align ?? 'center'); set('#cFather', s.father?.color ?? '#333333');
+  set('#yClass', s.classSec?.y ?? 115); set('#aClass', s.classSec?.align ?? 'center'); set('#cClass', s.classSec?.color ?? '#333333');
+  set('#yWording', s.wording?.y ?? 135); set('#aWording', s.wording?.align ?? 'center'); set('#cWording', s.wording?.color ?? '#222222');
+  set('#mLeft', s.margins?.left ?? 10); set('#mRight', s.margins?.right ?? 10);
+}
+function collectWatermark(){
+  return { mode:'center', scalePct:+$('#wmScale').value, opacity:(+$('#wmOpacity').value)/100, rotation:0 };
+}
+function applyWatermark(w){
+  $('#wmScale').value = Math.round((w.scalePct ?? 50));
+  $('#wmOpacity').value = Math.round(((w.opacity ?? .12)*100));
+}
+
+/* change -> re-render */
+['#tSchool','#tSub','#tTitle','#cSchool','#cSub','#cTitle',
+ '#ySchool','#ySub','#yTitle','#aSchool','#aSub','#aTitle',
+ '#cName','#cFather','#cClass','#cWording',
+ '#yName','#yFather','#yClass','#yWording',
+ '#aName','#aFather','#aClass','#aWording',
+ '#mLeft','#mRight','#wmScale','#wmOpacity','#wording'
+].forEach(sel=>{
+  const el = $(sel);
+  if (el) el.addEventListener('input', ()=>renderPreview());
+});
+
+/* init */
+listTemplates();
+</script>
+<script>
+/* ---------- Recipients UI ---------- */
+const tbody = $('#recipientsTable tbody');
+
+function redrawTable(){
+  tbody.innerHTML = '';
+  recipients.forEach((r,idx)=>{
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${idx+1}</td>
+      <td><input type="text" value="${r.name||''}" data-k="name"></td>
+      <td><input type="text" value="${r.father||''}" data-k="father"></td>
+      <td><input type="text" value="${r.cls||currentClassName||''}" data-k="cls" style="width:110px"></td>
+      <td><input type="text" value="${r.sec||currentSectionName||''}" data-k="sec" style="width:90px"></td>
+      <td class="right"><button class="btn-ghost" data-del="${idx}">Remove</button></td>
+    `;
+    tbody.appendChild(tr);
+  });
+  // inputs update
+  tbody.querySelectorAll('input').forEach(inp=>{
+    inp.oninput = (e)=>{
+      const tr = e.target.closest('tr');
+      const index = [...tbody.children].indexOf(tr);
+      const key = e.target.dataset.k;
+      recipients[index][key] = e.target.value;
+      renderPreview();
+    };
+  });
+  // delete
+  tbody.querySelectorAll('button[data-del]').forEach(b=>{
+    b.onclick = (e)=>{
+      const idx = +e.target.dataset.del;
+      recipients.splice(idx,1);
+      if (previewIndex >= recipients.length) previewIndex = Math.max(0, recipients.length-1);
+      redrawTable(); renderPreview();
+    };
+  });
+  $('#previewIndex').textContent = `${recipients.length? (previewIndex+1):0} / ${recipients.length}`;
+}
+
+$('#addRowBtn').onclick = ()=>{
+  recipients.push({name:'', father:'', cls:currentClassName||'', sec:currentSectionName||''});
+  if (recipients.length===1) previewIndex = 0;
+  redrawTable(); renderPreview();
+};
+$('#clearRowsBtn').onclick = ()=>{ recipients=[]; previewIndex=0; redrawTable(); renderPreview(); };
+
+$('#downloadCsvSampleBtn').onclick = ()=>{
+  const csv = "Name,Father,Class,Section\nJohn Paul,David,10th Class,A\nAsha,,9th Class,B\n";
+  const blob = new Blob([csv], {type:'text/csv'});
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = 'certificate_recipients_sample.csv'; a.click();
+};
+
+$('#importCsvInput').addEventListener('change', async (e)=>{
+  const f = e.target.files[0]; if (!f) return;
+  const ab = await f.arrayBuffer();
+  let rows = [];
+  if (f.name.endsWith('.csv')) {
+    const text = new TextDecoder().decode(ab);
+    rows = text.split(/\r?\n/).map(l=>l.split(','));
+  } else {
+    const wb = XLSX.read(ab, {type:'array'});
+    rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], {header:1, defval:''});
+  }
+  // find headers
+  const header = rows[0].map(h=>h.toString().trim().toLowerCase());
+  const iName = header.findIndex(h=>h==='name');
+  const iFather = header.findIndex(h=>h.startsWith('father'));
+  const iClass = header.findIndex(h=>h==='class');
+  const iSec = header.findIndex(h=>h.startsWith('sec'));
+  if (iName<0) return alert("CSV/XLSX must have a 'Name' column.");
+  for(let i=1;i<rows.length;i++){
+    const r = rows[i]; if (!r || !r[iName]) continue;
+    recipients.push({
+      name: (r[iName]||'').toString().trim(),
+      father: iFather>=0 ? (r[iFather]||'').toString().trim() : '',
+      cls: iClass>=0 ? (r[iClass]||'').toString().trim() : (currentClassName||''),
+      sec: iSec>=0 ? (r[iSec]||'').toString().trim() : (currentSectionName||'')
+    });
+  }
+  if (recipients.length && previewIndex===0) previewIndex = 0;
+  redrawTable(); renderPreview();
+  e.target.value='';
+});
+
+$('#loadSectionBtn').onclick = async ()=>{
+  if (!academicYear || !currentClassId || !currentSectionId) return alert("Class/Section not selected.");
+  showSpinner(true);
+  try{
+    const snap = await db.collection('years').doc(academicYear)
+      .collection('classes').doc(currentClassId)
+      .collection('sections').doc(currentSectionId)
+      .collection('students').orderBy('roll').get();
+    recipients = [];
+    snap.forEach(doc=>{
+      const d = doc.data(); if (d.isDeleted) return;
+      recipients.push({
+        name: d.name || '',
+        father: d.father || '',
+        cls: currentClassName || '',
+        sec: currentSectionName || ''
+      });
+    });
+    previewIndex = 0;
+    redrawTable(); renderPreview();
+  }catch(e){ alert("Failed: "+(e.message||e)); }
+  showSpinner(false);
+};
+
+/* preview nav */
+$('#prevBtn').onclick = ()=>{ if (recipients.length){ previewIndex = (previewIndex-1+recipients.length)%recipients.length; $('#previewIndex').textContent = `${previewIndex+1} / ${recipients.length}`; renderPreview(); }};
+$('#nextBtn').onclick = ()=>{ if (recipients.length){ previewIndex = (previewIndex+1)%recipients.length; $('#previewIndex').textContent = `${previewIndex+1} / ${recipients.length}`; renderPreview(); }};
+</script>
+<script>
+/* ---------- Canvas rendering ---------- */
+const canvas = $('#previewCanvas');
+const ctx = canvas.getContext('2d');
+// A4 landscape canvas size preset: 2480 x 1754 px (≈300dpi)
+const CANVAS_W = canvas.width, CANVAS_H = canvas.height;
+const MM_H = 210; // A4 height in mm (landscape)
+function yMmToPx(mm){ return Math.round((mm / MM_H) * CANVAS_H); }
+
+function drawBg(){
+  // white base
+  ctx.fillStyle = '#ffffff'; ctx.fillRect(0,0,CANVAS_W,CANVAS_H);
+  if (!bgImage) return;
+  // contain fit
+  const ratio = Math.min(CANVAS_W/bgImage.width, CANVAS_H/bgImage.height);
+  const w = bgImage.width * ratio, h = bgImage.height * ratio;
+  const x = (CANVAS_W - w)/2, y = (CANVAS_H - h)/2;
+  ctx.drawImage(bgImage, x, y, w, h);
+}
+
+function drawWatermark(){
+  if (!wmImage) return;
+  const scale = (+$('#wmScale').value||50)/100;
+  const alpha = (+$('#wmOpacity').value||12)/100;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  const baseH = CANVAS_H * (scale); // relative to height
+  const ratio = baseH / wmImage.height;
+  const w = wmImage.width * ratio, h = wmImage.height * ratio;
+  const x = (CANVAS_W - w)/2, y = (CANVAS_H - h)/2;
+  ctx.drawImage(wmImage, x, y, w, h);
+  ctx.restore();
+}
+
+function setFont(sizePx, weight='normal', style='normal'){
+  ctx.font = `${style} ${weight} ${sizePx}px 'Segoe UI', system-ui, -apple-system, Arial, sans-serif`;
+}
+
+function drawAlignedText(text, yPx, align, color, sizePx){
+  const leftMarginPx = mmToPx(+$('#mLeft').value||10);
+  const rightMarginPx = mmToPx(+$('#mRight').value||10);
+  ctx.fillStyle = color;
+  setFont(sizePx,'700');
+  let x;
+  if (align==='left')  { ctx.textAlign='left';  x = leftMarginPx; }
+  else if (align==='right'){ ctx.textAlign='right'; x = CANVAS_W - rightMarginPx; }
+  else { ctx.textAlign='center'; x = CANVAS_W/2; }
+  ctx.textBaseline='alphabetic';
+  ctx.fillText(text, x, yPx);
+}
+function mmToPx(mm){ return Math.round(mm * (CANVAS_H / MM_H)); }
+
+function wrapText(text, yPx, align, color, sizePx, lineHeight=1.35){
+  const leftMarginPx = mmToPx(+$('#mLeft').value||10);
+  const rightMarginPx = mmToPx(+$('#mRight').value||10);
+  const maxWidth = CANVAS_W - leftMarginPx - rightMarginPx;
+  ctx.fillStyle = color; setFont(sizePx,'400');
+  ctx.textBaseline='top';
+  let words = (text||'').split(/\s+/), lines=[''], i=0;
+  words.forEach(w=>{
+    const test = (lines[i] ? lines[i]+' ' : '') + w;
+    if (ctx.measureText(test).width <= maxWidth) lines[i]=test.trim();
+    else { lines[++i]=w; }
+  });
+  let x;
+  if (align==='left'){ ctx.textAlign='left'; x = leftMarginPx; }
+  else if (align==='right'){ ctx.textAlign='right'; x = CANVAS_W - rightMarginPx; }
+  else { ctx.textAlign='center'; x = CANVAS_W/2; }
+  let y = yPx;
+  lines.forEach(line=>{
+    ctx.fillText(line, x, y);
+    y += Math.round(sizePx * lineHeight);
+  });
+}
+
+function tokenizedWording(rec){
+  // Base fields
+  const SCHOOL = $('#tSchool').value || 'St. Patrick\'s School';
+  const SUBHEADING = $('#tSub').value || '';
+  const TITLE = $('#tTitle').value || '';
+  const NAME = rec.name || '';
+  const FATHER = rec.father || '';
+  const CLASS = rec.cls || '';
+  const SECTION = rec.sec || '';
+  let text = ($('#wording').value || '')
+    .replaceAll('{SCHOOL}', SCHOOL)
+    .replaceAll('{SUBHEADING}', SUBHEADING)
+    .replaceAll('{TITLE}', TITLE)
+    .replaceAll('{NAME}', NAME)
+    .replaceAll('{FATHER}', FATHER)
+    .replaceAll('{CLASS}', CLASS)
+    .replaceAll('{SECTION}', SECTION);
+
+  // clean up if FATHER empty: remove ", father ..." or " (father ...)" basic cleanup
+  if (!FATHER){
+    text = text.replace(/\s*,?\s*father[^,.]*/ig,'').replace(/\(\s*\)/g,'');
+  }
+  return text;
+}
+
+function renderPreview(){
+  drawBg();
+  drawWatermark();
+
+  const SCHOOL = $('#tSchool').value || 'St. Patrick\'s School';
+  const SUB = $('#tSub').value || '';
+  const TITLE = $('#tTitle').value || '';
+
+  const style = collectStyle();
+
+  // top three
+  drawAlignedText(SCHOOL, yMmToPx(style.school.y), style.school.align, style.school.color, 46);
+  if (SUB) drawAlignedText(SUB, yMmToPx(style.subheading.y), style.subheading.align, style.subheading.color, 28);
+  if (TITLE) drawAlignedText(TITLE, yMmToPx(style.title.y), style.title.align, style.title.color, 42);
+
+  // recipient-dependent
+  if (!recipients.length){
+    wrapText("Add recipients to preview.", yMmToPx(120), 'center', '#777', 24);
+    $('#previewIndex').textContent = `0 / 0`;
+    return;
+  }
+  const r = recipients[previewIndex] || recipients[0];
+  $('#previewIndex').textContent = `${previewIndex+1} / ${recipients.length}`;
+
+  drawAlignedText(r.name || '', yMmToPx(style.name.y), style.name.align, style.name.color, 48);
+  if (r.father){
+    drawAlignedText(`Father: ${r.father}`, yMmToPx(style.father.y), style.father.align, style.father.color, 26);
+  }
+  const csLine = `Class: ${r.cls}${r.sec ? ' - '+r.sec : ''}`;
+  drawAlignedText(csLine, yMmToPx(style.classSec.y), style.classSec.align, style.classSec.color, 26);
+
+  const wText = tokenizedWording(r);
+  wrapText(wText, yMmToPx(style.wording.y), style.wording.align, style.wording.color, 26, 1.4);
+}
+</script>
+<script>
+/* ---------- PDF Generation using canvas -> image ---------- */
+async function canvasToJpegDataUrl(){
+  // ensure latest preview is painted for current student
+  return canvas.toDataURL('image/jpeg', 0.95);
+}
+
+async function buildOnePdf(){
+  if (!recipients.length) return alert("No recipients.");
+  showSpinner(true);
+  try{
+    const { PDFDocument } = PDFLib;
+    const pdfDoc = await PDFDocument.create();
+    for (let i=0;i<recipients.length;i++){
+      previewIndex = i; renderPreview();
+      const jpgUrl = await canvasToJpegDataUrl();
+      const page = pdfDoc.addPage([842, 595]); // A4 landscape in points
+      const jpgImage = await pdfDoc.embedJpg(jpgUrl);
+      const { width, height } = jpgImage.scale(1);
+      // fit to page
+      const ratio = Math.min(842/width, 595/height);
+      const w = width*ratio, h = height*ratio;
+      const x = (842-w)/2, y = (595-h)/2;
+      page.drawImage(jpgImage, {x,y,width:w,height:h});
+    }
+    const bytes = await pdfDoc.save();
+    const blob = new Blob([bytes], {type:'application/pdf'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `Certificates_${academicYear || 'Year'}.pdf`;
+    a.click();
+  }catch(e){ alert("PDF failed: "+(e.message||e)); }
+  showSpinner(false);
+  renderPreview(); // restore current
+}
+
+async function buildManyPdfs(){
+  if (!recipients.length) return alert("No recipients.");
+  showSpinner(true);
+  try{
+    const { PDFDocument } = PDFLib;
+    for (let i=0;i<recipients.length;i++){
+      previewIndex = i; renderPreview();
+      const r = recipients[i];
+      const jpgUrl = await canvasToJpegDataUrl();
+      const pdfDoc = await PDFDocument.create();
+      const page = pdfDoc.addPage([842, 595]);
+      const jpgImage = await pdfDoc.embedJpg(jpgUrl);
+      const { width, height } = jpgImage.scale(1);
+      const ratio = Math.min(842/width, 595/height);
+      const w = width*ratio, h = height*ratio;
+      const x = (842-w)/2, y = (595-h)/2;
+      page.drawImage(jpgImage, {x,y,width:w,height:h});
+      const bytes = await pdfDoc.save();
+      const blob = new Blob([bytes], {type:'application/pdf'});
+      const a = document.createElement('a');
+      const safeName = (r.name||'Student').replace(/[^\p{L}\p{N} _-]+/gu,'');
+      const safeClass = (r.cls||'').replace(/[^\p{L}\p{N} _-]+/gu,'');
+      const safeSec = (r.sec||'').replace(/[^\p{L}\p{N} _-]+/gu,'');
+      a.href = URL.createObjectURL(blob);
+      a.download = `Certificate_${safeName}_${safeClass}-${safeSec}.pdf`;
+      a.click();
+      await new Promise(res=>setTimeout(res, 60)); // small gap
+    }
+  }catch(e){ alert("PDF failed: "+(e.message||e)); }
+  showSpinner(false);
+  renderPreview();
+}
+
+$('#genOnePdfBtn').onclick = buildOnePdf;
+$('#genManyPdfBtn').onclick = buildManyPdfs;
+
+/* first render */
+renderPreview();
+</script>
+</body>
+</html>
+
