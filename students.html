@@ -230,7 +230,7 @@
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-  
+  <script src="https://unpkg.com/pdf-lib/dist/pdf-lib.min.js"></script>
   <script>
     function normalizeExamName(name) {
    return name.replace(/[\s\.\-]/g, '').toUpperCase();
@@ -379,7 +379,129 @@ function getClassGroupName(className) {
       popupContent.innerHTML = '';
       popupBg.onclick = null;
     }
+  // Inline Certificate Studio (minimal shell). We'll render inside the existing popup.
+function openCertificateStudio() {
+  // Basic shell UI inside the same popup component you already use
+  showPopup(`
+    <div class="popup-title">Certificate Studio</div>
 
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+      <div>
+        <label>Background (A4 Landscape)</label>
+        <input type="file" id="cs_bg" accept="image/*">
+      </div>
+      <div>
+        <label>Watermark Logo</label>
+        <input type="file" id="cs_wm" accept="image/*">
+      </div>
+    </div>
+
+    <label>School Name</label>
+    <input id="cs_school" placeholder="St. Patrick's School" value="${localStorage.getItem('sp_schoolTitle') || 'St. Patrick\\'s School'}">
+
+    <label>Subheading</label>
+    <input id="cs_sub" placeholder="IIT & NEET FOUNDATION" value="${localStorage.getItem('sp_schoolSub') || 'IIT & NEET FOUNDATION'}">
+
+    <label>Certificate Title</label>
+    <input id="cs_title" placeholder="Certificate of Merit">
+
+    <div style="display:flex;gap:8px;align-items:center;margin:8px 0;">
+      <button class="popup-action-btn" id="cs_loadSection">Load Current Section</button>
+      <span style="font-size:.92em;color:#666" id="cs_count_hint"></span>
+    </div>
+
+    <div style="background:#fff;border:1px solid #e6eef7;border-radius:10px;padding:8px;">
+      <canvas id="cs_canvas" width="2480" height="1754" style="width:100%;height:auto;border-radius:8px;"></canvas>
+    </div>
+
+    <div class="popup-btn-row" style="margin-top:10px;">
+      <button type="button" class="popup-cancel-btn">Close</button>
+      <button type="button" class="popup-action-btn" id="cs_generate">Generate PDF</button>
+    </div>
+  `);
+
+  // very light preview wiring (placeholder). Replace with your full studio logic later.
+  const canvas = document.getElementById('cs_canvas');
+  const ctx = canvas.getContext('2d');
+  let bgImg = null, wmImg = null, recips = [];
+
+  function draw() {
+    // white
+    ctx.fillStyle = '#fff'; ctx.fillRect(0,0,canvas.width,canvas.height);
+    // bg
+    if (bgImg) {
+      const r = Math.min(canvas.width/bgImg.width, canvas.height/bgImg.height);
+      const w = bgImg.width*r, h = bgImg.height*r;
+      ctx.drawImage(bgImg, (canvas.width-w)/2, (canvas.height-h)/2, w, h);
+    }
+    // wm
+    if (wmImg) {
+      ctx.save();
+      ctx.globalAlpha = 0.12;
+      const h = canvas.height*0.5;
+      const r = h/wmImg.height;
+      const w = wmImg.width*r;
+      ctx.drawImage(wmImg, (canvas.width-w)/2, (canvas.height-h)/2, w, h);
+      ctx.restore();
+    }
+    // headings
+    const school = document.getElementById('cs_school').value.trim();
+    const sub    = document.getElementById('cs_sub').value.trim();
+    const title  = document.getElementById('cs_title').value.trim();
+    ctx.fillStyle = '#0f3d6b'; ctx.textAlign='center';
+    ctx.font = 'bold 56px "Segoe UI", Arial, sans-serif';
+    ctx.fillText(school || "St. Patrick's School", canvas.width/2, 180);
+    ctx.fillStyle = '#1467b7';
+    ctx.font = '500 34px "Segoe UI", Arial, sans-serif';
+    if (sub) ctx.fillText(sub, canvas.width/2, 230);
+    ctx.fillStyle = '#0f3d6b';
+    ctx.font = 'bold 46px "Segoe UI", Arial, sans-serif';
+    if (title) ctx.fillText(title, canvas.width/2, 300);
+  }
+
+  function readImg(file){ return new Promise((res,rej)=>{ const i=new Image(); i.onload=()=>res(i); i.onerror=rej; i.src=URL.createObjectURL(file); }); }
+  document.getElementById('cs_bg').onchange = async e => { if (e.target.files[0]) { bgImg = await readImg(e.target.files[0]); draw(); } };
+  document.getElementById('cs_wm').onchange = async e => { if (e.target.files[0]) { wmImg = await readImg(e.target.files[0]); draw(); } };
+  ['cs_school','cs_sub','cs_title'].forEach(id => document.getElementById(id).oninput = draw);
+
+  // Load recipients from the current section
+  document.getElementById('cs_loadSection').onclick = async () => {
+    const hint = document.getElementById('cs_count_hint');
+    if (!academicYear || !currentClassId || !currentSectionId) {
+      alert('Class/Section not selected.'); return;
+    }
+    const snap = await db.collection('years').doc(academicYear)
+      .collection('classes').doc(currentClassId)
+      .collection('sections').doc(currentSectionId)
+      .collection('students').orderBy('roll').get();
+    recips = [];
+    snap.forEach(d => { const x = d.data(); if (!x.isDeleted) recips.push({name:x.name, father:x.father, cls:currentClassName, sec:currentSectionName}); });
+    hint.textContent = recips.length ? `${recips.length} students loaded` : 'No students';
+  };
+
+  // Very simple PDF (image of canvas) — replace later with your full per-student draw
+  document.getElementById('cs_generate').onclick = async () => {
+    if (!window.PDFLib) { alert('pdf-lib not loaded on this page. Add it to this page if you need PDF.'); return; }
+    const { PDFDocument } = PDFLib;
+    const pdf = await PDFDocument.create();
+    // at least one page with headings/background to prove flow
+    draw();
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.95);
+    const base64  = dataUrl.split(',')[1];
+    const bytes   = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+    const page = pdf.addPage([842, 595]); // A4 landscape
+    const img  = await pdf.embedJpg(bytes);
+    const s = Math.min(842/img.width, 595/img.height);
+    page.drawImage(img, { x:(842-img.width*s)/2, y:(595-img.height*s)/2, width:img.width*s, height:img.height*s });
+    const pdfBytes = await pdf.save();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([pdfBytes], {type:'application/pdf'}));
+    a.download = 'Certificate.pdf';
+    a.click();
+  };
+
+  draw();
+}
     // =========== ADD/EDIT STUDENT POPUP =========================
     function showAddStudentPopup() {
       showPopup(`
@@ -532,7 +654,7 @@ function getClassGroupName(className) {
   window.location.href = "performance.html";
 };
   document.getElementById('showDeletedBtn').onclick = showDeletedStudentsPopup;
-      document.getElementById('createCertificateBtn').onclick = openCertificatesModal;  // NEW
+      document.getElementById('createCertificateBtn').onclick = openCertificateStudio;  // inline studio
     document.getElementById('yearPlanBtn').onclick = function() {
     window.location.href = "year-plan.html";
 };
@@ -1748,23 +1870,6 @@ function closeAbsenteesModal() {
   document.getElementById('absenteesModalBg').style.display = 'none';
   document.getElementById('absenteesIframe').src = '';
 }
-// NEW: Certificates modal controls
-function openCertificatesModal() {
-  const bg = document.getElementById('certificatesModalBg');
-  const iframe = document.getElementById('certificatesIframe');
-  if (!bg || !iframe) return;
-  iframe.src = 'certificates.html'; // this will be your new page
-  bg.style.display = 'flex';
-}
-
-function closeCertificatesModal() {
-  const bg = document.getElementById('certificatesModalBg');
-  const iframe = document.getElementById('certificatesIframe');
-  if (!bg || !iframe) return;
-  bg.style.display = 'none';
-  iframe.src = '';
-}
-
   </script>
   <!-- Absentees Report Modal -->
 <div id="absenteesModalBg" style="display:none;position:fixed;left:0;top:0;right:0;bottom:0;background:#0007;z-index:2003;align-items:center;justify-content:center;">
@@ -1776,28 +1881,12 @@ function closeCertificatesModal() {
     <iframe id="absenteesIframe" src="" style="border:none;width:100%;height:75vh;border-radius:0 0 16px 16px;"></iframe>
   </div>
 </div>
-  <!-- Certificates Modal (NEW) -->
-<div id="certificatesModalBg" style="display:none;position:fixed;left:0;top:0;right:0;bottom:0;background:#0007;z-index:2004;align-items:center;justify-content:center;">
-  <div id="certificatesModalContent" style="background:#fff;border-radius:16px;box-shadow:0 8px 30px #0f3d6b22;padding:0;min-width:320px;max-width:97vw;width:920px;display:flex;flex-direction:column;gap:0;align-items:stretch;">
-    <div style="display:flex;align-items:center;justify-content:space-between;padding:18px 24px 10px 18px;">
-      <span style="font-size:1.23em;font-weight:700;color:#0f3d6b;">Create Certificate</span>
-      <button id="closeCertificatesModal" style="background:none;border:none;font-size:1.55em;color:#0f3d6b;cursor:pointer;padding:0 8px;">&times;</button>
-    </div>
-    <iframe id="certificatesIframe" src="" style="border:none;width:100%;height:78vh;border-radius:0 0 16px 16px;"></iframe>
-  </div>
-</div>
-
-  <script>
+   <script>
   document.getElementById('closeAbsenteesModal').onclick = closeAbsenteesModal;
   document.getElementById('absenteesModalBg').onclick = function(e) {
     if (e.target === this) closeAbsenteesModal();
   };
-    // NEW: Certificates listeners
-document.getElementById('closeCertificatesModal').onclick = closeCertificatesModal;
-document.getElementById('certificatesModalBg').onclick = function(e) {
-  if (e.target === this) closeCertificatesModal();
-};
-    function showBulkMarksUploadPopup() {
+        function showBulkMarksUploadPopup() {
   db.collection('years').doc(academicYear)
     .collection('exams').doc('classGroups')
     .collection(getClassGroupName(currentClassName)).orderBy('name').get()
@@ -1973,6 +2062,7 @@ document.getElementById('certificatesModalBg').onclick = function(e) {
 </script>
 </body>
 </html>
+
 
 
 
