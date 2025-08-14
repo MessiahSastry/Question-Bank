@@ -632,43 +632,44 @@
         try {
             // 1. Find class document
             // --- use phoneIndex single-doc GET, no queries/lists ---
-const idxRef = db.collection('years').doc(year)
-  .collection('phoneIndex').doc(ph);
-const idxSnap = await idxRef.get();
+// Search directly in Firestore students collection
+const classSnap = await db.collection('years').doc(year)
+  .collection('classes').where('name', '==', cls).limit(1).get();
+if (classSnap.empty) {
+  msg.style.color = '#c82333';
+  msg.textContent = "Class not found.";
+  return;
+}
+const classDoc = classSnap.docs[0];
+window.__classDocId = classDoc.id;
 
-if (!idxSnap.exists) {
+const secSnap = await classDoc.ref.collection('sections').where('name', '==', sec).limit(1).get();
+if (secSnap.empty) {
+  msg.style.color = '#c82333';
+  msg.textContent = "Section not found.";
+  return;
+}
+const secDoc = secSnap.docs[0];
+window.__sectionDocId = secDoc.id;
+
+const stuSnap = await secDoc.ref.collection('students').where('parentPhone', '==', ph).limit(1).get();
+if (stuSnap.empty) {
   msg.style.color = '#c82333';
   msg.textContent = "No student found for given details.";
-  window.studentName = "Student";
-  document.getElementById('activate-pane').style.display = 'none';
-  document.getElementById('login-pane').style.display = 'none';
   return;
 }
+const stuDoc = stuSnap.docs[0];
+window.__studentDocId = stuDoc.id;
 
-const idx = idxSnap.data() || {};
-
-// optional: verify class/section the student selected
-if ((idx.className !== cls) || (idx.sectionName !== sec)) {
-  msg.style.color = '#c82333';
-  msg.textContent = "Class/Section do not match this phone.";
-  window.studentName = "Student";
-  document.getElementById('activate-pane').style.display = 'none';
-  document.getElementById('login-pane').style.display = 'none';
-  return;
-}
-
-// store IDs for later writes
-window.__classDocId   = idx.classId;
-window.__sectionDocId = idx.sectionId;
-window.__studentDocId = idx.studentId;
-
-// greet & reveal PIN UI
-const name = idx.name || "Student";
+const stuData = stuDoc.data() || {};
 msg.style.color = '#126c30';
-msg.textContent = "Welcome, " + name;
-window.studentName = name;
+msg.textContent = "Welcome, " + (stuData.name || "Student");
+window.studentName = stuData.name || "Student";
+
+// Always show Activate + Login panes so user can choose
 document.getElementById('activate-pane').style.display = '';
-document.getElementById('login-pane').style.display = 'none';
+document.getElementById('login-pane').style.display = '';
+
 
         } catch (e) {
             msg.style.color = '#c82333';
@@ -1240,6 +1241,7 @@ function saveCurrentProgress() {
     </script>
 </body>
 </html>
+
 
 
 
