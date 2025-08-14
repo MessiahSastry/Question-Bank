@@ -685,29 +685,30 @@ function handlePhoneInput() {
 }
         // --- Add this function below! ---
    async function fetchAndShowStudentName() {
-  const year = getAcademicYear(); // dynamic academic year
-  const cls = document.getElementById('selected-class').dataset.value || "";
-  const sec = document.getElementById('selected-section').dataset.value || "";
-  const ph  = (document.getElementById('student-phone').value || '').trim();
-  const msg = document.getElementById('student-name-msg');
+  const year = getAcademicYear();                      // e.g., "2025-26"
+  const cls  = (document.getElementById('selected-class')?.dataset.value || "").trim();
+  const sec  = (document.getElementById('selected-section')?.dataset.value || "").trim();
+  const phIn = (document.getElementById('student-phone')?.value || "");
+  const ph   = phIn.replace(/\D/g, "");                // keep only digits
 
+  const msg          = document.getElementById('student-name-msg');
   const paneActivate = document.getElementById('activate-pane');
   const paneLogin    = document.getElementById('login-pane');
+  const startBtn     = document.getElementById('start-quiz-btn');
 
-  const startBtn = document.getElementById('start-quiz-btn');
+  // reset UI
   if (startBtn) startBtn.style.display = 'none';
+  paneActivate.style.display = 'none';
+  paneLogin.style.display    = 'none';
+  msg.textContent = "";
 
-  if (!(cls && sec && ph.length === 10)) {
-    msg.textContent = "";
-    paneActivate.style.display = 'none';
-    paneLogin.style.display    = 'none';
-    return;
-  }
+  // require class + section + 10-digit phone
+  if (!(cls && sec && ph.length === 10)) return;
 
   try {
-    // 1) Find class document
-    const classSnap = await db.collection('years').doc(year)
-      .collection('classes').where('name', '==', cls).limit(1).get();
+    // 1) locate class by name under the selected year
+    const classesRef = db.collection('years').doc(year).collection('classes');
+    const classSnap  = await classesRef.where('name', '==', cls).limit(1).get();
     if (classSnap.empty) {
       msg.style.color = '#c82333';
       msg.textContent = "Class not found.";
@@ -716,9 +717,9 @@ function handlePhoneInput() {
     const classDoc = classSnap.docs[0];
     window.__classDocId = classDoc.id;
 
-    // 2) Find section document
-    const secSnap = await classDoc.ref.collection('sections')
-      .where('name', '==', sec).limit(1).get();
+    // 2) locate section by name under that class
+    const sectionsRef = classDoc.ref.collection('sections');
+    const secSnap     = await sectionsRef.where('name', '==', sec).limit(1).get();
     if (secSnap.empty) {
       msg.style.color = '#c82333';
       msg.textContent = "Section not found.";
@@ -727,31 +728,32 @@ function handlePhoneInput() {
     const secDoc = secSnap.docs[0];
     window.__sectionDocId = secDoc.id;
 
-    // 3) Find student by phone
-    const stuSnap = await secDoc.ref.collection('students')
-      .where('parentPhone', '==', ph).limit(1).get();
+    // 3) find student by exact parentPhone
+    const studentsRef = secDoc.ref.collection('students');
+    const stuSnap     = await studentsRef.where('parentPhone', '==', ph).limit(1).get();
     if (stuSnap.empty) {
       msg.style.color = '#c82333';
       msg.textContent = "No student found for given details.";
-      paneActivate.style.display = 'none';
-      paneLogin.style.display    = 'none';
       return;
     }
     const stuDoc  = stuSnap.docs[0];
     const stuData = stuDoc.data() || {};
     window.__studentDocId = stuDoc.id;
 
+    // greet
     const niceName = (stuData.name || "Student").trim();
     window.studentName = niceName;
     msg.style.color = '#126c30';
     msg.style.fontWeight = '700';
     msg.textContent = `Welcome, ${niceName}`;
 
-    // 4) Decide by presence of secret PIN doc
+    // 4) see if already activated:
+    //    sections/{sectionId}/studentSecrets/{studentId}
     const secretRef = secDoc.ref.collection('studentSecrets').doc(stuDoc.id);
     const secretDoc = await secretRef.get();
-    const alreadyActivated = !!(secretDoc.exists && (secretDoc.data() || {}).pinPlain);
+    const alreadyActivated = !!(secretDoc.exists && (secretDoc.data()?.pinPlain));
 
+    // toggle panes
     if (alreadyActivated) {
       paneActivate.style.display = 'none';
       paneLogin.style.display    = '';
@@ -759,12 +761,10 @@ function handlePhoneInput() {
       paneActivate.style.display = '';
       paneLogin.style.display    = 'none';
     }
-  } catch (e) {
-    console.error(e);
+  } catch (err) {
+    console.error('fetchAndShowStudentName error:', err);
     msg.style.color = '#c82333';
     msg.textContent = "Error fetching student.";
-    paneActivate.style.display = 'none';
-    paneLogin.style.display    = 'none';
   }
 }
 
@@ -1332,6 +1332,7 @@ function saveCurrentProgress() {
     </script>
 </body>
 </html>
+
 
 
 
