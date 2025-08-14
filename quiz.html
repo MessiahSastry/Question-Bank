@@ -631,54 +631,45 @@
     if (cls && sec && ph.length === 10) {
         try {
             // 1. Find class document
-            const classSnap = await db.collection('years').doc(year)
-                .collection('classes').where('name', '==', cls).limit(1).get();
-            if (classSnap.empty) {
-                msg.style.color = '#c82333';
-                msg.textContent = "Class not found.";
-                window.studentName = "Student";
-                return;
-            }
-            const classDocId = classSnap.docs[0].id;
-            window.__classDocId = classDocId;
+            // --- use phoneIndex single-doc GET, no queries/lists ---
+const idxRef = db.collection('years').doc(year)
+  .collection('phoneIndex').doc(ph);
+const idxSnap = await idxRef.get();
 
-            // 2. Find section document
-            const sectionSnap = await db.collection('years').doc(year)
-                .collection('classes').doc(classDocId)
-                .collection('sections').where('name', '==', sec).limit(1).get();
-            if (sectionSnap.empty) {
-                msg.style.color = '#c82333';
-                msg.textContent = "Section not found.";
-                window.studentName = "Student";
-                return;
-            }
-            const sectionDocId = sectionSnap.docs[0].id;
-            window.__sectionDocId = sectionDocId;
+if (!idxSnap.exists) {
+  msg.style.color = '#c82333';
+  msg.textContent = "No student found for given details.";
+  window.studentName = "Student";
+  document.getElementById('activate-pane').style.display = 'none';
+  document.getElementById('login-pane').style.display = 'none';
+  return;
+}
 
-            // 3. Find student
-            const studentSnap = await db.collection('years').doc(year)
-                .collection('classes').doc(classDocId)
-                .collection('sections').doc(sectionDocId)
-                .collection('students').where('parentPhone', '==', ph).limit(1).get();
+const idx = idxSnap.data() || {};
 
-            if (!studentSnap.empty) {
-                const name = studentSnap.docs[0].data().name || "Student";
-                window.__studentDocId = studentSnap.docs[0].id;
-                msg.style.color = '#126c30';
-                msg.textContent = "Welcome, " + name;
-                window.studentName = name;
-                console.log("DEBUG: Loaded student name", name);
-                // Reveal PIN UI only after we have a valid student
-                document.getElementById('activate-pane').style.display = '';
-                document.getElementById('login-pane').style.display = 'none';
-            } else {
-                msg.style.color = '#c82333';
-                msg.textContent = "No student found for given details.";
-                window.studentName = "Student";
-                // Hide PIN UI until a valid student is found
-                document.getElementById('activate-pane').style.display = 'none';
-                document.getElementById('login-pane').style.display = 'none';
-            }
+// optional: verify class/section the student selected
+if ((idx.className !== cls) || (idx.sectionName !== sec)) {
+  msg.style.color = '#c82333';
+  msg.textContent = "Class/Section do not match this phone.";
+  window.studentName = "Student";
+  document.getElementById('activate-pane').style.display = 'none';
+  document.getElementById('login-pane').style.display = 'none';
+  return;
+}
+
+// store IDs for later writes
+window.__classDocId   = idx.classId;
+window.__sectionDocId = idx.sectionId;
+window.__studentDocId = idx.studentId;
+
+// greet & reveal PIN UI
+const name = idx.name || "Student";
+msg.style.color = '#126c30';
+msg.textContent = "Welcome, " + name;
+window.studentName = name;
+document.getElementById('activate-pane').style.display = '';
+document.getElementById('login-pane').style.display = 'none';
+
         } catch (e) {
             msg.style.color = '#c82333';
             msg.textContent = "Error fetching student.";
@@ -1249,6 +1240,7 @@ function saveCurrentProgress() {
     </script>
 </body>
 </html>
+
 
 
 
