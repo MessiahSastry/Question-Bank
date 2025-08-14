@@ -640,6 +640,7 @@
                 return;
             }
             const classDocId = classSnap.docs[0].id;
+            window.__classDocId = classDocId;
 
             // 2. Find section document
             const sectionSnap = await db.collection('years').doc(year)
@@ -652,6 +653,7 @@
                 return;
             }
             const sectionDocId = sectionSnap.docs[0].id;
+            window.__sectionDocId = sectionDocId;
 
             // 3. Find student
             const studentSnap = await db.collection('years').doc(year)
@@ -661,6 +663,7 @@
 
             if (!studentSnap.empty) {
                 const name = studentSnap.docs[0].data().name || "Student";
+                window.__studentDocId = studentSnap.docs[0].id;
                 msg.style.color = '#126c30';
                 msg.textContent = "Welcome, " + name;
                 window.studentName = name;
@@ -913,10 +916,7 @@ window.onload = function() {
   setupModernDropdown('dropdown-class', 'selected-class', 'dropdown-class-list');
   setupModernDropdown('dropdown-section', 'selected-section', 'dropdown-section-list');
 
-  // Initialize Callable Functions
-  const fns = firebase.functions();
-  const registerPin = fns.httpsCallable('registerStudentPin');  // server: create hash + mark registered
-  const verifyPin   = fns.httpsCallable('verifyStudentPin');    // server: check hash + lockout
+  
 
   // Tab switch elements
   const tabActivate  = document.getElementById('tab-activate');
@@ -967,6 +967,7 @@ window.onload = function() {
   }
 
   // ACTIVATE — first-time PIN set
+ // ACTIVATE — first-time PIN set (Firestore only)
   document.getElementById('activate-btn').onclick = async function() {
     const {cls, sec, ph} = getShared();
     const pin1 = (document.getElementById('pin1').value || '').trim();
@@ -975,42 +976,119 @@ window.onload = function() {
     if (!cls || !sec || ph.length !== 10) return showError('Please fill Class, Section and 10-digit Phone.');
     if (pin1.length !== 6 || /\D/.test(pin1)) return showError('PIN must be 6 digits.');
     if (pin1 !== pin2) return showError('PIN and Confirm PIN must match.');
+    if (!window.__classDocId || !window.__sectionDocId || !window.__studentDocId) {
+      return showError('Type full phone to fetch your name, then try again.');
+    }
     showOk('Checking details...');
 
     try {
-      const resp = await registerPin({ className: cls, sectionName: sec, phone: ph, pin: pin1 });
-      if (resp?.data?.ok) {
-        window.studentName = resp?.data?.name || 'Student';
-        document.getElementById('quiz-auth-modal').style.display = 'none';
-        loadQuiz();
-      } else {
-        showError(resp?.data?.message || 'Details do not match our records.');
+      const year = "2025-26";
+      const stuRef = db.collection('years').doc(year)
+        .collection('classes').doc(window.__classDocId)
+        .collection('sections').doc(window.__sectionDocId)
+        .collection('students').doc(window.__studentDocId);
+
+      const secretRef = db.collection('years').doc(year)
+        .collection('classes').doc(window.__classDocId)
+        .collection('sections').doc(window.__sectionDocId)
+        .collection('studentSecrets').doc(window.__studentDocId);
+
+      const [stuSnap, secSnap] = await Promise.all([stuRef.get(), secretRef.get()]);
+      const stuData = stuSnap.data() || {};
+
+      if (stuData.parentPhone !== ph) {
+        return showError('Details do not match our records.');
       }
+      if (stuData.registered === true && secSnap.exists && (secSnap.data()?.pinPlain)) {
+        return showError('Already registered. Use Login with PIN.');
+      }
+
+     await secretRef.set({
+  pinPlain: pin1,
+  parentPhone: ph,  // <- needed for rules check
+  createdAt: firebase.firestore.FieldValue.serverTimestamp()
+}, { merge: true });
+
+      await stuRef.set({
+        registered: true,
+        failedAttempts: 0,
+        lockedUntil: null,
+        lastLogin: firebase.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+
+      window.studentName = stuData.name || 'Student';
+      document.getElementById('quiz-auth-modal').style.display = 'none';
+      loadQuiz();
     } catch (e) {
-      showError(e?.message || 'Activation failed.');
+      console.error(e);
+      showError('Activation failed.');
     }
   };
 
   // LOGIN — with PIN
+  // LOGIN — with PIN (Firestore only)
   document.getElementById('login-btn').onclick = async function() {
     const {cls, sec, ph} = getShared();
     const pin = (document.getElementById('pin-login').value || '').trim();
 
     if (!cls || !sec || ph.length !== 10) return showError('Please fill Class, Section and 10-digit Phone.');
     if (pin.length !== 6 || /\D/.test(pin)) return showError('PIN must be 6 digits.');
+    if (!window.__classDocId || !window.__sectionDocId || !window.__studentDocId) {
+      return showError('Type full phone to fetch your name, then try again.');
+    }
     showOk('Verifying...');
 
     try {
-      const resp = await verifyPin({ className: cls, sectionName: sec, phone: ph, pin });
-      if (resp?.data?.ok) {
-        window.studentName = resp?.data?.name || 'Student';
+      const year = "2025-26";
+      const stuRef = db.collection('years').doc(year)
+        .collection('classes').doc(window.__classDocId)
+        .collection('sections').doc(window.__sectionDocId)
+        .collection('students').doc(window.__studentDocId);
+
+      const secretRef = db.collection('years').doc(year)
+        .collection('classes').doc(window.__classDocId)
+        .collection('sections').doc(window.__sectionDocId)
+        .collection('studentSecrets').doc(window.__studentDocId);
+
+      const [stuSnap, secSnap] = await Promise.all([stuRef.get(), secretRef.get()]);
+      if (!stuSnap.exists || !secSnap.exists) return showError('Not registered. Activate first time.');
+
+      const stuData = stuSnap.data() || {};
+      const secret = secSnap.data() || {};
+
+      // Lock check (client-side)
+      const now = Date.now();
+      const lockedUntilMs = (stuData.lockedUntil && stuData.lockedUntil.toDate) ? stuData.lockedUntil.toDate().getTime() : null;
+      if (lockedUntilMs && lockedUntilMs > now) {
+        const mins = Math.ceil((lockedUntilMs - now) / 60000);
+        return showError(`Locked. Try again in ${mins} min.`);
+      }
+
+      if ((secret.pinPlain || '') === pin && stuData.parentPhone === ph) {
+        // Success
+        await stuRef.set({
+          failedAttempts: 0,
+          lockedUntil: null,
+          lastLogin: firebase.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+
+        window.studentName = stuData.name || 'Student';
         document.getElementById('quiz-auth-modal').style.display = 'none';
         loadQuiz();
       } else {
-        showError(resp?.data?.message || 'Invalid PIN or locked. Try later.');
+        // Wrong PIN: increment attempts, lock if threshold reached
+        const newFailed = (stuData.failedAttempts || 0) + 1;
+        const updates = { failedAttempts: newFailed };
+        if (newFailed >= 5) {
+          updates.lockedUntil = new Date(Date.now() + 15 * 60000); // 15 minutes
+        }
+        await stuRef.set(updates, { merge: true });
+        const left = Math.max(0, 5 - newFailed);
+        showError(left > 0 ? `Wrong PIN. ${left} tries left.` : `Too many attempts. Locked 15 min.`);
       }
     } catch (e) {
-      showError(e?.message || 'Login failed.');
+      console.error(e);
+      showError('Login failed.');
     }
   };
 };
@@ -1160,4 +1238,5 @@ function saveCurrentProgress() {
     </script>
 </body>
 </html>
+
 
