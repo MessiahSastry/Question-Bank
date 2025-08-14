@@ -472,11 +472,6 @@
                   <div id="quiz-auth-modal-inner">
                       <h2 style="color:#1762a7;font-size:1.36em;margin-bottom:18px;">Student Access</h2>
 
-<!-- Simple tab switch -->
-<div style="display:flex;gap:8px;margin:0 0 12px 0;">
-  <button id="tab-activate" style="flex:1;background:#1762a7;color:#fff;border:none;border-radius:7px;padding:10px 0;font-weight:600;cursor:pointer;">Activate First Time</button>
-  <button id="tab-login" style="flex:1;background:#e6effa;color:#1762a7;border:1.2px solid #1762a7;border-radius:7px;padding:10px 0;font-weight:600;cursor:pointer;">Login with PIN</button>
-</div>
 
 <!-- Shared fields -->
 <div class="form-group">
@@ -556,6 +551,10 @@
   <button id="login-btn">Login</button>
 </div>
 
+<button id="start-quiz-btn"
+        style="display:none;width:100%;background:#2e86de;color:#fff;border:none;border-radius:7px;padding:14px 0;font-weight:700;font-size:1.13em;cursor:pointer;box-shadow:0 2px 10px #1762a733;letter-spacing:.04em;margin:12px 0 0 0;">
+  Practice Quiz
+</button>
 <div id="student-name-msg" style="margin:6px 0 0 0; font-size:1.07em; min-height:24px;"></div>
 <div id="otp-status-msg" style="color:#c82333;margin:9px 0 0 0;font-size:1em;display:none;"></div>
 
@@ -643,7 +642,27 @@
             // 3. Setup dropdown functionality
             setupModernDropdown('class-dropdown', 'selected-class', 'dropdown-class-list');
             setupModernDropdown('section-dropdown', 'selected-section', 'dropdown-section-list');
-            document.getElementById('student-phone').addEventListener('input', fetchAndShowStudentName);
+            const phoneEl = document.getElementById('student-phone');
+
+function handlePhoneInput() {
+  // keep only digits, max 10
+  const v = phoneEl.value.replace(/\D/g, '').slice(0, 10);
+  if (v !== phoneEl.value) phoneEl.value = v;
+
+  if (v.length === 10) {
+    fetchAndShowStudentName();  // fetch immediately after 10th digit
+  } else {
+    // reset UI while typing/clearing
+    const msg = document.getElementById('student-name-msg');
+    msg.textContent = '';
+    document.getElementById('activate-pane').style.display = 'none';
+    document.getElementById('login-pane').style.display = 'none';
+  }
+}
+
+['input', 'change', 'blur', 'paste'].forEach(evt =>
+  phoneEl.addEventListener(evt, handlePhoneInput)
+);
         });
         // Firebase config (reuse from your app)
         const firebaseConfig = {
@@ -656,78 +675,99 @@
         };
         firebase.initializeApp(firebaseConfig);
         const db = firebase.firestore();
+        function getAcademicYear(startMonthIndex = 5) { // default: starts June
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = now.getMonth();
+  const startYear = (m >= startMonthIndex) ? y : (y - 1);
+  const nextShort = String((startYear + 1) % 100).padStart(2, '0');
+  return `${startYear}-${nextShort}`; // e.g., "2025-26"
+}
         // --- Add this function below! ---
-    async function fetchAndShowStudentName() {
-    const year = "2025-26"; // Or fetch from dropdown if dynamic
-    const cls = document.getElementById('selected-class').dataset.value || "";
-    const sec = document.getElementById('selected-section').dataset.value || "";
-    const ph = document.getElementById('student-phone').value.trim() || "";
-    const msg = document.getElementById('student-name-msg');
+   async function fetchAndShowStudentName() {
+  const year = getAcademicYear(); // dynamic academic year
+  const cls = document.getElementById('selected-class').dataset.value || "";
+  const sec = document.getElementById('selected-section').dataset.value || "";
+  const ph  = (document.getElementById('student-phone').value || '').trim();
+  const msg = document.getElementById('student-name-msg');
 
-    if (cls && sec && ph.length === 10) {
-        try {
-            // 1. Find class document
-            // --- use phoneIndex single-doc GET, no queries/lists ---
-// Search directly in Firestore students collection
-const classSnap = await db.collection('years').doc(year)
-  .collection('classes').where('name', '==', cls).limit(1).get();
-if (classSnap.empty) {
-  msg.style.color = '#c82333';
-  msg.textContent = "Class not found.";
-  return;
-}
-const classDoc = classSnap.docs[0];
-window.__classDocId = classDoc.id;
+  const paneActivate = document.getElementById('activate-pane');
+  const paneLogin    = document.getElementById('login-pane');
 
-const secSnap = await classDoc.ref.collection('sections').where('name', '==', sec).limit(1).get();
-if (secSnap.empty) {
-  msg.style.color = '#c82333';
-  msg.textContent = "Section not found.";
-  return;
-}
-const secDoc = secSnap.docs[0];
-window.__sectionDocId = secDoc.id;
+  const startBtn = document.getElementById('start-quiz-btn');
+  if (startBtn) startBtn.style.display = 'none';
 
-const stuSnap = await secDoc.ref.collection('students').where('parentPhone', '==', ph).limit(1).get();
-if (stuSnap.empty) {
-  msg.style.color = '#c82333';
-  msg.textContent = "No student found for given details.";
-  return;
-}
-const stuDoc = stuSnap.docs[0];
-window.__studentDocId = stuDoc.id;
+  if (!(cls && sec && ph.length === 10)) {
+    msg.textContent = "";
+    paneActivate.style.display = 'none';
+    paneLogin.style.display    = 'none';
+    return;
+  }
 
-const stuData = stuDoc.data() || {};
-msg.style.color = '#126c30';
-msg.textContent = "Welcome, " + (stuData.name || "Student");
-window.studentName = stuData.name || "Student";
-
-// show the correct pane based on registration flag
-if (stuData.registered === true) {
-  document.getElementById('activate-pane').style.display = 'none';
-  document.getElementById('login-pane').style.display = '';
-} else {
-  document.getElementById('activate-pane').style.display = '';
-  document.getElementById('login-pane').style.display = 'none';
-}
-
-
-
-        } catch (e) {
-            msg.style.color = '#c82333';
-            msg.textContent = "Error fetching student.";
-            window.studentName = "Student";
-            document.getElementById('activate-pane').style.display = 'none';
-            document.getElementById('login-pane').style.display = 'none';
-
-        }
-    } else {
-        msg.textContent = "";
-        window.studentName = "Student";
-        document.getElementById('activate-pane').style.display = 'none';
-        document.getElementById('login-pane').style.display = 'none';
+  try {
+    // 1) Find class document
+    const classSnap = await db.collection('years').doc(year)
+      .collection('classes').where('name', '==', cls).limit(1).get();
+    if (classSnap.empty) {
+      msg.style.color = '#c82333';
+      msg.textContent = "Class not found.";
+      return;
     }
+    const classDoc = classSnap.docs[0];
+    window.__classDocId = classDoc.id;
+
+    // 2) Find section document
+    const secSnap = await classDoc.ref.collection('sections')
+      .where('name', '==', sec).limit(1).get();
+    if (secSnap.empty) {
+      msg.style.color = '#c82333';
+      msg.textContent = "Section not found.";
+      return;
+    }
+    const secDoc = secSnap.docs[0];
+    window.__sectionDocId = secDoc.id;
+
+    // 3) Find student by phone
+    const stuSnap = await secDoc.ref.collection('students')
+      .where('parentPhone', '==', ph).limit(1).get();
+    if (stuSnap.empty) {
+      msg.style.color = '#c82333';
+      msg.textContent = "No student found for given details.";
+      paneActivate.style.display = 'none';
+      paneLogin.style.display    = 'none';
+      return;
+    }
+    const stuDoc  = stuSnap.docs[0];
+    const stuData = stuDoc.data() || {};
+    window.__studentDocId = stuDoc.id;
+
+    const niceName = (stuData.name || "Student").trim();
+    window.studentName = niceName;
+    msg.style.color = '#126c30';
+    msg.style.fontWeight = '700';
+    msg.textContent = `Welcome, ${niceName}`;
+
+    // 4) Decide by presence of secret PIN doc
+    const secretRef = secDoc.ref.collection('studentSecrets').doc(stuDoc.id);
+    const secretDoc = await secretRef.get();
+    const alreadyActivated = !!(secretDoc.exists && (secretDoc.data() || {}).pinPlain);
+
+    if (alreadyActivated) {
+      paneActivate.style.display = 'none';
+      paneLogin.style.display    = '';
+    } else {
+      paneActivate.style.display = '';
+      paneLogin.style.display    = 'none';
+    }
+  } catch (e) {
+    console.error(e);
+    msg.style.color = '#c82333';
+    msg.textContent = "Error fetching student.";
+    paneActivate.style.display = 'none';
+    paneLogin.style.display    = 'none';
+  }
 }
+
 
         // --- Quiz State ---
         let quiz = null;
@@ -956,37 +996,34 @@ if (stuData.registered === true) {
 
   
 
+function startQuizNow() {
+  const quizId = new URLSearchParams(window.location.search).get('quiz') || '';
+  const base = window.location.href.split('?')[0];
+  const url  = quizId ? `${base}?quiz=${encodeURIComponent(quizId)}` : base;
+  window.open(url, '_blank');
+}
+
 window.onload = function() {
   
-
-  // Tab switch elements
-  const tabActivate  = document.getElementById('tab-activate');
-  const tabLogin     = document.getElementById('tab-login');
+// Auto-skip modal if within 20 minutes of last auth
+const lastAuth = parseInt(localStorage.getItem('quizAuthTime') || '0', 10);
+const lastStudent = localStorage.getItem('quizAuthStudent') || '';
+const now = Date.now();
+if (lastAuth && (now - lastAuth) <= 20 * 60 * 1000 && lastStudent) {
+  // Assume already logged in — hide modal, show button
+  document.getElementById('activate-pane').style.display = 'none';
+  document.getElementById('login-pane').style.display = 'none';
+  document.getElementById('start-quiz-btn').style.display = '';
+  const msg = document.getElementById('student-name-msg');
+  msg.style.color = '#126c30';
+  msg.style.fontWeight = '700';
+  msg.textContent = `Welcome back!`;
+}
   const paneActivate = document.getElementById('activate-pane');
-  const paneLogin    = document.getElementById('login-pane');
-  const statusMsg    = document.getElementById('otp-status-msg');
-
-  function setTab(which) {
-    if (which === 'activate') {
-      paneActivate.style.display = '';
-      paneLogin.style.display = 'none';
-      tabActivate.style.background = '#1762a7';
-      tabActivate.style.color = '#fff';
-      tabLogin.style.background = '#e6effa';
-      tabLogin.style.color = '#1762a7';
-      statusMsg.style.display = 'none';
-    } else {
-      paneActivate.style.display = 'none';
-      paneLogin.style.display = '';
-      tabLogin.style.background = '#1762a7';
-      tabLogin.style.color = '#fff';
-      tabActivate.style.background = '#e6effa';
-      tabActivate.style.color = '#1762a7';
-      statusMsg.style.display = 'none';
-    }
-  }
-  tabActivate.onclick = () => setTab('activate');
-  tabLogin.onclick    = () => setTab('login');
+const paneLogin    = document.getElementById('login-pane');
+const statusMsg    = document.getElementById('otp-status-msg');
+const startBtn     = document.getElementById('start-quiz-btn');
+if (startBtn) startBtn.onclick = startQuizNow;
 
   // Helpers
   function getShared() {
@@ -1058,8 +1095,16 @@ window.onload = function() {
       }, { merge: true });
 
       window.studentName = stuData.name || 'Student';
-      document.getElementById('quiz-auth-modal').style.display = 'none';
-      loadQuiz();
+        document.getElementById('activate-pane').style.display = 'none';
+        document.getElementById('login-pane').style.display = 'none';
+        document.getElementById('start-quiz-btn').style.display = '';
+        statusMsg.style.display = '';
+        statusMsg.style.color = '#126c30';
+       statusMsg.textContent = 'Activation successful. Tap "Practice Quiz".';
+        // Save session token
+        localStorage.setItem('quizAuthTime', Date.now().toString());
+        localStorage.setItem('quizAuthStudent', window.__studentDocId || '');
+
     } catch (e) {
       console.error(e);
       showError('Activation failed.');
@@ -1113,9 +1158,18 @@ window.onload = function() {
           lastLogin: firebase.firestore.FieldValue.serverTimestamp()
         }, { merge: true });
 
-        window.studentName = stuData.name || 'Student';
-        document.getElementById('quiz-auth-modal').style.display = 'none';
-        loadQuiz();
+       window.studentName = stuData.name || 'Student';
+        document.getElementById('activate-pane').style.display = 'none';
+        document.getElementById('login-pane').style.display = 'none';
+        document.getElementById('start-quiz-btn').style.display = '';
+        statusMsg.style.display = '';
+        statusMsg.style.color = '#126c30';
+        statusMsg.textContent = 'Verified. Tap "Practice Quiz".';
+        // Save session token
+        localStorage.setItem('quizAuthTime', Date.now().toString());
+        localStorage.setItem('quizAuthStudent', window.__studentDocId || '');
+
+
       } else {
         // Wrong PIN: increment attempts, lock if threshold reached
         const newFailed = (stuData.failedAttempts || 0) + 1;
@@ -1278,5 +1332,6 @@ function saveCurrentProgress() {
     </script>
 </body>
 </html>
+
 
 
