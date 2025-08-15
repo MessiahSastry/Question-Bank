@@ -973,10 +973,10 @@ if (!main) { console.error("#quiz-main missing"); return; }
 
     // --- Leaderboard: Save quiz result to Firestore ---
     try {
-        const classVal = document.getElementById('selected-class').dataset.value;
-        const sectionVal = document.getElementById('selected-section').dataset.value;
-        const phoneVal = document.getElementById('student-phone').value;
-        const quizId = new URLSearchParams(window.location.search).get("quiz");
+        const { cls: classVal, sec: sectionVal, ph: phoneVal } = getShared();
+if (phoneVal.length !== 10) { console.warn('Skipping result write: missing 10-digit phone'); return; }
+const quizId = new URLSearchParams(window.location.search).get("quiz");
+const timeTaken = Math.floor((Date.now() - quizStart) / 1000);
         // Calculate score
         let correct = 0;
         quiz.questions.forEach((q, i) => {
@@ -1260,12 +1260,21 @@ setTimeout(fetchAndShowLeaderboard, 500);
 
 // --- Leaderboard logic (no changes needed) ---
 function fetchAndShowLeaderboard() {
-  const quizId = window.quizId || new URLSearchParams(window.location.search).get("quiz");
+  const usp    = new URLSearchParams(window.location.search);
+  const quizId = window.quizId || usp.get("quiz") || "";
 
-  db.collection("quizResults")
-    .where("quizId", "==", quizId)
-    .get()
-    .then((querySnapshot) => {
+  // Read Class & Section from the auth modal (even if it's hidden)
+  const cls = (document.getElementById('selected-class')?.dataset.value || '').trim();
+  const sec = (document.getElementById('selected-section')?.dataset.value || '').trim();
+
+  // Build Firestore query: quiz + class + section + visible
+  let q = db.collection("quizResults").where("quizId", "==", quizId);
+  if (cls) q = q.where("class", "==", cls);
+  if (sec) q = q.where("section", "==", sec);
+  q = q.where("leaderboardVisible", "==", true);
+
+  q.get()
+   .then((querySnapshot) => {
       // Collect all results
       const byPhone = {};
       querySnapshot.forEach(doc => {
@@ -1347,9 +1356,8 @@ if (closeLb) {
 }
 
 function saveCurrentProgress() {
-    const classVal = document.getElementById('selected-class').dataset.value;
-    const sectionVal = document.getElementById('selected-section').dataset.value;
-    const phoneVal = document.getElementById('student-phone').value;
+    const { cls: classVal, sec: sectionVal, ph: phoneVal } = getShared();
+if (phoneVal.length !== 10) return; // not authenticated → skip write
     const quizId = new URLSearchParams(window.location.search).get("quiz");
     let correct = 0;
     quiz.questions.forEach((q, i) => {
@@ -1395,4 +1403,5 @@ function saveCurrentProgress() {
     </script>
 </body>
 </html>
+
 
