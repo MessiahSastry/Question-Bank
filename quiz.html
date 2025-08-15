@@ -680,16 +680,22 @@ function handlePhoneInput() {
         firebase.initializeApp(firebaseConfig);
         const db = firebase.firestore();
         function getAcademicYear(startMonthIndex = 5) { // default: starts June
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = now.getMonth();
-  const startYear = (m >= startMonthIndex) ? y : (y - 1);
-  const nextShort = String((startYear + 1) % 100).padStart(2, '0');
-  return `${startYear}-${nextShort}`; // e.g., "2025-26"
-}
+            // Uses ?year=YYYY-YY if present; else current year from getAcademicYear()
+            function getActiveAcademicYear() {
+              const y = new URLSearchParams(location.search).get('year');
+              return (y && /^\d{4}-\d{2}$/.test(y)) ? y : getAcademicYear();
+            }
+
+          const now = new Date();
+          const y = now.getFullYear();
+          const m = now.getMonth();
+          const startYear = (m >= startMonthIndex) ? y : (y - 1);
+          const nextShort = String((startYear + 1) % 100).padStart(2, '0');
+          return `${startYear}-${nextShort}`; // e.g., "2025-26"
+        }
         // --- Add this function below! ---
    async function fetchAndShowStudentName() {
-  const year = getAcademicYear();                      // e.g., "2025-26"
+  const year = getActiveAcademicYear();                // e.g., "2025-26"
   const cls  = (document.getElementById('selected-class')?.dataset.value || "").trim();
   const sec  = (document.getElementById('selected-section')?.dataset.value || "").trim();
   const phIn = (document.getElementById('student-phone')?.value || "");
@@ -976,6 +982,7 @@ if (!main) { console.error("#quiz-main missing"); return; }
         const { cls: classVal, sec: sectionVal, ph: phoneVal } = getShared();
 if (phoneVal.length !== 10) { console.warn('Skipping result write: missing 10-digit phone'); return; }
 const quizId = new URLSearchParams(window.location.search).get("quiz");
+        const academicYear = getActiveAcademicYear();
 const timeTaken = Math.floor((Date.now() - quizStart) / 1000);
         // Calculate score
         let correct = 0;
@@ -984,21 +991,25 @@ const timeTaken = Math.floor((Date.now() - quizStart) / 1000);
             if (userAnswers[i] === ansIdx) correct++;
         });
         db.collection("quizResults").add({
-      quizId: quizId,
-      class: classVal,
-      section: sectionVal,
-      phone: phoneVal,
-      name: window.studentName,
-      score: correct,
-      time: timeTaken,
-      timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-      leaderboardVisible: true
-    });
-    } catch (e) {
-        // ignore, for first setup
-        console.error(e);
-    }
+  quizId: quizId,
+  academicYear,
+  class: classVal,
+  section: sectionVal,
+  phone: phoneVal,
+  name: window.studentName,
+  score: correct,
+  time: timeTaken,
+  timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+  leaderboardVisible: true
+});
+
+     } catch (e) {
+    // ignore, for first setup
+    console.error(e);
+  }
+  setTimeout(fetchAndShowLeaderboard, 400);
 }
+
         function renderResult() {
             let correct = 0, wrong = 0, missed = 0;
             quiz.questions.forEach((q, i) => {
@@ -1030,11 +1041,14 @@ const timeTaken = Math.floor((Date.now() - quizStart) / 1000);
   
 
 function startQuizNow() {
-  const quizId = new URLSearchParams(window.location.search).get('quiz') || '';
-  const base = window.location.href.split('?')[0];
-  const url  = quizId ? `${base}?quiz=${encodeURIComponent(quizId)}` : base;
-  window.location.href = url;
+  const modal = document.getElementById('quiz-auth-modal');
+  if (modal) modal.style.display = 'none';
+  if (!window.__quizStarted) {        // avoid double-start
+    window.__quizStarted = true;
+    loadQuiz();                       // <-- start quiz now
+  }
 }
+
 
 window.onload = function() {
   // --- SAFETY: if header/quiz accidentally sit inside the auth modal, move them out
@@ -1100,7 +1114,7 @@ window.getShared = function () {
     showOk('Checking details...');
 
     try {
-      const year = "2025-26";
+      const year = getActiveAcademicYear();
       const stuRef = db.collection('years').doc(year)
         .collection('classes').doc(window.__classDocId)
         .collection('sections').doc(window.__sectionDocId)
@@ -1167,7 +1181,7 @@ setTimeout(fetchAndShowLeaderboard, 500);
     showOk('Verifying...');
 
     try {
-      const year = "2025-26";
+      const year = getActiveAcademicYear();
       const stuRef = db.collection('years').doc(year)
         .collection('classes').doc(window.__classDocId)
         .collection('sections').doc(window.__sectionDocId)
@@ -1233,13 +1247,15 @@ setTimeout(fetchAndShowLeaderboard, 500);
 function fetchAndShowLeaderboard() {
   const usp    = new URLSearchParams(window.location.search);
   const quizId = window.quizId || usp.get("quiz") || "";
-
+const academicYear = getActiveAcademicYear();
   // Read Class & Section from the auth modal (even if it's hidden)
   const cls = (document.getElementById('selected-class')?.dataset.value || '').trim();
   const sec = (document.getElementById('selected-section')?.dataset.value || '').trim();
 
   // Build Firestore query: quiz + class + section + visible
-  let q = db.collection("quizResults").where("quizId", "==", quizId);
+  let q = db.collection("quizResults")
+  .where("quizId", "==", quizId)
+  .where("academicYear", "==", academicYear);
   if (cls) q = q.where("class", "==", cls);
   if (sec) q = q.where("section", "==", sec);
   
@@ -1339,34 +1355,36 @@ if (phoneVal.length !== 10) return; // not authenticated → skip write
     db.collection("quizResults")
       .where("quizId", "==", quizId)
       .where("phone", "==", phoneVal)
+      .where("academicYear", "==", academicYear)
       .get()
       .then(snapshot => {
           if (!snapshot.empty) {
               // Update the existing result (keep only latest one per user)
               const timeTaken = Math.floor((Date.now() - quizStart) / 1000);
-            snapshot.docs[0].ref.set({
-          name: window.studentName,
-          class: classVal,
-          section: sectionVal,
-          score: correct,
-          time: timeTaken,
-          timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-          leaderboardVisible: true
-        }, { merge: true });
+           snapshot.docs[0].ref.set({
+  name: window.studentName,
+  academicYear,
+  class: classVal,
+  section: sectionVal,
+  score: correct,
+  time: timeTaken,
+  timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+  leaderboardVisible: true
+}, { merge: true });
           } else {
                 const timeTaken = Math.floor((Date.now() - quizStart) / 1000); // Calculate time taken in seconds
                 db.collection("quizResults").add({
-                  quizId: quizId,
-                  class: classVal,
-                  section: sectionVal,
-                  phone: phoneVal,
-                  name: window.studentName,
-                  score: correct,
-                  time: Math.floor((Date.now() - quizStart) / 1000),
-                  timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-                  leaderboardVisible: true
-                });
-
+  quizId: quizId,
+  academicYear,
+  class: classVal,
+  section: sectionVal,
+  phone: phoneVal,
+  name: window.studentName,
+  score: correct,
+  time: Math.floor((Date.now() - quizStart) / 1000),
+  timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+  leaderboardVisible: true
+});
           }
       });
 }
@@ -1374,6 +1392,7 @@ if (phoneVal.length !== 10) return; // not authenticated → skip write
     </script>
 </body>
 </html>
+
 
 
 
