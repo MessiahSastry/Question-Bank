@@ -1257,93 +1257,79 @@ setTimeout(fetchAndShowLeaderboard, 500);
 
 // --- Leaderboard logic (no changes needed) ---
 function fetchAndShowLeaderboard() {
-    const quizId = new URLSearchParams(window.location.search).get("quiz");
-    db.collection("quizResults")
-        .where("quizId", "==", quizId)
-        .orderBy("score", "desc")
-        .orderBy("timestamp", "asc")
-        .get()
-        .then((querySnapshot) => {
-            // Group all attempts per student (by phone)
-            let byPhone = {};
-            querySnapshot.forEach(doc => {
-                const d = doc.data();
-                const key = d.phone || d.name; // fallback if phone is missing
-                if (!byPhone[key]) byPhone[key] = [];
-                byPhone[key].push({ ...d, _timestamp: doc.data().timestamp?.toDate?.() || new Date(0) });
-            });
+  const quizId = window.quizId || new URLSearchParams(window.location.search).get("quiz");
 
-            // Get best attempt for each student
-            let leaderboard = Object.values(byPhone).map(attemptsArr => {
-                // Sort by score DESC, then by fastest time (lowest), then by earliest timestamp
-                attemptsArr.sort((a, b) => {
-                    if (b.score !== a.score) return b.score - a.score;
-                    if ((a.time || 99999) !== (b.time || 99999)) return (a.time || 99999) - (b.time || 99999);
-                    return (a._timestamp - b._timestamp);
-                });
-                 let best = attemptsArr[0];
-                // Only first two words of the name
-                let shortName = (best.name && best.name.trim() && best.name !== "Student")
-                  ? best.name
-                  : (best.phone || "Student");
-                // Format time
-                let timeTaken = best.time || best.timeTaken || best.timer || 0;
-            let min = Math.max(1, Math.ceil(timeTaken / 60)); // show at least 1 minute if attempted
-            let timeMinutes = `${min}`;
-            return {
-                name: shortName,
-                phone: best.phone,
-                score: best.score,
-                attempts: attemptsArr.length,
-                timeMinutes
-            };
-            });
-            console.log("Leaderboard mapping:", leaderboard);
-            // Sort leaderboard by score DESC, then time ASC
-            leaderboard.sort((a, b) => {
-            if (b.score !== a.score) return b.score - a.score;
-            // For ties, show fastest time first
-            return parseInt(a.timeMinutes) - parseInt(b.timeMinutes);
+  db.collection("quizResults")
+    .where("quizId", "==", quizId)
+    .get()
+    .then((querySnapshot) => {
+      // Collect all results
+      const byPhone = {};
+      querySnapshot.forEach(doc => {
+        const d = doc.data() || {};
+        const key = d.phone || d.name || 'Student';
+        if (!byPhone[key]) byPhone[key] = [];
+        byPhone[key].push({
+          name: (d.name && d.name.trim() && d.name !== "Student") ? d.name : (d.phone || "Student"),
+          phone: d.phone || "",
+          score: Number(d.score || 0),
+          time: Number(d.time || d.timeTaken || d.timer || 0),
+          _ts: d.timestamp && d.timestamp.toDate ? d.timestamp.toDate().getTime() : 0
         });
+      });
 
-            // Render rows
-            function getMedal(rank) {
-                if (rank === 1) return '<span style="font-size:1.5em;">🥇</span>';
-                if (rank === 2) return '<span style="font-size:1.5em;">🥈</span>';
-                if (rank === 3) return '<span style="font-size:1.5em;">🥉</span>';
-                return `<span style="font-size:1.3em;font-weight:bold;color:#fff;background:#0f3d6b;border-radius:50%;display:inline-block;width:1.8em;height:1.8em;text-align:center;line-height:1.8em;">${rank}</span>`;
-            }
+      // Pick best attempt per student
+      let leaderboard = Object.values(byPhone).map(arr => {
+        arr.sort((a,b) => (b.score - a.score) || (a.time - b.time) || (a._ts - b._ts));
+        const best = arr[0];
+        const min = Math.max(1, Math.ceil((best.time || 0) / 60));
+        return { name: best.name, phone: best.phone, score: best.score, attempts: arr.length, timeMinutes: String(min) };
+      });
 
-         const currentPhone = document.getElementById('student-phone')?.value || '';
+      // Final ordering (client-side)
+      leaderboard.sort((a,b) => (b.score - a.score) || (parseInt(a.timeMinutes) - parseInt(b.timeMinutes)));
 
-        let rows = leaderboard.map((d, idx) => {
-          const isCurrentUser = (d.phone === currentPhone);
-            console.log('COMPARE:', {dphone: d.phone, currentPhone, isCurrentUser});
-          return `
-            <div class="leader-row${isCurrentUser ? ' current-user' : ''}">
-              <span class="leader-medal">${getMedal(idx+1)}</span>
-              <span class="leader-name" title="${d.name}">${d.name}</span>
-              <span class="leader-score">${d.score} /${d.timeMinutes} (${d.attempts})</span>
-            </div>
-          `;
-        });
-            // Show with new title and header color
-           const html = `
-              <div class="leaderboard-box">
-                <div class="leaderboard-title" style="font-size:1.14em;text-align:left;font-weight:600;">
-                  St. Patrick's Challengers
-                  <span style="float:right;font-size:0.95em;color:#e0eaff;font-weight:400;">
-                    Score / time (attempts)
-                  </span>
-                </div>
-                <div class="leaderboard-list">
-                  ${rows.join("")}
-                </div>
-              </div>
-            `;
-            showLeaderboard(html);
-        });
+      function getMedal(rank) {
+        if (rank === 1) return '<span style="font-size:1.5em;">🥇</span>';
+        if (rank === 2) return '<span style="font-size:1.5em;">🥈</span>';
+        if (rank === 3) return '<span style="font-size:1.5em;">🥉</span>';
+        return `<span style="font-size:1.3em;font-weight:bold;color:#fff;background:#0f3d6b;border-radius:50%;display:inline-block;width:1.8em;height:1.8em;text-align:center;line-height:1.8em;">${rank}</span>`;
+      }
+
+      const currentPhone = document.getElementById('student-phone')?.value || '';
+      const rows = leaderboard.map((d, idx) => `
+        <div class="leader-row${d.phone === currentPhone ? ' current-user' : ''}">
+          <span class="leader-medal">${getMedal(idx+1)}</span>
+          <span class="leader-name" title="${d.name}">${d.name}</span>
+          <span class="leader-score">${d.score} /${d.timeMinutes} (${d.attempts})</span>
+        </div>
+      `);
+
+      const html = `
+        <div class="leaderboard-box">
+          <div class="leaderboard-title" style="font-size:1.14em;text-align:left;font-weight:600;">
+            St. Patrick's Challengers
+            <span style="float:right;font-size:0.95em;color:#e0eaff;font-weight:400;">Score / time (attempts)</span>
+          </div>
+          <div class="leaderboard-list">
+            ${rows.join("") || `<div style="background:#fff;border-radius:12px;padding:14px;text-align:center;color:#185496;">No attempts yet.</div>`}
+          </div>
+        </div>`;
+      showLeaderboard(html);
+    })
+    .catch(err => {
+      console.error('Leaderboard error:', err);
+      showLeaderboard(
+        `<div class="leaderboard-box">
+           <div class="leaderboard-title">St. Patrick's Challengers</div>
+           <div style="background:#fff;border-radius:12px;padding:14px;text-align:center;color:#c82333;">
+             Couldn't load leaderboard.<br>${err && err.message ? err.message : err}
+           </div>
+         </div>`
+      );
+    });
 }
+
 // ---- Leaderboard Modal Show/Hide ----
 function showLeaderboard(html) {
     document.getElementById('leaderboard-popup-block').innerHTML = html || '';
@@ -1404,6 +1390,7 @@ function saveCurrentProgress() {
     </script>
 </body>
 </html>
+
 
 
 
