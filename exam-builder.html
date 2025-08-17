@@ -392,27 +392,71 @@ function splitCounts(total, percents) {
     return result;
 }
 
-// --- Firebase/Firestore fetch helpers ---
 // --- DEDUPE HELPERS (new) ---
 function normalizeText(s) {
   if (!s) return '';
-  return String(s)
-    .replace(/<[^>]+>/g, ' ')   // strip HTML tags
-    .replace(/&nbsp;/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .toLowerCase();
+  let t = String(s);
+
+  // strip HTML tags
+  t = t.replace(/<[^>]+>/g, ' ');
+
+  // HTML entities & non-breaking spaces
+  t = t.replace(/&nbsp;/gi, ' ').replace(/\u00A0/g, ' ');
+
+  // Unicode canonicalization
+  try { t = t.normalize('NFKC'); } catch (e) {}
+
+  // remove zero-width/invisible characters
+  t = t.replace(/[\u200B-\u200D\uFEFF]/g, '');
+
+  // unify dashes & minus (en/em/hyphen/minus → '-')
+  t = t.replace(/[\u2010-\u2015\u2212]/g, '-');
+
+  // unify quotes
+  t = t.replace(/[\u2018\u2019\u201A\u2032]/g, "'")
+       .replace(/[\u201C\u201D\u2033]/g, '"');
+
+  // unify multiplication sign × to 'x'
+  t = t.replace(/\u00D7/g, 'x');
+
+  // collapse whitespace
+  t = t.replace(/\s+/g, ' ').trim().toLowerCase();
+
+  // ignore trivial trailing punctuation differences
+  t = t.replace(/[.,;:!?]+$/g, '');
+
+  return t;
 }
+// Build a stable de-dupe key from a question object
+function makeDeDupeKey(q) {
+  if (!q) return '';
+  // Prefer 'question', fall back to 'text'
+  let raw = String(q.question || q.text || '');
+
+  // Drop HTML
+  raw = raw.replace(/<[^>]+>/g, ' ');
+
+  // Remove trailing "Ans: ..." (any case)
+  raw = raw.replace(/\bAns?\s*:\s*.*$/i, '');
+
+  // If MCQ options are inline, strip from the first option marker onward.
+// Matches A) / A. / (A) with optional spaces, case-insensitive.
+raw = raw.replace(/\s*(?:\(?\s*[A]\s*[\)\.])[\s\S]*$/i, '');
+
+  // Final canonical form
+  return normalizeText(raw);
+}
+
 function uniqueByIdOrText(arr) {
   const seenIds = new Set();
-  const seenText = new Set();
+  const seenKeys = new Set();
   const out = [];
   for (const q of arr) {
     const id  = q.id || '';
-    const key = normalizeText(q.question || q.text || '');
-    if (seenIds.has(id) || (key && seenText.has(key))) continue;
+    const key = makeDeDupeKey(q);
+    if ((id && seenIds.has(id)) || (key && seenKeys.has(key))) continue;
     if (id)  seenIds.add(id);
-    if (key) seenText.add(key);
+    if (key) seenKeys.add(key);
     out.push(q);
   }
   return out;
@@ -482,7 +526,7 @@ async function fetchQuestionsWithMarksFallback({
 
     // track duplicates by id AND by normalized text
     const usedIds = new Set();
-    const usedText = new Set();
+    const usedKeys = new Set();
 
     const base = firestore.collection("questions")
         .where("class", "==", selectedClass)
@@ -521,15 +565,15 @@ async function fetchQuestionsWithMarksFallback({
     };
 
     const dedupAppend = (arr, docs) => {
-        for (const d of docs) {
-            const key = normalizeText(d.question || d.text || '');
-            if ((d.id && usedIds.has(d.id)) || (key && usedText.has(key))) continue;
-            if (d.id) usedIds.add(d.id);
-            if (key)  usedText.add(key);
-            arr.push(d);
-            if (arr.length >= count) break;
-        }
-    };
+    for (const d of docs) {
+        const key = makeDeDupeKey(d);
+        if ((d.id && usedIds.has(d.id)) || (key && usedKeys.has(key))) continue;
+        if (d.id) usedIds.add(d.id);
+        if (key)  usedKeys.add(key);
+        arr.push(d);
+        if (arr.length >= count) break;
+    }
+};
 
     // 1) exact marks + difficulty
     {
@@ -918,6 +962,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
 for (let subjData of subjectsData) {
     let subjectBlock = { subject: subjData.subject, chapters: subjData.chapters, sections: [] };
+    // Track duplicates across all sections for this subject
+    const subjectSeenKeys = new Set();
     for (let secIdx = 0; secIdx < subjData.sections.length; secIdx++) {
         const sec = subjData.sections[secIdx];
         let questions = [];
@@ -932,20 +978,21 @@ for (let subjData of subjectsData) {
     const byLevel = {"Level 1": [], "Level 2": [], "Level 3": []};
 
     // strong de-dupe across ALL levels by id or normalized text
-    const usedIds  = new Set();
-    const usedText = new Set();
-    const takeUnique = (list, need) => {
-        const out = [];
-        for (const q of list) {
-            const key = normalizeText(q.question || q.text || '');
-            if ((q.id && usedIds.has(q.id)) || (key && usedText.has(key))) continue;
-            if (q.id) usedIds.add(q.id);
-            if (key)  usedText.add(key);
-            out.push(q);
-            if (out.length >= need) break;
-        }
-        return out;
-    };
+   // strong de-dupe across ALL levels by id or canonical key
+const usedIds  = new Set();
+const usedKeys = new Set();
+const takeUnique = (list, need) => {
+    const out = [];
+    for (const q of list) {
+        const key = makeDeDupeKey(q);
+        if ((q.id && usedIds.has(q.id)) || (key && usedKeys.has(key))) continue;
+        if (q.id) usedIds.add(q.id);
+        if (key)  usedKeys.add(key);
+        out.push(q);
+        if (out.length >= need) break;
+    }
+    return out;
+};
 
     // Step 1: fetch each level with a small buffer and pick uniques
     for (let i = 0; i < difficultyLevels.length; i++) {
@@ -1033,14 +1080,15 @@ if (questions.length < requestedCount) {
 }
 
 // Cap to requestedCount before numbering
-questions = questions.slice(0, requestedCount).map((q, idx) => {
+// Cap to requestedCount and build mapped items
+const mapped = questions.slice(0, requestedCount).map((q) => {
     let optionsArr = extractMCQOptions(q);
     let stem = q.question || q.text || '';
     if ((sec.mcqType === "MCQ (Single)" || sec.mcqType === "MCQ (Multiple)") && Array.isArray(optionsArr) && optionsArr.length === 4) {
         const cleanOptionsArr = optionsArr.map(opt => opt.replace(/^[A-D][).]?\s*/, '').trim());
         const shuffled = shuffleMCQQuestion({ ...q, options: cleanOptionsArr, question: stem, answer: q.answer });
         return {
-            number: idx + 1,
+            number: 0, // temp
             text: shuffled.question || shuffled.text || "",
             marks: sec.marksPerQuestion,
             options: shuffled.options || [],
@@ -1048,7 +1096,7 @@ questions = questions.slice(0, requestedCount).map((q, idx) => {
         };
     } else {
         return {
-            number: idx + 1,
+            number: 0, // temp
             text: stem,
             marks: sec.marksPerQuestion,
             options: Array.isArray(optionsArr) ? optionsArr : [],
@@ -1056,6 +1104,30 @@ questions = questions.slice(0, requestedCount).map((q, idx) => {
         };
     }
 });
+
+// Subject-level de-dupe (prevents repeats across multiple sections of same subject)
+const filtered = [];
+for (const item of mapped) {
+    const k = makeDeDupeKey({ text: item.text });
+    if (k && subjectSeenKeys.has(k)) continue;
+    if (k) subjectSeenKeys.add(k);
+    filtered.push(item);
+}
+
+// Renumber after filtering
+questions = filtered.map((it, i) => ({ ...it, number: i + 1 }));
+// DEBUG (temporary): log any remaining dupes by canonical key for this section
+{
+  const counts = {};
+  for (const it of questions) {
+    const k = makeDeDupeKey({ text: it.text });
+    counts[k] = (counts[k] || 0) + 1;
+  }
+  const dupes = Object.entries(counts).filter(([_, v]) => v > 1);
+  if (dupes.length) {
+    console.warn(`Dupes in ${subjData.subject} - ${sec.label}`, dupes);
+  }
+}
         } else if (sec.type === "internal") {
             let missingPairs = 0;
             for (let p = 0; p < sec.pairs.length; p++) {
@@ -1131,6 +1203,7 @@ window.location.href = 'exam-review.html';
 </script>
 </body>
 </html>
+
 
 
 
