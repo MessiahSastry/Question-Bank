@@ -2,9 +2,12 @@
 <html lang="en">
 <head>
   <script>
-  window.MathJax = { tex: { inlineMath: [["$", "$"], ["\\(", "\\)"]] }, svg: { fontCache: "global" } };
-  </script>
-  <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+  window.MathJax = {
+    tex: { inlineMath: [["$", "$"], ["\\(", "\\)"]], processEscapes: true },
+    svg: { fontCache: "global" }
+  };
+</script>
+<script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
   <meta charset="UTF-8" />
   <title>Exam Review | St. Patrick's School</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
@@ -237,10 +240,11 @@
 </div>
 `;
         (section.questions || []).forEach((q, qIdx) => {
-         html += `<div class="question-row" data-subject="${subjIdx}" data-section="${sIdx}" data-question="${qIdx}">
+        html += `<div class="question-row" data-subject="${subjIdx}" data-section="${sIdx}" data-question="${qIdx}">
   <span class="question-number">${(++qCounter)}.</span>
   <span class="question-text" contenteditable="true"
-        data-subject="${subjIdx}" data-section="${sIdx}" data-question="${qIdx}">
+        data-subject="${subjIdx}" data-section="${sIdx}" data-question="${qIdx}"
+        data-raw="${(stripMetaTags(stripMetaLine(q.text || q.body || q.question || ''))).replace(/"/g,'&quot;').replace(/\n/g,'&#10;')}">
     ${stripMetaTags(stripMetaLine(q.text || q.body || q.question || ''))}
   </span>
   <span class="marks-box" contenteditable="true">${q.marks || section.marksPerQuestion || ''}</span>
@@ -295,6 +299,15 @@ area.querySelectorAll('.num-questions, .marks-per-question').forEach(el => {
       });
     });
   }
+// Keep raw TeX/text in sync when the teacher edits a question
+area.querySelectorAll('.question-text[contenteditable="true"]').forEach(el => {
+  const setRaw = (txt) => el.setAttribute(
+    'data-raw',
+    (txt || '').replace(/"/g, '&quot;').replace(/\n/g, '&#10;')
+  );
+  el.addEventListener('input', () => setRaw(el.textContent));
+  el.addEventListener('blur',  () => setRaw(el.textContent));
+});
 
   function saveEdits() {
     const paper = getExamPaper();
@@ -320,20 +333,22 @@ area.querySelectorAll('.num-questions, .marks-per-question').forEach(el => {
       const subjIdx = +ins.dataset.subject, secIdx = +ins.dataset.section;
       paper.subjects[subjIdx].sections[secIdx].instructions = ins.innerText.trim();
     });
-    // Questions/marks
-    // Questions/marks (and edited text)
+ // Questions/marks (and edited text) — prefer raw TeX stored in data-raw
 document.querySelectorAll('.question-row').forEach(qr => {
   const subjIdx = +qr.dataset.subject, secIdx = +qr.dataset.section, qIdx = +qr.dataset.question;
   const qTextEl = qr.querySelector('.question-text');
-  const newText  = (qTextEl?.innerText || '').trim();
-  const newMarks = qr.querySelector('.marks-box').innerText.trim();
+
+  const rawAttr    = (qTextEl?.getAttribute('data-raw') || '').trim();
+  const editedText = (qTextEl?.textContent || '').trim();
+  const newText    = rawAttr || editedText; // keep TeX if present
+  const newMarks   = qr.querySelector('.marks-box').innerText.trim();
 
   if (newText) {
     paper.subjects[subjIdx].sections[secIdx].questions[qIdx].text = newText;
-    // keep any existing options untouched
   }
   paper.subjects[subjIdx].sections[secIdx].questions[qIdx].marks = newMarks;
 });
+
     // Re-number questions continuously within each subject
 paper.subjects.forEach(subj => {
   let n = 1;
@@ -525,6 +540,7 @@ for (let j = 1; j < lines.length; j++) {
 </script>
 </body>
 </html>
+
 
 
 
