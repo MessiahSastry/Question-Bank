@@ -453,7 +453,7 @@ async function fetchQuestionsWithMarksFallback({
         .where("class", "==", selectedClass)
         .where("subject", "==", selectedSubject);
 
-    // helper: allow only the requested type
+    // allow only the requested type
     const isAllowedType = (d) => {
         if (mcqType === "MCQ (Single)")   return d.mcqType === "MCQ (Single)";
         if (mcqType === "MCQ (Multiple)") return d.mcqType === "MCQ (Multiple)";
@@ -462,7 +462,7 @@ async function fetchQuestionsWithMarksFallback({
         return true;
     };
 
-    // helper: apply firestore filters (we'll still type-filter client side for Descriptive)
+    // apply firestore filters
     const applyFilters = (q, { marks, difficulty, withChapters = true } = {}) => {
         let qq = q;
         if (withChapters && chapters && chapters.length) qq = qq.where("chapter", "in", chapters.slice(0, 10));
@@ -473,7 +473,7 @@ async function fetchQuestionsWithMarksFallback({
         return qq;
     };
 
-    // helper: run query and filter by type; override marks if needed
+    // run query and filter by type; override marks if needed
     const runAndFilter = async (qq, overrideMarks = null) => {
         const out = [];
         const snap = await qq.get();
@@ -502,7 +502,7 @@ async function fetchQuestionsWithMarksFallback({
         if (picked.length >= count) return picked.slice(0, count);
     }
 
-    // 2) exact marks, difficulty RELAXED (fixes both MCQ & Descriptive)
+    // 2) exact marks, difficulty RELAXED
     {
         const q2 = applyFilters(base, { marks: wantedMarks, difficulty: null });
         const docs = await runAndFilter(q2, wantedMarks);
@@ -510,7 +510,8 @@ async function fetchQuestionsWithMarksFallback({
         if (picked.length >= count) return picked.slice(0, count);
     }
 
-    // 3) compose/convert fallbacks (respecting type)
+    // 3) ONLY non-pair conversions (keep or remove as you prefer)
+    //    If you also want to forbid these, tell me and I’ll strip them too.
 
     // wanted 1: allow 2-mark used as 1
     if (wantedMarks === 1 && picked.length < count) {
@@ -520,29 +521,7 @@ async function fetchQuestionsWithMarksFallback({
         if (picked.length >= count) return picked.slice(0, count);
     }
 
-    // wanted 2: pair two 1-mark -> 2-mark
-    if (wantedMarks === 2 && picked.length < count) {
-        const q = applyFilters(base, { marks: 1, difficulty: null });
-        let ones = await runAndFilter(q, 1);
-        ones = ones.filter(d => !used.has(d.id));
-
-        const needPairs = count - picked.length;
-        const pairs = [];
-        for (let i = 0; i + 1 < ones.length && pairs.length < needPairs; i += 2) {
-            const a = ones[i], b = ones[i + 1];
-            pairs.push({
-                id: `${a.id}_${b.id}`,
-                text: `${(a.question || a.text || "").trim()}<br>${(b.question || b.text || "").trim()}`,
-                marks: 2,
-                _composed: true,
-                _composedFrom: [a.id, b.id]
-            });
-        }
-        dedupAppend(picked, pairs);
-        if (picked.length >= count) return picked.slice(0, count);
-    }
-
-    // wanted 3: allow 2-mark as 3
+    // wanted 3: allow 2-mark used as 3
     if (wantedMarks === 3 && picked.length < count) {
         const q = applyFilters(base, { marks: 2, difficulty: null });
         let twos = await runAndFilter(q, 3);
@@ -551,29 +530,7 @@ async function fetchQuestionsWithMarksFallback({
         if (picked.length >= count) return picked.slice(0, count);
     }
 
-    // wanted 4: pair two 2-mark -> 4-mark
-    if (wantedMarks === 4 && picked.length < count) {
-        const q = applyFilters(base, { marks: 2, difficulty: null });
-        let twos = await runAndFilter(q, 2);
-        twos = twos.filter(d => !used.has(d.id));
-
-        const needPairs = count - picked.length;
-        const pairs = [];
-        for (let i = 0; i + 1 < twos.length && pairs.length < needPairs; i += 2) {
-            const a = twos[i], b = twos[i + 1];
-            pairs.push({
-                id: `${a.id}_${b.id}`,
-                text: `${(a.question || a.text || "").trim()}<br>${(b.question || b.text || "").trim()}`,
-                marks: 4,
-                _composed: true,
-                _composedFrom: [a.id, b.id]
-            });
-        }
-        dedupAppend(picked, pairs);
-        if (picked.length >= count) return picked.slice(0, count);
-    }
-
-    // wanted 5: allow 4-mark as 5
+    // wanted 5: allow 4-mark used as 5
     if (wantedMarks === 5 && picked.length < count) {
         const q = applyFilters(base, { marks: 4, difficulty: null });
         let fours = await runAndFilter(q, 5);
@@ -583,6 +540,7 @@ async function fetchQuestionsWithMarksFallback({
 
     return picked.slice(0, count);
 }
+
 // --- DROPDOWN HELPERS (multi, single, sections, etc.) ---
 function createDropdown(containerId, options, placeholder) {
     const container = document.getElementById(containerId);
@@ -1155,6 +1113,7 @@ window.location.href = 'exam-review.html';
 </script>
 </body>
 </html>
+
 
 
 
