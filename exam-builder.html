@@ -451,7 +451,29 @@ raw = raw.replace(/\s*(?:\(?\s*[A]\s*[\)\.])[\s\S]*$/i, '');
   // Final canonical form
   return normalizeText(raw);
 }
-
+// --- DEBUG: list items with their canonical key (no behavior change) ---
+function _debugList(list, label) {
+  try {
+    const rows = (list || []).map(d => {
+      const text = String(d.question || d.text || '');
+      return {
+        id: d.id || '',
+        diff: d.difficulty || '',
+        chapter: d.chapter || '',
+        marks: d.marks,
+        mcqType: d.mcqType || '',
+        key: makeDeDupeKey({ text }).slice(0, 80),
+        snippet: text.slice(0, 120)
+      };
+    });
+    console.group(label);
+    console.table(rows);
+    console.log('count:', rows.length);
+    console.groupEnd();
+  } catch (e) {
+    console.warn('debugList error:', e);
+  }
+}
 function uniqueByIdOrText(arr) {
   const seenIds = new Set();
   const seenKeys = new Set();
@@ -1000,20 +1022,25 @@ const takeUnique = (list, need) => {
 };
 
     // Step 1: fetch each level with a small buffer and pick uniques
-    for (let i = 0; i < difficultyLevels.length; i++) {
-        const level = difficultyLevels[i];
-        const need  = counts[i];
-        let pool = await fetchQuestionsWithMarksFallback({
-            selectedClass,
-            selectedSubject: subjData.subject,
-            chapters: subjData.chapters,
-            marksPerQuestion: sec.marksPerQuestion,
-            mcqType: sec.mcqType,
-            count: Math.max(need * 2, need + 2),   // small buffer to reduce repeats
-            forceDifficulty: level
-        });
-        pool = uniqueByIdOrText(pool);
-        byLevel[level] = takeUnique(pool, need);
+       for (let i = 0; i < difficultyLevels.length; i++) {
+      const level = difficultyLevels[i];
+      const need  = counts[i];
+
+      let pool = await fetchQuestionsWithMarksFallback({
+        selectedClass,
+        selectedSubject: subjData.subject,
+        chapters: subjData.chapters,
+        marksPerQuestion: sec.marksPerQuestion,
+        mcqType: sec.mcqType,
+        count: Math.max(need * 2, need + 2),   // small buffer to reduce repeats
+        forceDifficulty: level
+      });
+
+      // De-dupe within this level's pool and log what we actually have
+      pool = uniqueByIdOrText(pool);
+      _debugList(pool, `POOL — ${subjData.subject} / ${sec.label} / ${level} (need ${need})`);
+
+      byLevel[level] = takeUnique(pool, need);
     }
 
     // Step 2: if any bucket is short, borrow from the others via fresh fetches
@@ -1047,6 +1074,16 @@ const takeUnique = (list, need) => {
     // Step 3: merge, final de-dupe, shuffle, cap
     let questionsArr = [].concat(byLevel["Level 1"], byLevel["Level 2"], byLevel["Level 3"]);
     questionsArr = uniqueByIdOrText(questionsArr);
+                console.warn(
+  `MIXED — ${subjData.subject} / ${sec.label} — requested=${requestedCount}; ` +
+  `L1=${byLevel["Level 1"].length}, L2=${byLevel["Level 2"].length}, L3=${byLevel["Level 3"].length}; ` +
+  `afterUnique=${questionsArr.length}`
+);
+// show a few keys so we can see what's being considered the “same”
+_debugList(
+  questionsArr,
+  `MERGED UNIQUE — ${subjData.subject} / ${sec.label} (unique=${questionsArr.length})`
+);
     shuffleArray(questionsArr);
 
     if (questionsArr.length < requestedCount) {
@@ -1228,6 +1265,7 @@ window.location.href = 'exam-review.html';
 </script>
 </body>
 </html>
+
 
 
 
