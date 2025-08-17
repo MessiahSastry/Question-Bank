@@ -1087,54 +1087,46 @@ _debugList(
   `MERGED UNIQUE — ${subjData.subject} / ${sec.label} (unique=${questionsArr.length})`
 );
     shuffleArray(questionsArr);
-// FINAL TOP-UP: if still short, pull from ANY level (L1→L2→L3) within same chapters
+// FINAL TOP-UP: if still short, pull from ANY difficulty (ignore 40/30/30 split),
+// still respecting class/subject/chapters/marks/type and de-dupers.
 if (questionsArr.length < requestedCount) {
-  const donorsAny = ["Level 1", "Level 2", "Level 3"];
   const need0 = requestedCount - questionsArr.length;
 
-  // reuse the same used sets so we don't re-pick duplicates
+  // reuse “already picked” sets so we don’t repick
   const usedIdsTopUp  = new Set(questionsArr.map(q => q.id).filter(Boolean));
-  const usedKeysTopUp = new Set(questionsArr.map(q => makeDeDupeKey(q)));
+  const usedKeysTopUp = new Set(questionsArr.map(q => makeDeDupeKey(q)).filter(Boolean));
 
-  const takeUniqueTopUp = (pool, need) => {
-    const out = [];
-    for (const d of pool) {
-      const k = makeDeDupeKey(d);
-     if (
-  (d.id && usedIdsTopUp.has(d.id)) ||
-  (k && usedKeysTopUp.has(k))      ||
-  (k && subjectSeenKeys.has(k))    // prevent stems already used in earlier sections
-) continue;
-      if (d.id) usedIdsTopUp.add(d.id);
-      if (k)     usedKeysTopUp.add(k);
-      out.push(d);
-      if (out.length >= need) break;
-    }
-    return out;
-  };
+  // one wide fetch (NO forceDifficulty → any level)
+  let poolAny = await fetchQuestionsWithMarksFallback({
+    selectedClass,
+    selectedSubject: subjData.subject,
+    chapters: subjData.chapters,
+    marksPerQuestion: sec.marksPerQuestion,
+    mcqType: sec.mcqType,
+    count: Math.max(need0 * 3, need0 + 6)
+  });
 
-  let remaining = need0;
-  for (const donor of donorsAny) {
-    if (remaining <= 0) break;
-    let pool = await fetchQuestionsWithMarksFallback({
-      selectedClass,
-      selectedSubject: subjData.subject,
-      chapters: subjData.chapters,
-      marksPerQuestion: sec.marksPerQuestion,
-      mcqType: sec.mcqType,
-      count: Math.max(remaining * 2, remaining + 2),
-      forceDifficulty: donor
-    });
-    pool = uniqueByIdOrText(pool);
-    const picked = takeUniqueTopUp(pool, remaining);
-    questionsArr = questionsArr.concat(picked);
-    remaining -= picked.length;
+  poolAny = uniqueByIdOrText(poolAny);
+
+  const picked = [];
+  for (const d of poolAny) {
+    const id  = d.id;
+    const key = makeDeDupeKey(d);
+    if ((id && usedIdsTopUp.has(id)) || (key && usedKeysTopUp.has(key))) continue;
+    if (key && subjectSeenKeys.has(key)) continue; // don’t reuse stems from earlier sections
+    if (id)  usedIdsTopUp.add(id);
+    if (key) usedKeysTopUp.add(key);
+    picked.push(d);
+    if (questionsArr.length + picked.length >= requestedCount) break;
   }
 
-  // re-dedupe + shuffle once more
-  questionsArr = uniqueByIdOrText(questionsArr);
+  questionsArr = uniqueByIdOrText(questionsArr.concat(picked));
   shuffleArray(questionsArr);
 }
+
+// NO EARLY ERROR HERE. We just cap for now:
+questions = questionsArr.slice(0, requestedCount);
+
     if (questionsArr.length < requestedCount) {
         sectionErrors.push(
             `${subjData.subject} - ${sec.label} (${sec.mcqType}): Only ${questionsArr.length} of ${requestedCount} questions found. Please add more questions to the bank.`
@@ -1314,16 +1306,3 @@ window.location.href = 'exam-review.html';
 </script>
 </body>
 </html>
-
-
-
-
-
-
-
-
-
-
-
-
-
