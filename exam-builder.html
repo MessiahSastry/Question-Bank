@@ -1093,20 +1093,22 @@ const mapped = questions.slice(0, requestedCount).map((q) => {
         const cleanOptionsArr = optionsArr.map(opt => opt.replace(/^[A-D][).]?\s*/, '').trim());
         const shuffled = shuffleMCQQuestion({ ...q, options: cleanOptionsArr, question: stem, answer: q.answer });
         return {
-            number: 0, // temp
-            text: shuffled.question || shuffled.text || "",
-            marks: sec.marksPerQuestion,
-            options: shuffled.options || [],
-            answer: shuffled.answer || ""
-        };
+  number: 0, // temp
+  text: shuffled.question || shuffled.text || "",
+  marks: sec.marksPerQuestion,
+  options: shuffled.options || [],
+  answer: shuffled.answer || "",
+  srcId: q.id || null
+};
     } else {
         return {
-            number: 0, // temp
-            text: stem,
-            marks: sec.marksPerQuestion,
-            options: Array.isArray(optionsArr) ? optionsArr : [],
-            answer: q.answer || ""
-        };
+  number: 0, // temp
+  text: stem,
+  marks: sec.marksPerQuestion,
+  options: Array.isArray(optionsArr) ? optionsArr : [],
+  answer: q.answer || "",
+  srcId: q.id || null
+};
     }
 });
 
@@ -1216,8 +1218,38 @@ if (allSectionErrors.length > 0) {
   }
 })();
 
+// FINAL DUPLICATE AUDIT (by canonical key). Logs any dupes with ids & snippets.
+(function () {
+  const seen = new Map(); // key -> { count, ids:[], samples:[] }
+  function add(key, id, text) {
+    if (!key) return;
+    const e = seen.get(key) || { count: 0, ids: [], samples: [] };
+    e.count += 1;
+    if (id) e.ids.push(id);
+    if (e.samples.length < 2) e.samples.push((text || '').slice(0, 120));
+    seen.set(key, e);
+  }
+  for (const subj of finalPaper.subjects || []) {
+    for (const sec of subj.sections || []) {
+      for (const q of sec.questions || []) {
+        const k = makeDeDupeKey({ text: q.text });
+        add(k, q.srcId || null, q.text);
+      }
+    }
+  }
+  const dupes = [...seen.entries()].filter(([, v]) => v.count > 1);
+  if (dupes.length) {
+    console.warn('BUILDER AUDIT: DUPLICATES FOUND before save. Details below:');
+    dupes.forEach(([k, v]) => {
+      console.warn('x' + v.count, 'ids:', v.ids, 'samples:', v.samples);
+    });
+  } else {
+    console.warn('BUILDER AUDIT: No duplicates by canonical key. ✅');
+  }
+})();
 sessionStorage.setItem('examPaper', JSON.stringify(finalPaper));
 window.location.href = 'exam-review.html';
+
             } catch (err) {
                 showToast("Error building exam: " + (err.message || err), "error");
             }
@@ -1229,6 +1261,7 @@ window.location.href = 'exam-review.html';
 </script>
 </body>
 </html>
+
 
 
 
