@@ -1123,18 +1123,6 @@ for (const item of mapped) {
 
 // Renumber after filtering
 questions = filtered.map((it, i) => ({ ...it, number: i + 1 }));
-// DEBUG (temporary): log any remaining dupes by canonical key for this section
-{
-  const counts = {};
-  for (const it of questions) {
-    const k = makeDeDupeKey({ text: it.text });
-    counts[k] = (counts[k] || 0) + 1;
-  }
-  const dupes = Object.entries(counts).filter(([_, v]) => v > 1);
-  if (dupes.length) {
-    console.warn(`Dupes in ${subjData.subject} - ${sec.label}`, dupes);
-  }
-}
         } else if (sec.type === "internal") {
             let missingPairs = 0;
             for (let p = 0; p < sec.pairs.length; p++) {
@@ -1196,7 +1184,6 @@ if (allSectionErrors.length > 0) {
     return; // stop!
 }
 
-// Save and continue as before
 // Save and continue as before — but FIRST run a duplicate diagnostic
 (function () {
   const dupNotes = [];
@@ -1217,36 +1204,16 @@ if (allSectionErrors.length > 0) {
     console.warn('BUILDER: NO duplicates in finalPaper before saving');
   }
 })();
-
-// FINAL DUPLICATE AUDIT (by canonical key). Logs any dupes with ids & snippets.
-(function () {
-  const seen = new Map(); // key -> { count, ids:[], samples:[] }
-  function add(key, id, text) {
-    if (!key) return;
-    const e = seen.get(key) || { count: 0, ids: [], samples: [] };
-    e.count += 1;
-    if (id) e.ids.push(id);
-    if (e.samples.length < 2) e.samples.push((text || '').slice(0, 120));
-    seen.set(key, e);
-  }
-  for (const subj of finalPaper.subjects || []) {
-    for (const sec of subj.sections || []) {
-      for (const q of sec.questions || []) {
-        const k = makeDeDupeKey({ text: q.text });
-        add(k, q.srcId || null, q.text);
-      }
-    }
-  }
-  const dupes = [...seen.entries()].filter(([, v]) => v.count > 1);
-  if (dupes.length) {
-    console.warn('BUILDER AUDIT: DUPLICATES FOUND before save. Details below:');
-    dupes.forEach(([k, v]) => {
-      console.warn('x' + v.count, 'ids:', v.ids, 'samples:', v.samples);
-    });
-  } else {
-    console.warn('BUILDER AUDIT: No duplicates by canonical key. ✅');
-  }
-})();
+// Optional cleanup: remove debug-only srcId from questions before saving
+try {
+  (finalPaper.subjects || []).forEach(s =>
+    (s.sections || []).forEach(sec =>
+      (sec.questions || []).forEach(q => { if ('srcId' in q) delete q.srcId; })
+    )
+  );
+} catch (e) {
+  console.warn('srcId cleanup error:', e);
+}
 sessionStorage.setItem('examPaper', JSON.stringify(finalPaper));
 window.location.href = 'exam-review.html';
 
@@ -1261,6 +1228,7 @@ window.location.href = 'exam-review.html';
 </script>
 </body>
 </html>
+
 
 
 
