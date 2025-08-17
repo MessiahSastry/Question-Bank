@@ -393,6 +393,32 @@ function splitCounts(total, percents) {
 }
 
 // --- Firebase/Firestore fetch helpers ---
+// --- DEDUPE HELPERS (new) ---
+function normalizeText(s) {
+  if (!s) return '';
+  return String(s)
+    .replace(/<[^>]+>/g, ' ')   // strip HTML tags
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+function uniqueByIdOrText(arr) {
+  const seenIds = new Set();
+  const seenText = new Set();
+  const out = [];
+  for (const q of arr) {
+    const id  = q.id || '';
+    const key = normalizeText(q.question || q.text || '');
+    if (seenIds.has(id) || (key && seenText.has(key))) continue;
+    if (id)  seenIds.add(id);
+    if (key) seenText.add(key);
+    out.push(q);
+  }
+  return out;
+}
+
+// --- Firebase/Firestore fetch helpers ---
 const db = {
     getChapters: async (selectedClass, selectedSubject) => {
         try {
@@ -408,30 +434,36 @@ const db = {
         } catch (error) { console.error("Error fetching chapters from Firestore:", error); return []; }
     }
 };
+
 async function fetchQuestions({ selectedClass, selectedSubject, chapters, marksPerQuestion, mcqType, count, forceDifficulty }) {
     const firestore = firebase.firestore();
     let query = firestore.collection("questions")
         .where("class", "==", selectedClass)
         .where("subject", "==", selectedSubject);
-    if (forceDifficulty) query = query.where("difficulty", "==", forceDifficulty);
-    else if (window.difficultyFilter && window.difficultyFilter !== "Mixed") query = query.where("difficulty", "==", window.difficultyFilter);
+
+    if (forceDifficulty) {
+        query = query.where("difficulty", "==", forceDifficulty);
+    } else if (window.difficultyFilter && window.difficultyFilter !== "Mixed") {
+        query = query.where("difficulty", "==", window.difficultyFilter);
+    }
+
     if (chapters && chapters.length) query = query.where("chapter", "in", chapters.slice(0, 10));
-    if (marksPerQuestion) query = query.where("marks", "==", parseInt(marksPerQuestion));
-    if (mcqType === "MCQ (Single)") query = query.where("mcqType", "==", "MCQ (Single)");
+    if (marksPerQuestion)        query = query.where("marks", "==", parseInt(marksPerQuestion));
+    if (mcqType === "MCQ (Single)")   query = query.where("mcqType", "==", "MCQ (Single)");
     else if (mcqType === "MCQ (Multiple)") query = query.where("mcqType", "==", "MCQ (Multiple)");
+
     const snapshot = await query.get();
     let allQuestions = [];
     snapshot.forEach(doc => { allQuestions.push({ id: doc.id, ...doc.data() }); });
-        allQuestions.forEach(q => {
-      console.log(
-        `ID: ${q.id}, mcqType: ${q.mcqType}, marks: ${q.marks}, chapter: ${q.chapter}, difficulty: ${q.difficulty}`
-      );
-    });
-    console.log("ALL QUESTIONS FOUND:", allQuestions);
-    // Show only MCQ (Multiple) for this section
-    const filtered = allQuestions.filter(q => q.mcqType === "MCQ (Multiple)");
-    console.log("MCQ (Multiple) ONLY:", filtered.length, filtered.map(q => q.id));
-    if (mcqType === "Descriptive") allQuestions = allQuestions.filter(q => !q.mcqType || q.mcqType === "Descriptive");
+
+    // De-dupe by ID or by normalized text
+    allQuestions = uniqueByIdOrText(allQuestions);
+
+    // For descriptive sections, allow docs with mcqType "Descriptive" or missing/empty
+    if (mcqType === "Descriptive") {
+        allQuestions = allQuestions.filter(q => !q.mcqType || q.mcqType === "Descriptive");
+    }
+
     shuffleArray(allQuestions);
     return allQuestions.slice(0, count);
 }
@@ -447,7 +479,10 @@ async function fetchQuestionsWithMarksFallback({
     const firestore = firebase.firestore();
     const wantedMarks = parseInt(marksPerQuestion);
     let picked = [];
-    const used = new Set();
+
+    // track duplicates by id AND by normalized text
+    const usedIds = new Set();
+    const usedText = new Set();
 
     const base = firestore.collection("questions")
         .where("class", "==", selectedClass)
@@ -473,22 +508,24 @@ async function fetchQuestionsWithMarksFallback({
         return qq;
     };
 
-    // run query and filter by type; override marks if needed
-    const runAndFilter = async (qq, overrideMarks = null) => {
+    // run query and filter by type; no marks override (we keep exact marks only)
+    const runAndFilter = async (qq) => {
         const out = [];
         const snap = await qq.get();
         snap.forEach(doc => {
             const d = { id: doc.id, ...doc.data() };
             if (!isAllowedType(d)) return;
-            out.push(overrideMarks != null ? { ...d, marks: overrideMarks } : { ...d, marks: d.marks });
+            out.push(d);
         });
         return out;
     };
 
     const dedupAppend = (arr, docs) => {
         for (const d of docs) {
-            if (used.has(d.id)) continue;
-            used.add(d.id);
+            const key = normalizeText(d.question || d.text || '');
+            if ((d.id && usedIds.has(d.id)) || (key && usedText.has(key))) continue;
+            if (d.id) usedIds.add(d.id);
+            if (key)  usedText.add(key);
             arr.push(d);
             if (arr.length >= count) break;
         }
@@ -497,7 +534,7 @@ async function fetchQuestionsWithMarksFallback({
     // 1) exact marks + difficulty
     {
         const q1 = applyFilters(base, { marks: wantedMarks, difficulty: forceDifficulty });
-        const docs = await runAndFilter(q1, wantedMarks);
+        const docs = await runAndFilter(q1);
         dedupAppend(picked, docs);
         if (picked.length >= count) return picked.slice(0, count);
     }
@@ -505,39 +542,12 @@ async function fetchQuestionsWithMarksFallback({
     // 2) exact marks, difficulty RELAXED
     {
         const q2 = applyFilters(base, { marks: wantedMarks, difficulty: null });
-        const docs = await runAndFilter(q2, wantedMarks);
+        const docs = await runAndFilter(q2);
         dedupAppend(picked, docs);
         if (picked.length >= count) return picked.slice(0, count);
     }
 
-    // 3) ONLY non-pair conversions (keep or remove as you prefer)
-    //    If you also want to forbid these, tell me and I’ll strip them too.
-
-    // wanted 1: allow 2-mark used as 1
-    if (wantedMarks === 1 && picked.length < count) {
-        const q = applyFilters(base, { marks: 2, difficulty: null });
-        const docs = await runAndFilter(q, 1);
-        dedupAppend(picked, docs);
-        if (picked.length >= count) return picked.slice(0, count);
-    }
-
-    // wanted 3: allow 2-mark used as 3
-    if (wantedMarks === 3 && picked.length < count) {
-        const q = applyFilters(base, { marks: 2, difficulty: null });
-        let twos = await runAndFilter(q, 3);
-        twos = twos.filter(d => !used.has(d.id));
-        dedupAppend(picked, twos);
-        if (picked.length >= count) return picked.slice(0, count);
-    }
-
-    // wanted 5: allow 4-mark used as 5
-    if (wantedMarks === 5 && picked.length < count) {
-        const q = applyFilters(base, { marks: 4, difficulty: null });
-        let fours = await runAndFilter(q, 5);
-        fours = fours.filter(d => !used.has(d.id));
-        dedupAppend(picked, fours);
-    }
-
+    // No conversions or pairing: if still short, just return what we have.
     return picked.slice(0, count);
 }
 
@@ -919,68 +929,72 @@ for (let subjData of subjectsData) {
     const percentages = [40, 30, 30];
     const counts = splitCounts(requestedCount, percentages);
 
-    let byLevel = {"Level 1": [], "Level 2": [], "Level 3": []};
-    let usedIds = new Set();
+    const byLevel = {"Level 1": [], "Level 2": [], "Level 3": []};
 
-    // Step 1: Fetch each level with fallback marks logic
+    // strong de-dupe across ALL levels by id or normalized text
+    const usedIds  = new Set();
+    const usedText = new Set();
+    const takeUnique = (list, need) => {
+        const out = [];
+        for (const q of list) {
+            const key = normalizeText(q.question || q.text || '');
+            if ((q.id && usedIds.has(q.id)) || (key && usedText.has(key))) continue;
+            if (q.id) usedIds.add(q.id);
+            if (key)  usedText.add(key);
+            out.push(q);
+            if (out.length >= need) break;
+        }
+        return out;
+    };
+
+    // Step 1: fetch each level with a small buffer and pick uniques
     for (let i = 0; i < difficultyLevels.length; i++) {
-        let level = difficultyLevels[i];
-        let needed = counts[i];
-        let qs = await fetchQuestionsWithMarksFallback({
+        const level = difficultyLevels[i];
+        const need  = counts[i];
+        let pool = await fetchQuestionsWithMarksFallback({
             selectedClass,
             selectedSubject: subjData.subject,
             chapters: subjData.chapters,
             marksPerQuestion: sec.marksPerQuestion,
             mcqType: sec.mcqType,
-            count: needed,
+            count: Math.max(need * 2, need + 2),   // small buffer to reduce repeats
             forceDifficulty: level
         });
-        // Remove duplicates
-        qs = qs.filter(q => {
-            if (usedIds.has(q.id)) return false;
-            usedIds.add(q.id);
-            return true;
-        });
-        byLevel[level] = qs;
+        pool = uniqueByIdOrText(pool);
+        byLevel[level] = takeUnique(pool, need);
     }
 
-    // Step 2: Fallback across levels (as per your priority rules)
-    // If Level 1 missing, take from Level 2, then 3
-    let short1 = counts[0] - byLevel["Level 1"].length;
-    if (short1 > 0) {
-        let from2 = byLevel["Level 2"].slice(0, short1);
-        byLevel["Level 1"] = byLevel["Level 1"].concat(from2);
-        short1 -= from2.length;
-        if (short1 > 0) {
-            let from3 = byLevel["Level 3"].slice(0, short1);
-            byLevel["Level 1"] = byLevel["Level 1"].concat(from3);
-        }
-    }
-    // If Level 2 missing, take from Level 1, then 3
-    let short2 = counts[1] - byLevel["Level 2"].length;
-    if (short2 > 0) {
-        let from1 = byLevel["Level 1"].slice(byLevel["Level 2"].length, byLevel["Level 2"].length + short2);
-        byLevel["Level 2"] = byLevel["Level 2"].concat(from1);
-        short2 -= from1.length;
-        if (short2 > 0) {
-            let from3 = byLevel["Level 3"].slice(byLevel["Level 2"].length, byLevel["Level 2"].length + short2);
-            byLevel["Level 2"] = byLevel["Level 2"].concat(from3);
-        }
-    }
-    // If Level 3 missing, take from Level 2, then 1
-    let short3 = counts[2] - byLevel["Level 3"].length;
-    if (short3 > 0) {
-        let from2 = byLevel["Level 2"].slice(byLevel["Level 3"].length, byLevel["Level 3"].length + short3);
-        byLevel["Level 3"] = byLevel["Level 3"].concat(from2);
-        short3 -= from2.length;
-        if (short3 > 0) {
-            let from1 = byLevel["Level 1"].slice(byLevel["Level 3"].length, byLevel["Level 3"].length + short3);
-            byLevel["Level 3"] = byLevel["Level 3"].concat(from1);
-        }
-    }
+    // Step 2: if any bucket is short, borrow from the others via fresh fetches
+    const fillShort = async (targetLevel, donors) => {
+        const idx = difficultyLevels.indexOf(targetLevel);
+        let remaining = counts[idx] - byLevel[targetLevel].length;
+        if (remaining <= 0) return;
 
-    // Step 3: Merge all and shuffle
-    let questionsArr = byLevel["Level 1"].concat(byLevel["Level 2"]).concat(byLevel["Level 3"]);
+        for (const donor of donors) {
+            if (remaining <= 0) break;
+            let pool = await fetchQuestionsWithMarksFallback({
+                selectedClass,
+                selectedSubject: subjData.subject,
+                chapters: subjData.chapters,
+                marksPerQuestion: sec.marksPerQuestion,
+                mcqType: sec.mcqType,
+                count: Math.max(remaining * 2, remaining + 2),
+                forceDifficulty: donor
+            });
+            pool = uniqueByIdOrText(pool);
+            const picked = takeUnique(pool, remaining);
+            byLevel[targetLevel] = byLevel[targetLevel].concat(picked);
+            remaining -= picked.length;
+        }
+    };
+
+    await fillShort("Level 1", ["Level 2", "Level 3"]);
+    await fillShort("Level 2", ["Level 1", "Level 3"]);
+    await fillShort("Level 3", ["Level 2", "Level 1"]);
+
+    // Step 3: merge, final de-dupe, shuffle, cap
+    let questionsArr = [].concat(byLevel["Level 1"], byLevel["Level 2"], byLevel["Level 3"]);
+    questionsArr = uniqueByIdOrText(questionsArr);
     shuffleArray(questionsArr);
 
     if (questionsArr.length < requestedCount) {
@@ -1009,35 +1023,39 @@ for (let subjData of subjectsData) {
                     count: requestedCount
                 });
             }
-            if (questions.length < requestedCount) {
-                sectionErrors.push(
-                    `${subjData.subject} - ${sec.label} (${sec.mcqType}): Only ${questions.length} of ${requestedCount} questions found.`
-                );
-                // continue; // skip this section
-            }
-            questions = questions.map((q, idx) => {
-                let optionsArr = extractMCQOptions(q);
-                let stem = q.question || q.text || '';
-                if ((sec.mcqType === "MCQ (Single)" || sec.mcqType === "MCQ (Multiple)") && Array.isArray(optionsArr) && optionsArr.length === 4) {
-                    const cleanOptionsArr = optionsArr.map(opt => opt.replace(/^[A-D][).]?\s*/, '').trim());
-                    const shuffled = shuffleMCQQuestion({ ...q, options: cleanOptionsArr, question: stem });
-                    return {
-                        number: idx + 1,
-                        text: shuffled.question || shuffled.text || "",
-                        marks: sec.marksPerQuestion,
-                        options: shuffled.options || [],
-                        answer: shuffled.answer || ""
-                    };
-                } else {
-                    return {
-                        number: idx + 1,
-                        text: stem,
-                        marks: sec.marksPerQuestion,
-                        options: optionsArr || [],
-                        answer: q.answer || ""
-                    };
-                }
-            });
+           // Final de-dupe right before numbering/mapping
+questions = uniqueByIdOrText(questions);
+
+if (questions.length < requestedCount) {
+    sectionErrors.push(
+        `${subjData.subject} - ${sec.label} (${sec.mcqType}): Only ${questions.length} of ${requestedCount} questions found.`
+    );
+}
+
+// Cap to requestedCount before numbering
+questions = questions.slice(0, requestedCount).map((q, idx) => {
+    let optionsArr = extractMCQOptions(q);
+    let stem = q.question || q.text || '';
+    if ((sec.mcqType === "MCQ (Single)" || sec.mcqType === "MCQ (Multiple)") && Array.isArray(optionsArr) && optionsArr.length === 4) {
+        const cleanOptionsArr = optionsArr.map(opt => opt.replace(/^[A-D][).]?\s*/, '').trim());
+        const shuffled = shuffleMCQQuestion({ ...q, options: cleanOptionsArr, question: stem, answer: q.answer });
+        return {
+            number: idx + 1,
+            text: shuffled.question || shuffled.text || "",
+            marks: sec.marksPerQuestion,
+            options: shuffled.options || [],
+            answer: shuffled.answer || ""
+        };
+    } else {
+        return {
+            number: idx + 1,
+            text: stem,
+            marks: sec.marksPerQuestion,
+            options: Array.isArray(optionsArr) ? optionsArr : [],
+            answer: q.answer || ""
+        };
+    }
+});
         } else if (sec.type === "internal") {
             let missingPairs = 0;
             for (let p = 0; p < sec.pairs.length; p++) {
@@ -1113,6 +1131,7 @@ window.location.href = 'exam-review.html';
 </script>
 </body>
 </html>
+
 
 
 
