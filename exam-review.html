@@ -174,6 +174,45 @@
   function renderExam() {
     const paper = getExamPaper();
     const area = document.getElementById('exam-review-area');
+      // ===== DIAGNOSTIC: are duplicates already in the saved data (as displayed)? =====
+  (function () {
+    function normKey(s) {
+      if (!s) return '';
+      let t = String(s).replace(/<[^>]+>/g, ' ')
+                       .replace(/&nbsp;/gi, ' ')
+                       .replace(/\u00A0/g, ' ');
+      try { t = t.normalize('NFKC'); } catch (e) {}
+      return t.replace(/[\u200B-\u200D\uFEFF]/g, '')       // zero-width
+              .replace(/[\u2010-\u2015\u2212]/g, '-')      // dashes/minus
+              .replace(/[\u2018\u2019\u201A\u2032]/g, "'") // single quotes
+              .replace(/[\u201C\u201D\u2033]/g, '"')       // double quotes
+              .replace(/\u00D7/g, 'x')                     // × -> x
+              .replace(/\s+/g, ' ')
+              .trim()
+              .toLowerCase()
+              .replace(/[.,;:!?]+$/g, '');
+    }
+
+    const dupNotes = [];
+    for (const subj of (paper?.subjects || [])) {
+      for (const sec of (subj.sections || [])) {
+        const counts = {};
+        for (const q of (sec.questions || [])) {
+          // use the SAME transformation exam-review uses when displaying
+          const shown = stripMetaTags(stripMetaLine(q.text || q.body || q.question || ''));
+          const k = normKey(shown);
+          counts[k] = (counts[k] || 0) + 1;
+        }
+        const dupes = Object.entries(counts).filter(([_, c]) => c > 1);
+        if (dupes.length) dupNotes.push(`${subj.subject} / ${sec.label}: ${dupes.length} duplicate key(s)`);
+      }
+    }
+    if (dupNotes.length) {
+      console.warn('REVIEW: duplicates PRESENT in sessionStorage data (as displayed):', dupNotes);
+    } else {
+      console.warn('REVIEW: NO duplicates in sessionStorage source. If you still see duplicates on screen, rendering is duplicating them.');
+    }
+  })();
     if (!paper) {
       area.innerHTML = `<div style="color:#b00;padding:16px;font-size:1.11em;">No exam paper found!<br>Please go back and generate one first.</div>`;
       document.getElementById("save-review-btn").disabled = true;
@@ -525,6 +564,7 @@ for (let j = 1; j < lines.length; j++) {
 </script>
 </body>
 </html>
+
 
 
 
