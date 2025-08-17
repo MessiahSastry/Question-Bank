@@ -440,116 +440,148 @@ async function fetchQuestionsWithMarksFallback({
     selectedSubject,
     chapters,
     marksPerQuestion,
-    mcqType,
+    mcqType,          // "MCQ (Single)" | "MCQ (Multiple)" | "Descriptive"
     count,
     forceDifficulty
 }) {
     const firestore = firebase.firestore();
-    let all = [];
+    const wantedMarks = parseInt(marksPerQuestion);
+    let picked = [];
+    const used = new Set();
 
-    // 1. Try exact marks first
-    let query = firestore.collection("questions")
+    const base = firestore.collection("questions")
         .where("class", "==", selectedClass)
         .where("subject", "==", selectedSubject);
-    if (forceDifficulty) query = query.where("difficulty", "==", forceDifficulty);
-    if (chapters && chapters.length) query = query.where("chapter", "in", chapters.slice(0, 10));
-    if (marksPerQuestion) query = query.where("marks", "==", parseInt(marksPerQuestion));
-    if (mcqType === "MCQ (Single)") query = query.where("mcqType", "==", "MCQ (Single)");
-    else if (mcqType === "MCQ (Multiple)") query = query.where("mcqType", "==", "MCQ (Multiple)");
-    let snap = await query.get();
-    snap.forEach(doc => all.push({ id: doc.id, ...doc.data(), marks: marksPerQuestion }));
 
-    // If enough, return
-    if (all.length >= count) return all.slice(0, count);
+    // helper: allow only the requested type
+    const isAllowedType = (d) => {
+        if (mcqType === "MCQ (Single)")   return d.mcqType === "MCQ (Single)";
+        if (mcqType === "MCQ (Multiple)") return d.mcqType === "MCQ (Multiple)";
+        // Descriptive: accept docs with mcqType "Descriptive" OR missing/empty
+        if (mcqType === "Descriptive")    return !d.mcqType || d.mcqType === "Descriptive";
+        return true;
+    };
 
-    let needed = count - all.length;
+    // helper: apply firestore filters (we'll still type-filter client side for Descriptive)
+    const applyFilters = (q, { marks, difficulty, withChapters = true } = {}) => {
+        let qq = q;
+        if (withChapters && chapters && chapters.length) qq = qq.where("chapter", "in", chapters.slice(0, 10));
+        if (typeof marks === "number") qq = qq.where("marks", "==", marks);
+        if (mcqType === "MCQ (Single)")   qq = qq.where("mcqType", "==", "MCQ (Single)");
+        if (mcqType === "MCQ (Multiple)") qq = qq.where("mcqType", "==", "MCQ (Multiple)");
+        if (difficulty) qq = qq.where("difficulty", "==", difficulty);
+        return qq;
+    };
 
-    // 2. Marks fallback rules
-    // 1 mark fallback: use 2-mark as 1-mark
-    if (marksPerQuestion == 1 && needed > 0) {
-        let q2 = await firestore.collection("questions")
-            .where("class", "==", selectedClass)
-            .where("subject", "==", selectedSubject)
-            .where("marks", "==", 2)
-            .get();
-        let arr2 = [];
-        q2.forEach(doc => arr2.push({ id: doc.id, ...doc.data(), marks: 1 }));
-        arr2 = arr2.filter(q => !all.some(x => x.id === q.id));
-        let add = arr2.slice(0, needed);
-        all = all.concat(add);
-        needed -= add.length;
-    }
-    // 2 mark fallback: group two 1-mark as 2 mark
-    if (marksPerQuestion == 2 && needed > 0) {
-        let q1 = await firestore.collection("questions")
-            .where("class", "==", selectedClass)
-            .where("subject", "==", selectedSubject)
-            .where("marks", "==", 1)
-            .get();
-        let arr1 = [];
-        q1.forEach(doc => arr1.push({ id: doc.id, ...doc.data(), marks: 1 }));
-        arr1 = arr1.filter(q => !all.some(x => x.id === q.id));
-        let pairs = [];
-        for (let i = 0; i < arr1.length - 1 && pairs.length < needed; i += 2) {
-            pairs.push([arr1[i], arr1[i + 1]]);
+    // helper: run query and filter by type; override marks if needed
+    const runAndFilter = async (qq, overrideMarks = null) => {
+        const out = [];
+        const snap = await qq.get();
+        snap.forEach(doc => {
+            const d = { id: doc.id, ...doc.data() };
+            if (!isAllowedType(d)) return;
+            out.push(overrideMarks != null ? { ...d, marks: overrideMarks } : { ...d, marks: d.marks });
+        });
+        return out;
+    };
+
+    const dedupAppend = (arr, docs) => {
+        for (const d of docs) {
+            if (used.has(d.id)) continue;
+            used.add(d.id);
+            arr.push(d);
+            if (arr.length >= count) break;
         }
-        all = all.concat(pairs.map(pair => ({
-            id: pair[0].id + "_" + pair[1].id,
-            text: pair[0].text + "<br>" + pair[1].text,
-            marks: 2
-        })));
-        needed -= pairs.length;
+    };
+
+    // 1) exact marks + difficulty
+    {
+        const q1 = applyFilters(base, { marks: wantedMarks, difficulty: forceDifficulty });
+        const docs = await runAndFilter(q1, wantedMarks);
+        dedupAppend(picked, docs);
+        if (picked.length >= count) return picked.slice(0, count);
     }
-    // 4 mark fallback: group two 2-mark as 4 mark
-    if (marksPerQuestion == 4 && needed > 0) {
-        let q2 = await firestore.collection("questions")
-            .where("class", "==", selectedClass)
-            .where("subject", "==", selectedSubject)
-            .where("marks", "==", 2)
-            .get();
-        let arr2 = [];
-        q2.forEach(doc => arr2.push({ id: doc.id, ...doc.data(), marks: 2 }));
-        arr2 = arr2.filter(q => !all.some(x => x.id === q.id));
-        let pairs = [];
-        for (let i = 0; i < arr2.length - 1 && pairs.length < needed; i += 2) {
-            pairs.push([arr2[i], arr2[i + 1]]);
+
+    // 2) exact marks, difficulty RELAXED (fixes both MCQ & Descriptive)
+    {
+        const q2 = applyFilters(base, { marks: wantedMarks, difficulty: null });
+        const docs = await runAndFilter(q2, wantedMarks);
+        dedupAppend(picked, docs);
+        if (picked.length >= count) return picked.slice(0, count);
+    }
+
+    // 3) compose/convert fallbacks (respecting type)
+
+    // wanted 1: allow 2-mark used as 1
+    if (wantedMarks === 1 && picked.length < count) {
+        const q = applyFilters(base, { marks: 2, difficulty: null });
+        const docs = await runAndFilter(q, 1);
+        dedupAppend(picked, docs);
+        if (picked.length >= count) return picked.slice(0, count);
+    }
+
+    // wanted 2: pair two 1-mark -> 2-mark
+    if (wantedMarks === 2 && picked.length < count) {
+        const q = applyFilters(base, { marks: 1, difficulty: null });
+        let ones = await runAndFilter(q, 1);
+        ones = ones.filter(d => !used.has(d.id));
+
+        const needPairs = count - picked.length;
+        const pairs = [];
+        for (let i = 0; i + 1 < ones.length && pairs.length < needPairs; i += 2) {
+            const a = ones[i], b = ones[i + 1];
+            pairs.push({
+                id: `${a.id}_${b.id}`,
+                text: `${(a.question || a.text || "").trim()}<br>${(b.question || b.text || "").trim()}`,
+                marks: 2,
+                _composed: true,
+                _composedFrom: [a.id, b.id]
+            });
         }
-        all = all.concat(pairs.map(pair => ({
-            id: pair[0].id + "_" + pair[1].id,
-            text: pair[0].text + "<br>" + pair[1].text,
-            marks: 4
-        })));
-        needed -= pairs.length;
+        dedupAppend(picked, pairs);
+        if (picked.length >= count) return picked.slice(0, count);
     }
-    // 3 mark fallback: use 2-mark as 3-mark
-    if (marksPerQuestion == 3 && needed > 0) {
-        let q2 = await firestore.collection("questions")
-            .where("class", "==", selectedClass)
-            .where("subject", "==", selectedSubject)
-            .where("marks", "==", 2)
-            .get();
-        let arr2 = [];
-        q2.forEach(doc => arr2.push({ id: doc.id, ...doc.data(), marks: 3 }));
-        arr2 = arr2.filter(q => !all.some(x => x.id === q.id));
-        let add = arr2.slice(0, needed);
-        all = all.concat(add);
-        needed -= add.length;
+
+    // wanted 3: allow 2-mark as 3
+    if (wantedMarks === 3 && picked.length < count) {
+        const q = applyFilters(base, { marks: 2, difficulty: null });
+        let twos = await runAndFilter(q, 3);
+        twos = twos.filter(d => !used.has(d.id));
+        dedupAppend(picked, twos);
+        if (picked.length >= count) return picked.slice(0, count);
     }
-    // 5 mark fallback: use 4-mark as 5-mark
-    if (marksPerQuestion == 5 && needed > 0) {
-        let q4 = await firestore.collection("questions")
-            .where("class", "==", selectedClass)
-            .where("subject", "==", selectedSubject)
-            .where("marks", "==", 4)
-            .get();
-        let arr4 = [];
-        q4.forEach(doc => arr4.push({ id: doc.id, ...doc.data(), marks: 5 }));
-        arr4 = arr4.filter(q => !all.some(x => x.id === q.id));
-        let add = arr4.slice(0, needed);
-        all = all.concat(add);
-        needed -= add.length;
+
+    // wanted 4: pair two 2-mark -> 4-mark
+    if (wantedMarks === 4 && picked.length < count) {
+        const q = applyFilters(base, { marks: 2, difficulty: null });
+        let twos = await runAndFilter(q, 2);
+        twos = twos.filter(d => !used.has(d.id));
+
+        const needPairs = count - picked.length;
+        const pairs = [];
+        for (let i = 0; i + 1 < twos.length && pairs.length < needPairs; i += 2) {
+            const a = twos[i], b = twos[i + 1];
+            pairs.push({
+                id: `${a.id}_${b.id}`,
+                text: `${(a.question || a.text || "").trim()}<br>${(b.question || b.text || "").trim()}`,
+                marks: 4,
+                _composed: true,
+                _composedFrom: [a.id, b.id]
+            });
+        }
+        dedupAppend(picked, pairs);
+        if (picked.length >= count) return picked.slice(0, count);
     }
-    return all.slice(0, count);
+
+    // wanted 5: allow 4-mark as 5
+    if (wantedMarks === 5 && picked.length < count) {
+        const q = applyFilters(base, { marks: 4, difficulty: null });
+        let fours = await runAndFilter(q, 5);
+        fours = fours.filter(d => !used.has(d.id));
+        dedupAppend(picked, fours);
+    }
+
+    return picked.slice(0, count);
 }
 // --- DROPDOWN HELPERS (multi, single, sections, etc.) ---
 function createDropdown(containerId, options, placeholder) {
@@ -1123,5 +1155,6 @@ window.location.href = 'exam-review.html';
 </script>
 </body>
 </html>
+
 
 
