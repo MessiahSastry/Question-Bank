@@ -1253,7 +1253,32 @@ for (let subjData of subjectsData) {
   }
 
   // Map & preserve MCQ shuffle/answers
-  const mapped = (rawItems || []).slice(0, requestedCount).map((q) => {
+    // Ensure one question per chapter when possible
+  let pool = Array.isArray(rawItems) ? rawItems.slice() : [];
+  const uniqueByChapter = [];
+  const seenCh = new Set();
+
+  // First pass: keep at most one from each chapter
+  for (const q of pool) {
+    const ch = (q.chapter || "").trim();
+    if (ch && !seenCh.has(ch)) {
+      uniqueByChapter.push(q);
+      seenCh.add(ch);
+    }
+    if (uniqueByChapter.length >= requestedCount) break;
+  }
+
+  // If still short, top up with leftovers (any chapter) so the section isn’t empty
+  if (uniqueByChapter.length < requestedCount) {
+    for (const q of pool) {
+      if (uniqueByChapter.includes(q)) continue;
+      uniqueByChapter.push(q);
+      if (uniqueByChapter.length >= requestedCount) break;
+    }
+  }
+
+  // Map & preserve MCQ shuffle/answers
+  const mapped = uniqueByChapter.slice(0, requestedCount).map((q) => {
     let optionsArr = extractMCQOptions(q);
     let stem = q.question || q.text || '';
     if ((sec.mcqType === "MCQ (Single)" || sec.mcqType === "MCQ (Multiple)") && Array.isArray(optionsArr) && optionsArr.length === 4) {
@@ -1395,6 +1420,7 @@ window.location.href = 'exam-review.html';
 </script>
 </body>
 </html>
+
 
 
 
