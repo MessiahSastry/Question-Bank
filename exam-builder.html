@@ -1252,33 +1252,52 @@ for (let subjData of subjectsData) {
     sectionErrors = sectionErrors.concat(balanceErrors);
   }
 
-  // Map & preserve MCQ shuffle/answers
-    // Ensure one question per chapter when possible
+    // Map & preserve MCQ shuffle/answers
+  // HARD RULE: if user picked N chapters and requests ≤ N questions, take one from each selected chapter.
   let pool = Array.isArray(rawItems) ? rawItems.slice() : [];
-  const uniqueByChapter = [];
-  const seenCh = new Set();
+  let chosen = [];
 
-  // First pass: keep at most one from each chapter
-  for (const q of pool) {
-    const ch = (q.chapter || "").trim();
-    if (ch && !seenCh.has(ch)) {
-      uniqueByChapter.push(q);
-      seenCh.add(ch);
-    }
-    if (uniqueByChapter.length >= requestedCount) break;
-  }
-
-  // If still short, top up with leftovers (any chapter) so the section isn’t empty
-  if (uniqueByChapter.length < requestedCount) {
+  const selectedChs = Array.isArray(subjData.chapters) ? subjData.chapters.filter(Boolean) : [];
+  if (selectedChs.length && requestedCount <= selectedChs.length) {
+    // index first available question per chapter from the pool
+    const firstByChapter = new Map();
     for (const q of pool) {
-      if (uniqueByChapter.includes(q)) continue;
-      uniqueByChapter.push(q);
+      const ch = (q.chapter || "").trim();
+      if (ch && !firstByChapter.has(ch)) firstByChapter.set(ch, q);
+    }
+    // take one per selected chapter, in the same order the user selected
+    for (const ch of selectedChs) {
+      const q = firstByChapter.get((ch || "").trim());
+      if (q) chosen.push(q);
+      if (chosen.length >= requestedCount) break;
+    }
+    // if any selected chapter is missing a question, surface a section error
+    if (chosen.length < requestedCount) {
+      sectionErrors.push(`${subjData.subject} - ${sec.label}: Missing questions for some selected chapters.`);
+    }
+  } else {
+    // Fallback: prefer distinct chapters when possible, then top-up with leftovers
+    const uniqueByChapter = [];
+    const seenCh = new Set();
+    for (const q of pool) {
+      const ch = (q.chapter || "").trim();
+      if (ch && !seenCh.has(ch)) {
+        uniqueByChapter.push(q);
+        seenCh.add(ch);
+      }
       if (uniqueByChapter.length >= requestedCount) break;
     }
+    if (uniqueByChapter.length < requestedCount) {
+      for (const q of pool) {
+        if (uniqueByChapter.includes(q)) continue;
+        uniqueByChapter.push(q);
+        if (uniqueByChapter.length >= requestedCount) break;
+      }
+    }
+    chosen = uniqueByChapter.slice(0, requestedCount);
   }
 
-  // Map & preserve MCQ shuffle/answers
-  const mapped = uniqueByChapter.slice(0, requestedCount).map((q) => {
+  const mapped = chosen.map((q) => {
     let optionsArr = extractMCQOptions(q);
     let stem = q.question || q.text || '';
     if ((sec.mcqType === "MCQ (Single)" || sec.mcqType === "MCQ (Multiple)") && Array.isArray(optionsArr) && optionsArr.length === 4) {
@@ -1420,6 +1439,7 @@ window.location.href = 'exam-review.html';
 </script>
 </body>
 </html>
+
 
 
 
