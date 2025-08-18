@@ -753,38 +753,55 @@ async function fetchBalancedAcrossChapters({
 
   // === Non-Mixed difficulty path ===
   async function fillNonMixed(totalNeed, forceDiff) {
-    if (!chs.length) {
-      // no chapter filter → behave like previous logic but still dedupe
-      let pool = await fetchFor(null, totalNeed, forceDiff);
-      items.push(...takeUniqueFromPool(pool, totalNeed, usedIds, usedKeys, subjectSeenKeys));
-      return;
-    }
-    const perChapter = splitEvenAcrossChapters(totalNeed, chs);
-    // 1) Pull each chapter's share with forced difficulty
-    for (let i = 0; i < chs.length; i++) {
-      const need = perChapter[i];
-      if (!need) continue;
-      let pool = await fetchFor([chs[i]], need, forceDiff);
-      const picked = takeUniqueFromPool(pool, need, usedIds, usedKeys, subjectSeenKeys);
-      items.push(...picked);
-      perChapter[i] -= picked.length;
-    }
-    // 2) Chapters short? borrow from other chapters (same difficulty), then any difficulty
-    let remaining = perChapter.reduce((a, b) => a + b, 0);
-    if (remaining > 0) {
-      const borrowedSame = await borrow(remaining, forceDiff);
-      items.push(...borrowedSame);
-      remaining = totalNeed - items.length;
-    }
-    if (remaining > 0) {
-      const borrowedAny = await borrow(remaining, null);
-      items.push(...borrowedAny);
-    }
-    // Error if still short
-    if (items.length < totalNeed) {
-      errors.push(`${subject}: Only ${items.length} of ${totalNeed} questions found (after chapter balance).`);
-    }
+  // No chapter filter → old behavior
+  if (!chs.length) {
+    const pool = await fetchFor(null, totalNeed, forceDiff);
+    items.push(...takeUniqueFromPool(pool, totalNeed, usedIds, usedKeys, subjectSeenKeys));
+    return;
   }
+
+  // If we are asking for <= number of chapters, do a strict one-per-chapter pass.
+  const strictOneEach = totalNeed <= chs.length;
+  if (strictOneEach) {
+    for (let i = 0; i < chs.length && items.length < totalNeed; i++) {
+      const pool = await fetchFor([chs[i]], 1, forceDiff);       // ask only this chapter
+      const picked = takeUniqueFromPool(pool, 1, usedIds, usedKeys, subjectSeenKeys);
+      if (picked.length) items.push(...picked);
+    }
+    // If we couldn’t get one from each required chapter, show an error (don’t borrow from the same chapter).
+    if (items.length < totalNeed) {
+      errors.push(`${subject}: Could not pick one question from each selected chapter for this section.`);
+    }
+    return;
+  }
+
+  // Otherwise (we need more questions than chapters), do the even split + borrow fallback.
+  const perChapter = splitEvenAcrossChapters(totalNeed, chs);
+  for (let i = 0; i < chs.length; i++) {
+    const need = perChapter[i];
+    if (!need) continue;
+    const pool = await fetchFor([chs[i]], need, forceDiff);
+    const picked = takeUniqueFromPool(pool, need, usedIds, usedKeys, subjectSeenKeys);
+    items.push(...picked);
+    perChapter[i] -= picked.length;
+  }
+
+  // Borrow to fill any remaining, first same difficulty, then any.
+  let remaining = perChapter.reduce((a, b) => a + b, 0);
+  if (remaining > 0) {
+    const borrowedSame = await borrow(remaining, forceDiff);
+    items.push(...borrowedSame);
+    remaining = totalNeed - items.length;
+  }
+  if (remaining > 0) {
+    const borrowedAny = await borrow(remaining, null);
+    items.push(...borrowedAny);
+  }
+
+  if (items.length < totalNeed) {
+    errors.push(`${subject}: Only ${items.length} of ${totalNeed} questions found (after chapter balance).`);
+  }
+}
 
   // === Mixed difficulty path ===
   async function fillMixed(totalNeed) {
@@ -1378,5 +1395,6 @@ window.location.href = 'exam-review.html';
 </script>
 </body>
 </html>
+
 
 
