@@ -506,37 +506,62 @@ const db = {
     }
 };
 
-async function fetchQuestions({ selectedClass, selectedSubject, chapters, marksPerQuestion, mcqType, count, forceDifficulty }) {
-    const firestore = firebase.firestore();
-    let query = firestore.collection("questions")
-        .where("class", "==", selectedClass)
-        .where("subject", "==", selectedSubject);
+async function fetchQuestions({
+  selectedClass,
+  selectedSubject,
+  chapters,
+  marksPerQuestion,
+  mcqType,
+  count,
+  forceDifficulty
+}) {
+  const firestore = firebase.firestore();
 
+  const base = firestore.collection("questions")
+    .where("class", "==", selectedClass)
+    .where("subject", "==", selectedSubject);
+
+  // Apply all non-chapter filters here
+  const applyNonChapterFilters = (q) => {
     if (forceDifficulty) {
-        query = query.where("difficulty", "==", forceDifficulty);
+      q = q.where("difficulty", "==", forceDifficulty);
     } else if (window.difficultyFilter && window.difficultyFilter !== "Mixed") {
-        query = query.where("difficulty", "==", window.difficultyFilter);
+      q = q.where("difficulty", "==", window.difficultyFilter);
     }
+    if (marksPerQuestion) q = q.where("marks", "==", parseInt(marksPerQuestion));
+    if (mcqType === "MCQ (Single)")   q = q.where("mcqType", "==", "MCQ (Single)");
+    else if (mcqType === "MCQ (Multiple)") q = q.where("mcqType", "==", "MCQ (Multiple)");
+    return q;
+  };
 
-    if (chapters && chapters.length) query = query.where("chapter", "in", chapters.slice(0, 10));
-    if (marksPerQuestion)        query = query.where("marks", "==", parseInt(marksPerQuestion));
-    if (mcqType === "MCQ (Single)")   query = query.where("mcqType", "==", "MCQ (Single)");
-    else if (mcqType === "MCQ (Multiple)") query = query.where("mcqType", "==", "MCQ (Multiple)");
+  const selectedChapters = Array.isArray(chapters) ? chapters.filter(Boolean) : [];
+  let allQuestions = [];
 
-    const snapshot = await query.get();
-    let allQuestions = [];
-    snapshot.forEach(doc => { allQuestions.push({ id: doc.id, ...doc.data() }); });
-
-    // De-dupe by ID or by normalized text
-    allQuestions = uniqueByIdOrText(allQuestions);
-
-    // For descriptive sections, allow docs with mcqType "Descriptive" or missing/empty
-    if (mcqType === "Descriptive") {
-        allQuestions = allQuestions.filter(q => !q.mcqType || q.mcqType === "Descriptive");
+  if (selectedChapters.length > 10) {
+    // Batch by 10 to respect Firestore "in" limit
+    for (const batch of chunk(selectedChapters, 10)) {
+      let q = applyNonChapterFilters(base.where("chapter", "in", batch));
+      const snap = await q.get();
+      snap.forEach(doc => allQuestions.push({ id: doc.id, ...doc.data() }));
+      // Optional soft cap to avoid pulling thousands before shuffle/dedupe
+      if (count && allQuestions.length >= count * 3) { break; }
     }
+  } else {
+    let q = applyNonChapterFilters(base);
+    if (selectedChapters.length) q = q.where("chapter", "in", selectedChapters);
+    const snap = await q.get();
+    snap.forEach(doc => allQuestions.push({ id: doc.id, ...doc.data() }));
+  }
 
-    shuffleArray(allQuestions);
-    return allQuestions.slice(0, count);
+  // For descriptive sections, allow docs with mcqType "Descriptive" or missing/empty
+  if (mcqType === "Descriptive") {
+    allQuestions = allQuestions.filter(q => !q.mcqType || q.mcqType === "Descriptive");
+  }
+
+  // De-dupe by ID or by normalized text, then shuffle and cap
+  allQuestions = uniqueByIdOrText(allQuestions);
+  shuffleArray(allQuestions);
+  return allQuestions.slice(0, count);
 }
 async function fetchQuestionsWithMarksFallback({
     selectedClass,
@@ -569,28 +594,41 @@ async function fetchQuestionsWithMarksFallback({
     };
 
     // apply firestore filters
-    const applyFilters = (q, { marks, difficulty, withChapters = true } = {}) => {
-        let qq = q;
-        if (withChapters && chapters && chapters.length) qq = qq.where("chapter", "in", chapters.slice(0, 10));
-        if (typeof marks === "number") qq = qq.where("marks", "==", marks);
-        if (mcqType === "MCQ (Single)")   qq = qq.where("mcqType", "==", "MCQ (Single)");
-        if (mcqType === "MCQ (Multiple)") qq = qq.where("mcqType", "==", "MCQ (Multiple)");
-        if (difficulty) qq = qq.where("difficulty", "==", difficulty);
-        return qq;
-    };
+    const applyFilters = (q, { marks, difficulty } = {}) => {
+    let qq = q;
+    if (typeof marks === "number") qq = qq.where("marks", "==", marks);
+    if (mcqType === "MCQ (Single)")   qq = qq.where("mcqType", "==", "MCQ (Single)");
+    if (mcqType === "MCQ (Multiple)") qq = qq.where("mcqType", "==", "MCQ (Multiple)");
+    if (difficulty) qq = qq.where("difficulty", "==", difficulty);
+    return qq;
+};
 
     // run query and filter by type; no marks override (we keep exact marks only)
-    const runAndFilter = async (qq) => {
-        const out = [];
-        const snap = await qq.get();
+    const runAndFilter = async (qq, chapterList) => {
+    const out = [];
+    if (chapterList && chapterList.length > 10) {
+        // run multiple queries, 10 chapters at a time
+        for (const batch of chunk(chapterList, 10)) {
+            const snap = await qq.where("chapter", "in", batch).get();
+            snap.forEach(doc => {
+                const d = { id: doc.id, ...doc.data() };
+                if (!isAllowedType(d)) return;
+                out.push(d);
+            });
+        }
+    } else {
+        // single query path
+        let q2 = qq;
+        if (chapterList && chapterList.length) q2 = q2.where("chapter", "in", chapterList);
+        const snap = await q2.get();
         snap.forEach(doc => {
             const d = { id: doc.id, ...doc.data() };
             if (!isAllowedType(d)) return;
             out.push(d);
         });
-        return out;
-    };
-
+    }
+    return out;
+};
     const dedupAppend = (arr, docs) => {
     for (const d of docs) {
         const key = makeDeDupeKey(d);
@@ -605,7 +643,7 @@ async function fetchQuestionsWithMarksFallback({
     // 1) exact marks + difficulty
     {
         const q1 = applyFilters(base, { marks: wantedMarks, difficulty: forceDifficulty });
-        const docs = await runAndFilter(q1);
+        const docs = await runAndFilter(q1, chapters);
         dedupAppend(picked, docs);
         if (picked.length >= count) return picked.slice(0, count);
     }
@@ -613,7 +651,7 @@ async function fetchQuestionsWithMarksFallback({
     // 2) exact marks, difficulty RELAXED
     {
         const q2 = applyFilters(base, { marks: wantedMarks, difficulty: null });
-        const docs = await runAndFilter(q2);
+     const docs = await runAndFilter(q2, chapters);
         dedupAppend(picked, docs);
         if (picked.length >= count) return picked.slice(0, count);
     }
@@ -621,6 +659,13 @@ async function fetchQuestionsWithMarksFallback({
     // No conversions or pairing: if still short, just return what we have.
     return picked.slice(0, count);
 }
+    // Small util to split an array into chunks of given size
+function chunk(arr, size) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
 // --- CHAPTER-BALANCED HELPERS (new) ---
 function splitEvenAcrossChapters(total, chapters) {
   const n = Math.max(1, (chapters || []).length);
@@ -667,7 +712,7 @@ async function fetchBalancedAcrossChapters({
   const usedIds  = new Set();
   const usedKeys = new Set();
 
-  const chs = Array.isArray(chapters) && chapters.length ? chapters.slice(0, 10) : []; // Firestore "in" cap = 10
+  const chs = Array.isArray(chapters) ? chapters.slice() : [];
 
   // Helper: fetch using our existing fallback function with a chapter constraint
   async function fetchFor(chapterList, count, forceDifficulty) {
@@ -1172,63 +1217,63 @@ for (let subjData of subjectsData) {
         let questions = [];
         let sectionErrors = [];
                if (sec.type === "all" || sec.type === "any") {
-            const requestedCount = sec.numQuestions;
+  const requestedCount = sec.numQuestions;
 
-            // Chapter-balanced fetch (handles Mixed/non-Mixed + 4→3 fallback)
-            const { items: rawItems, errors: balanceErrors } = await fetchBalancedAcrossChapters({
-              selectedClass,
-              subject: subjData.subject,
-              chapters: subjData.chapters,
-              marksPerQuestion: sec.marksPerQuestion,
-              mcqType: sec.mcqType,
-              requestedCount,
-              difficultyValue,
-              subjectSeenKeys
-            });
+  // Section-wise, chapter-balanced fetch (equal split across the selected chapters)
+  const { items: rawItems, errors: balanceErrors } = await fetchBalancedAcrossChapters({
+    selectedClass,
+    subject: subjData.subject,
+    chapters: subjData.chapters,
+    marksPerQuestion: sec.marksPerQuestion,
+    mcqType: sec.mcqType,
+    requestedCount,
+    difficultyValue,
+    subjectSeenKeys
+  });
 
-            if (balanceErrors && balanceErrors.length) {
-              sectionErrors = sectionErrors.concat(balanceErrors);
-            }
+  if (balanceErrors && balanceErrors.length) {
+    sectionErrors = sectionErrors.concat(balanceErrors);
+  }
 
-            // Build mapped items (preserves your MCQ shuffle & answers)
-            const mapped = (rawItems || []).slice(0, requestedCount).map((q) => {
-              let optionsArr = extractMCQOptions(q);
-              let stem = q.question || q.text || '';
-              if ((sec.mcqType === "MCQ (Single)" || sec.mcqType === "MCQ (Multiple)") && Array.isArray(optionsArr) && optionsArr.length === 4) {
-                const cleanOptionsArr = optionsArr.map(opt => opt.replace(/^[A-D][).]?\s*/, '').trim());
-                const shuffled = shuffleMCQQuestion({ ...q, options: cleanOptionsArr, question: stem, answer: q.answer });
-                return {
-                  number: 0,
-                  text: shuffled.question || shuffled.text || "",
-                  marks: sec.marksPerQuestion,
-                  options: shuffled.options || [],
-                  answer: shuffled.answer || "",
-                  srcId: q.id || null
-                };
-              } else {
-                return {
-                  number: 0,
-                  text: stem,
-                  marks: sec.marksPerQuestion,
-                  options: Array.isArray(optionsArr) ? optionsArr : [],
-                  answer: q.answer || "",
-                  srcId: q.id || null
-                };
-              }
-            });
+  // Map & preserve MCQ shuffle/answers
+  const mapped = (rawItems || []).slice(0, requestedCount).map((q) => {
+    let optionsArr = extractMCQOptions(q);
+    let stem = q.question || q.text || '';
+    if ((sec.mcqType === "MCQ (Single)" || sec.mcqType === "MCQ (Multiple)") && Array.isArray(optionsArr) && optionsArr.length === 4) {
+      const cleanOptionsArr = optionsArr.map(opt => opt.replace(/^[A-D][).]?\s*/, '').trim());
+      const shuffled = shuffleMCQQuestion({ ...q, options: cleanOptionsArr, question: stem, answer: q.answer });
+      return {
+        number: 0,
+        text: shuffled.question || shuffled.text || "",
+        marks: sec.marksPerQuestion,
+        options: shuffled.options || [],
+        answer: shuffled.answer || "",
+        srcId: q.id || null
+      };
+    } else {
+      return {
+        number: 0,
+        text: stem,
+        marks: sec.marksPerQuestion,
+        options: Array.isArray(optionsArr) ? optionsArr : [],
+        answer: q.answer || "",
+        srcId: q.id || null
+      };
+    }
+  });
 
-            // Subject-level de-dupe across sections
-            const filtered = [];
-            for (const item of mapped) {
-              const k = makeDeDupeKey({ text: item.text });
-              if (k && subjectSeenKeys.has(k)) continue;
-              if (k) subjectSeenKeys.add(k);
-              filtered.push(item);
-            }
+  // Subject-level de-dupe across sections
+  const filtered = [];
+  for (const item of mapped) {
+    const k = makeDeDupeKey({ text: item.text });
+    if (k && subjectSeenKeys.has(k)) continue;
+    if (k) subjectSeenKeys.add(k);
+    filtered.push(item);
+  }
 
-            // Renumber for the section
-            questions = filtered.map((it, i) => ({ ...it, number: i + 1 }));
-        } else if (sec.type === "internal") {
+  // Renumber for this section
+  questions = filtered.map((it, i) => ({ ...it, number: i + 1 }));
+} else if (sec.type === "internal") {
             let missingPairs = 0;
             for (let p = 0; p < sec.pairs.length; p++) {
                 let qA = await fetchQuestions({
@@ -1333,4 +1378,5 @@ window.location.href = 'exam-review.html';
 </script>
 </body>
 </html>
+
 
