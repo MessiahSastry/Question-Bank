@@ -621,6 +621,182 @@ async function fetchQuestionsWithMarksFallback({
     // No conversions or pairing: if still short, just return what we have.
     return picked.slice(0, count);
 }
+// --- CHAPTER-BALANCED HELPERS (new) ---
+function splitEvenAcrossChapters(total, chapters) {
+  const n = Math.max(1, (chapters || []).length);
+  const base = Math.floor(total / n);
+  const rem  = total - base * n;
+  const out = Array(n).fill(base);
+  for (let i = 0; i < rem; i++) out[i] += 1; // distribute leftovers from start
+  return out;
+}
+
+function takeUniqueFromPool(pool, need, usedIds, usedKeys, subjectSeenKeys) {
+  const out = [];
+  for (const d of pool || []) {
+    const id  = d.id || null;
+    const key = makeDeDupeKey(d);
+    if ((id && usedIds.has(id)) || (key && usedKeys.has(key)) || (key && subjectSeenKeys.has(key))) continue;
+    if (id)  usedIds.add(id);
+    if (key) usedKeys.add(key);
+    out.push(d);
+    if (out.length >= need) break;
+  }
+  return out;
+}
+
+/**
+ * Chapter-balanced fetch for a section.
+ * - Enforces equal split across chapters.
+ * - Respects mcqType, difficulty (including Mixed 40/30/30), and 4→3 mark fallback.
+ * - Borrows from other chapters if a chapter is short.
+ * Returns { items, errors }
+ */
+async function fetchBalancedAcrossChapters({
+  selectedClass,
+  subject,
+  chapters,              // array of chapter names (can be empty/undefined)
+  marksPerQuestion,      // number
+  mcqType,               // "MCQ (Single)" | "MCQ (Multiple)" | "Descriptive"
+  requestedCount,        // number
+  difficultyValue,       // "Level 1" | "Level 2" | "Level 3" | "Mixed" | undefined
+  subjectSeenKeys        // Set passed from caller to avoid repeats across sections of the same subject
+}) {
+  const errors = [];
+  const items  = [];
+  const usedIds  = new Set();
+  const usedKeys = new Set();
+
+  const chs = Array.isArray(chapters) && chapters.length ? chapters.slice(0, 10) : []; // Firestore "in" cap = 10
+
+  // Helper: fetch using our existing fallback function with a chapter constraint
+  async function fetchFor(chapterList, count, forceDifficulty) {
+    if (!count) return [];
+    let docs = await fetchQuestionsWithMarksFallback({
+      selectedClass,
+      selectedSubject: subject,
+      chapters: chapterList && chapterList.length ? chapterList : undefined,
+      marksPerQuestion,
+      mcqType,
+      count: Math.max(count * 2, count + 2), // small buffer to reduce dupes
+      forceDifficulty: forceDifficulty || undefined
+    });
+    return uniqueByIdOrText(docs);
+  }
+
+  // Borrowing helper: try from other chapters, same difficulty first, then any difficulty
+  async function borrow(need, sameDifficulty) {
+    if (need <= 0) return [];
+    let pool = [];
+    // Try same difficulty across all chapters
+    if (sameDifficulty) {
+      pool = await fetchFor(chs, need, sameDifficulty);
+      let picked = takeUniqueFromPool(pool, need, usedIds, usedKeys, subjectSeenKeys);
+      need -= picked.length;
+      if (need <= 0) return picked;
+
+      // Try ANY difficulty across all chapters
+      const pool2 = await fetchFor(chs, need, null);
+      picked = picked.concat(takeUniqueFromPool(pool2, need, usedIds, usedKeys, subjectSeenKeys));
+      return picked;
+    } else {
+      // Any difficulty directly
+      pool = await fetchFor(chs, need, null);
+      return takeUniqueFromPool(pool, need, usedIds, usedKeys, subjectSeenKeys);
+    }
+  }
+
+  // === Non-Mixed difficulty path ===
+  async function fillNonMixed(totalNeed, forceDiff) {
+    if (!chs.length) {
+      // no chapter filter → behave like previous logic but still dedupe
+      let pool = await fetchFor(null, totalNeed, forceDiff);
+      items.push(...takeUniqueFromPool(pool, totalNeed, usedIds, usedKeys, subjectSeenKeys));
+      return;
+    }
+    const perChapter = splitEvenAcrossChapters(totalNeed, chs);
+    // 1) Pull each chapter's share with forced difficulty
+    for (let i = 0; i < chs.length; i++) {
+      const need = perChapter[i];
+      if (!need) continue;
+      let pool = await fetchFor([chs[i]], need, forceDiff);
+      const picked = takeUniqueFromPool(pool, need, usedIds, usedKeys, subjectSeenKeys);
+      items.push(...picked);
+      perChapter[i] -= picked.length;
+    }
+    // 2) Chapters short? borrow from other chapters (same difficulty), then any difficulty
+    let remaining = perChapter.reduce((a, b) => a + b, 0);
+    if (remaining > 0) {
+      const borrowedSame = await borrow(remaining, forceDiff);
+      items.push(...borrowedSame);
+      remaining = totalNeed - items.length;
+    }
+    if (remaining > 0) {
+      const borrowedAny = await borrow(remaining, null);
+      items.push(...borrowedAny);
+    }
+    // Error if still short
+    if (items.length < totalNeed) {
+      errors.push(`${subject}: Only ${items.length} of ${totalNeed} questions found (after chapter balance).`);
+    }
+  }
+
+  // === Mixed difficulty path ===
+  async function fillMixed(totalNeed) {
+    const diffs = ["Level 1", "Level 2", "Level 3"];
+    const parts = splitCounts(totalNeed, [40, 30, 30]); // existing helper
+    for (let d = 0; d < diffs.length; d++) {
+      const want = parts[d];
+      if (want <= 0) continue;
+
+      if (!chs.length) {
+        // No chapter constraint → old behavior for this slice
+        let pool = await fetchFor(null, want, diffs[d]);
+        items.push(...takeUniqueFromPool(pool, want, usedIds, usedKeys, subjectSeenKeys));
+        continue;
+      }
+
+      // 1) Even split across chapters for this difficulty slice
+      const perChapter = splitEvenAcrossChapters(want, chs);
+      for (let i = 0; i < chs.length; i++) {
+        const need = perChapter[i];
+        if (!need) continue;
+        let pool = await fetchFor([chs[i]], need, diffs[d]);
+        const picked = takeUniqueFromPool(pool, need, usedIds, usedKeys, subjectSeenKeys);
+        items.push(...picked);
+        perChapter[i] -= picked.length;
+      }
+
+      // 2) Borrow within SAME difficulty from other chapters
+      let remaining = perChapter.reduce((a, b) => a + b, 0);
+      if (remaining > 0) {
+        const borrowed = await borrow(remaining, diffs[d]);
+        items.push(...borrowed);
+      }
+    }
+
+    // FINAL TOP-UP: if Mixed total is still short, allow any difficulty across all chapters
+    const short = totalNeed - items.length;
+    if (short > 0) {
+      const topup = await borrow(short, null);
+      items.push(...topup);
+    }
+
+    if (items.length < totalNeed) {
+      errors.push(`${subject}: Only ${items.length} of ${totalNeed} questions found (Mixed, after chapter balance).`);
+    }
+  }
+
+  if (difficultyValue === "Mixed") {
+    await fillMixed(requestedCount);
+  } else if (difficultyValue && difficultyValue !== "Mixed") {
+    await fillNonMixed(requestedCount, difficultyValue);
+  } else {
+    await fillNonMixed(requestedCount, null);
+  }
+
+  return { items: items.slice(0, requestedCount), errors };
+}
 
 // --- DROPDOWN HELPERS (multi, single, sections, etc.) ---
 function createDropdown(containerId, options, placeholder) {
@@ -995,212 +1171,63 @@ for (let subjData of subjectsData) {
         const sec = subjData.sections[secIdx];
         let questions = [];
         let sectionErrors = [];
-        if (sec.type === "all" || sec.type === "any") {
-            let requestedCount = sec.numQuestions;
-            if (difficultyValue === "Mixed") {
-    const difficultyLevels = ["Level 1", "Level 2", "Level 3"];
-    const percentages = [40, 30, 30];
-    const counts = splitCounts(requestedCount, percentages);
+               if (sec.type === "all" || sec.type === "any") {
+            const requestedCount = sec.numQuestions;
 
-    const byLevel = {"Level 1": [], "Level 2": [], "Level 3": []};
-
-    // strong de-dupe across ALL levels by id or canonical key
-const usedIds  = new Set();
-const usedKeys = new Set();
-const takeUnique = (list, need) => {
-  const out = [];
-  for (const q of list) {
-    const key = makeDeDupeKey(q);
-    if (
-      (q.id && usedIds.has(q.id)) ||
-      (key && usedKeys.has(key)) ||
-      (key && subjectSeenKeys.has(key)) // avoid stems already taken by earlier sections of this subject
-    ) continue;
-    if (q.id) usedIds.add(q.id);
-    if (key)  usedKeys.add(key);
-    out.push(q);
-    if (out.length >= need) break;
-  }
-  return out;
-};
-    // Step 1: fetch each level with a small buffer and pick uniques
-       for (let i = 0; i < difficultyLevels.length; i++) {
-      const level = difficultyLevels[i];
-      const need  = counts[i];
-
-      let pool = await fetchQuestionsWithMarksFallback({
-        selectedClass,
-        selectedSubject: subjData.subject,
-        chapters: subjData.chapters,
-        marksPerQuestion: sec.marksPerQuestion,
-        mcqType: sec.mcqType,
-        count: Math.max(need * 2, need + 2),   // small buffer to reduce repeats
-        forceDifficulty: level
-      });
-
-      // De-dupe within this level's pool and log what we actually have
-      pool = uniqueByIdOrText(pool);
-      _debugList(pool, `POOL — ${subjData.subject} / ${sec.label} / ${level} (need ${need})`);
-
-      byLevel[level] = takeUnique(pool, need);
-    }
-
-    // Step 2: if any bucket is short, borrow from the others via fresh fetches
-    const fillShort = async (targetLevel, donors) => {
-        const idx = difficultyLevels.indexOf(targetLevel);
-        let remaining = counts[idx] - byLevel[targetLevel].length;
-        if (remaining <= 0) return;
-
-        for (const donor of donors) {
-            if (remaining <= 0) break;
-            let pool = await fetchQuestionsWithMarksFallback({
-                selectedClass,
-                selectedSubject: subjData.subject,
-                chapters: subjData.chapters,
-                marksPerQuestion: sec.marksPerQuestion,
-                mcqType: sec.mcqType,
-                count: Math.max(remaining * 2, remaining + 2),
-                forceDifficulty: donor
+            // Chapter-balanced fetch (handles Mixed/non-Mixed + 4→3 fallback)
+            const { items: rawItems, errors: balanceErrors } = await fetchBalancedAcrossChapters({
+              selectedClass,
+              subject: subjData.subject,
+              chapters: subjData.chapters,
+              marksPerQuestion: sec.marksPerQuestion,
+              mcqType: sec.mcqType,
+              requestedCount,
+              difficultyValue,
+              subjectSeenKeys
             });
-            pool = uniqueByIdOrText(pool);
-            const picked = takeUnique(pool, remaining);
-            byLevel[targetLevel] = byLevel[targetLevel].concat(picked);
-            remaining -= picked.length;
-        }
-    };
 
-    await fillShort("Level 1", ["Level 2", "Level 3"]);
-    await fillShort("Level 2", ["Level 1", "Level 3"]);
-    await fillShort("Level 3", ["Level 2", "Level 1"]);
-
-    // Step 3: merge, final de-dupe, shuffle, cap
-    let questionsArr = [].concat(byLevel["Level 1"], byLevel["Level 2"], byLevel["Level 3"]);
-    questionsArr = uniqueByIdOrText(questionsArr);
-                console.warn(
-  `MIXED — ${subjData.subject} / ${sec.label} — requested=${requestedCount}; ` +
-  `L1=${byLevel["Level 1"].length}, L2=${byLevel["Level 2"].length}, L3=${byLevel["Level 3"].length}; ` +
-  `afterUnique=${questionsArr.length}`
-);
-// show a few keys so we can see what's being considered the “same”
-_debugList(
-  questionsArr,
-  `MERGED UNIQUE — ${subjData.subject} / ${sec.label} (unique=${questionsArr.length})`
-);
-    shuffleArray(questionsArr);
-// FINAL TOP-UP: if still short, pull from ANY difficulty (ignore 40/30/30 split),
-// still respecting class/subject/chapters/marks/type and de-dupers.
-if (questionsArr.length < requestedCount) {
-  const need0 = requestedCount - questionsArr.length;
-
-  // reuse “already picked” sets so we don’t repick
-  const usedIdsTopUp  = new Set(questionsArr.map(q => q.id).filter(Boolean));
-  const usedKeysTopUp = new Set(questionsArr.map(q => makeDeDupeKey(q)).filter(Boolean));
-
-  // one wide fetch (NO forceDifficulty → any level)
-  let poolAny = await fetchQuestionsWithMarksFallback({
-    selectedClass,
-    selectedSubject: subjData.subject,
-    chapters: subjData.chapters,
-    marksPerQuestion: sec.marksPerQuestion,
-    mcqType: sec.mcqType,
-    count: Math.max(need0 * 3, need0 + 6)
-  });
-
-  poolAny = uniqueByIdOrText(poolAny);
-
-  const picked = [];
-  for (const d of poolAny) {
-    const id  = d.id;
-    const key = makeDeDupeKey(d);
-    if ((id && usedIdsTopUp.has(id)) || (key && usedKeysTopUp.has(key))) continue;
-    if (key && subjectSeenKeys.has(key)) continue; // don’t reuse stems from earlier sections
-    if (id)  usedIdsTopUp.add(id);
-    if (key) usedKeysTopUp.add(key);
-    picked.push(d);
-    if (questionsArr.length + picked.length >= requestedCount) break;
-  }
-
-  questionsArr = uniqueByIdOrText(questionsArr.concat(picked));
-  shuffleArray(questionsArr);
-}
-
-// NO EARLY ERROR HERE. We just cap for now:
-questions = questionsArr.slice(0, requestedCount);
-
-    if (questionsArr.length < requestedCount) {
-        sectionErrors.push(
-            `${subjData.subject} - ${sec.label} (${sec.mcqType}): Only ${questionsArr.length} of ${requestedCount} questions found. Please add more questions to the bank.`
-        );
-    }
-    questions = questionsArr.slice(0, requestedCount);
-} else if (difficultyValue && difficultyValue !== "Mixed") {
-                questions = await fetchQuestions({
-                    selectedClass,
-                    selectedSubject: subjData.subject,
-                    chapters: subjData.chapters,
-                    marksPerQuestion: sec.marksPerQuestion,
-                    mcqType: sec.mcqType,
-                    count: requestedCount,
-                    forceDifficulty: difficultyValue
-                });
-            } else {
-                questions = await fetchQuestions({
-                    selectedClass,
-                    selectedSubject: subjData.subject,
-                    chapters: subjData.chapters,
-                    marksPerQuestion: sec.marksPerQuestion,
-                    mcqType: sec.mcqType,
-                    count: requestedCount
-                });
+            if (balanceErrors && balanceErrors.length) {
+              sectionErrors = sectionErrors.concat(balanceErrors);
             }
-           // Final de-dupe right before numbering/mapping
-questions = uniqueByIdOrText(questions);
 
-if (questions.length < requestedCount) {
-    sectionErrors.push(
-        `${subjData.subject} - ${sec.label} (${sec.mcqType}): Only ${questions.length} of ${requestedCount} questions found.`
-    );
-}
+            // Build mapped items (preserves your MCQ shuffle & answers)
+            const mapped = (rawItems || []).slice(0, requestedCount).map((q) => {
+              let optionsArr = extractMCQOptions(q);
+              let stem = q.question || q.text || '';
+              if ((sec.mcqType === "MCQ (Single)" || sec.mcqType === "MCQ (Multiple)") && Array.isArray(optionsArr) && optionsArr.length === 4) {
+                const cleanOptionsArr = optionsArr.map(opt => opt.replace(/^[A-D][).]?\s*/, '').trim());
+                const shuffled = shuffleMCQQuestion({ ...q, options: cleanOptionsArr, question: stem, answer: q.answer });
+                return {
+                  number: 0,
+                  text: shuffled.question || shuffled.text || "",
+                  marks: sec.marksPerQuestion,
+                  options: shuffled.options || [],
+                  answer: shuffled.answer || "",
+                  srcId: q.id || null
+                };
+              } else {
+                return {
+                  number: 0,
+                  text: stem,
+                  marks: sec.marksPerQuestion,
+                  options: Array.isArray(optionsArr) ? optionsArr : [],
+                  answer: q.answer || "",
+                  srcId: q.id || null
+                };
+              }
+            });
 
-// Cap to requestedCount before numbering
-// Cap to requestedCount and build mapped items
-const mapped = questions.slice(0, requestedCount).map((q) => {
-    let optionsArr = extractMCQOptions(q);
-    let stem = q.question || q.text || '';
-    if ((sec.mcqType === "MCQ (Single)" || sec.mcqType === "MCQ (Multiple)") && Array.isArray(optionsArr) && optionsArr.length === 4) {
-        const cleanOptionsArr = optionsArr.map(opt => opt.replace(/^[A-D][).]?\s*/, '').trim());
-        const shuffled = shuffleMCQQuestion({ ...q, options: cleanOptionsArr, question: stem, answer: q.answer });
-        return {
-  number: 0, // temp
-  text: shuffled.question || shuffled.text || "",
-  marks: sec.marksPerQuestion,
-  options: shuffled.options || [],
-  answer: shuffled.answer || "",
-  srcId: q.id || null
-};
-    } else {
-        return {
-  number: 0, // temp
-  text: stem,
-  marks: sec.marksPerQuestion,
-  options: Array.isArray(optionsArr) ? optionsArr : [],
-  answer: q.answer || "",
-  srcId: q.id || null
-};
-    }
-});
+            // Subject-level de-dupe across sections
+            const filtered = [];
+            for (const item of mapped) {
+              const k = makeDeDupeKey({ text: item.text });
+              if (k && subjectSeenKeys.has(k)) continue;
+              if (k) subjectSeenKeys.add(k);
+              filtered.push(item);
+            }
 
-// Subject-level de-dupe (prevents repeats across multiple sections of same subject)
-const filtered = [];
-for (const item of mapped) {
-    const k = makeDeDupeKey({ text: item.text });
-    if (k && subjectSeenKeys.has(k)) continue;
-    if (k) subjectSeenKeys.add(k);
-    filtered.push(item);
-}
-
-// Renumber after filtering
-questions = filtered.map((it, i) => ({ ...it, number: i + 1 }));
+            // Renumber for the section
+            questions = filtered.map((it, i) => ({ ...it, number: i + 1 }));
         } else if (sec.type === "internal") {
             let missingPairs = 0;
             for (let p = 0; p < sec.pairs.length; p++) {
@@ -1306,3 +1333,4 @@ window.location.href = 'exam-review.html';
 </script>
 </body>
 </html>
+
