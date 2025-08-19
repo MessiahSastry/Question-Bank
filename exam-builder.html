@@ -480,7 +480,7 @@ function uniqueByIdOrText(arr) {
   const out = [];
   for (const q of arr) {
     const id  = q.id || '';
-    const key = makeDeDupeKey(q);
+    const key = makeDeDupeKey(q) + '|m=' + (q.marks ?? '');
     if ((id && seenIds.has(id)) || (key && seenKeys.has(key))) continue;
     if (id)  seenIds.add(id);
     if (key) seenKeys.add(key);
@@ -624,7 +624,7 @@ async function fetchQuestionsWithMarksFallback({
 
   const dedupAppend = (arr, docs) => {
     for (const d of docs) {
-      const key = makeDeDupeKey(d);
+      const key = makeDeDupeKey(d) + '|m=' + (d.marks ?? '');
       if ((d.id && usedIds.has(d.id)) || (key && usedKeys.has(key))) continue;
       if (d.id)  usedIds.add(d.id);
       if (key)   usedKeys.add(key);
@@ -633,15 +633,28 @@ async function fetchQuestionsWithMarksFallback({
     }
   };
 
-  // Try: (1) exact difficulty then (2) any difficulty — across a marks fallback list.
+    // Try each marks value as number AND string to handle mixed Firestore schemas.
   for (const marks of marksOrder) {
-    // (1) exact difficulty first (if provided)
-    if (forceDifficulty) {
-      const q1 = applyFilters(base, { marks, difficulty: forceDifficulty });
-      const docs1 = await runAndFilter(q1, chapters);
-      dedupAppend(picked, docs1);
+    const variants = Number.isFinite(marks) ? [marks, String(marks)] : [marks];
+
+    for (const mv of variants) {
+      if (forceDifficulty) {
+        const q1 = applyFilters(base, { marks: mv, difficulty: forceDifficulty });
+        const docs1 = await runAndFilter(q1, chapters);
+        dedupAppend(picked, docs1);
+        if (picked.length >= count) return picked.slice(0, count);
+      }
+      const q2 = applyFilters(base, { marks: mv, difficulty: null });
+      const docs2 = await runAndFilter(q2, chapters);
+      dedupAppend(picked, docs2);
       if (picked.length >= count) return picked.slice(0, count);
     }
+  }
+
+  // Still short — return what we have.
+  return picked.slice(0, count);
+}
+
     // (2) relax difficulty
     const q2 = applyFilters(base, { marks, difficulty: null });
     const docs2 = await runAndFilter(q2, chapters);
@@ -1410,10 +1423,12 @@ console.groupEnd();
   // Subject-level de-dupe across sections
   const filtered = [];
   for (const item of mapped) {
-    const k = makeDeDupeKey({ text: item.text });
-    if (k && subjectSeenKeys.has(k)) continue;
-    if (k) subjectSeenKeys.add(k);
-    filtered.push(item);
+    // Prefer exact document identity if we have it
+const k = item.srcId ? `id:${item.srcId}` 
+                      : makeDeDupeKey({ text: item.text }) + `|m=${sec.marksPerQuestion}`;
+if (k && subjectSeenKeys.has(k)) continue;
+if (k) subjectSeenKeys.add(k);
+
   }
 
   // Renumber for this section
@@ -1523,6 +1538,7 @@ window.location.href = 'exam-review.html';
 </script>
 </body>
 </html>
+
 
 
 
