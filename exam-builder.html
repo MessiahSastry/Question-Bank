@@ -564,106 +564,109 @@ async function fetchQuestions({
   return allQuestions.slice(0, count);
 }
 async function fetchQuestionsWithMarksFallback({
-    selectedClass,
-    selectedSubject,
-    chapters,
-    marksPerQuestion,
-    mcqType,          // "MCQ (Single)" | "MCQ (Multiple)" | "Descriptive"
-    count,
-    forceDifficulty
+  selectedClass,
+  selectedSubject,
+  chapters,
+  marksPerQuestion,
+  mcqType,          // "MCQ (Single)" | "MCQ (Multiple)" | "Descriptive"
+  count,
+  forceDifficulty   // "Level 1" | "Level 2" | "Level 3" | null
 }) {
-    const firestore = firebase.firestore();
-    const wantedMarks = parseInt(marksPerQuestion);
-    let picked = [];
+  const firestore = firebase.firestore();
+  const wantedMarks = parseInt(marksPerQuestion);
+  const marksOrder = buildMarksFallbackOrder(wantedMarks);
 
-    // track duplicates by id AND by normalized text
-    const usedIds = new Set();
-    const usedKeys = new Set();
+  const picked   = [];
+  const usedIds  = new Set();
+  const usedKeys = new Set();
 
-    const base = firestore.collection("questions")
-        .where("class", "==", selectedClass)
-        .where("subject", "==", selectedSubject);
+  const base = firestore.collection("questions")
+    .where("class", "==", selectedClass)
+    .where("subject", "==", selectedSubject);
 
-    // allow only the requested type
-    const isAllowedType = (d) => {
-        if (mcqType === "MCQ (Single)")   return d.mcqType === "MCQ (Single)";
-        if (mcqType === "MCQ (Multiple)") return d.mcqType === "MCQ (Multiple)";
-        // Descriptive: accept docs with mcqType "Descriptive" OR missing/empty
-        if (mcqType === "Descriptive")    return !d.mcqType || d.mcqType === "Descriptive";
-        return true;
-    };
+  const isAllowedType = (d) => {
+    if (mcqType === "MCQ (Single)")   return d.mcqType === "MCQ (Single)";
+    if (mcqType === "MCQ (Multiple)") return d.mcqType === "MCQ (Multiple)";
+    if (mcqType === "Descriptive")    return !d.mcqType || d.mcqType === "Descriptive";
+    return true;
+  };
 
-    // apply firestore filters
-    const applyFilters = (q, { marks, difficulty } = {}) => {
+  const applyFilters = (q, { marks, difficulty } = {}) => {
     let qq = q;
     if (typeof marks === "number") qq = qq.where("marks", "==", marks);
     if (mcqType === "MCQ (Single)")   qq = qq.where("mcqType", "==", "MCQ (Single)");
     if (mcqType === "MCQ (Multiple)") qq = qq.where("mcqType", "==", "MCQ (Multiple)");
     if (difficulty) qq = qq.where("difficulty", "==", difficulty);
     return qq;
-};
+  };
 
-    // run query and filter by type; no marks override (we keep exact marks only)
-    const runAndFilter = async (qq, chapterList) => {
+  const runAndFilter = async (qq, chapterList) => {
     const out = [];
     if (chapterList && chapterList.length > 10) {
-        // run multiple queries, 10 chapters at a time
-        for (const batch of chunk(chapterList, 10)) {
-            const snap = await qq.where("chapter", "in", batch).get();
-            snap.forEach(doc => {
-                const d = { id: doc.id, ...doc.data() };
-                if (!isAllowedType(d)) return;
-                out.push(d);
-            });
-        }
-    } else {
-        // single query path
-        let q2 = qq;
-        if (chapterList && chapterList.length) q2 = q2.where("chapter", "in", chapterList);
-        const snap = await q2.get();
+      for (const batch of chunk(chapterList, 10)) {
+        const snap = await qq.where("chapter", "in", batch).get();
         snap.forEach(doc => {
-            const d = { id: doc.id, ...doc.data() };
-            if (!isAllowedType(d)) return;
-            out.push(d);
+          const d = { id: doc.id, ...doc.data() };
+          if (isAllowedType(d)) out.push(d);
         });
+      }
+    } else {
+      let q2 = qq;
+      if (chapterList && chapterList.length) q2 = q2.where("chapter", "in", chapterList);
+      const snap = await q2.get();
+      snap.forEach(doc => {
+        const d = { id: doc.id, ...doc.data() };
+        if (isAllowedType(d)) out.push(d);
+      });
     }
     return out;
-};
-    const dedupAppend = (arr, docs) => {
+  };
+
+  const dedupAppend = (arr, docs) => {
     for (const d of docs) {
-        const key = makeDeDupeKey(d);
-        if ((d.id && usedIds.has(d.id)) || (key && usedKeys.has(key))) continue;
-        if (d.id) usedIds.add(d.id);
-        if (key)  usedKeys.add(key);
-        arr.push(d);
-        if (arr.length >= count) break;
+      const key = makeDeDupeKey(d);
+      if ((d.id && usedIds.has(d.id)) || (key && usedKeys.has(key))) continue;
+      if (d.id)  usedIds.add(d.id);
+      if (key)   usedKeys.add(key);
+      arr.push(d);
+      if (arr.length >= count) break;
     }
-};
+  };
 
-    // 1) exact marks + difficulty
-    {
-        const q1 = applyFilters(base, { marks: wantedMarks, difficulty: forceDifficulty });
-        const docs = await runAndFilter(q1, chapters);
-        dedupAppend(picked, docs);
-        if (picked.length >= count) return picked.slice(0, count);
+  // Try: (1) exact difficulty then (2) any difficulty — across a marks fallback list.
+  for (const marks of marksOrder) {
+    // (1) exact difficulty first (if provided)
+    if (forceDifficulty) {
+      const q1 = applyFilters(base, { marks, difficulty: forceDifficulty });
+      const docs1 = await runAndFilter(q1, chapters);
+      dedupAppend(picked, docs1);
+      if (picked.length >= count) return picked.slice(0, count);
     }
+    // (2) relax difficulty
+    const q2 = applyFilters(base, { marks, difficulty: null });
+    const docs2 = await runAndFilter(q2, chapters);
+    dedupAppend(picked, docs2);
+    if (picked.length >= count) return picked.slice(0, count);
+  }
 
-    // 2) exact marks, difficulty RELAXED
-    {
-        const q2 = applyFilters(base, { marks: wantedMarks, difficulty: null });
-     const docs = await runAndFilter(q2, chapters);
-        dedupAppend(picked, docs);
-        if (picked.length >= count) return picked.slice(0, count);
-    }
-
-    // No conversions or pairing: if still short, just return what we have.
-    return picked.slice(0, count);
+  // Still short — return what we have.
+  return picked.slice(0, count);
 }
+
     // Small util to split an array into chunks of given size
 function chunk(arr, size) {
   const out = [];
   for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
   return out;
+}
+// Build a sensible marks fallback order, preferring the requested value first.
+function buildMarksFallbackOrder(wanted) {
+  const w = parseInt(wanted || 0);
+  const universe = [1,2,3,4,5,6,8,10]; // adjust to your data if needed
+  if (!w || !universe.includes(w)) return universe;
+  // put wanted first, then the rest by nearest distance
+  const rest = universe.filter(m => m !== w).sort((a,b) => Math.abs(a-w) - Math.abs(b-w));
+  return [w, ...rest];
 }
 
 // --- CHAPTER-BALANCED HELPERS (new) ---
@@ -762,18 +765,33 @@ async function fetchBalancedAcrossChapters({
 
   // If we are asking for <= number of chapters, do a strict one-per-chapter pass.
   const strictOneEach = totalNeed <= chs.length;
-  if (strictOneEach) {
-    for (let i = 0; i < chs.length && items.length < totalNeed; i++) {
-      const pool = await fetchFor([chs[i]], 1, forceDiff);       // ask only this chapter
-      const picked = takeUniqueFromPool(pool, 1, usedIds, usedKeys, subjectSeenKeys);
-      if (picked.length) items.push(...picked);
+if (strictOneEach) {
+  for (let i = 0; i < chs.length && items.length < totalNeed; i++) {
+    let pool = await fetchFor([chs[i]], 1, forceDiff);
+    let picked = takeUniqueFromPool(pool, 1, usedIds, usedKeys, subjectSeenKeys);
+    if (!picked.length) {
+      // same chapter, any difficulty
+      pool = await fetchFor([chs[i]], 1, null);
+      picked = takeUniqueFromPool(pool, 1, usedIds, usedKeys, subjectSeenKeys);
     }
-    // If we couldn’t get one from each required chapter, show an error (don’t borrow from the same chapter).
-    if (items.length < totalNeed) {
-      errors.push(`${subject}: Could not pick one question from each selected chapter for this section.`);
-    }
-    return;
+    if (picked.length) items.push(...picked);
   }
+  // Borrow across chapters to fill the remainder before erroring
+  let remaining = totalNeed - items.length;
+  if (remaining > 0) {
+    const borrowedSame = await borrow(remaining, forceDiff);
+    items.push(...borrowedSame);
+    remaining = totalNeed - items.length;
+  }
+  if (remaining > 0) {
+    const borrowedAny = await borrow(remaining, null);
+    items.push(...borrowedAny);
+  }
+  if (items.length < totalNeed) {
+    errors.push(`${subject}: Could not pick one per selected chapter; only ${items.length} of ${totalNeed} found.`);
+  }
+  return;
+}
 
   // Otherwise (we need more questions than chapters), do the even split + borrow fallback.
   const perChapter = splitEvenAcrossChapters(totalNeed, chs);
@@ -816,27 +834,40 @@ async function fillMixed(totalNeed) {
   for (let i = 0; i < parts[2]; i++) diffSeq.push("Level 3");
 
   // STRICT one-per-chapter when we asked for ≤ number of selected chapters
-  if (chs.length && totalNeed <= chs.length) {
-    for (let i = 0; i < totalNeed; i++) {
-      const ch = chs[i];                       // take first N selected chapters
-      const preferDiff = diffSeq[i] || null;   // prefer distribution, but chapter wins
-      let pool = await fetchFor([ch], 1, preferDiff);
-      let picked = takeUniqueFromPool(pool, 1, usedIds, usedKeys, subjectSeenKeys);
+if (chs.length && totalNeed <= chs.length) {
+  for (let i = 0; i < totalNeed; i++) {
+    const ch = chs[i];
+    const preferDiff = diffSeq[i] || null;
+    let pool = await fetchFor([ch], 1, preferDiff);
+    let picked = takeUniqueFromPool(pool, 1, usedIds, usedKeys, subjectSeenKeys);
 
-      // fallback: same chapter, any difficulty
-      if (!picked.length) {
-        pool = await fetchFor([ch], 1, null);
-        picked = takeUniqueFromPool(pool, 1, usedIds, usedKeys, subjectSeenKeys);
-      }
-      if (picked.length) items.push(...picked);
+    if (!picked.length) {
+      // same chapter, any difficulty
+      pool = await fetchFor([ch], 1, null);
+      picked = takeUniqueFromPool(pool, 1, usedIds, usedKeys, subjectSeenKeys);
     }
-
-    const missing = totalNeed - items.length;
-    if (missing > 0) {
-      errors.push(`${subject}: Missing questions for some selected chapters.`);
-    }
-    return;
+    if (picked.length) items.push(...picked);
   }
+
+  // Borrow across all chapters to satisfy the remaining slots,
+  // first honoring the remaining difficulty slots from diffSeq, then any difficulty.
+  let remaining = totalNeed - items.length;
+  for (let i = items.length; i < totalNeed && remaining > 0; i++) {
+    const needDiff = diffSeq[i] || null;
+    const got = await borrow(1, needDiff);
+    items.push(...got);
+    remaining = totalNeed - items.length;
+  }
+  if (remaining > 0) {
+    const topup = await borrow(remaining, null);
+    items.push(...topup);
+  }
+
+  if (items.length < totalNeed) {
+    errors.push(`${subject}: Missing questions after cross-chapter borrow (Mixed).`);
+  }
+  return;
+}
 
   // Otherwise: keep the original per-slice logic
   for (let d = 0; d < diffs.length; d++) {
@@ -1492,6 +1523,7 @@ window.location.href = 'exam-review.html';
 </script>
 </body>
 </html>
+
 
 
 
