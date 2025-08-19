@@ -591,59 +591,76 @@ async function fetchQuestionsWithMarksFallback({
     return true;
   };
 
-  const applyFilters = (q, { marks, difficulty } = {}) => {
-    let qq = q;
-    if (typeof marks !== "undefined") qq = qq.where("marks", "==", marks);
-    if (mcqType === "MCQ (Single)")   qq = qq.where("mcqType", "==", "MCQ (Single)");
-    if (mcqType === "MCQ (Multiple)") qq = qq.where("mcqType", "==", "MCQ (Multiple)");
-    if (difficulty)                   qq = qq.where("difficulty", "==", difficulty);
-    return qq;
-  };
+  const applyFilters = (q, { marks } = {}) => {
+  let qq = q;
+  if (typeof marks !== "undefined") qq = qq.where("marks", "==", marks);
+  if (mcqType === "MCQ (Single)")   qq = qq.where("mcqType", "==", "MCQ (Single)");
+  if (mcqType === "MCQ (Multiple)") qq = qq.where("mcqType", "==", "MCQ (Multiple)");
+  return qq; // no difficulty here
+};
 
-  const runAndFilter = async (qq, chapterList) => {
-    const out = [];
-    if (chapterList && chapterList.length > 10) {
-      for (const batch of chunk(chapterList, 10)) {
-        const snap = await qq.where("chapter", "in", batch).get();
-        snap.forEach(doc => { const d = { id: doc.id, ...doc.data() }; if (isAllowedType(d)) out.push(d); });
-      }
-    } else {
-      let q2 = qq;
-      if (chapterList && chapterList.length) q2 = q2.where("chapter", "in", chapterList);
-      const snap = await q2.get();
-      snap.forEach(doc => { const d = { id: doc.id, ...doc.data() }; if (isAllowedType(d)) out.push(d); });
-    }
-    return out;
-  };
+  const normDiff = s => String(s || "")
+  .replace(/<[^>]+>/g, " ")
+  .replace(/\u00A0/g, " ")
+  .replace(/\s+/g, " ")
+  .trim()
+  .toLowerCase();
 
-  const dedupAppend = (arr, docs) => {
-    for (const d of docs) {
-      const key = makeDeDupeKey(d);
-      if ((d.id && usedIds.has(d.id)) || (key && usedKeys.has(key))) continue;
-      if (d.id)  usedIds.add(d.id);
-      if (key)   usedKeys.add(key);
-      arr.push(d);
-      if (arr.length >= count) break;
+const runAndFilter = async (qq, chapterList, difficulty /* new */) => {
+  const collected = [];
+  if (chapterList && chapterList.length > 10) {
+    for (const batch of chunk(chapterList, 10)) {
+      const snap = await qq.where("chapter", "in", batch).get();
+      snap.forEach(doc => {
+        const d = { id: doc.id, ...doc.data() };
+        if (isAllowedType(d)) collected.push(d);
+      });
     }
-  };
+  } else {
+    let q2 = qq;
+    if (chapterList && chapterList.length) q2 = q2.where("chapter", "in", chapterList);
+    const snap = await q2.get();
+    snap.forEach(doc => {
+      const d = { id: doc.id, ...doc.data() };
+      if (isAllowedType(d)) collected.push(d);
+    });
+  }
+
+  if (!difficulty) return collected;
+  const want = normDiff(difficulty);
+  return collected.filter(d => normDiff(d.difficulty) === want);
+};
+
+
+  const usedIds = new Set();
+const dedupAppend = (arr, docs) => {
+  for (const d of docs) {
+    if (d.id && usedIds.has(d.id)) continue; // id-only here
+    if (d.id) usedIds.add(d.id);
+    arr.push(d);
+    if (arr.length >= count) break;
+  }
+};
 
   // Try each marks value as number AND string to handle mixed Firestore schemas.
   for (const marks of marksOrder) {
-    const variants = Number.isFinite(marks) ? [marks, String(marks)] : [marks];
+  const variants = Number.isFinite(marks) ? [marks, String(marks)] : [marks];
 
-    for (const mv of variants) {
-      if (forceDifficulty) {
-        const q1 = applyFilters(base, { marks: mv, difficulty: forceDifficulty });
-        const docs1 = await runAndFilter(q1, chapters);
-        dedupAppend(picked, docs1);
-        if (picked.length >= count) return picked.slice(0, count);
-      }
-      const q2 = applyFilters(base, { marks: mv, difficulty: null });
-      const docs2 = await runAndFilter(q2, chapters);
-      dedupAppend(picked, docs2);
+  for (const mv of variants) {
+    // (1) exact difficulty first
+    if (forceDifficulty) {
+      const q1   = applyFilters(base, { marks: mv });
+      const docs1 = await runAndFilter(q1, chapters, forceDifficulty);
+      dedupAppend(picked, docs1);
       if (picked.length >= count) return picked.slice(0, count);
     }
+    // (2) relax difficulty
+    const q2   = applyFilters(base, { marks: mv });
+    const docs2 = await runAndFilter(q2, chapters, null);
+    dedupAppend(picked, docs2);
+    if (picked.length >= count) return picked.slice(0, count);
   }
+}
 
   // Still short — return what we have.
   return picked.slice(0, count);
@@ -1404,19 +1421,21 @@ console.groupEnd();
     }
   });
 
-  // Subject-level de-dupe across sections
-  const filtered = [];
-  for (const item of mapped) {
-    // Prefer exact document identity if we have it
-const k = item.srcId ? `id:${item.srcId}` 
-                      : makeDeDupeKey({ text: item.text }) + `|m=${sec.marksPerQuestion}`;
-if (k && subjectSeenKeys.has(k)) continue;
-if (k) subjectSeenKeys.add(k);
-filtered.push(item); 
-  }
+ // Subject-level de-dupe across sections
+const filtered = [];
+const sectionSeen = new Set(); // optional: also block dupes within this section explicitly
+for (const item of mapped) {
+  const k = item.srcId
+    ? `id:${item.srcId}`
+    : makeDeDupeKey({ text: item.text }); // ← no marks suffix
 
-  // Renumber for this section
-  questions = filtered.map((it, i) => ({ ...it, number: i + 1 }));
+  if (k && (subjectSeenKeys.has(k) || sectionSeen.has(k))) continue;
+  if (k) { subjectSeenKeys.add(k); sectionSeen.add(k); }
+  filtered.push(item);
+}
+
+// Renumber for this section
+questions = filtered.map((it, i) => ({ ...it, number: i + 1 }));
 } else if (sec.type === "internal") {
             let missingPairs = 0;
             for (let p = 0; p < sec.pairs.length; p++) {
@@ -1522,6 +1541,7 @@ window.location.href = 'exam-review.html';
 </script>
 </body>
 </html>
+
 
 
 
