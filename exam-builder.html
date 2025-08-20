@@ -602,7 +602,7 @@ async function fetchQuestionsWithMarksFallback({
   const normDiff = s => String(s || "")
   .replace(/<[^>]+>/g, " ")
   .replace(/\u00A0/g, " ")
-  .replace(/\s+/g, " ")
+  .replace(/\s+/g, "")   // remove ALL spaces so "Level 2" == "Level2"
   .trim()
   .toLowerCase();
 
@@ -833,52 +833,67 @@ if (strictOneEach) {
   }
 }
 
-  // === Mixed difficulty path ===
-  // Mixed difficulty: first ensure per-chapter coverage when possible, then fall back.
+    // Mixed difficulty: first ensure per-chapter coverage when possible, then fall back.
 async function fillMixed(totalNeed) {
   const diffs = ["Level 1", "Level 2", "Level 3"];
-  const parts = splitCounts(totalNeed, [40, 30, 30]); // e.g., 2 → [1,1,0]
 
-  // Build a difficulty sequence like ["Level 1","Level 2","Level 3",...]
-  const diffSeq = [];
-  for (let i = 0; i < parts[0]; i++) diffSeq.push("Level 1");
-  for (let i = 0; i < parts[1]; i++) diffSeq.push("Level 2");
-  for (let i = 0; i < parts[2]; i++) diffSeq.push("Level 3");
-
-  // STRICT one-per-chapter when we asked for ≤ number of selected chapters
-if (chs.length && totalNeed <= chs.length) {
-  for (let i = 0; i < totalNeed; i++) {
-    const ch = chs[i];
-    const preferDiff = diffSeq[i] || null;
-    let pool = await fetchFor([ch], 1, preferDiff);
-    let picked = takeUniqueFromPool(pool, 1, usedIds, usedKeys, subjectSeenKeys);
-
-    if (!picked.length) {
-      // same chapter, any difficulty
-      pool = await fetchFor([ch], 1, null);
-      picked = takeUniqueFromPool(pool, 1, usedIds, usedKeys, subjectSeenKeys);
+  // If no chapter constraint, keep your old (global) behaviour
+  if (!chs.length) {
+    const parts = splitCounts(totalNeed, [40, 30, 30]); // e.g. 6 -> [3,2,1]
+    for (let d = 0; d < diffs.length; d++) {
+      const want = parts[d];
+      if (!want) continue;
+      const pool = await fetchFor(null, want, diffs[d]);
+      items.push(...takeUniqueFromPool(pool, want, usedIds, usedKeys, subjectSeenKeys));
     }
-    if (picked.length) items.push(...picked);
+    const short = totalNeed - items.length;
+    if (short > 0) items.push(...await borrow(short, null)); // any difficulty
+    if (items.length < totalNeed) {
+      errors.push(`${subject}: Only ${items.length} of ${totalNeed} questions found (Mixed, no-chapter).`);
+    }
+    return;
   }
 
-  // Borrow across all chapters to satisfy the remaining slots,
-  // first honoring the remaining difficulty slots from diffSeq, then any difficulty.
-  let remaining = totalNeed - items.length;
-  for (let i = items.length; i < totalNeed && remaining > 0; i++) {
-    const needDiff = diffSeq[i] || null;
-    const got = await borrow(1, needDiff);
-    items.push(...got);
-    remaining = totalNeed - items.length;
+  // === CHAPTER-FIRST: split total evenly across chapters ===
+  const quotaPerChapter = splitEvenAcrossChapters(totalNeed, chs); // e.g. 6 -> [3,3] for 2 chapters
+
+  for (let i = 0; i < chs.length; i++) {
+    const ch = chs[i];
+    let need = quotaPerChapter[i];
+    if (!need) continue;
+
+    // 40/30/30 *inside this chapter*
+    const parts = splitCounts(need, [40, 30, 30]); // e.g. 3 -> [2,1,0]
+    for (let d = 0; d < diffs.length && need > 0; d++) {
+      const want = parts[d];
+      if (!want) continue;
+      const pool = await fetchFor([ch], want, diffs[d]);         // this chapter + this difficulty
+      const picked = takeUniqueFromPool(pool, want, usedIds, usedKeys, subjectSeenKeys);
+      items.push(...picked);
+      need -= picked.length;
+    }
+
+    // Not enough in 40/30/30? Relax difficulty within the SAME chapter
+    if (need > 0) {
+      const poolAny = await fetchFor([ch], need, null);          // this chapter, any difficulty
+      const add = takeUniqueFromPool(poolAny, need, usedIds, usedKeys, subjectSeenKeys);
+      items.push(...add);
+      need -= add.length;
+    }
+
+    quotaPerChapter[i] = need; // leftover for this chapter (likely 0)
   }
+
+  // Anything still missing? Borrow across ALL chapters, any difficulty.
+  let remaining = totalNeed - items.length;
   if (remaining > 0) {
     const topup = await borrow(remaining, null);
     items.push(...topup);
   }
 
   if (items.length < totalNeed) {
-    errors.push(`${subject}: Missing questions after cross-chapter borrow (Mixed).`);
+    errors.push(`${subject}: Only ${items.length} of ${totalNeed} questions found (Mixed, chapter-first).`);
   }
-  return;
 }
 
   // Otherwise: keep the original per-slice logic
@@ -1539,6 +1554,7 @@ window.location.href = 'exam-review.html';
 </script>
 </body>
 </html>
+
 
 
 
