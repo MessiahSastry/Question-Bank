@@ -1369,81 +1369,47 @@ console.groupEnd();
   }
 
     // Helper: map raw Firestore doc -> section item (applies MCQ shuffle if needed)
-  function mapToItem(qDoc) {
-    const stem = qDoc.question || qDoc.text || '';
-    const opts = extractMCQOptions(qDoc);
-    if ((sec.mcqType === "MCQ (Single)" || sec.mcqType === "MCQ (Multiple)") && Array.isArray(opts) && opts.length === 4) {
-      const cleaned = opts.map(o => o.replace(/^[A-D][).]?\s*/, '').trim());
-      const shuffled = shuffleMCQQuestion({ ...qDoc, options: cleaned, question: stem, answer: qDoc.answer });
+   const mapped = chosen.map((q) => {
+    let optionsArr = extractMCQOptions(q);
+    let stem = q.question || q.text || '';
+    if ((sec.mcqType === "MCQ (Single)" || sec.mcqType === "MCQ (Multiple)") && Array.isArray(optionsArr) && optionsArr.length === 4) {
+      const cleanOptionsArr = optionsArr.map(opt => opt.replace(/^[A-D][).]?\s*/, '').trim());
+      const shuffled = shuffleMCQQuestion({ ...q, options: cleanOptionsArr, question: stem, answer: q.answer });
       return {
         number: 0,
         text: shuffled.question || shuffled.text || "",
         marks: sec.marksPerQuestion,
         options: shuffled.options || [],
         answer: shuffled.answer || "",
-        srcId: qDoc.id || null
+        srcId: q.id || null
+      };
+    } else {
+      return {
+        number: 0,
+        text: stem,
+        marks: sec.marksPerQuestion,
+        options: Array.isArray(optionsArr) ? optionsArr : [],
+        answer: q.answer || "",
+        srcId: q.id || null
       };
     }
-    return {
-      number: 0,
-      text: stem,
-      marks: sec.marksPerQuestion,
-      options: Array.isArray(opts) ? opts : [],
-      answer: qDoc.answer || "",
-      srcId: qDoc.id || null
-    };
-  }
-  const keyForDoc   = (d) => d?.id ? `id:${d.id}` : makeDeDupeKey(d);
-  const keyForItem  = (it) => it?.srcId ? `id:${it.srcId}` : makeDeDupeKey({ text: it.text });
+  });
 
-  // 1) Map the initially chosen set
-  const mapped = chosen.map(mapToItem);
+ // Subject-level de-dupe across sections
+const filtered = [];
+const sectionSeen = new Set(); // optional: also block dupes within this section explicitly
+for (const item of mapped) {
+  const k = item.srcId
+    ? `id:${item.srcId}`
+    : makeDeDupeKey({ text: item.text }); // ← no marks suffix
 
-  // 2) De-dupe against this section and across earlier sections of same subject
-  const sectionSeen = new Set();
-  let picked = [];
-  for (const item of mapped) {
-    const k = keyForItem(item);
-    if (k && (subjectSeenKeys.has(k) || sectionSeen.has(k))) continue;
-    if (k) { subjectSeenKeys.add(k); sectionSeen.add(k); }
-    picked.push(item);
-  }
+  if (k && (subjectSeenKeys.has(k) || sectionSeen.has(k))) continue;
+  if (k) { subjectSeenKeys.add(k); sectionSeen.add(k); }
+  filtered.push(item);
+}
 
-  // 3) If de-dupe made us short, TOP-UP from the remaining pool (non-duplicate first)
-  if (picked.length < requestedCount) {
-    for (const qDoc of pool) {
-      if (picked.length >= requestedCount) break;
-      // skip ones already mapped
-      if (chosen.includes(qDoc)) continue;
-      const kDoc = keyForDoc(qDoc);
-      if (kDoc && (subjectSeenKeys.has(kDoc) || sectionSeen.has(kDoc))) continue;
-      const item = mapToItem(qDoc);
-      const kIt  = keyForItem(item);
-      if (kIt && (subjectSeenKeys.has(kIt) || sectionSeen.has(kIt))) continue;
-      if (kIt) { subjectSeenKeys.add(kIt); sectionSeen.add(kIt); }
-      picked.push(item);
-    }
-  }
-
-  // 4) Last resort: still short? allow cross-section duplicate (but NOT within this section)
-  if (picked.length < requestedCount) {
-    for (const qDoc of pool) {
-      if (picked.length >= requestedCount) break;
-      const item = mapToItem(qDoc);
-      const kIt  = keyForItem(item);
-      if (kIt && sectionSeen.has(kIt)) continue; // keep this section duplicate-free
-      // do NOT add to subjectSeenKeys here; we're deliberately allowing cross-section repeat
-      if (kIt) sectionSeen.add(kIt);
-      picked.push(item);
-    }
-  }
-
-  // 5) Cap & renumber
-  picked = picked.slice(0, requestedCount);
-  questions = picked.map((it, i) => ({ ...it, number: i + 1 }));
-
-  // Debug
-  console.log(`SEC DEBUG ✓ ${subjData.subject} / ${sec.label}: want=${requestedCount}, afterDedup=${mapped.length}→${questions.length}`);
+// Renumber for this section
+questions = filtered.map((it, i) => ({ ...it, number: i + 1 }));
 } else if (sec.type === "internal") {
             let missingPairs = 0;
             for (let p = 0; p < sec.pairs.length; p++) {
@@ -1549,6 +1515,7 @@ window.location.href = 'exam-review.html';
 </script>
 </body>
 </html>
+
 
 
 
