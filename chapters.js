@@ -290,6 +290,8 @@ window.textbooks = {
       "Bio Diversity"
     ],
     "Social": [
+      "Our Universe and the Earth",
+      "Forests",
       "Equality in Indian Democracy",
       "State Government",
       "Our Country – India",
@@ -703,6 +705,7 @@ window.textbooks = {
     ]
   }
 };
+
 
 
 
