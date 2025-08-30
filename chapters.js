@@ -90,6 +90,7 @@ window.textbooks = {
     "Physics IIT & NEET": [
       "Units and Measurements",
       "Kinematics",
+      "Kinematics (Motion, Distance & Displacement)",
       "Newton's Laws of Motion",
       "Work-Energy and Power",
       "Heat",
@@ -105,6 +106,7 @@ window.textbooks = {
     "Chemistry IIT & NEET": [
       "Nature of Chemistry",
       "Language of Chemistry",
+      "Language of Chemistry(symbol of elements & Valency)",
       "Basic Concept Of Chemistry",
       "Atomic Structure",
       "Chemical Bonding",
@@ -243,6 +245,7 @@ window.textbooks = {
     ],
     "Physics IIT & NEET": [
       "Units and Measurements",
+      "Units and Measurements (Measurements of Length, Mass & Area) ",
       "Kinematics",
       "Newton's Laws of Motion",
       "Work-Energy and Power",
@@ -258,7 +261,7 @@ window.textbooks = {
     ],
     "Chemistry IIT & NEET": [
       "States of Matter",
-      "Basic Concepts of Chemistry",
+      "Basic Concepts of Chemistry (Atomic Mass, Molecular Mass & Mole Concept)",
       "Language of Chemistry",
       "Atomic Structure",
       "Classification of Elements",
@@ -705,6 +708,7 @@ window.textbooks = {
     ]
   }
 };
+
 
 
 
