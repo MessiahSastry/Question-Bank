@@ -1028,8 +1028,8 @@ async function fetchAndDisplayQuestions() {
             questionsHTML += `
             <div class="question-item" data-id="${doc.id}" style="position:relative;">
                 <div class="question-meta">
-                    Q${questionCount}: ${data.difficulty || 'N/A'}, ${data.marks || 'N/A'} Mark(s)${data.mcqType ? ` [${data.mcqType}]` : ''}
-                </div>
+              Q${questionCount}: ${(data.difficulty || data.level || 'N/A')}, ${(data.marks ?? 'N/A')} Mark(s)${data.mcqType ? ` [${data.mcqType}]` : ''}
+            </div>
                 <div class="question-text">
                    ${
                       Array.isArray(data.options) && data.options.length === 4
@@ -1152,12 +1152,11 @@ async function fetchAndDisplayQuestions() {
                     menu.className = 'actions-menu';
         
                     // Build menu
-                    menu.innerHTML = `
-                        <button class="menu-show-answer-btn">Show Answer</button>
-                        <button class="menu-edit-btn">Edit</button>
-                        <button class="menu-delete-btn">Delete</button>
-                    `;
-        
+                   menu.innerHTML = `
+                    <button class="menu-show-answer-btn">Show Answer</button>
+                    <button class="menu-edit-btn">Edit / Meta</button>
+                    <button class="menu-delete-btn">Delete</button>
+                `;      
                     // Insert menu
                     questionItem.appendChild(menu);
         
@@ -1225,104 +1224,191 @@ async function fetchAndDisplayQuestions() {
         if (typeof setupQuestionActionMenus === "function") setupQuestionActionMenus();
         
        
-     function showEditPopupForBank(docId, data) {
-    // Remove any existing edit popups
-    document.querySelectorAll('.edit-popup').forEach(p => p.remove());
+    function showEditPopupForBank(docId, data) {
+  // Remove any existing edit popups
+  document.querySelectorAll('.edit-popup').forEach(p => p.remove());
 
-    const isMCQ = Array.isArray(data.options) && data.options.length === 4;
-    const options = isMCQ ? data.options : ["", "", "", ""];
-    const answerVal = data.parsedAnswer || data.answer || "";
+  // Detect type
+  const isMCQInitial = Array.isArray(data.options) && data.options.length === 4;
+  const initialType = data.mcqType && (data.mcqType === 'MCQ (Single)' || data.mcqType === 'MCQ (Multiple)')
+      ? data.mcqType
+      : (isMCQInitial ? 'MCQ (Single)' : 'Descriptive');
 
-    // Popup HTML
-    const popup = document.createElement('div');
-    popup.className = 'edit-popup';
-    popup.innerHTML = `
-        <div style="
-            background:#fff;
-            border-radius:18px;
-            box-shadow:0 6px 24px rgba(23,98,167,0.20);
-            padding:32px 22px 22px 22px;
-            max-width:99vw;
-            width:520px;
-            margin:0 auto;
-            position:relative;
-            font-family:'Segoe UI',Arial,sans-serif;">
-            <div style="font-weight:bold;font-size:1.34em;margin-bottom:16px;letter-spacing:0.01em;text-align:center;">Edit Question</div>
-            <label style="display:block;margin-bottom:4px;margin-top:2px;font-weight:500;color:#1d5b96;">Question:</label>
-            <textarea id="edit-q-text" rows="10" style="width:100%;min-height:180px;margin-bottom:18px;padding:13px 15px;border-radius:7px;border:1.5px solid #bdd7f6;font-size:1.17em;resize:vertical;">${data.question || data.body || data.text || ''}</textarea>
-            ${
-                isMCQ
-                ? `<div>
-                        <div style="margin-bottom:10px;">
-                            <label style="font-weight:500;color:#1d5b96;">Option A:</label>
-                            <input type="text" id="edit-q-optA" value="${options[0] || ''}" style="width:100%;margin-bottom:4px;padding:7px 9px;border-radius:7px;border:1.5px solid #bdd7f6;">
-                        </div>
-                        <div style="margin-bottom:10px;">
-                            <label style="font-weight:500;color:#1d5b96;">Option B:</label>
-                            <input type="text" id="edit-q-optB" value="${options[1] || ''}" style="width:100%;margin-bottom:4px;padding:7px 9px;border-radius:7px;border:1.5px solid #bdd7f6;">
-                        </div>
-                        <div style="margin-bottom:10px;">
-                            <label style="font-weight:500;color:#1d5b96;">Option C:</label>
-                            <input type="text" id="edit-q-optC" value="${options[2] || ''}" style="width:100%;margin-bottom:4px;padding:7px 9px;border-radius:7px;border:1.5px solid #bdd7f6;">
-                        </div>
-                        <div>
-                            <label style="font-weight:500;color:#1d5b96;">Option D:</label>
-                            <input type="text" id="edit-q-optD" value="${options[3] || ''}" style="width:100%;margin-bottom:4px;padding:7px 9px;border-radius:7px;border:1.5px solid #bdd7f6;">
-                        </div>
-                    </div>
-                    <label style="display:block;margin-top:14px;font-weight:500;color:#1d5b96;">Answer (e.g., "A" or "A, C" for multiple correct):</label>
-                    <input type="text" id="edit-q-answer" value="${answerVal}" style="width:100%;margin-bottom:8px;padding:7px 9px;border-radius:7px;border:1.5px solid #bdd7f6;">
-                `
-                : ``
-            }
-            <div style="display:flex;justify-content:flex-end;gap:18px;margin-top:28px;">
-                <button id="edit-cancel" style="background:#eee;border:none;border-radius:6px;padding:10px 22px;font-weight:600;font-size:1em;color:#346799;cursor:pointer;">Cancel</button>
-                <button id="edit-save" style="background:#1762a7;border:none;border-radius:6px;padding:10px 22px;font-weight:600;font-size:1em;color:#fff;cursor:pointer;">Save</button>
-            </div>
+  // Safe meta defaults
+  const initMarks = (typeof data.marks === 'number' || /^[0-9]+$/.test(String(data.marks))) ? data.marks : '';
+  const initLevel = data.difficulty || '';            // using `difficulty` as the stored field
+  const initChapter = data.chapter || '';
+  const initQNo = (typeof data.questionNumber === 'number' || /^[0-9]+$/.test(String(data.questionNumber))) ? data.questionNumber : '';
+
+  // Options
+  const opts = isMCQInitial ? (data.options || ["", "", "", ""]) : ["", "", "", ""];
+
+  const popup = document.createElement('div');
+  popup.className = 'edit-popup';
+  popup.innerHTML = `
+    <div style="
+      background:#fff;border-radius:18px;box-shadow:0 6px 24px rgba(23,98,167,0.20);
+      padding:28px 20px 20px 20px;max-width:98vw;width:620px;margin:0 auto;position:relative;">
+      <div style="font-weight:bold;font-size:1.24em;margin-bottom:12px;letter-spacing:0.01em;text-align:center;">Edit Question & Meta</div>
+
+      <!-- META BLOCK -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
+        <div>
+          <label style="display:block;margin-bottom:4px;font-weight:600;color:#1d5b96;">Question Type</label>
+          <select id="edit-q-type" style="width:100%;padding:9px;border-radius:8px;border:1.5px solid #bdd7f6;">
+            <option value="Descriptive">Descriptive</option>
+            <option value="MCQ (Single)">MCQ (Single)</option>
+            <option value="MCQ (Multiple)">MCQ (Multiple)</option>
+          </select>
         </div>
-    `;
-    // Full screen, blur bg
-    Object.assign(popup.style, {
-        position: 'fixed',
-        top: '0', left: '0', width: '100vw', height: '100vh', background: 'rgba(12,29,68,0.12)',
-        zIndex: 5000, display: 'flex', alignItems: 'center', justifyContent: 'center'
-    });
-    document.body.appendChild(popup);
+        <div>
+          <label style="display:block;margin-bottom:4px;font-weight:600;color:#1d5b96;">Marks</label>
+          <input id="edit-q-marks" type="number" min="1" step="1" value="${initMarks}" style="width:100%;padding:9px;border-radius:8px;border:1.5px solid #bdd7f6;">
+        </div>
+        <div>
+          <label style="display:block;margin-bottom:4px;font-weight:600;color:#1d5b96;">Level / Difficulty</label>
+          <select id="edit-q-level" style="width:100%;padding:9px;border-radius:8px;border:1.5px solid #bdd7f6;">
+            <option value="">Select Level</option>
+            <option value="Level 1">Level 1</option>
+            <option value="Level 2">Level 2</option>
+            <option value="Level 3">Level 3</option>
+          </select>
+        </div>
+        <div>
+          <label style="display:block;margin-bottom:4px;font-weight:600;color:#1d5b96;">Question No.</label>
+          <input id="edit-q-number" type="number" min="1" step="1" value="${initQNo}" style="width:100%;padding:9px;border-radius:8px;border:1.5px solid #bdd7f6;">
+        </div>
+        <div style="grid-column:1 / -1;">
+          <label style="display:block;margin-bottom:4px;font-weight:600;color:#1d5b96;">Chapter</label>
+          <input id="edit-q-chapter" type="text" value="${initChapter.replace(/"/g,'&quot;')}" style="width:100%;padding:9px;border-radius:8px;border:1.5px solid #bdd7f6;">
+        </div>
+      </div>
 
-    document.getElementById('edit-cancel').onclick = () => popup.remove();
+      <!-- QUESTION TEXT -->
+      <label style="display:block;margin-bottom:4px;margin-top:4px;font-weight:600;color:#1d5b96;">Question Text</label>
+      <textarea id="edit-q-text" rows="8" style="width:100%;min-height:140px;margin-bottom:12px;padding:12px 14px;border-radius:8px;border:1.5px solid #bdd7f6;font-size:1.05em;resize:vertical;">${(data.question || data.body || data.text || '').replace(/</g,'&lt;')}</textarea>
 
-    document.getElementById('edit-save').onclick = async () => {
-        const qText = document.getElementById('edit-q-text').value.trim();
-        let updateObj = { question: qText };
+      <!-- OPTIONS (shown when MCQ) -->
+      <div id="edit-mcq-block" style="display:none;border:1px dashed #bdd7f6;padding:12px;border-radius:10px;background:#f9fcff;margin-bottom:12px;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+          <div>
+            <label style="display:block;margin-bottom:4px;font-weight:500;color:#1d5b96;">Option A</label>
+            <input id="edit-q-optA" type="text" value="${(opts[0]||'').replace(/"/g,'&quot;')}" style="width:100%;padding:8px;border-radius:8px;border:1.5px solid #bdd7f6;">
+          </div>
+          <div>
+            <label style="display:block;margin-bottom:4px;font-weight:500;color:#1d5b96;">Option B</label>
+            <input id="edit-q-optB" type="text" value="${(opts[1]||'').replace(/"/g,'&quot;')}" style="width:100%;padding:8px;border-radius:8px;border:1.5px solid #bdd7f6;">
+          </div>
+          <div>
+            <label style="display:block;margin-bottom:4px;font-weight:500;color:#1d5b96;">Option C</label>
+            <input id="edit-q-optC" type="text" value="${(opts[2]||'').replace(/"/g,'&quot;')}" style="width:100%;padding:8px;border-radius:8px;border:1.5px solid #bdd7f6;">
+          </div>
+          <div>
+            <label style="display:block;margin-bottom:4px;font-weight:500;color:#1d5b96;">Option D</label>
+            <input id="edit-q-optD" type="text" value="${(opts[3]||'').replace(/"/g,'&quot;')}" style="width:100%;padding:8px;border-radius:8px;border:1.5px solid #bdd7f6;">
+          </div>
+        </div>
+        <label style="display:block;margin-top:12px;margin-bottom:4px;font-weight:500;color:#1d5b96;">Answer (e.g., A or A,C)</label>
+        <input id="edit-q-answer" type="text" value="${(data.parsedAnswer || data.answer || '').replace(/"/g,'&quot;')}" style="width:100%;padding:8px;border-radius:8px;border:1.5px solid #bdd7f6;">
+      </div>
 
-        if (isMCQ) {
-            const answer = document.getElementById('edit-q-answer').value.trim();
-            const optA = document.getElementById('edit-q-optA').value.trim();
-            const optB = document.getElementById('edit-q-optB').value.trim();
-            const optC = document.getElementById('edit-q-optC').value.trim();
-            const optD = document.getElementById('edit-q-optD').value.trim();
-            if (!qText || !optA || !optB || !optC || !optD || !answer) {
-                alert("All fields are required.");
-                return;
-            }
-            updateObj.options = [optA, optB, optC, optD];
-            updateObj.parsedAnswer = answer;
-        } else {
-            if (!qText) {
-                alert("Question is required.");
-                return;
-            }
-            updateObj.options = firebase.firestore.FieldValue.delete();
-            updateObj.body = qText;
-            updateObj.text = qText;
-            updateObj.question = qText;
-            updateObj.parsedAnswer = firebase.firestore.FieldValue.delete();
-        }
+      <div style="display:flex;justify-content:flex-end;gap:12px;margin-top:6px;">
+        <button id="edit-cancel" style="background:#eee;border:none;border-radius:8px;padding:10px 22px;font-weight:600;color:#346799;cursor:pointer;">Cancel</button>
+        <button id="edit-save" style="background:#1762a7;border:none;border-radius:8px;padding:10px 22px;font-weight:600;color:#fff;cursor:pointer;">Save</button>
+      </div>
+    </div>
+  `;
+  // overlay
+  Object.assign(popup.style, {
+    position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh',
+    background: 'rgba(12,29,68,0.12)', zIndex: 5000, display: 'flex',
+    alignItems: 'center', justifyContent: 'center', padding: '10px'
+  });
+  document.body.appendChild(popup);
 
-        await db.collection('questions').doc(docId).update(updateObj);
-        popup.remove();
-        fetchAndDisplayQuestions();
+  // Set initial selections
+  const selType = popup.querySelector('#edit-q-type');
+  const selLevel = popup.querySelector('#edit-q-level');
+  selType.value = initialType;
+  if (initLevel) selLevel.value = initLevel;
+
+  const mcqBlock = popup.querySelector('#edit-mcq-block');
+  const toggleMCQBlock = () => {
+    mcqBlock.style.display = (selType.value === 'MCQ (Single)' || selType.value === 'MCQ (Multiple)') ? 'block' : 'none';
+  };
+  selType.addEventListener('change', toggleMCQBlock);
+  toggleMCQBlock();
+
+  // Handlers
+  popup.querySelector('#edit-cancel').onclick = () => popup.remove();
+
+  popup.querySelector('#edit-save').onclick = async () => {
+    const qType = selType.value;
+    const qText = popup.querySelector('#edit-q-text').value.trim();
+    const marksRaw = popup.querySelector('#edit-q-marks').value.trim();
+    const levelVal = selLevel.value || '';
+    const chapterVal = popup.querySelector('#edit-q-chapter').value.trim();
+    const qNoRaw = popup.querySelector('#edit-q-number').value.trim();
+
+    if (!qText) { alert("Question text is required."); return; }
+
+    const updateObj = {
+      question: qText,
+      // meta
+      difficulty: levelVal || firebase.firestore.FieldValue.delete(),
+      chapter: chapterVal || firebase.firestore.FieldValue.delete(),
     };
+
+    // Marks
+    if (marksRaw === '') {
+      updateObj.marks = firebase.firestore.FieldValue.delete();
+    } else {
+      const m = Number(marksRaw);
+      if (Number.isNaN(m) || m < 0) { alert("Marks must be a positive number."); return; }
+      updateObj.marks = m;
+    }
+
+    // Question number
+    if (qNoRaw === '') {
+      updateObj.questionNumber = firebase.firestore.FieldValue.delete();
+    } else {
+      const qn = Number(qNoRaw);
+      if (!Number.isInteger(qn) || qn < 1) { alert("Question No. must be a positive integer."); return; }
+      updateObj.questionNumber = qn;
+    }
+
+    if (qType === 'Descriptive') {
+      // Clear MCQ fields for descriptive
+      updateObj.mcqType = firebase.firestore.FieldValue.delete();
+      updateObj.options = firebase.firestore.FieldValue.delete();
+      // keep multiple mirrors for consistency with older data:
+      updateObj.body = qText;
+      updateObj.text = qText;
+      updateObj.parsedAnswer = firebase.firestore.FieldValue.delete();
+    } else {
+      // MCQ – require options + answer
+      const optA = popup.querySelector('#edit-q-optA').value.trim();
+      const optB = popup.querySelector('#edit-q-optB').value.trim();
+      const optC = popup.querySelector('#edit-q-optC').value.trim();
+      const optD = popup.querySelector('#edit-q-optD').value.trim();
+      const ans = popup.querySelector('#edit-q-answer').value.trim();
+      if (!optA || !optB || !optC || !optD || !ans) {
+        alert("For MCQ, all four options and the answer are required.");
+        return;
+      }
+      updateObj.mcqType = qType;
+      updateObj.options = [optA, optB, optC, optD];
+      updateObj.parsedAnswer = ans;
+    }
+
+    try {
+      await db.collection('questions').doc(docId).update(updateObj);
+      popup.remove();
+      fetchAndDisplayQuestions();
+    } catch (err) {
+      alert("Failed to save: " + err.message);
+    }
+  };
 }
         // --- Create Practice Quiz Button Handler ---
     document.getElementById('create-quiz-btn').addEventListener('click', async function() {
@@ -1463,3 +1549,4 @@ All the Best
 </div>
 </body>
 </html>
+
