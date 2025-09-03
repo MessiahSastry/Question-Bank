@@ -429,27 +429,75 @@ function normalizeText(s) {
 }
 // Build a stable de-dupe key from a question object
 function makeDeDupeKey(q) {
-  if (!q) return '';
-  // Prefer 'question', fall back to 'text'
-  let raw = String(q.question || q.text || '');
+  // 1) Base stem (strip html, inline options, answers)
+  let raw = String(q?.question || q?.text || '');
+  raw = raw.replace(/<[^>]+>/g, ' ');                          // drop HTML
+  raw = raw.replace(/^Q\d+:\s*[^A-Za-z0-9]*[\[\]A-Za-z0-9, ]*\s*/i, ''); // drop "Q4: [..]" prefixes
+  raw = raw.replace(/\bAns?\s*:\s*.*$/i, '');                  // remove trailing "Ans: ..."
+  raw = raw.replace(/\s*(?:\(?\s*A\s*[\)\.])[\s\S]*$/i, '');   // remove inline options from first "A)" onward
+  const stemNorm = normalizeText(raw);                         // your existing normalizer
 
-  // Drop HTML
-  raw = raw.replace(/<[^>]+>/g, ' ');
-  // Strip leading meta line like "Q4: Level 1, 1 Mark [Descriptive]"
-  raw = raw.replace(/^Q\d+:\s*[^A-Za-z0-9]*[\[\]A-Za-z0-9, ]*\s*/i, '');
+  // 2) MCQ type (canonical)
+  const typeNorm = normalizeMcqType(q?.mcqType);
 
-  // Strip bracketed tags anywhere in the text
-  raw = raw.replace(/\s*\[(?:Descriptive|MCQ|Multiple|Single)\]\s*/gi, '');
+  // 3) Options (canonicalize BEFORE any shuffle)
+  //    Prefer q.options; else parse inline via your existing extractor.
+  const rawOpts = Array.isArray(q?.options) ? q.options.slice(0, 4) : (extractMCQOptions(q) || []);
+  const optNormsInOrder = rawOpts.map(o => normalizeChoice(o)).filter(Boolean);
 
-  // Remove trailing "Ans: ..." (any case)
-  raw = raw.replace(/\bAns?\s*:\s*.*$/i, '');
+  // 4) Correct answer(s) as texts (use letters if present)
+  const ansLetters = extractAnswerLetters(q?.answer); // ["A"], ["A","C"], or []
+  const ansTexts = ansLetters.length && optNormsInOrder.length === 4
+    ? ansLetters.map(L => {
+        const idx = "ABCD".indexOf(L);
+        return idx >= 0 ? optNormsInOrder[idx] : '';
+      }).filter(Boolean).sort()
+    : []; // if unknown, leave empty
 
-  // If MCQ options are inline, strip from the first option marker onward.
-// Matches A) / A. / (A) with optional spaces, case-insensitive.
-raw = raw.replace(/\s*(?:\(?\s*[A]\s*[\)\.])[\s\S]*$/i, '');
+  // 5) Option signature as a SET (order-independent)
+  const optionSet = Array.from(new Set(optNormsInOrder)).sort();
 
-  // Final canonical form
-  return normalizeText(raw);
+  // 6) Build fingerprint (no marks here; uniqueByIdOrText appends marks)
+  //    Include type+options+answers so different variants won’t collapse.
+  const key =
+    stemNorm +
+    '||t=' + (typeNorm || '') +
+    '||opts=' + optionSet.join('|') +
+    '||ans=' + ansTexts.join('|');
+
+  return key;
+}
+
+// Helpers used above
+function normalizeChoice(s) {
+  if (!s) return '';
+  let t = String(s);
+  t = t.replace(/^[A-D][\)\.]?\s*/i, '');         // drop leading "A)"/"B."/etc
+  t = t.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/\u00A0/g, ' ');
+  try { t = t.normalize('NFKC'); } catch (e) {}
+  t = t.replace(/[\u200B-\u200D\uFEFF]/g, '');    // zero-width
+  t = t.replace(/[\u2010-\u2015\u2212]/g, '-');   // dashes
+  t = t.replace(/[\u2018\u2019\u201A\u2032]/g, "'").replace(/[\u201C\u201D\u2033]/g, '"');
+  t = t.replace(/\u00D7/g, 'x');                  // × → x
+  t = t.replace(/\s+/g, ' ').trim().toLowerCase();
+  t = t.replace(/[.,;:!?]+$/g, '');
+  return t;
+}
+function extractAnswerLetters(ans) {
+  if (!ans) return [];
+  if (Array.isArray(ans)) {
+    return ans.map(x => String(x)).map(s => s.toUpperCase()).filter(s => /^[ABCD]$/.test(s));
+  }
+  const m = String(ans).toUpperCase().match(/[A-D]/g);
+  return m ? m : [];
+}
+function normalizeMcqType(s) {
+  const t = String(s || '').trim().toLowerCase();
+  if (!t) return 'Descriptive';                 // keep your old behavior for missing type
+  if (t.includes('single'))   return 'MCQ (Single)';
+  if (t.includes('multiple') || t.includes('multi')) return 'MCQ (Multiple)';
+  if (t.includes('desc'))     return 'Descriptive';
+  return s; // unknown → leave as-is
 }
 // --- DEBUG: list items with their canonical key (no behavior change) ---
 function _debugList(list, label) {
@@ -585,11 +633,12 @@ async function fetchQuestionsWithMarksFallback({
     .where("subject", "==", selectedSubject);
 
   const isAllowedType = (d) => {
-    if (mcqType === "MCQ (Single)")   return d.mcqType === "MCQ (Single)";
-    if (mcqType === "MCQ (Multiple)") return d.mcqType === "MCQ (Multiple)";
-    if (mcqType === "Descriptive")    return !d.mcqType || d.mcqType === "Descriptive";
-    return true;
-  };
+  const typ = normalizeMcqType(d?.mcqType);
+  if (mcqType === "MCQ (Single)")   return typ === "MCQ (Single)";
+  if (mcqType === "MCQ (Multiple)") return typ === "MCQ (Multiple)";
+  if (mcqType === "Descriptive")    return !d?.mcqType || typ === "Descriptive";
+  return true;
+};
 
   const applyFilters = (q, { marks } = {}) => {
   let qq = q;
@@ -599,13 +648,18 @@ async function fetchQuestionsWithMarksFallback({
   return qq; // no difficulty here
 };
 
-  const normDiff = s => String(s || "")
-  .replace(/<[^>]+>/g, " ")
-  .replace(/\u00A0/g, " ")
-  .replace(/\s+/g, "")   // remove ALL spaces so "Level 2" == "Level2"
-  .trim()
-  .toLowerCase();
-
+  const normDiff = s => {
+  let t = String(s || "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\u00A0/g, " ")
+    .replace(/\s+/g, "")
+    .trim()
+    .toLowerCase();
+  // unify common aliases
+  t = t.replace(/^level[-_]?(\d)$/, 'level$1');
+  t = t.replace(/^l(\d)$/, 'level$1');
+  return t;
+};
 const runAndFilter = async (qq, chapterList, difficulty /* new */) => {
   const collected = [];
   if (chapterList && chapterList.length > 10) {
@@ -1515,6 +1569,7 @@ window.location.href = 'exam-review.html';
 </script>
 </body>
 </html>
+
 
 
 
