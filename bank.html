@@ -494,151 +494,156 @@
             // For MathJax rendering
             let mathElements = [];
 
-            // Build questions
-            nodes.forEach((item, idx) => {
-                const qNum = idx + 1;
+           // Group questions by level for section headings
+const levelsOrder = ['Level 1', 'Level 2', 'Level 3'];
+const buckets = { 'Level 1': [], 'Level 2': [], 'Level 3': [], '': [] };
 
-                // Remove buttons from clone
-                const clone = item.cloneNode(true);
-                clone.querySelectorAll('.question-img-btn, .delete-img-btn, .question-image-input').forEach(btn => btn.remove());
+nodes.forEach(node => {
+  const lvl = (node.getAttribute('data-level') || '').trim();
+  (buckets[lvl] ? buckets[lvl] : buckets['']).push(node);
+});
 
-                // --- IMAGE HANDLING ---
-                let imgHtml = '';
-                const imgTag = clone.querySelector('img');
-                if (imgTag && imgTag.src) {
-                    imgHtml = `<div class="question-img-block" style="margin:10px 0 4px 0;">
-            <img class="question-img" src="${imgTag.src}" style="max-width:170px;max-height:110px;border:1px solid #eee;border-radius:5px;display:block;"/>
-        </div>`;
-                }
+let qCounter = 1;
 
-                // --- UNIVERSAL QUESTION TEXT + OPTIONS EXTRACTION ---
-                const textDiv = clone.querySelector('.question-text');
-                let questionLine = '';
-                let options = [];
-                if (textDiv) {
-                    // Remove images
-                    let html = textDiv.innerHTML.replace(/<img[^>]*>/gi, '');
-                    // Split into lines by <br> or <div>
-                    let parts = html.split(/<br\s*\/?>|<\/div>|<div[^>]*>/gi)
-                        .map(s => s.replace(/&nbsp;/g, ' ').trim())
-                        .filter(Boolean);
+// helper to build one question's HTML (same as before, but uses qCounter)
+function buildQuestionHTML(item) {
+  // Remove buttons from clone
+  const clone = item.cloneNode(true);
+  clone.querySelectorAll('.question-img-btn, .delete-img-btn, .question-image-input').forEach(btn => btn.remove());
 
-                    // Remove empty lines
-                    parts = parts.filter(line => line && !/^<br\s*\/?>$/i.test(line));
+  // --- IMAGE HANDLING ---
+  let imgHtml = '';
+  const imgTag = clone.querySelector('img');
+  if (imgTag && imgTag.src) {
+    imgHtml = `<div class="question-img-block" style="margin:10px 0 4px 0;">
+      <img class="question-img" src="${imgTag.src}" style="max-width:170px;max-height:110px;border:1px solid #eee;border-radius:5px;display:block;"/>
+    </div>`;
+  }
 
-                    if (parts.length > 0) {
-                        questionLine = parts[0];
-                        // Gather all lines after question as possible options
-                        let optionLines = [];
-                        for (let i = 1; i < parts.length; i++) {
-                            let line = parts[i];
-                            // If a line contains all options in one, split them!
-                            let inlineOpts = line.match(/([A-D][).][^A-D]*)/g);
-                            if (inlineOpts && inlineOpts.length >= 2) {
-                                optionLines.push(...inlineOpts.map(opt => opt.trim()));
-                            } else if (line) {
-                                optionLines.push(line);
-                            }
-                        }
-                        // Add option labels if missing
-                        if (optionLines.length === 4) {
-                            options = optionLines.map((opt, i) =>
-                                /^[A-D][).]/.test(opt) ? opt : String.fromCharCode(65 + i) + ") " + opt
-                            );
-                        } else {
-                            options = optionLines;
-                        }
-                    }
-                }
-                let isMCQ = options.length === 4;
-                // console.log("DEBUG MCQ extraction", { questionLine, options, isMCQ });
-                // --- END REPLACEMENT BLOCK ---
+  // --- UNIVERSAL QUESTION TEXT + OPTIONS EXTRACTION ---
+  const textDiv = clone.querySelector('.question-text');
+  let questionLine = '';
+  let options = [];
+  if (textDiv) {
+    let html = textDiv.innerHTML.replace(/<img[^>]*>/gi, '');
+    let parts = html.split(/<br\s*\/?>|<\/div>|<div[^>]*>/gi)
+      .map(s => s.replace(/&nbsp;/g, ' ').trim())
+      .filter(Boolean);
 
-                let questionHtml =
-                    `<div class="question-container" style="display:flex;align-items:flex-start;margin-bottom:10px;page-break-inside:avoid;break-inside:avoid;">
-                            <div class="question-body" style="flex:1;">
-                              ${createHangingDiv(qNum, questionLine, isMCQ)}
-                              ${imgHtml ? imgHtml : ''}
-                              <div class="options-block" style="margin-top:2px;">
-                                    ${ 
-                                  isMCQ
-                                    ? (() => {
-                                        // MCQ options (fit logic): one line, two lines, or four lines
-                                         let optionLines = options.slice(0, 4).map((opt, i) => {
-                                          // Remove any existing leading A), A. etc (with or without space)
-                                          let cleaned = opt.replace(/^[A-D][\)\.\-]\s*/, '');
-                                          // Always add label just once
-                                          return String.fromCharCode(65 + i) + ") " + cleaned;
-                                        });
-                                    
-                                            // Helper: check if two options fit in one line
-                                        function fitsInLine(a, b) {
-                                            let d = document.createElement('span');
-                                            d.style.cssText = 'visibility:hidden;position:absolute;white-space:nowrap;padding:0;margin:0;border:none;font-family:Times New Roman,Times,serif;font-size:1.11em;';
-                                            d.innerText = a + "    " + b;
-                                            document.body.appendChild(d);
-                                            let fits = d.offsetWidth < 450;
-                                            document.body.removeChild(d);
-                                            return fits;
-                                        }
-                                        // Measure using HTML with MathJax
-                                            let dummyDiv = document.createElement('div');
-                                            dummyDiv.style.cssText = 'visibility:hidden;position:absolute;white-space:nowrap;padding:0;margin:0;border:none;z-index:-1;font-family:Times New Roman,Times,serif;font-size:1.11em;';
-                                            dummyDiv.innerHTML = optionLines.map(opt => `<span style="display:inline-block;vertical-align:middle;margin-right:32px;">${opt.trim()}</span>`).join('');
-                                            document.body.appendChild(dummyDiv);
-                                            
-                                            let fitsFour = dummyDiv.offsetWidth < 700; // 700px is safe for A4, adjust if needed
-                                            document.body.removeChild(dummyDiv);
+    parts = parts.filter(line => line && !/^<br\s*\/?>$/i.test(line));
 
-                                       let abFits = fitsInLine(optionLines[0], optionLines[1]);
-                                        let cdFits = fitsInLine(optionLines[2], optionLines[3]);
-                                
-                                       if (fitsFour) {
-                                        // All four options in one row (left aligned)
-                                        return `<div style="display:flex;gap:32px;flex-wrap:wrap;margin-bottom:3px;margin-left:2px;">
-                                            ${optionLines.map(opt => `<span style="min-width:70px;display:inline-block;vertical-align:top;">${opt.trim()}</span>`).join('')}
-                                        </div>`;
-                                       } else if (abFits && cdFits) {
-                                            // Two rows: (A+B), (C+D)
-                                            return `
-                                          <div style="
-                                          display: grid;
-                                          grid-template-columns: auto auto;
-                                          column-gap: 24px;
-                                          row-gap: 0;
-                                          margin-bottom: 2px;
-                                          margin-left: 2px;
-                                          width: max-content;
-                                          ">
-                                              <span style="min-width:70px;display:inline-block;vertical-align:top;">${optionLines[0]}</span>
-                                                <span style="min-width:70px;display:inline-block;vertical-align:top;">${optionLines[1]}</span>
-                                                <span style="min-width:70px;display:inline-block;vertical-align:top;">${optionLines[2]}</span>
-                                                <span style="min-width:70px;display:inline-block;vertical-align:top;">${optionLines[3]}</span>
-                                          </div>
-                                        `;
-                                        } else {
-                                            // Four lines, each option on its own
-                                            return optionLines.map(opt =>
-                                                `<div style="margin-bottom:2px;margin-left:2px;">${opt.trim().replace(/\n/g, '<br>')}</div>`
-                                            ).join('');
-                                        }
-                                    })()
-                                    : (options.length > 0
-                                        ? options.map(opt =>
-                                            `<div style="margin-bottom:2px;margin-left:2px;">${opt.trim().replace(/\n/g, '<br>')}</div>`
-                                          ).join('')
-                                        : '')
-                                }
-        </div>
-      </div>
-    </div>
-`;
-                // MathJax tracking (keep if you use MathJax)
-                if (/\$|\\\(|\\\)/.test(questionLine)) mathElements.push(idx);
-                let wrap = document.createElement('div');
-                wrap.innerHTML = questionHtml;
-                printable.appendChild(wrap);
-            });
+    if (parts.length > 0) {
+      questionLine = parts[0];
+      let optionLines = [];
+      for (let i = 1; i < parts.length; i++) {
+        let line = parts[i];
+        let inlineOpts = line.match(/([A-D][).][^A-D]*)/g);
+        if (inlineOpts && inlineOpts.length >= 2) {
+          optionLines.push(...inlineOpts.map(opt => opt.trim()));
+        } else if (line) {
+          optionLines.push(line);
+        }
+      }
+      if (optionLines.length === 4) {
+        options = optionLines.map((opt, i) =>
+          /^[A-D][).]/.test(opt) ? opt : String.fromCharCode(65 + i) + ") " + opt
+        );
+      } else {
+        options = optionLines;
+      }
+    }
+  }
+  const isMCQ = options.length === 4;
+
+  const questionHtml =
+    `<div class="question-container" style="display:flex;align-items:flex-start;margin-bottom:10px;page-break-inside:avoid;break-inside:avoid;">
+       <div class="question-body" style="flex:1;">
+         ${createHangingDiv(qCounter, questionLine, isMCQ)}
+         ${imgHtml ? imgHtml : ''}
+         <div class="options-block" style="margin-top:2px;">
+           ${
+             isMCQ
+               ? (() => {
+                   // === MCQ layout block (keep your existing code here unchanged) ===
+                   let optionLines = options.slice(0, 4).map((opt, i) => {
+                     let cleaned = opt.replace(/^[A-D][\)\.\-]\s*/, '');
+                     return String.fromCharCode(65 + i) + ") " + cleaned;
+                   });
+                   function fitsInLine(a, b) {
+                     let d = document.createElement('span');
+                     d.style.cssText = 'visibility:hidden;position:absolute;white-space:nowrap;padding:0;margin:0;border:none;font-family:Times New Roman,Times,serif;font-size:1.11em;';
+                     d.innerText = a + "    " + b;
+                     document.body.appendChild(d);
+                     let fits = d.offsetWidth < 450;
+                     document.body.removeChild(d);
+                     return fits;
+                   }
+                   let dummyDiv = document.createElement('div');
+                   dummyDiv.style.cssText = 'visibility:hidden;position:absolute;white-space:nowrap;padding:0;margin:0;border:none;z-index:-1;font-family:Times New Roman,Times,serif;font-size:1.11em;';
+                   dummyDiv.innerHTML = optionLines.map(opt => `<span style="display:inline-block;vertical-align:middle;margin-right:32px;">${opt.trim()}</span>`).join('');
+                   document.body.appendChild(dummyDiv);
+                   let fitsFour = dummyDiv.offsetWidth < 700;
+                   document.body.removeChild(dummyDiv);
+
+                   let abFits = fitsInLine(optionLines[0], optionLines[1]);
+                   let cdFits = fitsInLine(optionLines[2], optionLines[3]);
+
+                   if (fitsFour) {
+                     return `<div style="display:flex;gap:32px;flex-wrap:wrap;margin-bottom:3px;margin-left:2px;">
+                       ${optionLines.map(opt => `<span style="min-width:70px;display:inline-block;vertical-align:top;">${opt.trim()}</span>`).join('')}
+                     </div>`;
+                   } else if (abFits && cdFits) {
+                     return `
+                       <div style="display:grid;grid-template-columns:auto auto;column-gap:24px;row-gap:0;margin-bottom:2px;margin-left:2px;width:max-content;">
+                         <span style="min-width:70px;display:inline-block;vertical-align:top;">${optionLines[0]}</span>
+                         <span style="min-width:70px;display:inline-block;vertical-align:top;">${optionLines[1]}</span>
+                         <span style="min-width:70px;display:inline-block;vertical-align:top;">${optionLines[2]}</span>
+                         <span style="min-width:70px;display:inline-block;vertical-align:top;">${optionLines[3]}</span>
+                       </div>
+                     `;
+                   } else {
+                     return optionLines.map(opt =>
+                       `<div style="margin-bottom:2px;margin-left:2px;">${opt.trim().replace(/\n/g, '<br>')}</div>`
+                     ).join('');
+                   }
+                 })()
+               : (options.length > 0
+                   ? options.map(opt => `<div style="margin-bottom:2px;margin-left:2px;">${opt.trim().replace(/\n/g, '<br>')}</div>`).join('')
+                   : '')
+           }
+         </div>
+       </div>
+     </div>`;
+
+  if (/\$|\\\(|\\\)/.test(questionLine)) mathElements.push(qCounter - 1);
+
+  const wrap = document.createElement('div');
+  wrap.innerHTML = questionHtml;
+  printable.appendChild(wrap);
+
+  qCounter++;
+}
+
+// Render sections in fixed order
+levelsOrder.forEach(levelName => {
+  const list = buckets[levelName];
+  if (!list || list.length === 0) return;
+
+  // LEVEL HEADING
+  const section = document.createElement('div');
+  section.innerHTML = `
+    <div style="font-size:1.15em;font-weight:800;letter-spacing:0.02em;text-align:left;margin:16px 0 8px 0;">
+      ${levelName.toUpperCase()}
+    </div>`;
+  printable.appendChild(section);
+
+  list.forEach(item => buildQuestionHTML(item));
+});
+
+// If there are items with no level, append them at the end without a heading
+if (buckets[''] && buckets[''].length) {
+  buckets[''].forEach(item => buildQuestionHTML(item));
+}
 
           // Final export using html2pdf
             if (window.MathJax && typeof window.MathJax.typesetPromise === 'function') {
@@ -1026,7 +1031,7 @@ async function fetchAndDisplayQuestions() {
             }
             questionCount++;
             questionsHTML += `
-            <div class="question-item" data-id="${doc.id}" style="position:relative;">
+            <div class="question-item" data-id="${doc.id}" data-level="${data.difficulty || data.level || ''}" style="position:relative;">
                 <div class="question-meta">
               Q${questionCount}: ${(data.difficulty || data.level || 'N/A')}, ${(data.marks ?? 'N/A')} Mark(s)${data.mcqType ? ` [${data.mcqType}]` : ''}
             </div>
@@ -1549,6 +1554,7 @@ All the Best
 </div>
 </body>
 </html>
+
 
 
 
