@@ -381,8 +381,86 @@ function getClassGroupName(className) {
     }
   // ======================= CERTIFICATE GENERATOR =========================
 function openCertificateGenerator() {
+  const classGroup = getClassGroupName(currentClassName);
+
+  // 1. Fetch all exams for this class group
+  db.collection('years').doc(academicYear)
+    .collection('exams').doc('classGroups')
+    .collection(classGroup).orderBy('name').get()
+    .then(examSnap => {
+      let exams = [];
+      examSnap.forEach(doc => exams.push({ id: doc.id, ...doc.data() }));
+
+      if (exams.length === 0) {
+        showPopup(`
+          <div class="popup-title">Generate Certificates</div>
+          <div style="margin:16px 0;">No exams found! Please add exams first.</div>
+          <div class="popup-btn-row"><button class="popup-cancel-btn">Close</button></div>
+        `);
+        return;
+      }
+
+      // Popup UI – memos style
+      let html = `
+        <form id="certForm">
+          <div class="popup-title">Generate Certificates (Top 3)</div>
+          <label>Select Exam</label>
+          <div class="custom-dropdown" id="certExamDropdown" tabindex="0">
+            <div class="dropdown-selected" id="certExamSelected" data-value="">--Select--</div>
+            <div class="dropdown-list" id="certExamList" style="display:none;"></div>
+          </div>
+          <div class="popup-btn-row" style="margin-top:10px;">
+            <button type="button" class="popup-cancel-btn">Cancel</button>
+            <button type="submit" class="popup-action-btn">Next</button>
+          </div>
+        </form>
+      `;
+
+      showPopup(html, 'certForm', function (e) {
+        e.preventDefault();
+        const examId = document.getElementById('certExamSelected').dataset.value;
+        if (!examId) { alert("Please select an exam first!"); return; }
+        const exam = exams.find(ex => ex.id === examId);
+        if (!exam) { alert("Exam not found!"); return; }
+
+        closePopup();
+        generateCertificatesForExam(examId, exam);
+      });
+
+      // Fill exam dropdown
+      const certExamDropdown = document.getElementById('certExamDropdown');
+      const certExamSelected = document.getElementById('certExamSelected');
+      const certExamList = document.getElementById('certExamList');
+      certExamList.innerHTML = exams.map(e => `
+        <div class="dropdown-option" data-id="${e.id}" style="padding:10px 12px;cursor:pointer;">
+          ${e.name}
+        </div>
+      `).join('');
+
+      certExamSelected.onclick = function () {
+        certExamList.style.display = (certExamList.style.display === 'none' || certExamList.style.display === '') ? 'block' : 'none';
+      };
+      document.addEventListener('click', function handler(e) {
+        if (!certExamDropdown.contains(e.target)) {
+          certExamList.style.display = 'none';
+          document.removeEventListener('click', handler);
+        }
+      });
+
+      certExamList.querySelectorAll('.dropdown-option').forEach(opt => {
+        opt.onclick = function () {
+          certExamSelected.textContent = this.textContent;
+          certExamSelected.dataset.value = this.dataset.id;
+          certExamList.style.display = 'none';
+        };
+      });
+    });
+}
+
+// ======================= ACTUAL CERTIFICATE GENERATION =========================
+async function generateCertificatesForExam(examId, exam) {
   showPopup(`
-    <div class="popup-title">Generate Certificates (Top 3 Rankers)</div>
+    <div class="popup-title">Certificates: ${exam.name}</div>
     <div style="margin-bottom:12px;color:#555;">
       Certificates will be generated only for the <b>first three ranks</b> (including ties).
     </div>
@@ -393,6 +471,124 @@ function openCertificateGenerator() {
     </div>
     <canvas id="certCanvas" width="2480" height="1754" style="display:none;"></canvas>
   `);
+
+  const canvas = document.getElementById('certCanvas');
+  const ctx = canvas.getContext('2d');
+
+  // Assets
+  const bgUrl = "https://raw.githubusercontent.com/MessiahSastry/Question-Bank/main/certificate.png";
+  const directorUrl = "https://raw.githubusercontent.com/MessiahSastry/Question-Bank/main/director-sign.png";
+  const teacherUrl  = "https://raw.githubusercontent.com/MessiahSastry/Question-Bank/main/teacher-sign.png";
+  let bgImg=new Image(), directorImg=new Image(), teacherImg=new Image();
+  bgImg.crossOrigin=directorImg.crossOrigin=teacherImg.crossOrigin="anonymous";
+  bgImg.src=bgUrl; directorImg.src=directorUrl; teacherImg.src=teacherUrl;
+
+  function drawCertificate(stu, examName, rank){
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    ctx.drawImage(bgImg,0,0,canvas.width,canvas.height);
+    ctx.fillStyle="#000"; ctx.textAlign="center";
+
+    // Exam name
+    ctx.font="48px Segoe UI Bold";
+    ctx.fillText(examName,1211,549);
+
+    // Student Name
+    ctx.font="64px Segoe Script";
+    ctx.fillText(stu.name,1223,751);
+
+    // Class & Section
+    ctx.font="40px Segoe UI";
+    ctx.fillText(`Class ${stu.cls} - ${stu.sec}`,1214,800);
+
+    // Father Name
+    ctx.font="40px Segoe UI";
+    ctx.fillText("S/o " + (stu.father || ""),1214,893);
+
+    // Rank
+    ctx.font="48px Segoe UI Bold";
+    ctx.fillText("Rank " + rank,2112,772);
+
+    // Director signature
+    if(directorImg.complete && directorImg.naturalWidth>0){
+      const w=220,h=directorImg.height/directorImg.width*220;
+      ctx.drawImage(directorImg,772-w/2,1400-h/2,w,h);
+    }
+
+    // Teacher signature
+    if(teacherImg.complete && teacherImg.naturalWidth>0){
+      const w=220,h=teacherImg.height/teacherImg.width*220;
+      ctx.drawImage(teacherImg,1759-w/2,1412-h/2,w,h);
+    }
+  }
+
+  async function generateCertificates(mode){
+    const stuSnap = await db.collection('years').doc(academicYear)
+      .collection('classes').doc(currentClassId)
+      .collection('sections').doc(currentSectionId)
+      .collection('students').orderBy('roll').get();
+    let students=[];
+    stuSnap.forEach(d=>{ const x=d.data(); if(!x.isDeleted) students.push({id:d.id,...x,cls:currentClassName,sec:currentSectionName}); });
+
+    // Fetch marks
+    for(const stu of students){
+      const mDoc = await db.collection('years').doc(academicYear)
+        .collection('classes').doc(currentClassId)
+        .collection('sections').doc(currentSectionId)
+        .collection('students').doc(stu.id)
+        .collection('marks').doc(examId).get();
+      let marks = mDoc.exists ? mDoc.data() : {};
+      let total=0;
+      (exam.subjects||[]).forEach(s=>{ total += Number(marks[s.name]||0); });
+      stu.total=total;
+    }
+
+    // Rank
+    students.sort((a,b)=>b.total-a.total);
+    let rank=1;
+    for(let i=0;i<students.length;i++){
+      if(i>0 && students[i].total<students[i-1].total) rank=i+1;
+      students[i].rank=rank;
+    }
+    const top3=students.filter(s=>s.rank<=3);
+
+    if(top3.length===0){ alert("No students with ranks."); return; }
+
+    const { PDFDocument } = PDFLib;
+    const pdf=await PDFDocument.create();
+
+    for(const stu of top3){
+      drawCertificate(stu,exam.name,stu.rank);
+      const dataUrl=canvas.toDataURL("image/jpeg",0.95);
+      const imgBytes=Uint8Array.from(atob(dataUrl.split(",")[1]),c=>c.charCodeAt(0));
+      const jpg=await pdf.embedJpg(imgBytes);
+      const page=pdf.addPage([842,595]);
+      const s=Math.min(842/jpg.width,595/jpg.height);
+      page.drawImage(jpg,{x:(842-jpg.width*s)/2,y:(595-jpg.height*s)/2,width:jpg.width*s,height:jpg.height*s});
+
+      if(mode==="separate"){
+        const one=await PDFDocument.create();
+        const [p]=await one.copyPages(pdf,[pdf.getPageCount()-1]);
+        one.addPage(p);
+        const bytes=await one.save();
+        const a=document.createElement("a");
+        a.href=URL.createObjectURL(new Blob([bytes],{type:"application/pdf"}));
+        a.download=`Certificate_${stu.name}.pdf`;
+        a.click();
+      }
+    }
+
+    if(mode==="one"){
+      const bytes=await pdf.save();
+      const a=document.createElement("a");
+      a.href=URL.createObjectURL(new Blob([bytes],{type:"application/pdf"}));
+      a.download=`Certificates_${exam.name}.pdf`;
+      a.click();
+    }
+  }
+
+  document.getElementById("certOnePdfBtn").onclick=()=>generateCertificates("one");
+  document.getElementById("certSeparateBtn").onclick=()=>generateCertificates("separate");
+}
 
   const canvas = document.getElementById('certCanvas');
   const ctx = canvas.getContext('2d');
@@ -2096,4 +2292,5 @@ function closeAbsenteesModal() {
 </script>
 </body>
 </html>
+
 
