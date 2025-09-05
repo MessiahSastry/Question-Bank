@@ -381,34 +381,44 @@ function getClassGroupName(className) {
     }
   // ======================= CERTIFICATE GENERATOR =========================
 function openCertificateGenerator() {
-  const classGroup = getClassGroupName(currentClassName);
-
-  // 1. Fetch all exams for this class group
+  // 1. Fetch all classes for this academic year
   db.collection('years').doc(academicYear)
-    .collection('exams').doc('classGroups')
-    .collection(classGroup).orderBy('name').get()
-    .then(examSnap => {
-      let exams = [];
-      examSnap.forEach(doc => exams.push({ id: doc.id, ...doc.data() }));
+    .collection('classes').orderBy('name').get()
+    .then(classSnap => {
+      let classes = [];
+      classSnap.forEach(doc => classes.push({ id: doc.id, ...doc.data() }));
 
-      if (exams.length === 0) {
+      if (classes.length === 0) {
         showPopup(`
           <div class="popup-title">Generate Certificates</div>
-          <div style="margin:16px 0;">No exams found! Please add exams first.</div>
+          <div style="margin:16px 0;">No classes found! Please add students first.</div>
           <div class="popup-btn-row"><button class="popup-cancel-btn">Close</button></div>
         `);
         return;
       }
 
-      // Popup UI – memos style
       let html = `
         <form id="certForm">
           <div class="popup-title">Generate Certificates (Top 3)</div>
+
+          <label>Select Class</label>
+          <div class="custom-dropdown" id="certClassDropdown">
+            <div class="dropdown-selected" id="certClassSelected" data-value="">--Select--</div>
+            <div class="dropdown-list" id="certClassList" style="display:none;"></div>
+          </div>
+
+          <label>Select Section</label>
+          <div class="custom-dropdown" id="certSectionDropdown">
+            <div class="dropdown-selected" id="certSectionSelected" data-value="">--Select Class First--</div>
+            <div class="dropdown-list" id="certSectionList" style="display:none;"></div>
+          </div>
+
           <label>Select Exam</label>
-          <div class="custom-dropdown" id="certExamDropdown" tabindex="0">
-            <div class="dropdown-selected" id="certExamSelected" data-value="">--Select--</div>
+          <div class="custom-dropdown" id="certExamDropdown">
+            <div class="dropdown-selected" id="certExamSelected" data-value="">--Select Section First--</div>
             <div class="dropdown-list" id="certExamList" style="display:none;"></div>
           </div>
+
           <div class="popup-btn-row" style="margin-top:10px;">
             <button type="button" class="popup-cancel-btn">Cancel</button>
             <button type="submit" class="popup-action-btn">Next</button>
@@ -416,51 +426,73 @@ function openCertificateGenerator() {
         </form>
       `;
 
-      showPopup(html, 'certForm', function (e) {
+      showPopup(html, 'certForm', function(e) {
         e.preventDefault();
+
+        const classId = document.getElementById('certClassSelected').dataset.value;
+        const className = document.getElementById('certClassSelected').textContent;
+        const sectionId = document.getElementById('certSectionSelected').dataset.value;
+        const sectionName = document.getElementById('certSectionSelected').textContent;
         const examId = document.getElementById('certExamSelected').dataset.value;
-        if (!examId) { alert("Please select an exam first!"); return; }
-        const exam = exams.find(ex => ex.id === examId);
-        if (!exam) { alert("Exam not found!"); return; }
+        const examName = document.getElementById('certExamSelected').textContent;
+
+        if (!classId || !sectionId || !examId) {
+          alert("Please select Class, Section, and Exam!");
+          return;
+        }
 
         closePopup();
-        generateCertificatesForExam(examId, exam);
+        generateCertificatesForExam(classId, className, sectionId, sectionName, examId, examName);
       });
 
-      // Fill exam dropdown
-      const certExamDropdown = document.getElementById('certExamDropdown');
-      const certExamSelected = document.getElementById('certExamSelected');
-      const certExamList = document.getElementById('certExamList');
-      certExamList.innerHTML = exams.map(e => `
-        <div class="dropdown-option" data-id="${e.id}" style="padding:10px 12px;cursor:pointer;">
-          ${e.name}
-        </div>
+      // Fill class dropdown
+      const certClassList = document.getElementById('certClassList');
+      certClassList.innerHTML = classes.map(c => `
+        <div class="dropdown-option" data-id="${c.id}">${c.name}</div>
       `).join('');
 
-      certExamSelected.onclick = function () {
-        certExamList.style.display = (certExamList.style.display === 'none' || certExamList.style.display === '') ? 'block' : 'none';
-      };
-      document.addEventListener('click', function handler(e) {
-        if (!certExamDropdown.contains(e.target)) {
-          certExamList.style.display = 'none';
-          document.removeEventListener('click', handler);
-        }
+      setupDropdown('certClassDropdown','certClassSelected','certClassList',(classId,className)=>{
+        // fetch sections
+        db.collection('years').doc(academicYear)
+          .collection('classes').doc(classId).collection('sections').orderBy('name').get()
+          .then(secSnap=>{
+            let secs=[];
+            secSnap.forEach(d=>secs.push({id:d.id,...d.data()}));
+            const certSectionList=document.getElementById('certSectionList');
+            certSectionList.innerHTML=secs.map(s=>`
+              <div class="dropdown-option" data-id="${s.id}">${s.name}</div>
+            `).join('');
+            document.getElementById('certSectionSelected').textContent="--Select--";
+            document.getElementById('certSectionSelected').dataset.value="";
+          });
       });
 
-      certExamList.querySelectorAll('.dropdown-option').forEach(opt => {
-        opt.onclick = function () {
-          certExamSelected.textContent = this.textContent;
-          certExamSelected.dataset.value = this.dataset.id;
-          certExamList.style.display = 'none';
-        };
+      setupDropdown('certSectionDropdown','certSectionSelected','certSectionList',(sectionId,sectionName)=>{
+        const classId=document.getElementById('certClassSelected').dataset.value;
+        const className=document.getElementById('certClassSelected').textContent;
+        const classGroup=getClassGroupName(className);
+        db.collection('years').doc(academicYear)
+          .collection('exams').doc('classGroups').collection(classGroup).orderBy('name').get()
+          .then(examSnap=>{
+            let exams=[];
+            examSnap.forEach(d=>exams.push({id:d.id,...d.data()}));
+            const certExamList=document.getElementById('certExamList');
+            certExamList.innerHTML=exams.map(e=>`
+              <div class="dropdown-option" data-id="${e.id}">${e.name}</div>
+            `).join('');
+            document.getElementById('certExamSelected').textContent="--Select--";
+            document.getElementById('certExamSelected').dataset.value="";
+          });
       });
+
+      setupDropdown('certExamDropdown','certExamSelected','certExamList');
     });
 }
 
 // ======================= ACTUAL CERTIFICATE GENERATION =========================
-async function generateCertificatesForExam(examId, exam) {
+async function generateCertificatesForExam(classId, className, sectionId, sectionName, examId, examName) {
   showPopup(`
-    <div class="popup-title">Certificates: ${exam.name}</div>
+    <div class="popup-title">Certificates: ${examName}</div>
     <div style="margin-bottom:12px;color:#555;">
       Certificates will be generated only for the <b>first three ranks</b> (including ties).
     </div>
@@ -483,32 +515,31 @@ async function generateCertificatesForExam(examId, exam) {
   bgImg.crossOrigin=directorImg.crossOrigin=teacherImg.crossOrigin="anonymous";
   bgImg.src=bgUrl; directorImg.src=directorUrl; teacherImg.src=teacherUrl;
 
-  function drawCertificate(stu, examName, rank){
+  function drawCertificate(stu, rank){
     ctx.clearRect(0,0,canvas.width,canvas.height);
     ctx.drawImage(bgImg,0,0,canvas.width,canvas.height);
     ctx.fillStyle="#000"; ctx.textAlign="center";
 
     // Exam name
     ctx.font="64px Segoe UI Bold";
-    ctx.fillText(examName,1211,620);
+    ctx.fillText(examName,1211,600);
 
     // Student Name
-    ctx.font="64px Segoe Script";
+    ctx.font="72px Segoe Script";
     ctx.fillText(stu.name,1223,800);
 
     // Class & Section
-    ctx.font="40px Segoe UI";
-    ctx.fillText(`(${stu.cls} / ${stu.sec})`,1214,860);
-
+    ctx.font="46px Segoe UI";
+    ctx.fillText(`(${className} / ${sectionName})`,1214,880);
 
     // Father Name
-    ctx.font = "48px Segoe UI";
-    ctx.fillText("Father: " + (stu.father || ""), 1214, 950);
+    ctx.font="52px Segoe UI";
+    ctx.fillText("Father: " + (stu.father || ""),1214,960);
 
-    // Rank
-    let badge = rank === 1 ? "🥇" : rank === 2 ? "🥈" : "🥉";
-    ctx.font = "96px Segoe UI";   // bigger size so emoji looks like a badge
-    ctx.fillText(badge, 2112, 772);
+    // Rank badge with emoji
+    ctx.font="56px Segoe UI Bold";
+    let rankEmoji = rank===1 ? "🥇" : rank===2 ? "🥈" : rank===3 ? "🥉" : "";
+    ctx.fillText(`${rankEmoji} Rank ${rank}`,2112,772);
 
     // Director signature
     if(directorImg.complete && directorImg.naturalWidth>0){
@@ -524,18 +555,30 @@ async function generateCertificatesForExam(examId, exam) {
   }
 
   async function generateCertificates(mode){
+    // Fetch students
     const stuSnap = await db.collection('years').doc(academicYear)
-      .collection('classes').doc(currentClassId)
-      .collection('sections').doc(currentSectionId)
+      .collection('classes').doc(classId)
+      .collection('sections').doc(sectionId)
       .collection('students').orderBy('roll').get();
+
     let students=[];
-    stuSnap.forEach(d=>{ const x=d.data(); if(!x.isDeleted) students.push({id:d.id,...x,cls:currentClassName,sec:currentSectionName}); });
+    stuSnap.forEach(d=>{ 
+      const x=d.data(); 
+      if(!x.isDeleted) students.push({id:d.id,...x,cls:className,sec:sectionName}); 
+    });
+
+    // Fetch exam details
+    const classGroup = getClassGroupName(className);
+    const examDoc = await db.collection('years').doc(academicYear)
+      .collection('exams').doc('classGroups')
+      .collection(classGroup).doc(examId).get();
+    const exam = examDoc.exists ? examDoc.data() : { subjects: [] };
 
     // Fetch marks
     for(const stu of students){
       const mDoc = await db.collection('years').doc(academicYear)
-        .collection('classes').doc(currentClassId)
-        .collection('sections').doc(currentSectionId)
+        .collection('classes').doc(classId)
+        .collection('sections').doc(sectionId)
         .collection('students').doc(stu.id)
         .collection('marks').doc(examId).get();
       let marks = mDoc.exists ? mDoc.data() : {};
@@ -559,7 +602,7 @@ async function generateCertificatesForExam(examId, exam) {
     const pdf=await PDFDocument.create();
 
     for(const stu of top3){
-      drawCertificate(stu,exam.name,stu.rank);
+      drawCertificate(stu,stu.rank);
       const dataUrl=canvas.toDataURL("image/jpeg",0.95);
       const imgBytes=Uint8Array.from(atob(dataUrl.split(",")[1]),c=>c.charCodeAt(0));
       const jpg=await pdf.embedJpg(imgBytes);
@@ -583,7 +626,7 @@ async function generateCertificatesForExam(examId, exam) {
       const bytes=await pdf.save();
       const a=document.createElement("a");
       a.href=URL.createObjectURL(new Blob([bytes],{type:"application/pdf"}));
-      a.download=`Certificates_${exam.name}.pdf`;
+      a.download=`Certificates_${examName}.pdf`;
       a.click();
     }
   }
@@ -591,7 +634,6 @@ async function generateCertificatesForExam(examId, exam) {
   document.getElementById("certOnePdfBtn").onclick=()=>generateCertificates("one");
   document.getElementById("certSeparateBtn").onclick=()=>generateCertificates("separate");
 }
-
      // =========== ADD/EDIT STUDENT POPUP =========================
     function showAddStudentPopup() {
       showPopup(`
@@ -2152,6 +2194,7 @@ function closeAbsenteesModal() {
 </script>
 </body>
 </html>
+
 
 
 
