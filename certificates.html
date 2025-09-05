@@ -1,209 +1,271 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <title>Create Certificates | St. Patrick's School</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta charset="UTF-8">
+  <title>Certificates - St. Patrick's School</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-  <!-- Icons / libs -->
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
+  <!-- Firebase -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+
+  <!-- PDF Lib -->
   <script src="https://unpkg.com/pdf-lib/dist/pdf-lib.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+  <!-- Choices.js for nice dropdowns -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/choices.js/public/assets/styles/choices.min.css" />
+  <script src="https://cdn.jsdelivr.net/npm/choices.js/public/assets/scripts/choices.min.js"></script>
 
   <style>
-    body{margin:0;font-family:'Segoe UI',Arial,sans-serif;background:#f4f8fc}
-    .page{padding:20px}
-    .card{background:#fff;border-radius:12px;padding:16px;box-shadow:0 4px 12px rgba(0,0,0,.1);margin-bottom:20px}
-    table{width:100%;border-collapse:collapse}
-    th,td{border:1px solid #ccc;padding:6px;text-align:left}
-    .btn{padding:8px 14px;border:none;border-radius:6px;cursor:pointer}
-    .btn-main{background:#0f3d6b;color:#fff}
-    .btn-ghost{background:#e9f2fb;color:#0f3d6b}
-    canvas{width:100%;max-width:800px;border:1px solid #ccc;border-radius:8px;display:block;margin:10px auto}
+    body { margin:0; font-family:'Segoe UI',Arial,sans-serif; background:#f4f8fc; }
+    .container { max-width:800px; margin:20px auto; background:#fff; padding:20px; border-radius:12px;
+                 box-shadow:0 4px 12px rgba(0,0,0,.1); }
+    h1 { text-align:center; color:#0f3d6b; }
+    .section { margin-bottom:20px; }
+    label { font-weight:600; color:#0f3d6b; display:block; margin-bottom:6px; }
+    select { width:100%; }
+    .actions { display:flex; gap:12px; margin-top:12px; flex-wrap:wrap; }
+    button { flex:1; padding:12px; border:none; border-radius:6px; font-weight:600; cursor:pointer; }
+    .btn-main { background:#0f3d6b; color:#fff; }
+    .btn-ghost { background:#e9f2fb; color:#0f3d6b; }
+    canvas { width:100%; border:1px solid #ccc; border-radius:8px; margin-top:16px; }
   </style>
 </head>
 <body>
-<div class="page">
-  <div class="card">
-    <h2>Recipients</h2>
-    <button class="btn btn-main" id="addRowBtn">Add Row</button>
-    <button class="btn btn-ghost" id="clearRowsBtn">Clear</button>
-    <button class="btn btn-ghost" id="downloadCsvSampleBtn">CSV Sample</button>
-    <label class="btn btn-ghost">
-      Import CSV/XLSX
-      <input type="file" id="importCsvInput" accept=".csv,.xlsx,.xls" style="display:none">
-    </label>
-    <table id="recipientsTable">
-      <thead>
-        <tr><th>#</th><th>Name</th><th>Father</th><th>Class</th><th>Section</th><th>Rank</th><th></th></tr>
-      </thead>
-      <tbody></tbody>
-    </table>
-  </div>
+  <div class="container">
+    <h1>Certificate Generator</h1>
 
-  <div class="card">
-    <h2>Preview</h2>
+    <div class="section">
+      <label for="yearSel">Academic Year</label>
+      <select id="yearSel"></select>
+    </div>
+
+    <div class="section">
+      <label for="classSel">Class</label>
+      <select id="classSel"></select>
+    </div>
+
+    <div class="section">
+      <label for="sectionSel">Section</label>
+      <select id="sectionSel"></select>
+    </div>
+
+    <div class="section">
+      <label for="examSel">Exam</label>
+      <select id="examSel"></select>
+    </div>
+
+    <div class="actions">
+      <button class="btn-main" id="previewBtn">Preview Top 3</button>
+      <button class="btn-ghost" id="downloadOneBtn">Download One PDF</button>
+      <button class="btn-ghost" id="downloadManyBtn">Download Separate PDFs</button>
+    </div>
+
     <canvas id="previewCanvas" width="2480" height="1754"></canvas>
   </div>
 
-  <div class="card">
-    <h2>Generate PDF</h2>
-    <button class="btn btn-main" id="genOnePdfBtn">One PDF (Top 3)</button>
-    <button class="btn btn-ghost" id="genManyPdfBtn">Separate PDFs (Top 3)</button>
-  </div>
-</div>
-
 <script>
-const recipients=[]; 
-const tbody=document.querySelector('#recipientsTable tbody');
-const canvas=document.getElementById('previewCanvas');
-const ctx=canvas.getContext('2d');
+// ---------- FIREBASE INIT ----------
+const firebaseConfig = {
+  apiKey: "AIzaSyAszVhWXUUOYLQ7VimKmPKf1yEu_CI9RCE",
+  authDomain: "stpatricks-questionbank.firebaseapp.com",
+  projectId: "stpatricks-questionbank",
+  storageBucket: "stpatricks-questionbank.appspot.com",
+  messagingSenderId: "917615322861",
+  appId: "1:917615322861:web:c6c890aa2184dd395b8ee4"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+
+// ---------- UI ----------
+const yearSel = new Choices('#yearSel',{searchEnabled:false});
+const classSel = new Choices('#classSel',{searchEnabled:false});
+const sectionSel = new Choices('#sectionSel',{searchEnabled:false});
+const examSel = new Choices('#examSel',{searchEnabled:false});
+const previewBtn = document.getElementById('previewBtn');
+const downloadOneBtn = document.getElementById('downloadOneBtn');
+const downloadManyBtn = document.getElementById('downloadManyBtn');
+const canvas = document.getElementById('previewCanvas');
+const ctx = canvas.getContext('2d');
+
+let years=[], classes=[], sections=[], exams=[], students=[];
 let bgImage=null;
 
-// 🔹 Load certificate.png from GitHub main branch
-async function loadBackground(){
-  return new Promise((resolve,reject)=>{
-    const img=new Image();
-    img.crossOrigin="anonymous";
-    img.onload=()=>resolve(img);
-    img.onerror=reject;
-    // change YOUR_USERNAME/REPO to your actual GitHub username and repo name
-    img.src="https://raw.githubusercontent.com/MessiahSastry/Question-Bank/main/certificate.png";
-  });
-}
-loadBackground().then(img=>{bgImage=img;renderPreview();});
+// Load certificate.png from repo
+(async()=>{
+  bgImage=new Image();
+  bgImage.crossOrigin="anonymous";
+  bgImage.src="https://raw.githubusercontent.com/MessiahSastry/Question-Bank/main/certificate.png";
+  await new Promise(res=>bgImage.onload=res);
+  renderPreview({});
+})();
 
-// ---------- Table Handling ----------
-function redrawTable(){
-  tbody.innerHTML='';
-  recipients.forEach((r,idx)=>{
-    const tr=document.createElement('tr');
-    tr.innerHTML=`
-      <td>${idx+1}</td>
-      <td><input type="text" value="${r.name||''}" data-k="name"></td>
-      <td><input type="text" value="${r.father||''}" data-k="father"></td>
-      <td><input type="text" value="${r.cls||''}" data-k="cls"></td>
-      <td><input type="text" value="${r.sec||''}" data-k="sec"></td>
-      <td><input type="number" value="${r.rank||''}" data-k="rank" style="width:60px"></td>
-      <td><button data-del="${idx}">X</button></td>
-    `;
-    tbody.appendChild(tr);
-  });
-  tbody.querySelectorAll('input').forEach(inp=>{
-    inp.oninput=e=>{
-      const tr=e.target.closest('tr');
-      const index=[...tbody.children].indexOf(tr);
-      recipients[index][e.target.dataset.k]=e.target.value;
-      renderPreview();
-    };
-  });
-  tbody.querySelectorAll('button[data-del]').forEach(b=>{
-    b.onclick=e=>{recipients.splice(+b.dataset.del,1);redrawTable();renderPreview();}
-  });
+// ---------- LOAD DATA ----------
+async function loadYears(){
+  let snap=await db.collection('years').orderBy('name','desc').get();
+  years=snap.docs.map(doc=>({id:doc.id,...doc.data()}));
+  yearSel.setChoices(years.map(y=>({value:y.id,label:y.id})), 'value','label', true);
+  await loadClasses();
 }
-document.getElementById('addRowBtn').onclick=()=>{recipients.push({});redrawTable();};
-document.getElementById('clearRowsBtn').onclick=()=>{recipients.length=0;redrawTable();};
-document.getElementById('downloadCsvSampleBtn').onclick=()=>{
-  const csv="Name,Father,Class,Section,Rank\nJohn Paul,David,10,A,1\nAsha,,9,B,2\n";
-  const blob=new Blob([csv],{type:'text/csv'});
-  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download="sample.csv";a.click();
-};
+async function loadClasses(){
+  let year=yearSel.getValue(true);
+  if(!year) return;
+  let snap=await db.collection('years').doc(year).collection('classes').orderBy('name').get();
+  classes=snap.docs.map(doc=>({id:doc.id,...doc.data()}));
+  classSel.setChoices(classes.map(c=>({value:c.id,label:c.name})), 'value','label', true);
+  await loadSections();
+}
+async function loadSections(){
+  let year=yearSel.getValue(true), classId=classSel.getValue(true);
+  if(!year||!classId) return;
+  let snap=await db.collection('years').doc(year).collection('classes').doc(classId).collection('sections').orderBy('name').get();
+  sections=snap.docs.map(doc=>({id:doc.id,...doc.data()}));
+  sectionSel.setChoices(sections.map(s=>({value:s.id,label:s.name})), 'value','label', true);
+  await loadExams();
+}
+async function loadExams(){
+  let year=yearSel.getValue(true), classId=classSel.getValue(true);
+  if(!year||!classId) return;
+  let snap=await db.collection('years').doc(year).collection('exams').doc('classGroups').collection('class-10').get(); // adjust class-group if needed
+  exams=snap.docs.map(doc=>({id:doc.id,...doc.data()}));
+  examSel.setChoices(exams.map(e=>({value:e.id,label:e.name})), 'value','label', true);
+  await loadStudents();
+}
+async function loadStudents(){
+  let year=yearSel.getValue(true), classId=classSel.getValue(true), sectionId=sectionSel.getValue(true);
+  if(!year||!classId||!sectionId) return;
+  let snap=await db.collection('years').doc(year).collection('classes').doc(classId).collection('sections').doc(sectionId).collection('students').orderBy('roll').get();
+  students=[];
+  snap.forEach(doc=>{let d=doc.data(); if(!d.isDeleted) students.push({id:doc.id,...d});});
+}
 
-// ---------- Certificate Drawing ----------
-function drawCertificate(r){
-  ctx.fillStyle="#fff";
-  ctx.fillRect(0,0,canvas.width,canvas.height);
+// ---------- FETCH MARKS + RANK ----------
+async function fetchStudentData(stu){
+  let year=yearSel.getValue(true), classId=classSel.getValue(true), sectionId=sectionSel.getValue(true), examId=examSel.getValue(true);
+  let examObj=exams.find(e=>e.id===examId);
+  let marksDoc=await db.collection('years').doc(year).collection('classes').doc(classId).collection('sections').doc(sectionId).collection('students').doc(stu.id).collection('marks').doc(examId).get();
+  let marks=marksDoc.exists ? marksDoc.data() : {};
+  let subjects=(examObj && Array.isArray(examObj.subjects)) ? examObj.subjects : [];
+  let totalMarks=0,totalMax=0;
+  subjects.forEach(sub=>{
+    let m=marks[sub.name] ?? '';
+    if(m!=='' && !isNaN(m)){ totalMarks+=+m; }
+    if(sub.max && !isNaN(sub.max)){ totalMax+=+sub.max; }
+  });
+  return {
+    name: stu.name,
+    father: stu.father,
+    class: classes.find(c=>c.id===classId)?.name || '',
+    section: sections.find(s=>s.id===sectionId)?.name || '',
+    totalMarks,totalMax,
+    percentage: totalMax? Math.round((totalMarks/totalMax)*100):''
+  };
+}
+
+async function getTop3Students(){
+  let arr=[];
+  for(let stu of students){
+    let dat=await fetchStudentData(stu);
+    arr.push(dat);
+  }
+  arr.sort((a,b)=>b.totalMarks-a.totalMarks);
+  let lastMark=null,lastRank=0;
+  arr.forEach((d,i)=>{
+    if(d.totalMarks!==lastMark){ lastRank=i+1; lastMark=d.totalMarks; }
+    d.rank=lastRank;
+  });
+  return arr.filter(d=>d.rank<=3);
+}
+
+// ---------- CERTIFICATE DRAW ----------
+function drawCertificate(stu, examName){
+  ctx.fillStyle="#fff"; ctx.fillRect(0,0,canvas.width,canvas.height);
   if(bgImage) ctx.drawImage(bgImage,0,0,canvas.width,canvas.height);
+  ctx.fillStyle="#000"; ctx.textAlign="center";
 
-  ctx.fillStyle="#000"; 
-  ctx.textAlign="center";
-
-  // Exam Name
   ctx.font="48px Segoe UI Bold";
-  ctx.fillText(r.exam || "Exam Name", 1211, 549);
+  ctx.fillText(examName||"",1211,549);
 
-  // Student Name
   ctx.font="64px Segoe Script";
-  ctx.fillText(r.name || "", 1223, 751);
+  ctx.fillText(stu.name||"",1223,751);
 
-  // Father Name
   ctx.font="40px Segoe UI";
-  ctx.fillText(r.father ? "S/o " + r.father : "", 1214, 893);
+  ctx.fillText(stu.father? "S/o "+stu.father : "",1214,893);
 
-  // Class & Section
   ctx.font="40px Segoe UI";
-  ctx.fillText(`Class ${r.cls || ""} - ${r.sec || ""}`, 1214, 800);
+  ctx.fillText(`Class ${stu.class||""} - ${stu.section||""}`,1214,800);
 
-  // Rank Badge
   ctx.font="48px Segoe UI Bold";
-  if(r.rank) ctx.fillText(`Rank ${r.rank}`, 2112, 772);
+  ctx.fillText(stu.rank? `Rank ${stu.rank}`:"",2112,772);
 
-  // Director Signature
   ctx.font="32px Segoe UI Italic";
-  ctx.fillText("Director", 772, 1400);
+  ctx.fillText("Director",772,1400);
 
-  // Teacher Signature
   ctx.font="32px Segoe UI Italic";
-  ctx.fillText("Class Teacher", 1759, 1412);
+  ctx.fillText("Class Teacher",1759,1412);
 }
 
-// ---------- PDF Generation ----------
-async function buildOnePdf(){
-  const top3=recipients.filter(r=>[1,2,3].includes(+r.rank));
-  if(!top3.length)return alert("No rank 1,2,3 students found.");
-  const {PDFDocument}=PDFLib; const pdfDoc=await PDFDocument.create();
-  for(const r of top3){
-    drawCertificate(r);
+function renderPreview(stu){
+  drawCertificate(stu||{}, examSel.getValue(true));
+}
+
+// ---------- PDF GENERATION ----------
+async function downloadOnePDF(){
+  const top3=await getTop3Students();
+  if(!top3.length) return alert("No top 3 students.");
+  const {PDFDocument}=PDFLib;
+  const pdfDoc=await PDFDocument.create();
+  for(const stu of top3){
+    drawCertificate(stu, examSel.getValue(true));
     const jpgUrl=canvas.toDataURL("image/jpeg",0.95);
-    const page=pdfDoc.addPage([842,595]);
     const jpg=await pdfDoc.embedJpg(jpgUrl);
+    const page=pdfDoc.addPage([842,595]);
     const {width,height}=jpg.scale(1);
     const ratio=Math.min(842/width,595/height);
-    const w=width*ratio,h=height*ratio;
-    const x=(842-w)/2,y=(595-h)/2;
-    page.drawImage(jpg,{x,y,width:w,height:h});
+    page.drawImage(jpg,{x:(842-width*ratio)/2,y:(595-height*ratio)/2,width:width*ratio,height:height*ratio});
   }
   const bytes=await pdfDoc.save();
   const blob=new Blob([bytes],{type:"application/pdf"});
-  const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="Certificates_Top3.pdf";a.click();
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(blob);
+  a.download="Certificates_Top3.pdf";
+  a.click();
 }
-async function buildManyPdfs(){
-  const top3=recipients.filter(r=>[1,2,3].includes(+r.rank));
-  if(!top3.length)return alert("No rank 1,2,3 students found.");
+
+async function downloadManyPDFs(){
+  const top3=await getTop3Students();
+  if(!top3.length) return alert("No top 3 students.");
   const {PDFDocument}=PDFLib;
-  for(const r of top3){
-    drawCertificate(r);
+  for(const stu of top3){
+    drawCertificate(stu, examSel.getValue(true));
     const jpgUrl=canvas.toDataURL("image/jpeg",0.95);
     const pdfDoc=await PDFDocument.create();
-    const page=pdfDoc.addPage([842,595]);
     const jpg=await pdfDoc.embedJpg(jpgUrl);
+    const page=pdfDoc.addPage([842,595]);
     const {width,height}=jpg.scale(1);
     const ratio=Math.min(842/width,595/height);
-    const w=width*ratio,h=height*ratio;
-    const x=(842-w)/2,y=(595-h)/2;
-    page.drawImage(jpg,{x,y,width:w,height:h});
+    page.drawImage(jpg,{x:(842-width*ratio)/2,y:(595-height*ratio)/2,width:width*ratio,height:height*ratio});
     const bytes=await pdfDoc.save();
     const blob=new Blob([bytes],{type:"application/pdf"});
     const a=document.createElement("a");
     a.href=URL.createObjectURL(blob);
-    a.download=`Certificate_${r.name}_Rank${r.rank}.pdf`;
+    a.download=`Certificate_${stu.name}.pdf`;
     a.click();
     await new Promise(res=>setTimeout(res,100));
   }
 }
-document.getElementById('genOnePdfBtn').onclick=buildOnePdf;
-document.getElementById('genManyPdfBtn').onclick=buildManyPdfs;
-</script>
-<script>
-// 🔹 Helper: Show coordinates when clicking on canvas
-canvas.addEventListener("click", function(e){
-  const rect = canvas.getBoundingClientRect();
-  const x = Math.round((e.clientX - rect.left) * (canvas.width / rect.width));
-  const y = Math.round((e.clientY - rect.top) * (canvas.height / rect.height));
-  alert(`Clicked at X=${x}, Y=${y}`);
-});
+
+// ---------- HOOKS ----------
+previewBtn.onclick=async()=>{
+  const top3=await getTop3Students();
+  if(top3.length) renderPreview(top3[0]);
+};
+downloadOneBtn.onclick=downloadOnePDF;
+downloadManyBtn.onclick=downloadManyPDFs;
+
+// INIT
+loadYears();
 </script>
 </body>
 </html>
-
-
