@@ -379,129 +379,163 @@ function getClassGroupName(className) {
       popupContent.innerHTML = '';
       popupBg.onclick = null;
     }
-  // Inline Certificate Studio (minimal shell). We'll render inside the existing popup.
-function openCertificateStudio() {
-  // Basic shell UI inside the same popup component you already use
+  // ======================= CERTIFICATE GENERATOR =========================
+function openCertificateGenerator() {
   showPopup(`
-    <div class="popup-title">Certificate Studio</div>
-
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-      <div>
-        <label>Background (A4 Landscape)</label>
-        <input type="file" id="cs_bg" accept="image/*">
-      </div>
-      <div>
-        <label>Watermark Logo</label>
-        <input type="file" id="cs_wm" accept="image/*">
-      </div>
+    <div class="popup-title">Generate Certificates (Top 3 Rankers)</div>
+    <div style="margin-bottom:12px;color:#555;">
+      Certificates will be generated only for the <b>first three ranks</b> (including ties).
     </div>
-
-    <label>School Name</label>
-    <input id="cs_school" placeholder="St. Patrick's School" value="${localStorage.getItem('sp_schoolTitle') || "St. Patrick's School"}">
-
-    <label>Subheading</label>
-    <input id="cs_sub" placeholder="IIT & NEET FOUNDATION" value="${localStorage.getItem('sp_schoolSub') || 'IIT & NEET FOUNDATION'}">
-
-    <label>Certificate Title</label>
-    <input id="cs_title" placeholder="Certificate of Merit">
-
-    <div style="display:flex;gap:8px;align-items:center;margin:8px 0;">
-      <button class="popup-action-btn" id="cs_loadSection">Load Current Section</button>
-      <span style="font-size:.92em;color:#666" id="cs_count_hint"></span>
+    <div style="display:flex;flex-direction:column;gap:10px;">
+      <button class="popup-action-btn" id="certOnePdfBtn">Generate One PDF (All Rankers)</button>
+      <button class="popup-action-btn" id="certSeparateBtn">Generate Separate PDFs</button>
+      <button class="popup-cancel-btn">Close</button>
     </div>
-
-    <div style="background:#fff;border:1px solid #e6eef7;border-radius:10px;padding:8px;">
-      <canvas id="cs_canvas" width="2480" height="1754" style="width:100%;height:auto;border-radius:8px;"></canvas>
-    </div>
-
-    <div class="popup-btn-row" style="margin-top:10px;">
-      <button type="button" class="popup-cancel-btn">Close</button>
-      <button type="button" class="popup-action-btn" id="cs_generate">Generate PDF</button>
-    </div>
+    <canvas id="certCanvas" width="2480" height="1754" style="display:none;"></canvas>
   `);
 
-  // very light preview wiring (placeholder). Replace with your full studio logic later.
-  const canvas = document.getElementById('cs_canvas');
+  const canvas = document.getElementById('certCanvas');
   const ctx = canvas.getContext('2d');
-  let bgImg = null, wmImg = null, recips = [];
 
-  function draw() {
-    // white
-    ctx.fillStyle = '#fff'; ctx.fillRect(0,0,canvas.width,canvas.height);
-    // bg
-    if (bgImg) {
-      const r = Math.min(canvas.width/bgImg.width, canvas.height/bgImg.height);
-      const w = bgImg.width*r, h = bgImg.height*r;
-      ctx.drawImage(bgImg, (canvas.width-w)/2, (canvas.height-h)/2, w, h);
+  // Load assets (background + signatures)
+  const bgUrl = "https://raw.githubusercontent.com/MessiahSastry/Question-Bank/main/certificate.png";
+  const directorUrl = "https://raw.githubusercontent.com/MessiahSastry/Question-Bank/main/director-sign.png";
+  const teacherUrl  = "https://raw.githubusercontent.com/MessiahSastry/Question-Bank/main/teacher-sign.png";
+  let bgImg=new Image(), directorImg=new Image(), teacherImg=new Image();
+  bgImg.crossOrigin=directorImg.crossOrigin=teacherImg.crossOrigin="anonymous";
+  bgImg.src=bgUrl; directorImg.src=directorUrl; teacherImg.src=teacherUrl;
+
+  // Wait for background to load before any drawing
+  function drawCertificate(stu, examName, rank){
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    ctx.drawImage(bgImg,0,0,canvas.width,canvas.height);
+    ctx.fillStyle="#000"; ctx.textAlign="center";
+
+    // Exam name
+    ctx.font="48px Segoe UI Bold";
+    ctx.fillText(examName,1211,549);
+
+    // Student Name
+    ctx.font="64px Segoe Script";
+    ctx.fillText(stu.name,1223,751);
+
+    // Class & Section
+    ctx.font="40px Segoe UI";
+    ctx.fillText(`Class ${stu.cls} - ${stu.sec}`,1214,800);
+
+    // Father Name
+    ctx.font="40px Segoe UI";
+    ctx.fillText("S/o " + (stu.father || ""),1214,893);
+
+    // Rank
+    ctx.font="48px Segoe UI Bold";
+    ctx.fillText("Rank " + rank,2112,772);
+
+    // Director signature
+    if(directorImg.complete && directorImg.naturalWidth>0){
+      const w=220,h=directorImg.height/directorImg.width*220;
+      ctx.drawImage(directorImg,772-w/2,1400-h/2,w,h);
+    } else {
+      ctx.font="32px Segoe UI Italic";
+      ctx.fillText("Director",772,1400);
     }
-    // wm
-    if (wmImg) {
-      ctx.save();
-      ctx.globalAlpha = 0.12;
-      const h = canvas.height*0.5;
-      const r = h/wmImg.height;
-      const w = wmImg.width*r;
-      ctx.drawImage(wmImg, (canvas.width-w)/2, (canvas.height-h)/2, w, h);
-      ctx.restore();
+
+    // Teacher signature
+    if(teacherImg.complete && teacherImg.naturalWidth>0){
+      const w=220,h=teacherImg.height/teacherImg.width*220;
+      ctx.drawImage(teacherImg,1759-w/2,1412-h/2,w,h);
+    } else {
+      ctx.font="32px Segoe UI Italic";
+      ctx.fillText("Class Teacher",1759,1412);
     }
-    // headings
-    const school = document.getElementById('cs_school').value.trim();
-    const sub    = document.getElementById('cs_sub').value.trim();
-    const title  = document.getElementById('cs_title').value.trim();
-    ctx.fillStyle = '#0f3d6b'; ctx.textAlign='center';
-    ctx.font = 'bold 56px "Segoe UI", Arial, sans-serif';
-    ctx.fillText(school || "St. Patrick's School", canvas.width/2, 180);
-    ctx.fillStyle = '#1467b7';
-    ctx.font = '500 34px "Segoe UI", Arial, sans-serif';
-    if (sub) ctx.fillText(sub, canvas.width/2, 230);
-    ctx.fillStyle = '#0f3d6b';
-    ctx.font = 'bold 46px "Segoe UI", Arial, sans-serif';
-    if (title) ctx.fillText(title, canvas.width/2, 300);
   }
 
-  function readImg(file){ return new Promise((res,rej)=>{ const i=new Image(); i.onload=()=>res(i); i.onerror=rej; i.src=URL.createObjectURL(file); }); }
-  document.getElementById('cs_bg').onchange = async e => { if (e.target.files[0]) { bgImg = await readImg(e.target.files[0]); draw(); } };
-  document.getElementById('cs_wm').onchange = async e => { if (e.target.files[0]) { wmImg = await readImg(e.target.files[0]); draw(); } };
-  ['cs_school','cs_sub','cs_title'].forEach(id => document.getElementById(id).oninput = draw);
-
-  // Load recipients from the current section
-  document.getElementById('cs_loadSection').onclick = async () => {
-    const hint = document.getElementById('cs_count_hint');
-    if (!academicYear || !currentClassId || !currentSectionId) {
-      alert('Class/Section not selected.'); return;
+  // ===== Fetch marks, calculate ranks, and generate PDFs =====
+  async function generateCertificates(mode){
+    if(!academicYear || !currentClassId || !currentSectionId){
+      alert("Select a class and section first!"); return;
     }
-    const snap = await db.collection('years').doc(academicYear)
+    const classGroup = getClassGroupName(currentClassName);
+
+    // 1. Fetch exams for this group
+    const examSnap = await db.collection('years').doc(academicYear)
+      .collection('exams').doc('classGroups').collection(classGroup).orderBy('name').get();
+    if(examSnap.empty){ alert("No exams found!"); return; }
+
+    // Pick the latest exam (or let user choose later)
+    const exam = examSnap.docs[examSnap.docs.length-1].data();
+    const examId = examSnap.docs[examSnap.docs.length-1].id;
+    const examName = exam.name;
+
+    // 2. Fetch students
+    const stuSnap = await db.collection('years').doc(academicYear)
       .collection('classes').doc(currentClassId)
       .collection('sections').doc(currentSectionId)
       .collection('students').orderBy('roll').get();
-    recips = [];
-    snap.forEach(d => { const x = d.data(); if (!x.isDeleted) recips.push({name:x.name, father:x.father, cls:currentClassName, sec:currentSectionName}); });
-    hint.textContent = recips.length ? `${recips.length} students loaded` : 'No students';
-  };
+    let students = [];
+    stuSnap.forEach(d=>{ const x=d.data(); if(!x.isDeleted) students.push({id:d.id,...x,cls:currentClassName,sec:currentSectionName}); });
 
-  // Very simple PDF (image of canvas) — replace later with your full per-student draw
-  document.getElementById('cs_generate').onclick = async () => {
-    if (!window.PDFLib) { alert('pdf-lib not loaded on this page. Add it to this page if you need PDF.'); return; }
+    // 3. Fetch marks and compute totals
+    for(const stu of students){
+      const mDoc = await db.collection('years').doc(academicYear)
+        .collection('classes').doc(currentClassId)
+        .collection('sections').doc(currentSectionId)
+        .collection('students').doc(stu.id)
+        .collection('marks').doc(examId).get();
+      let marks = mDoc.exists ? mDoc.data() : {};
+      let total=0;
+      (exam.subjects||[]).forEach(s=>{ total += Number(marks[s.name]||0); });
+      stu.total=total;
+    }
+
+    // 4. Rank assignment
+    students.sort((a,b)=>b.total-a.total);
+    let rank=1;
+    for(let i=0;i<students.length;i++){
+      if(i>0 && students[i].total<students[i-1].total) rank=i+1;
+      students[i].rank=rank;
+    }
+    const top3=students.filter(s=>s.rank<=3);
+
+    if(top3.length===0){ alert("No students with ranks."); return; }
+
     const { PDFDocument } = PDFLib;
-    const pdf = await PDFDocument.create();
-    // at least one page with headings/background to prove flow
-    draw();
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.95);
-    const base64  = dataUrl.split(',')[1];
-    const bytes   = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
-    const page = pdf.addPage([842, 595]); // A4 landscape
-    const img  = await pdf.embedJpg(imgBytes);
-    const s = Math.min(842/img.width, 595/img.height);
-    page.drawImage(img, { x:(842-img.width*s)/2, y:(595-img.height*s)/2, width:img.width*s, height:img.height*s });
-    const pdfBytes = await pdf.save();
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([pdfBytes], {type:'application/pdf'}));
-    a.download = 'Certificate.pdf';
-    a.click();
-  };
+    const pdf=await PDFDocument.create();
 
-  draw();
+    for(const stu of top3){
+      drawCertificate(stu,examName,stu.rank);
+      const dataUrl=canvas.toDataURL("image/jpeg",0.95);
+      const imgBytes=Uint8Array.from(atob(dataUrl.split(",")[1]),c=>c.charCodeAt(0));
+      const jpg=await pdf.embedJpg(imgBytes);
+      const page=pdf.addPage([842,595]); // A4 landscape
+      const s=Math.min(842/jpg.width,595/jpg.height);
+      page.drawImage(jpg,{x:(842-jpg.width*s)/2,y:(595-jpg.height*s)/2,width:jpg.width*s,height:jpg.height*s});
+
+      if(mode==="separate"){
+        const one=await PDFDocument.create();
+        const [p]=await one.copyPages(pdf,[pdf.getPageCount()-1]);
+        one.addPage(p);
+        const bytes=await one.save();
+        const a=document.createElement("a");
+        a.href=URL.createObjectURL(new Blob([bytes],{type:"application/pdf"}));
+        a.download=`Certificate_${stu.name}.pdf`;
+        a.click();
+      }
+    }
+
+    if(mode==="one"){
+      const bytes=await pdf.save();
+      const a=document.createElement("a");
+      a.href=URL.createObjectURL(new Blob([bytes],{type:"application/pdf"}));
+      a.download=`Certificates_${examName}.pdf`;
+      a.click();
+    }
+  }
+
+  document.getElementById("certOnePdfBtn").onclick=()=>generateCertificates("one");
+  document.getElementById("certSeparateBtn").onclick=()=>generateCertificates("separate");
 }
+
     // =========== ADD/EDIT STUDENT POPUP =========================
     function showAddStudentPopup() {
       showPopup(`
@@ -654,7 +688,7 @@ function openCertificateStudio() {
   window.location.href = "performance.html";
 };
   document.getElementById('showDeletedBtn').onclick = showDeletedStudentsPopup;
-      document.getElementById('createCertificateBtn').onclick = openCertificateStudio;  // inline studio
+      document.getElementById('createCertificateBtn').onclick = openCertificateGenerator;
     document.getElementById('yearPlanBtn').onclick = function() {
     window.location.href = "year-plan.html";
 };
@@ -2062,3 +2096,4 @@ function closeAbsenteesModal() {
 </script>
 </body>
 </html>
+
