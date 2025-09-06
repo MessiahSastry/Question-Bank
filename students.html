@@ -589,11 +589,13 @@ async function generateCertificatesForExam(classId, className, sectionId, sectio
 
   // Assets
   const bgUrl = "https://raw.githubusercontent.com/MessiahSastry/Question-Bank/main/certificate.png";
-  const directorUrl = "https://raw.githubusercontent.com/MessiahSastry/Question-Bank/main/director-sign.png";
-  const teacherUrl  = "https://raw.githubusercontent.com/MessiahSastry/Question-Bank/main/teacher-sign.png";
-  let bgImg=new Image(), directorImg=new Image(), teacherImg=new Image();
-  bgImg.crossOrigin=directorImg.crossOrigin=teacherImg.crossOrigin="anonymous";
-  bgImg.src=bgUrl; directorImg.src=directorUrl; teacherImg.src=teacherUrl;
+  let bgImg = new Image();
+bgImg.crossOrigin = "anonymous";
+bgImg.src = bgUrl;
+
+// signatures removed
+const directorImg = null;
+const teacherImg  = null;
   
  // Rank badges
   const rank1Img = new Image(), rank2Img = new Image(), rank3Img = new Image();
@@ -606,17 +608,15 @@ const decodeImg = (img) =>
   ("decode" in img)
     ? img.decode()
     : new Promise((res, rej) => { img.onload = res; img.onerror = rej; });
+const withTimeout = (p, ms) =>
+  Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), ms))]);
 
-const assetsReady = Promise.all([
-  decodeImg(bgImg),
-  decodeImg(directorImg).catch(()=>{}),
-  decodeImg(teacherImg).catch(()=>{}),
-  decodeImg(rank1Img).catch(()=>{}),
-  decodeImg(rank2Img).catch(()=>{}),
-  decodeImg(rank3Img).catch(()=>{}),
-]);
-
-  
+const assetsReady = Promise.allSettled([
+  withTimeout(decodeImg(bgImg),    8000),
+  withTimeout(decodeImg(rank1Img), 4000),
+  withTimeout(decodeImg(rank2Img), 4000),
+  withTimeout(decodeImg(rank3Img), 4000),
+]); 
   function drawCertificate(stu, rank){
     ctx.clearRect(0,0,canvas.width,canvas.height);
     if (bgImg && bgImg.naturalWidth > 0) {
@@ -629,16 +629,16 @@ const assetsReady = Promise.all([
     ctx.fillStyle="#000"; ctx.textAlign="center";
 
     // Exam name
-    ctx.font="64px Segoe UI Bold";
+    ctx.font = "bold 64px 'Segoe UI'";
     ctx.fillText(examName,1211,600);
 
     // Student Name
-    ctx.font="72px Segoe Script";
+    ctx.font = "72px 'Segoe Script'";
     ctx.fillStyle="#0f3d6b";
     ctx.fillText(stu.name,1223,800);
 
     // Class & Section
-    ctx.font="46px Segoe UI";
+    ctx.font = "46px 'Segoe UI'";
     ctx.fillText(`(${className} / ${sectionName})`,1214,880);
 
        // Rank badge with emoji
@@ -647,18 +647,6 @@ const assetsReady = Promise.all([
       const w = 300;  // increase badge width
       const h = (rankImg.naturalHeight / rankImg.naturalWidth) * w;
       ctx.drawImage(rankImg, 1850, 600, w, h); 
-
-    // Director signature
-    if(directorImg.complete && directorImg.naturalWidth>0){
-      const w=220,h=directorImg.height/directorImg.width*220;
-      ctx.drawImage(directorImg,772-w/2,1400-h/2,w,h);
-    }
-
-    // Teacher signature
-    if(teacherImg.complete && teacherImg.naturalWidth>0){
-      const w=220,h=teacherImg.height/teacherImg.width*220;
-      ctx.drawImage(teacherImg,1759-w/2,1412-h/2,w,h);
-    }
   }
   }
   async function generateCertificates(mode){
@@ -677,7 +665,8 @@ const assetsReady = Promise.all([
     statusText.textContent = "Loading certificate assets...";
 await assetsReady;        // <-- ensures images are ready
 await nextFrame();
-    // Fetch students
+   try {
+  // Fetch students
     const stuSnap = await db.collection('years').doc(academicYear)
       .collection('classes').doc(classId)
       .collection('sections').doc(sectionId)
@@ -760,11 +749,22 @@ await nextFrame();
   a.click();
 
   statusText.textContent = "Download complete!";
-await sleep(1200);         // small delay so the user sees it
-statusEl.style.display = "none";
-statusText.textContent = "Preparing download...";
+  await sleep(1200); // small delay so the user sees it
 }
-  }
+
+// after the loop, if separate mode, show done message
+if (mode === "separate") {
+  statusText.textContent = "All certificates saved!";
+  await sleep(1200);
+}
+} catch (err) {
+  console.error(err);
+  statusText.textContent = "Something went wrong. Please try again.";
+  await sleep(1200);
+} finally {
+  statusEl.style.display = "none";
+  statusText.textContent = "Preparing download...";
+}
 
   document.getElementById("certOnePdfBtn").onclick=()=>generateCertificates("one");
   document.getElementById("certSeparateBtn").onclick=()=>generateCertificates("separate");
@@ -2329,6 +2329,7 @@ function closeAbsenteesModal() {
 </script>
 </body>
 </html>
+
 
 
 
