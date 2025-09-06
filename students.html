@@ -601,10 +601,31 @@ async function generateCertificatesForExam(classId, className, sectionId, sectio
   rank1Img.src = "https://raw.githubusercontent.com/MessiahSastry/Progress-card-app/main/rank-1.png";
   rank2Img.src = "https://raw.githubusercontent.com/MessiahSastry/Progress-card-app/main/rank-2.png";
   rank3Img.src = "https://raw.githubusercontent.com/MessiahSastry/Progress-card-app/main/rank-3.png";
+  // Preload all assets once and reuse
+const decodeImg = (img) =>
+  ("decode" in img)
+    ? img.decode()
+    : new Promise((res, rej) => { img.onload = res; img.onerror = rej; });
+
+const assetsReady = Promise.all([
+  decodeImg(bgImg),
+  decodeImg(directorImg).catch(()=>{}),
+  decodeImg(teacherImg).catch(()=>{}),
+  decodeImg(rank1Img).catch(()=>{}),
+  decodeImg(rank2Img).catch(()=>{}),
+  decodeImg(rank3Img).catch(()=>{}),
+]);
+
   
   function drawCertificate(stu, rank){
     ctx.clearRect(0,0,canvas.width,canvas.height);
-    ctx.drawImage(bgImg,0,0,canvas.width,canvas.height);
+    if (bgImg && bgImg.naturalWidth > 0) {
+  ctx.drawImage(bgImg, 0, 0, canvas.width, canvas.height);
+} else {
+  // fallback to white background if image isn't ready
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+}
     ctx.fillStyle="#000"; ctx.textAlign="center";
 
     // Exam name
@@ -653,6 +674,9 @@ async function generateCertificatesForExam(classId, className, sectionId, sectio
   // give the browser time to paint & start the CSS animation
   await nextFrame(); 
   await nextFrame();
+    statusText.textContent = "Loading certificate assets...";
+await assetsReady;        // <-- ensures images are ready
+await nextFrame();
     // Fetch students
     const stuSnap = await db.collection('years').doc(academicYear)
       .collection('classes').doc(classId)
@@ -2305,6 +2329,7 @@ function closeAbsenteesModal() {
 </script>
 </body>
 </html>
+
 
 
 
