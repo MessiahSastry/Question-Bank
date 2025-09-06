@@ -641,6 +641,18 @@ async function generateCertificatesForExam(classId, className, sectionId, sectio
   }
   }
   async function generateCertificates(mode){
+  const statusEl = document.getElementById("downloadStatus");
+  const statusText = document.getElementById("statusText");
+  const nextFrame = () => new Promise(r => requestAnimationFrame(() => r()));
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+  // show spinner immediately
+  statusEl.style.display = "block";
+  statusText.textContent = "Preparing download...";
+
+  // give the browser time to paint & start the CSS animation
+  await nextFrame(); 
+  await nextFrame();
     // Fetch students
     const stuSnap = await db.collection('years').doc(academicYear)
       .collection('classes').doc(classId)
@@ -690,10 +702,9 @@ async function generateCertificatesForExam(classId, className, sectionId, sectio
     for (let i = 0; i < top3.length; i++) {
     const stu = top3[i];
        // 🔹 Progress update goes here
-      document.getElementById("downloadStatus").style.display = "block";
-      document.getElementById("statusText").textContent = 
-    `Downloading ${i+1} of ${top3.length} certificates...`;
-      
+     statusText.textContent = `Generating ${i+1} of ${top3.length}...`;
+await nextFrame();
+    
       drawCertificate(stu,stu.rank);
       const dataUrl=canvas.toDataURL("image/jpeg",0.95);
       const imgBytes=Uint8Array.from(atob(dataUrl.split(",")[1]),c=>c.charCodeAt(0));
@@ -703,8 +714,8 @@ async function generateCertificatesForExam(classId, className, sectionId, sectio
       page.drawImage(jpg,{x:(842-jpg.width*s)/2,y:(595-jpg.height*s)/2,width:jpg.width*s,height:jpg.height*s});
 
       if (mode === "separate") {
-  document.getElementById("downloadStatus").style.display = "block";
-  document.getElementById("statusText").textContent = "Generating separate certificates...";
+  statusText.textContent = "Saving certificate...";
+  await nextFrame();
   const one = await PDFDocument.create();
   const [p] = await one.copyPages(pdf, [pdf.getPageCount() - 1]);
   one.addPage(p);
@@ -715,24 +726,19 @@ async function generateCertificatesForExam(classId, className, sectionId, sectio
   a.click();
 }
     }
-    document.getElementById("downloadStatus").style.display = "none";
-    document.getElementById("statusText").textContent = "Preparing download...";
-
-   if (mode === "one") {
-  document.getElementById("downloadStatus").style.display = "block";
-  document.getElementById("statusText").textContent = "Generating all certificates...";
-
+     if (mode === "one") {
+  statusText.textContent = "Generating all certificates...";
+  await nextFrame();
   const bytes = await pdf.save();
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
   a.download = `Certificates_${className}_${sectionName}_${examName}.pdf`;
   a.click();
 
-  document.getElementById("statusText").textContent = "Download complete!";
-  setTimeout(() => {
-    document.getElementById("downloadStatus").style.display = "none";
-    document.getElementById("statusText").textContent = "Preparing download...";
-  }, 2000);
+  statusText.textContent = "Download complete!";
+await sleep(1200);         // small delay so the user sees it
+statusEl.style.display = "none";
+statusText.textContent = "Preparing download...";
 }
   }
 
@@ -2299,6 +2305,7 @@ function closeAbsenteesModal() {
 </script>
 </body>
 </html>
+
 
 
 
