@@ -760,6 +760,20 @@ function drawBackPagePortrait(pdf, student, includedExams, perExam, ranksByExam,
     // Grade col blank for ranks
   }
 }
+    // --- Draw "landscape-looking" back page on a PORTRAIT sheet by rotating 90° ---
+function drawBackPageLandscapeRotated(pdf, student, includedExams, perExam, ranksByExam, selectedExamId) {
+  const PORTRAIT_W = 2481; // portrait page width in px
+
+  pdf.saveGraphicsState();
+  // Rotate the drawing space 90° clockwise around the top-right corner
+  if (typeof pdf.rotate === 'function') {
+    pdf.rotate(90, { origin: [PORTRAIT_W, 0] });
+  }
+  // Now render exactly as if the page were true landscape
+  drawBackPageLandscape(pdf, student, includedExams, perExam, ranksByExam, selectedExamId);
+  pdf.restoreGraphicsState();
+}
+
     // -------- BACK PAGE (LANDSCAPE) ----------
 function drawBackPageLandscape(pdf, student, includedExams, perExam, ranksByExam, selectedExamId) {
   const pageW = 3509, pageH = 2481;          // landscape canvas
@@ -1092,11 +1106,11 @@ async function generatePDF(studentArr, isSingle) {
       centerText(pdf, String(a.work||''), attWorkCoords[i][0], attWorkCoords[i][1], 60, COLOR_GREEN);
       centerText(pdf, String(a.pres||''), attPresCoords[i][0], attPresCoords[i][1], 60, COLOR_BROWN);
     }
-    // ---------- BACK PAGE (LANDSCAPE) ----------
-// BACK PAGE (LANDSCAPE) only if more than one exam
+    // ---------- BACK PAGE (LANDSCAPE LOOK, PORTRAIT SHEET) ----------
 if (consolidated && includedExams.length > 1) {
-  pdf.addPage([3509,2481], 'l'); // true landscape
-  drawBackPageLandscape(
+  // add a new **portrait** page and rotate the drawing 90°
+  pdf.addPage([2481,3509], 'p');
+  drawBackPageLandscapeRotated(
     pdf,
     { ...student, id: (students.find(s=> s.name===student.name && s.roll==student.roll)?.id) },
     includedExams,
@@ -1193,17 +1207,19 @@ async function showPreviewPDF(stuArr) {
     }
 
        // BACK PAGE (LANDSCAPE) only if more than one exam
-    if (consolidated && includedExams.length > 1) {
-      pdf.addPage([3509,2481], 'l'); // true landscape
-      drawBackPageLandscape(
-        pdf,
-        { ...student, id: (students.find(s=> s.name===student.name && s.roll==student.roll)?.id) },
-        includedExams,
-        consolidated.perExam,
-        consolidated.ranksByExam,
-        selectedExamId
-      );
-    }
+    // BACK PAGE (LANDSCAPE LOOK, PORTRAIT SHEET) ----------
+if (consolidated && includedExams.length > 1) {
+  // keep the sheet portrait and rotate the drawing
+  pdf.addPage([2481,3509], 'p');
+  drawBackPageLandscapeRotated(
+    pdf,
+    { ...student, id: (students.find(s=> s.name===student.name && s.roll==student.roll)?.id) },
+    includedExams,
+    consolidated.perExam,
+    consolidated.ranksByExam,
+    selectedExamId
+  );
+}
   }
 
   // Render preview canvases
@@ -1245,6 +1261,7 @@ function showToast(msg) {
 </div>
 </body>
 </html>
+
 
 
 
