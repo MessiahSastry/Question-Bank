@@ -399,7 +399,7 @@ function markDownloadComplete(text="Download complete!") {
   if (statusText) statusText.textContent = text;
 }
   // ======================= CERTIFICATE GENERATOR =========================
-function openCertificateGenerator() {
+function openCertificateGenerator(prefill = null) {
   // 1. Fetch all classes for this academic year
   db.collection('years').doc(academicYear)
     .collection('classes').orderBy('name').get()
@@ -529,7 +529,66 @@ function setupDropdown(dropdownId, selectedId, listId, onSelect) {
             examSelected.dataset.value="";
             // re-attach exam dropdown as well
             setupDropdown('certExamDropdown','certExamSelected','certExamList');
-          });
+            // ---- PREFILL (optional) ----
+(async function prefillIfAny() {
+  if (!prefill || !prefill.classId) return;
+
+  // Prefill class
+  const classSel = document.getElementById('certClassSelected');
+  classSel.dataset.value = prefill.classId;
+  classSel.textContent   = prefill.className || classSel.textContent;
+
+  // Load sections for class
+  const secSnap = await db.collection('years').doc(academicYear)
+    .collection('classes').doc(prefill.classId)
+    .collection('sections').orderBy('name').get();
+
+  const certSectionList = document.getElementById('certSectionList');
+  certSectionList.innerHTML = secSnap.docs.map(d => `
+    <div class="dropdown-option" data-id="${d.id}">${d.data().name}</div>
+  `).join('');
+
+  // Reset and attach section dropdown again
+  const sectionSel = document.getElementById('certSectionSelected');
+  sectionSel.textContent   = prefill.sectionName || '--Select--';
+  sectionSel.dataset.value = prefill.sectionId   || '';
+  setupDropdown('certSectionDropdown','certSectionSelected','certSectionList', async (sectionId, sectionName) => {
+    const className = document.getElementById('certClassSelected').textContent;
+    const classGroup = getClassGroupName(className);
+
+    const examSnap = await db.collection('years').doc(academicYear)
+      .collection('exams').doc('classGroups').collection(classGroup).orderBy('name').get();
+
+    const certExamList = document.getElementById('certExamList');
+    certExamList.innerHTML = examSnap.docs.map(e => `
+      <div class="dropdown-option" data-id="${e.id}">${e.data().name}</div>
+    `).join('');
+
+    const examSel = document.getElementById('certExamSelected');
+    examSel.textContent   = '--Select--';
+    examSel.dataset.value = '';
+    setupDropdown('certExamDropdown','certExamSelected','certExamList');
+  });
+
+  // If we already know the section, load exams now and prefill exam too
+  if (prefill.sectionId) {
+    const className  = classSel.textContent;
+    const classGroup = getClassGroupName(className);
+    const examSnap = await db.collection('years').doc(academicYear)
+      .collection('exams').doc('classGroups').collection(classGroup).orderBy('name').get();
+
+    const certExamList = document.getElementById('certExamList');
+    certExamList.innerHTML = examSnap.docs.map(e => `
+      <div class="dropdown-option" data-id="${e.id}">${e.data().name}</div>
+    `).join('');
+
+    const examSel = document.getElementById('certExamSelected');
+    examSel.textContent   = prefill.examName || '--Select--';
+    examSel.dataset.value = prefill.examId   || '';
+    setupDropdown('certExamDropdown','certExamSelected','certExamList');
+  }
+})();
+      });
       });
     });
 });
@@ -2339,6 +2398,7 @@ function closeAbsenteesModal() {
 </script>
 </body>
 </html>
+
 
 
 
