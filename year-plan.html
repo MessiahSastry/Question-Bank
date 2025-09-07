@@ -547,12 +547,11 @@ if (hasIndic) {
   data.forEach(d => {
     doc.setFont(undefined, 'bold'); doc.text(`${d.subject}:`, 10, y); y += 7;
     doc.setFont(undefined, 'normal');
-    const lines = doc.splitTextToSize(d.syllabus, 180);
+    const lines = doc.splitTextToSize(normalizeSyllabus(d.syllabus || ''), 180);
     doc.text(lines, 16, y);
     y += lines.length * 7 + 2;
     if (y > 270) { doc.addPage(); y = 14; }
   });
-
   doc.save(`${className}_${exam}_syllabus.pdf`);
 }
 } finally {
@@ -617,6 +616,22 @@ function sanitizeFileName(name) {
     .replace(/\s+/g, ' ')            // collapse spaces
     .trim();
 }
+    // Normalize whitespace: trim lines, collapse multiple spaces,
+// and limit consecutive blank lines to at most one.
+function normalizeSyllabus(txt) {
+  const lines = String(txt || '')
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .map(l => l.replace(/\s+/g, ' ').trim());
+
+  const out = [];
+  for (const l of lines) {
+    if (l === '' && out.length && out[out.length - 1] === '') continue; // merge blanks
+    out.push(l);
+  }
+  return out.join('\n').trim();
+}
+
  function showPdfSpinner(){ const el=document.getElementById('pdf-spinner'); if(el) el.style.display='flex'; }
 function hidePdfSpinner(){ const el=document.getElementById('pdf-spinner'); if(el) el.style.display='none'; }  
 
@@ -643,18 +658,35 @@ function renderMixedText(txt) {
 
   return lines.join('<br>');
 }
+  // Turn newline-separated topics into a numbered, indented list.
+// Removes any existing bullets/numbers to avoid duplicates.
+function renderMixedList(txt) {
+  const lines = String(txt || '')
+    .split('\n')
+    .map(l => l.trim())
+    .filter(Boolean);
+
+  let n = 0;
+  return lines.map(line => {
+    // strip leading bullets/numbers like "1.", "1)", "-", "•"
+    const clean = line.replace(/^\s*(\d+[.)]|[-•*])\s+/, '');
+    n += 1;
+    return `<div style="margin:2px 0;">${n}. ${renderMixedText(clean)}</div>`;
+  }).join('');
+}
+
 // Use html2pdf for Telugu/Hindi-safe rendering
 async function renderSyllabusWithHTML2PDF({ school, subtitle, className, exam, items }) {
   // Hidden container for print
   const wrap = document.createElement('div');
-  wrap.style.position = 'fixed';
+  wrap.style.position = 'absolute';
   wrap.style.left = '-99999px';
   wrap.style.top = '0';
   wrap.style.width = '794px'; // approx A4 width @96dpi; html2pdf will scale
 
  // Build printable HTML with per-block language-aware font selection
 const itemsHTML = items.map(it => {
-  const text = (it.syllabus || '');
+  const text = normalizeSyllabus(it.syllabus || '');
   const isTelugu = /[\u0C00-\u0C7F]/.test(text);
   const isDevanagari = /[\u0900-\u097F]/.test(text);
   const langAttr = isTelugu ? 'te' : (isDevanagari ? 'hi' : 'en');
@@ -664,12 +696,12 @@ const itemsHTML = items.map(it => {
                     : "'Segoe UI',sans-serif");
 
   return `
-    <div lang="${langAttr}" style="margin:0 0 12px 0; page-break-inside: avoid; break-inside: avoid; font-family:${fontFamily};">
-      <div style="font-weight:700; margin:0 0 6px 0;">
-        ${escapeHTML(it.subject || '')}:
-      </div>
-      <div style="white-space: normal; word-break: break-word;">
-  ${renderMixedText(text)}
+    <div lang="${langAttr}" style="margin:0 0 12px 0; font-family:${fontFamily};">
+      <div style="font-weight:800; text-transform:uppercase; letter-spacing:.4px; margin:0 0 6px 0;">
+  ${escapeHTML(it.subject || '')}
+</div>
+      <div style="margin-left:22px; white-space: normal; word-break: break-word;">
+  ${renderMixedList(text)}
 </div>
     </div>
   `;
@@ -678,7 +710,7 @@ const itemsHTML = items.map(it => {
 wrap.innerHTML = `
   <div id="indic-pdf-root" style="
     font-family: 'Noto Sans Telugu','Noto Sans Devanagari','Segoe UI', sans-serif;
-    color:#111; padding:24px 28px; line-height:1.45; font-size:14px;">
+    color:#111; padding:10px 20px 16px 20px; line-height:1.45; font-size:14px;
     
     <div style="text-align:center; font-weight:700; font-size:20px; margin-bottom:8px;">
       ${escapeHTML(school)}
@@ -701,11 +733,19 @@ wrap.innerHTML = `
   // Generate and save PDF
  const dpr = Math.min(2.5, (window.devicePixelRatio || 1));
 const opt = {
-  margin: [10, 10, 10, 10],
+  margin: [4, 10, 10, 10],
   filename: sanitizeFileName(`${className}_${exam}_syllabus.pdf`),
   image: { type: 'jpeg', quality: 0.98 },
-  html2canvas: { scale: dpr, useCORS: true, letterRendering: true },
-  pagebreak: { mode: ['css', 'legacy'], avoid: ['div[lang="te"]', 'div[lang="hi"]'] },
+  html2canvas: {
+  scale: dpr,
+  useCORS: true,
+  letterRendering: true,
+  scrollX: 0,
+  scrollY: 0,
+  windowWidth: document.documentElement.scrollWidth,
+  windowHeight: document.documentElement.scrollHeight
+},
+  pagebreak: { mode: ['css', 'legacy'] },
   jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
 };
 
@@ -726,14 +766,3 @@ if (document.fonts && document.fonts.ready) {
 
 </body>
 </html>
-
-
-
-
-
-
-
-
-
-
-
