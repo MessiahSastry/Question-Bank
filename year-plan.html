@@ -5,6 +5,13 @@
   <title>Year Plan & Syllabus PDF | St. Patrick's School</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
+  <!-- Indic fonts for Telugu/Hindi in PDF -->
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Devanagari:wght@400;700&family=Noto+Sans+Telugu:wght@400;700&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<!-- html2pdf for proper Indic rendering -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+
   <style>
     body {
       margin: 0; padding: 0;
@@ -310,13 +317,7 @@
       });
     });
 
-    // ====== Syllabus Textarea to UPPERCASE ======
-    document.addEventListener('DOMContentLoaded', function() {
-      document.getElementById('syllabus').addEventListener('input', function() {
-        this.value = this.value.toUpperCase();
-      });
-    });
-// Attach fetchAndShowExistingSyllabus to all dropdowns after DOM is ready
+   // Attach fetchAndShowExistingSyllabus to all dropdowns after DOM is ready
 document.addEventListener('DOMContentLoaded', function() {
   ['year-value', 'class-value', 'exam-value', 'subject-value'].forEach(id => {
     document.getElementById(id).addEventListener('change', fetchAndShowExistingSyllabus);
@@ -368,8 +369,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const className = document.getElementById('class-value').value.trim();
     const examName = document.getElementById('exam-value').value.trim();
     const subject = document.getElementById('subject-value').value.trim();
-    const syllabus = document.getElementById('syllabus').value.trim();
-
+    const syllabus = document.getElementById('syllabus').value.toUpperCase().trim();
 
     if (!year || !className || !examName || !subject || !syllabus) {
       alert("Please fill all fields before saving.");
@@ -411,6 +411,7 @@ document.getElementById('syllabus').value = "";
   });
     document.addEventListener('DOMContentLoaded', function() {
   document.getElementById('download-btn').onclick = async function () {
+    showPdfSpinner();
   const year = document.getElementById('pdf-year-value').value.trim();
 const className = document.getElementById('pdf-class-value').value.trim();
 const exam = document.getElementById('pdf-exam-value').value.trim();
@@ -468,100 +469,96 @@ const exam = document.getElementById('pdf-exam-value').value.trim();
     })
     .filter(Boolean);
 
-    // ======= jsPDF Part =======
+   // ======= PDF generation (Indic-aware) =======
+// Use html2pdf when any Telugu/Devanagari text is present
+try {
+    const hasIndic = data.some(d =>
+  /[\u0900-\u097F\u0C00-\u0C7F]/.test((d.syllabus || "")) ||
+  /[\u0900-\u097F\u0C00-\u0C7F]/.test((d.subject || ""))
+);
+
+if (hasIndic) {
+  // Helper defined in next step
+  await renderSyllabusWithHTML2PDF({
+    school: "St. Patrick's School",
+    subtitle: "IIT & NEET Foundation",
+    className,
+    exam,
+    items: data
+  });
+} else {
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF();
   let pageWidth = doc.internal.pageSize.getWidth();
   let y = 18;
 
-  // 1. School Name (centered, big)
-  doc.setFontSize(18);
-  doc.setFont(undefined, 'bold');
-  doc.text('St. Patrick\'s School', pageWidth / 2, y, { align: 'center' });
-  y += 9;
+  // 1. School
+  doc.setFontSize(18); doc.setFont(undefined, 'bold');
+  doc.text("St. Patrick's School", pageWidth / 2, y, { align: 'center' }); y += 9;
 
-  // 2. Subheading (center, normal)
-  doc.setFontSize(14);
-  doc.setFont(undefined, 'normal');
-  doc.text('IIT & NEET Foundation', pageWidth / 2, y, { align: 'center' });
-  y += 8;
+  // 2. Subtitle
+  doc.setFontSize(14); doc.setFont(undefined, 'normal');
+  doc.text("IIT & NEET Foundation", pageWidth / 2, y, { align: 'center' }); y += 8;
 
-  // 3. Exam Name (center, normal)
-  doc.setFontSize(13);
-  doc.setFont(undefined, 'bold');
-  doc.text(`${exam}`, pageWidth / 2, y, { align: 'center' });
-  y += 11;
+  // 3. Exam
+  doc.setFontSize(13); doc.setFont(undefined, 'bold');
+  doc.text(`${exam}`, pageWidth / 2, y, { align: 'center' }); y += 11;
 
-  // 4. Class Line: centered, bold, all caps, with hyphen
-  // 4. Class Line: Centered, bold, with superscript for "th"/"nd"/"st"/"rd"
-  doc.setFontSize(13);
-  doc.setFont(undefined, 'bold');
-  // Extract "6th", "IIT & NEET" etc.
-let parts = className.trim().split(" ");
-let numPart = parts[0].toUpperCase(); // "6TH", "10TH"
-let supMatch = numPart.match(/^(\d+)(ST|ND|RD|TH)$/i);
-let rest = parts.slice(1).join(" "); // "IIT & NEET" or "Class" etc.
+  // 4. Class line with superscript (same logic as your original)
+  let parts = className.trim().split(" ");
+  let numPart = parts[0].toUpperCase();
+  let supMatch = numPart.match(/^(\d+)(ST|ND|RD|TH)$/i);
+  let rest = parts.slice(1).join(" ");
 
-let finalClassLine = "";
-
-if (supMatch) {
-    // If matches "6TH", etc.
+  if (supMatch) {
     let mainNum = supMatch[1];
     let sup = supMatch[2].toLowerCase();
-    finalClassLine = mainNum;
-    // If there is a rest part ("IIT & NEET")
-    if (rest) {
-        // Center mainNum + sup + rest + " - SYLLABUS"
-        let beforeWidth = doc.getTextWidth(mainNum);
-        let supWidth = doc.getTextWidth(sup);
-        let restText = " " + rest.toUpperCase() + " - SYLLABUS";
-        let restWidth = doc.getTextWidth(restText);
-        let totalWidth = beforeWidth + supWidth + restWidth;
-        let startX = pageWidth / 2 - totalWidth / 2;
 
-        doc.setFontSize(13);
-        doc.text(mainNum, startX, y);
-        doc.setFontSize(9);
-        doc.text(sup, startX + beforeWidth, y - 2.3);
-        doc.setFontSize(13);
-        doc.text(restText, startX + beforeWidth + supWidth, y);
-        y += 11;
+    if (rest) {
+      let beforeWidth = doc.getTextWidth(mainNum);
+      let supWidth = doc.getTextWidth(sup);
+      let restText = " " + rest.toUpperCase() + " - SYLLABUS";
+      let totalWidth = beforeWidth + supWidth + doc.getTextWidth(restText);
+      let startX = pageWidth / 2 - totalWidth / 2;
+
+      doc.setFontSize(13); doc.text(mainNum, startX, y);
+      doc.setFontSize(9);  doc.text(sup, startX + beforeWidth, y - 2.3);
+      doc.setFontSize(13); doc.text(restText, startX + beforeWidth + supWidth, y);
+      y += 11;
     } else {
-        // Just print mainNum + sup + " CLASS - SYLLABUS"
-        let afterText = " CLASS - SYLLABUS";
-        let beforeWidth = doc.getTextWidth(mainNum);
-        let supWidth = doc.getTextWidth(sup);
-        let afterWidth = doc.getTextWidth(afterText);
-        let totalWidth = beforeWidth + supWidth + afterWidth;
-        let startX = pageWidth / 2 - totalWidth / 2;
-        doc.setFontSize(13);
-        doc.text(mainNum, startX, y);
-        doc.setFontSize(9);
-        doc.text(sup, startX + beforeWidth, y - 2.3);
-        doc.setFontSize(13);
-        doc.text(afterText, startX + beforeWidth + supWidth, y);
-        y += 11;
+      let afterText = " CLASS - SYLLABUS";
+      let beforeWidth = doc.getTextWidth(mainNum);
+      let supWidth = doc.getTextWidth(sup);
+      let afterWidth = doc.getTextWidth(afterText);
+      let startX = pageWidth / 2 - (beforeWidth + supWidth + afterWidth) / 2;
+
+      doc.setFontSize(13); doc.text(mainNum, startX, y);
+      doc.setFontSize(9);  doc.text(sup, startX + beforeWidth, y - 2.3);
+      doc.setFontSize(13); doc.text(afterText, startX + beforeWidth + supWidth, y);
+      y += 11;
     }
-} else {
-    // No number part, fallback
+  } else {
     doc.setFontSize(13);
     doc.text(`${className.toUpperCase()} - SYLLABUS`, pageWidth / 2, y, { align: 'center' });
     y += 11;
-}
+  }
 
+  // 5. Subjects + syllabus
   data.forEach(d => {
-    doc.setFont(undefined, 'bold');
-    doc.text(`${d.subject}:`, 10, y); y += 7;
+    doc.setFont(undefined, 'bold'); doc.text(`${d.subject}:`, 10, y); y += 7;
     doc.setFont(undefined, 'normal');
-    let lines = doc.splitTextToSize(d.syllabus, 180);
+    const lines = doc.splitTextToSize(d.syllabus, 180);
     doc.text(lines, 16, y);
     y += lines.length * 7 + 2;
     if (y > 270) { doc.addPage(); y = 14; }
   });
 
   doc.save(`${className}_${exam}_syllabus.pdf`);
+}
+} finally {
+    hidePdfSpinner();
+  }
 };
-});
     // --- Fetch and show existing syllabus for current dropdown values ---
 async function fetchAndShowExistingSyllabus() {
  const year = document.getElementById('year-value').value.trim();
@@ -606,9 +603,129 @@ const subject = document.getElementById('subject-value').value.trim();
   document.body.appendChild(d);
   setTimeout(() => { d.remove(); }, 1900);
 }
+      // Safely escape HTML
+function escapeHTML(s) {
+  return (s || '').replace(/[&<>"']/g, m => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[m]));
+}
+function sanitizeFileName(name) {
+  // Keep Unicode letters/numbers; replace others with underscores
+  return (name || 'syllabus')
+    .replace(/[\\/:*?"<>|]/g, '_')   // Windows-forbidden chars
+    .replace(/\s+/g, ' ')            // collapse spaces
+    .trim();
+}
+ function showPdfSpinner(){ const el=document.getElementById('pdf-spinner'); if(el) el.style.display='flex'; }
+function hidePdfSpinner(){ const el=document.getElementById('pdf-spinner'); if(el) el.style.display='none'; }  
+
+// Preserves newlines by converting them to <br>.
+function renderMixedText(txt) {
+  const s = String(txt || '');
+  const parts = s.split('\n'); // keep lines
+  const runRegex = /([\u0C00-\u0C7F]+|[\u0900-\u097F]+|[^\\n\u0C00-\u0C7F\u0900-\u097F]+)/g; // Telugu | Devanagari | other
+
+  const renderRun = (run) => {
+    const r = run || '';
+    if (/[\u0C00-\u0C7F]/.test(r)) {
+      return `<span style="font-family:'Noto Sans Telugu','Segoe UI',sans-serif;">${escapeHTML(r)}</span>`;
+    } else if (/[\u0900-\u097F]/.test(r)) {
+      return `<span style="font-family:'Noto Sans Devanagari','Segoe UI',sans-serif;">${escapeHTML(r)}</span>`;
+    }
+    return `<span style="font-family:'Segoe UI',sans-serif;">${escapeHTML(r)}</span>`;
+  };
+
+  const lines = parts.map(line => {
+    const runs = (line.match(runRegex) || []).map(renderRun).join('');
+    return runs;
+  });
+
+  return lines.join('<br>');
+}
+// Use html2pdf for Telugu/Hindi-safe rendering
+async function renderSyllabusWithHTML2PDF({ school, subtitle, className, exam, items }) {
+  // Hidden container for print
+  const wrap = document.createElement('div');
+  wrap.style.position = 'fixed';
+  wrap.style.left = '-99999px';
+  wrap.style.top = '0';
+  wrap.style.width = '794px'; // approx A4 width @96dpi; html2pdf will scale
+
+ // Build printable HTML with per-block language-aware font selection
+const itemsHTML = items.map(it => {
+  const text = (it.syllabus || '');
+  const isTelugu = /[\u0C00-\u0C7F]/.test(text);
+  const isDevanagari = /[\u0900-\u097F]/.test(text);
+  const langAttr = isTelugu ? 'te' : (isDevanagari ? 'hi' : 'en');
+  const fontFamily = isTelugu
+    ? "'Noto Sans Telugu','Segoe UI',sans-serif"
+    : (isDevanagari ? "'Noto Sans Devanagari','Segoe UI',sans-serif"
+                    : "'Segoe UI',sans-serif");
+
+  return `
+    <div lang="${langAttr}" style="margin:0 0 12px 0; page-break-inside: avoid; break-inside: avoid; font-family:${fontFamily};">
+      <div style="font-weight:700; margin:0 0 6px 0;">
+        ${escapeHTML(it.subject || '')}:
+      </div>
+      <div style="white-space: normal; word-break: break-word;">
+  ${renderMixedText(text)}
+</div>
+    </div>
+  `;
+}).join('');
+
+wrap.innerHTML = `
+  <div id="indic-pdf-root" style="
+    font-family: 'Noto Sans Telugu','Noto Sans Devanagari','Segoe UI', sans-serif;
+    color:#111; padding:24px 28px; line-height:1.45; font-size:14px;">
+    
+    <div style="text-align:center; font-weight:700; font-size:20px; margin-bottom:8px;">
+      ${escapeHTML(school)}
+    </div>
+    <div style="text-align:center; font-size:16px; margin-bottom:6px;">
+      ${escapeHTML(subtitle)}
+    </div>
+    <div style="text-align:center; font-weight:700; font-size:15px; margin-bottom:12px;">
+      ${escapeHTML(exam)}
+    </div>
+    <div style="text-align:center; font-weight:700; font-size:15px; margin-bottom:18px;">
+      ${escapeHTML(className)} - SYLLABUS
+    </div>
+
+    ${itemsHTML}
+  </div>
+`;
+  document.body.appendChild(wrap);
+
+  // Generate and save PDF
+ const dpr = Math.min(2.5, (window.devicePixelRatio || 1));
+const opt = {
+  margin: [10, 10, 10, 10],
+  filename: sanitizeFileName(`${className}_${exam}_syllabus.pdf`),
+  image: { type: 'jpeg', quality: 0.98 },
+  html2canvas: { scale: dpr, useCORS: true, letterRendering: true },
+  pagebreak: { mode: ['css', 'legacy'], avoid: ['div[lang="te"]', 'div[lang="hi"]'] },
+  jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+};
+
+// Ensure web-fonts (Noto) are loaded before rasterizing
+if (document.fonts && document.fonts.ready) {
+  try { await document.fonts.ready; } catch(e) {}
+}
+  await html2pdf().set(opt).from(wrap.querySelector('#indic-pdf-root')).save();
+  wrap.remove();
+}
   </script>
+  <div id="pdf-spinner" style="position:fixed; inset:0; background:rgba(15,61,107,.12); backdrop-filter:saturate(120%) blur(1px); display:none; align-items:center; justify-content:center; z-index:99999;">
+  <div style="background:#0f3d6b; color:#fff; padding:14px 18px; border-radius:10px; box-shadow:0 6px 24px #0f3d6b33; display:flex; align-items:center; gap:10px;">
+    <span class="fa-solid fa-spinner fa-spin"></span>
+    <span>Generating PDF…</span>
+  </div>
+</div>
+
 </body>
 </html>
+
 
 
 
