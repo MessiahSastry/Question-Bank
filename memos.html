@@ -760,38 +760,33 @@ function drawBackPagePortrait(pdf, student, includedExams, perExam, ranksByExam,
     // Grade col blank for ranks
   }
 }
-    // --- Draw "landscape-looking" back page on a PORTRAIT sheet by rotating 90° ---
+   // --- Draw "landscape-looking" back page on a PORTRAIT sheet (no pdf.rotate needed)
 function drawBackPageLandscapeRotated(pdf, student, includedExams, perExam, ranksByExam, selectedExamId) {
-  const PORTRAIT_W = 2481; // portrait page width in px
+  const W = 2481;       // portrait page width
+  // Coordinate & drawing helpers: rotate 90° clockwise onto the portrait page
+  const R = (x,y)=>[W - y, x];
+  const rText = (txt, x, y, opts={}) => { const [X,Y]=R(x,y); pdf.text(txt, X, Y, {angle:90, ...opts}); };
+  const rLine = (x1,y1,x2,y2) => { const [X1,Y1]=R(x1,y1); const [X2,Y2]=R(x2,y2); pdf.line(X1,Y1,X2,Y2); };
+  const rRect = (x,y,w,h) => { const [X,Y]=R(x, y + h); pdf.rect(X, Y, h, w); };
 
-  pdf.saveGraphicsState();
-  // Rotate the drawing space 90° clockwise around the top-right corner
-  if (typeof pdf.rotate === 'function') {
-    pdf.rotate(90, { origin: [PORTRAIT_W, 0] });
-  }
-  // Now render exactly as if the page were true landscape
-  drawBackPageLandscape(pdf, student, includedExams, perExam, ranksByExam, selectedExamId);
-  pdf.restoreGraphicsState();
-}
-
-    // -------- BACK PAGE (LANDSCAPE) ----------
-function drawBackPageLandscape(pdf, student, includedExams, perExam, ranksByExam, selectedExamId) {
-  const pageW = 3509, pageH = 2481;          // landscape canvas
+  // Use the SAME numbers as the landscape drawer
+  const pageW = 3509, pageH = 2481;
   const left = 160, top = 160, right = 160;
 
-  // compact header
+  // header
   pdf.setFont('helvetica','bold'); pdf.setFontSize(32); pdf.setTextColor(15,61,107);
-  pdf.text("St. Patrick's School – IIT & NEET FOUNDATION", left, top);
+  rText("St. Patrick's School – IIT & NEET FOUNDATION", left, top);
+
   pdf.setFont('helvetica','normal'); pdf.setFontSize(24); pdf.setTextColor(0,0,0);
   const cls = `${formatClass(student.class)}${student.section ? ' / ' + formatSection(student.section) : ''}`;
-  pdf.text(`Name: ${student.name || ''}`, left, top + 44);
-  pdf.text(`Father: ${student.father || ''}`, left + 980, top + 44);
-  pdf.text(`Class: ${cls}    Roll: ${student.roll ?? ''}`, left, top + 88);
+  rText(`Name: ${student.name || ''}`, left, top + 44);
+  rText(`Father: ${student.father || ''}`, left + 980, top + 44);
+  rText(`Class: ${cls}    Roll: ${student.roll ?? ''}`, left, top + 88);
 
   // table layout
   const y0 = top + 140;
-  const subjectsColW = 900;                 // wide subject column
-  let perSubColW = 180;                     // (Obt., Grade)
+  const subjectsColW = 900;
+  let perSubColW = 180;
   const examsCols = includedExams.length * 2;
   const maxTableW = pageW - left - right;
   let tableW = subjectsColW + examsCols * perSubColW;
@@ -800,14 +795,12 @@ function drawBackPageLandscape(pdf, student, includedExams, perExam, ranksByExam
     tableW = subjectsColW + examsCols * perSubColW;
   }
 
-  // row sizes
   let cellH = 58, headH1 = 70, headH2 = 52;
 
   const subjects = buildSubjectListForTable(includedExams, selectedExamId);
-  const bodyRows = subjects.length + 2;   // + Total + Rank
+  const bodyRows = subjects.length + 2; // + Total + Rank
   let totalH = headH1 + headH2 + bodyRows * cellH;
 
-  // compress if too tall
   const maxH = pageH - y0 - 140;
   if (totalH > maxH) {
     const k = totalH / maxH;
@@ -821,38 +814,38 @@ function drawBackPageLandscape(pdf, student, includedExams, perExam, ranksByExam
 
   // borders
   pdf.setDrawColor(180,200,233); pdf.setLineWidth(1.4);
-  pdf.rect(left, y0, tableW, totalH);
+  rRect(left, y0, tableW, totalH);
 
-  // horizontal lines
-  pdf.line(left, y0 + headH1, left + tableW, y0 + headH1);
-  pdf.line(left, y0 + headH1 + headH2, left + tableW, y0 + headH1 + headH2);
+  // horizontals
+  rLine(left, y0 + headH1, left + tableW, y0 + headH1);
+  rLine(left, y0 + headH1 + headH2, left + tableW, y0 + headH1 + headH2);
   for (let i = 0; i <= bodyRows; i++) {
     const y = y0 + headH1 + headH2 + i * cellH;
-    pdf.line(left, y, left + tableW, y);
+    rLine(left, y, left + tableW, y);
   }
 
-  // vertical lines
-  pdf.line(xAfterSubjects, y0, xAfterSubjects, y0 + totalH);
+  // verticals
+  rLine(xAfterSubjects, y0, xAfterSubjects, y0 + totalH);
   for (let eIdx = 0; eIdx < includedExams.length; eIdx++) {
     const xGroupStart = xAfterSubjects + eIdx * 2 * perSubColW;
-    pdf.line(xGroupStart + perSubColW,   y0, xGroupStart + perSubColW,   y0 + totalH); // Obt/Grade split
-    pdf.line(xGroupStart + 2*perSubColW, y0, xGroupStart + 2*perSubColW, y0 + totalH); // group boundary
+    rLine(xGroupStart + perSubColW,   y0, xGroupStart + perSubColW,   y0 + totalH);
+    rLine(xGroupStart + 2*perSubColW, y0, xGroupStart + 2*perSubColW, y0 + totalH);
   }
 
   // headers
   pdf.setFont('helvetica','bold'); pdf.setFontSize(24); pdf.setTextColor(15,61,107);
-  pdf.text('SUBJECT', xSubjects + subjectsColW/2, y0 + headH1/2 + 8, {align:'center', baseline:'middle'});
+  rText('SUBJECT', xSubjects + subjectsColW/2, y0 + headH1/2 + 8, {align:'center', baseline:'middle'});
   for (let eIdx=0; eIdx<includedExams.length; eIdx++) {
     const ex = includedExams[eIdx];
     const exCenter = xAfterSubjects + eIdx*2*perSubColW + perSubColW;
     const label = (ex.shortName || ex.name || ex.id || '').replace(/\s+/g,' ').trim();
-    pdf.text(label, exCenter, y0 + headH1/2 + 8, {align:'center', baseline:'middle'});
+    rText(label, exCenter, y0 + headH1/2 + 8, {align:'center', baseline:'middle'});
   }
   pdf.setFont('helvetica','bold'); pdf.setFontSize(20);
   for (let eIdx=0; eIdx<includedExams.length; eIdx++) {
     const x0 = xAfterSubjects + eIdx*2*perSubColW;
-    pdf.text('Obt.',  x0 + perSubColW/2,   y0 + headH1 + headH2/2 + 6, {align:'center', baseline:'middle'});
-    pdf.text('Grade', x0 + 1.5*perSubColW, y0 + headH1 + headH2/2 + 6, {align:'center', baseline:'middle'});
+    rText('Obt.',  x0 + perSubColW/2,   y0 + headH1 + headH2/2 + 6, {align:'center', baseline:'middle'});
+    rText('Grade', x0 + 1.5*perSubColW, y0 + headH1 + headH2/2 + 6, {align:'center', baseline:'middle'});
   }
 
   // body
@@ -861,7 +854,7 @@ function drawBackPageLandscape(pdf, student, includedExams, perExam, ranksByExam
 
   for (let r=0; r<subjects.length; r++) {
     const yC = yBodyStart + r*cellH + Math.floor(cellH/2) + 6;
-    pdf.text(subjects[r].name, xSubjects + 12, yC, {align:'left', baseline:'middle'});
+    rText(subjects[r].name, xSubjects + 12, yC, {align:'left', baseline:'middle'});
 
     for (let eIdx=0; eIdx<includedExams.length; eIdx++) {
       const ex = includedExams[eIdx];
@@ -870,34 +863,33 @@ function drawBackPageLandscape(pdf, student, includedExams, perExam, ranksByExam
       const markTxt  = (cell && cell.marks !== undefined && cell.marks !== null) ? String(cell.marks) : 'AB';
       const gradeTxt = (cell && cell.grade) ? String(cell.grade) : '';
       const x0 = xAfterSubjects + eIdx*2*perSubColW;
-      pdf.text(markTxt,                         x0 + perSubColW/2,   yC, {align:'center', baseline:'middle'});
-      pdf.text(gradeTxt === 'AB' ? '' : gradeTxt, x0 + 1.5*perSubColW, yC, {align:'center', baseline:'middle'});
+      rText(markTxt,                         x0 + perSubColW/2,   yC, {align:'center', baseline:'middle'});
+      rText(gradeTxt === 'AB' ? '' : gradeTxt, x0 + 1.5*perSubColW, yC, {align:'center', baseline:'middle'});
     }
   }
 
   // totals
   const yTotal = yBodyStart + subjects.length*cellH + Math.floor(cellH/2) + 6;
   pdf.setFont('helvetica','bold');
-  pdf.text('Total', xSubjects + 12, yTotal, {align:'left', baseline:'middle'});
+  rText('Total', xSubjects + 12, yTotal, {align:'left', baseline:'middle'});
   for (let eIdx=0; eIdx<includedExams.length; eIdx++) {
     const ex = includedExams[eIdx];
     const sData = perExam[ex.id][student.id];
     const totalTxt = sData ? String(sData.total) : '';
     const x0 = xAfterSubjects + eIdx*2*perSubColW;
-    pdf.text(totalTxt, x0 + perSubColW/2, yTotal, {align:'center', baseline:'middle'});
+    rText(totalTxt, x0 + perSubColW/2, yTotal, {align:'center', baseline:'middle'});
   }
 
   // ranks
   const yRank = yBodyStart + (subjects.length+1)*cellH + Math.floor(cellH/2) + 6;
-  pdf.text('Rank', xSubjects + 12, yRank, {align:'left', baseline:'middle'});
+  rText('Rank', xSubjects + 12, yRank, {align:'left', baseline:'middle'});
   for (let eIdx=0; eIdx<includedExams.length; eIdx++) {
     const ex = includedExams[eIdx];
     const rank = ranksByExam[ex.id]?.[student.id] ?? '';
     const x0 = xAfterSubjects + eIdx*2*perSubColW;
-    pdf.text(rank ? String(rank) : '', x0 + perSubColW/2, yRank, {align:'center', baseline:'middle'});
+    rText(rank ? String(rank) : '', x0 + perSubColW/2, yRank, {align:'center', baseline:'middle'});
   }
 }
-
 // ======= PDF GENERATION =========
 async function fetchStudentData(stu) {
   let year = yearSel.value, classId = classSel.value, sectionId = sectionSel.value, examId = examSel.value;
@@ -1261,6 +1253,7 @@ function showToast(msg) {
 </div>
 </body>
 </html>
+
 
 
 
