@@ -679,11 +679,13 @@ function renderMixedList(txt) {
 async function renderSyllabusWithHTML2PDF({ school, subtitle, className, exam, items }) {
   // Hidden container for print
   const wrap = document.createElement('div');
-  wrap.style.position = 'absolute';
-  wrap.style.left = '-99999px';
-  wrap.style.top = '0';
-  wrap.style.width = '794px'; // approx A4 width @96dpi; html2pdf will scale
-
+ wrap.style.position = 'absolute';
+wrap.style.left = '0';
+wrap.style.top = '0';
+wrap.style.width = '794px'; // ~A4, html2pdf scales anyway
+wrap.style.visibility = 'hidden';      // hide but keep in layout
+wrap.style.pointerEvents = 'none';
+wrap.style.background = '#fff';
  // Build printable HTML with per-block language-aware font selection
 const itemsHTML = items.map(it => {
   const text = normalizeSyllabus(it.syllabus || '');
@@ -736,24 +738,21 @@ const opt = {
   margin: [4, 10, 10, 10],
   filename: sanitizeFileName(`${className}_${exam}_syllabus.pdf`),
   image: { type: 'jpeg', quality: 0.98 },
-  html2canvas: {
+ html2canvas: {
   scale: dpr,
   useCORS: true,
   letterRendering: true,
   scrollX: 0,
-  scrollY: 0,
-  windowWidth: document.documentElement.scrollWidth,
-  windowHeight: document.documentElement.scrollHeight
+  scrollY: 0
 },
+
   pagebreak: { mode: ['css', 'legacy'] },
   jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
 };
 
-// Ensure web-fonts (Noto) are loaded before rasterizing
-if (document.fonts && document.fonts.ready) {
-  try { await document.fonts.ready; } catch(e) {}
-}
-  await html2pdf().set(opt).from(wrap.querySelector('#indic-pdf-root')).save();
+// Give the browser one full paint cycle to layout the hidden DOM
+  await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+  await html2pdf().set(opt).from(wrap).save();
   wrap.remove();
 }
   </script>
@@ -766,3 +765,4 @@ if (document.fonts && document.fonts.ready) {
 
 </body>
 </html>
+
