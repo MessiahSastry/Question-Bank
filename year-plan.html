@@ -616,6 +616,24 @@ function sanitizeFileName(name) {
     .replace(/\s+/g, ' ')            // collapse spaces
     .trim();
 }
+    // Remove any leading numbering/bullets, repeatedly.
+// Handles: "1.", "1)", "(1)", "१.", "I.", "(i)", "A)", "-", "•", "—", etc.
+// Also removes chains like "1. 1.) (i) ".
+function stripLeadingEnumerator(line) {
+  let s = String(line || '');
+  const patterns = [
+    /^\s*\(?[\u0966-\u096F\d]+\)?\s*[.)\-–—:]\s*/u,   // 1. / 1) / (1) / १.
+    /^\s*\(?[IVXLCDMivxlcdm]+\)?\s*[.)\-–—:]\s*/u,    // I. / (i)
+    /^\s*\(?[A-Za-z]\)?\s*[.)\-–—:]\s*/u,             // A. / (a)
+    /^\s*[-•*]\s*/u                                   // bullets/dashes
+  ];
+  let prev;
+  do {
+    prev = s;
+    for (const re of patterns) s = s.replace(re, '');
+  } while (s !== prev); // keep stripping until nothing changes
+  return s.trim();
+}
     // Normalize whitespace: trim lines, collapse multiple spaces,
 // and limit consecutive blank lines to at most one.
 function normalizeSyllabus(txt) {
@@ -660,6 +678,7 @@ function renderMixedText(txt) {
 }
   // Turn newline-separated topics into a numbered, indented list.
 // Removes any existing bullets/numbers to avoid duplicates.
+// Numbered, indented list. First remove any existing bullets/numbers.
 function renderMixedList(txt) {
   const lines = String(txt || '')
     .split('\n')
@@ -668,13 +687,11 @@ function renderMixedList(txt) {
 
   let n = 0;
   return lines.map(line => {
-    // strip leading bullets/numbers like "1.", "1)", "-", "•"
-    const clean = line.replace(/^\s*(\d+[.)]|[-•*])\s+/, '');
+    const clean = stripLeadingEnumerator(line);
     n += 1;
     return `<div style="margin:2px 0;">${n}. ${renderMixedText(clean)}</div>`;
   }).join('');
 }
-
 // Use html2pdf for Telugu/Hindi-safe rendering
 async function renderSyllabusWithHTML2PDF({ school, subtitle, className, exam, items }) {
   // Hidden container for print
@@ -765,5 +782,6 @@ const opt = {
 
 </body>
 </html>
+
 
 
