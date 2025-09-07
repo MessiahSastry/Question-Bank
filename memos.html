@@ -760,16 +760,33 @@ function drawBackPagePortrait(pdf, student, includedExams, perExam, ranksByExam,
     // Grade col blank for ranks
   }
 }
-   // --- Draw "landscape-looking" back page on a PORTRAIT sheet (no pdf.rotate needed)
+   // Draw the "landscape-looking" back page on a PORTRAIT sheet (rotate 90° CCW)
 function drawBackPageLandscapeRotated(pdf, student, includedExams, perExam, ranksByExam, selectedExamId) {
-  const W = 2481;       // portrait page width
-  // Coordinate & drawing helpers: rotate 90° clockwise onto the portrait page
-  const R = (x,y)=>[W - y, x];
-  const rText = (txt, x, y, opts={}) => { const [X,Y]=R(x,y); pdf.text(txt, X, Y, {angle:90, ...opts}); };
-  const rLine = (x1,y1,x2,y2) => { const [X1,Y1]=R(x1,y1); const [X2,Y2]=R(x2,y2); pdf.line(X1,Y1,X2,Y2); };
-  const rRect = (x,y,w,h) => { const [X,Y]=R(x, y + h); pdf.rect(X, Y, h, w); };
+  const PORTRAIT_W = 2481; // width of the portrait page
+  const PORTRAIT_H = 3509; // height of the portrait page
 
-  // Use the SAME numbers as the landscape drawer
+  // CCW rotation mapping from (x,y) in landscape space to portrait page:
+  // (x, y) -> ( y , PORTRAIT_H - x )
+  const R = (x, y) => [ y, PORTRAIT_H - x ];
+
+  // helpers
+  const rText = (txt, x, y, opts = {}) => {
+    const [X, Y] = R(x, y);
+    pdf.text(txt, X, Y, { angle: -90, ...opts });
+  };
+  const rLine = (x1, y1, x2, y2) => {
+    const [X1, Y1] = R(x1, y1);
+    const [X2, Y2] = R(x2, y2);
+    pdf.line(X1, Y1, X2, Y2);
+  };
+  // For a rect at (x,y) w×h in landscape coords, the top-left after CCW rotation
+  // is the transform of the original top-right (x+w, y)
+  const rRect = (x, y, w, h) => {
+    const [X, Y] = R(x + w, y);
+    pdf.rect(X, Y, h, w);
+  };
+
+  // Use the same layout numbers as the landscape drawer
   const pageW = 3509, pageH = 2481;
   const left = 160, top = 160, right = 160;
 
@@ -798,7 +815,7 @@ function drawBackPageLandscapeRotated(pdf, student, includedExams, perExam, rank
   let cellH = 58, headH1 = 70, headH2 = 52;
 
   const subjects = buildSubjectListForTable(includedExams, selectedExamId);
-  const bodyRows = subjects.length + 2; // + Total + Rank
+  const bodyRows = subjects.length + 2;
   let totalH = headH1 + headH2 + bodyRows * cellH;
 
   const maxH = pageH - y0 - 140;
@@ -863,7 +880,7 @@ function drawBackPageLandscapeRotated(pdf, student, includedExams, perExam, rank
       const markTxt  = (cell && cell.marks !== undefined && cell.marks !== null) ? String(cell.marks) : 'AB';
       const gradeTxt = (cell && cell.grade) ? String(cell.grade) : '';
       const x0 = xAfterSubjects + eIdx*2*perSubColW;
-      rText(markTxt,                         x0 + perSubColW/2,   yC, {align:'center', baseline:'middle'});
+      rText(markTxt,                          x0 + perSubColW/2,   yC, {align:'center', baseline:'middle'});
       rText(gradeTxt === 'AB' ? '' : gradeTxt, x0 + 1.5*perSubColW, yC, {align:'center', baseline:'middle'});
     }
   }
@@ -890,6 +907,7 @@ function drawBackPageLandscapeRotated(pdf, student, includedExams, perExam, rank
     rText(rank ? String(rank) : '', x0 + perSubColW/2, yRank, {align:'center', baseline:'middle'});
   }
 }
+
 // ======= PDF GENERATION =========
 async function fetchStudentData(stu) {
   let year = yearSel.value, classId = classSel.value, sectionId = sectionSel.value, examId = examSel.value;
@@ -1253,6 +1271,7 @@ function showToast(msg) {
 </div>
 </body>
 </html>
+
 
 
 
