@@ -676,22 +676,32 @@ function renderMixedText(txt) {
 
   return lines.join('<br>');
 }
-  // Turn newline-separated topics into a numbered, indented list.
-// Removes any existing bullets/numbers to avoid duplicates.
-// Numbered, indented list. First remove any existing bullets/numbers.
+  // Render topics as the user typed them: keep existing numbering/bullets,
+// just indent and apply mixed-script font wrapping per segment.
 function renderMixedList(txt) {
   const lines = String(txt || '')
     .split('\n')
     .map(l => l.trim())
     .filter(Boolean);
 
-  let n = 0;
+  // Enumerator at start of line:
+  //  (1)  1.  1)  १.  I.  (i)  A)  -  –  —  •  *
+  const enumRe = /^\s*(\(?[\u0966-\u096F\d]+\)?|[IVXLCDMivxlcdm]+|[A-Za-z]|[-•*–—])\s*([.)\-–—:]*)\s*/u;
+
   return lines.map(line => {
-    const clean = stripLeadingEnumerator(line);
-    n += 1;
-    return `<div style="margin:2px 0;">${n}. ${renderMixedText(clean)}</div>`;
+    let body = line, enumerator = '', punct = '';
+    const m = line.match(enumRe);
+    if (m) {
+      enumerator = m[1] || '';
+      punct = m[2] || '';
+      body = line.slice(m[0].length); // rest of the text after enumerator
+    }
+    // Build prefix exactly as user gave it, ensure a single space after
+    const prefix = enumerator ? `${escapeHTML(enumerator + punct)} ` : '';
+    return `<div style="margin:2px 0;">${prefix}${renderMixedText(body)}</div>`;
   }).join('');
 }
+
 // Use html2pdf for Telugu/Hindi-safe rendering
 async function renderSyllabusWithHTML2PDF({ school, subtitle, className, exam, items }) {
   // Hidden container for print
@@ -782,6 +792,7 @@ const opt = {
 
 </body>
 </html>
+
 
 
 
