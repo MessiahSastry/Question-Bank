@@ -470,458 +470,6 @@ async function getMemoAndMapping(student) {
   let memoImgData = await loadMemoImg(cfg.file);
   return { cfg, memoImgData };
 }
-// ======================= BACK PAGE (PORTRAIT) – HELPERS =======================
-
-// Order exams so we can include “all up to the selected one”
-function examOrderIndex(examName='') {
-  const n = (examName || '').toLowerCase().replace(/\s+/g,'').trim();
-  // Tries to map common names like: FA 1, FA-1, Formative Assessment 1, SA 1, etc.
-  const m = n.match(/(fa|formativeassessment)\-?\s*(\d+)/i) || n.match(/(sa|summativeassessment)\-?\s*(\d+)/i);
-  if (m) {
-    const isFA = /fa|formative/.test(m[1]);
-    const num = parseInt(m[2], 10) || 0;
-    return isFA ? (num * 10) : (100 + num * 10);
-  }
-  // Fallback: try trailing number
-  const tail = n.match(/(\d+)$/);
-  return tail ? parseInt(tail[1], 10) : 9999;
-}
-
-function byExamOrder(a, b) {
-  return examOrderIndex(a.name || a.id) - examOrderIndex(b.name || b.id);
-}
-
-// Build included exams (<= selected exam by order)
-function buildIncludedExams(selectedExamId) {
-  const selected = exams.find(e => e.id === selectedExamId);
-  if (!selected) return [];
-  const ordered = [...exams].sort(byExamOrder);
-  const selIdx = examOrderIndex(selected.name || selected.id);
-  // include exams with order <= selected; must have subjects array
-  return ordered.filter(e => examOrderIndex(e.name || e.id) <= selIdx && Array.isArray(e.subjects) && e.subjects.length);
-}
-
-// Normalizer (already used elsewhere)
-function normKey(s){ return (s || '').replace(/[\s.]/g,'').toLowerCase(); }
-
-// Compute per-subject grade (same thresholds as front)
-function gradeFrom(m, max) {
-  if (m == null || m === '' || isNaN(m) || !max || isNaN(max)) return '';
-  const p = (m / max) * 100;
-  if (p >= 95) return 'A+';
-  if (p >= 90) return 'A';
-  if (p >= 85) return 'B+';
-  if (p >= 80) return 'B';
-  if (p >= 70) return 'C+';
-  if (p >= 60) return 'C';
-  if (p >= 50) return 'D';
-  if (p >= 40) return 'E';
-  return 'F';
-}
-
-// Fetch marks for ALL students for ALL included exams (batch), then compute ranks
-async function fetchSectionMarksForExams(includedExams) {
-  const year = yearSel.value, classId = classSel.value, sectionId = sectionSel.value;
-  const perExam = {};       // { examId: { studentId: { subjects:{[subNorm]: {marks, grade}}, total } } }
-  const totalsByExam = {};  // { examId: [ {studentId, total} ] }
-
-  // Prepare Firestore refs
-  const base = db.collection('years').doc(year)
-    .collection('classes').doc(classId)
-    .collection('sections').doc(sectionId)
-    .collection('students');
-
-  // For each exam -> for each student, fetch marks doc
-  for (const exam of includedExams) {
-    perExam[exam.id] = {};
-    totalsByExam[exam.id] = [];
-
-    // Build a quick lookup of subject max by normalized name for this exam
-    const subjMaxMap = {};
-    (exam.subjects || []).forEach(s => { subjMaxMap[normKey(s.name)] = s.max; });
-
-    // Fetch all marks docs in parallel
-    const reads = students.map(async (stu) => {
-      const doc = await base.doc(stu.id).collection('marks').doc(exam.id).get();
-      const marks = doc.exists ? (doc.data() || {}) : {};
-      const subjects = {};
-      let total = 0;
-
-      // Use the exam's subject order as baseline
-      (exam.subjects || []).forEach(s => {
-        const keyN = normKey(s.name);
-        // Find matching key in marks (case/space/dot-insensitive)
-        let val = null;
-        for (const k of Object.keys(marks)) {
-          if (normKey(k) === keyN) { val = marks[k]; break; }
-        }
-        if (val === 'AB' || val === 'ab' || val === 'Ab') {
-          subjects[keyN] = { marks: 'AB', grade: 'AB' };
-        } else if (val != null && val !== '' && !isNaN(val)) {
-          const mNum = +val;
-          total += mNum;
-          const gr = gradeFrom(mNum, subjMaxMap[keyN]);
-          subjects[keyN] = { marks: mNum, grade: gr };
-        } else {
-          subjects[keyN] = { marks: 'AB', grade: 'AB' }; // treat missing as AB
-        }
-      });
-
-      perExam[exam.id][stu.id] = { subjects, total };
-      totalsByExam[exam.id].push({ studentId: stu.id, total });
-    });
-
-    await Promise.all(reads);
-  }
-
-  // Compute ranks per exam (ties share rank)
-  const ranksByExam = {}; // { examId: { studentId: rank } }
-  for (const exam of includedExams) {
-    const arr = totalsByExam[exam.id].slice().sort((a,b)=> b.total - a.total);
-    let lastTotal = null, lastRank = 0;
-    const map = {};
-    arr.forEach((it, i) => {
-      if (it.total !== lastTotal) { lastRank = i + 1; lastTotal = it.total; }
-      map[it.studentId] = lastRank;
-    });
-    ranksByExam[exam.id] = map;
-  }
-
-  return { perExam, ranksByExam };
-}
-
-// Build subject list for the table: start from selected exam order, then append extras (if any)
-function buildSubjectListForTable(includedExams, selectedExamId) {
-  const sel = includedExams.find(e => e.id === selectedExamId);
-  const list = [];
-  const seen = new Set();
-  if (sel && Array.isArray(sel.subjects)) {
-    sel.subjects.forEach(s => { const k=normKey(s.name); if(!seen.has(k)){ seen.add(k); list.push({ name: s.name, key: k }); }});
-  }
-  // Append any extras from earlier exams in order
-  includedExams.forEach(ex => {
-    (ex.subjects || []).forEach(s => {
-      const k = normKey(s.name);
-      if (!seen.has(k)) { seen.add(k); list.push({ name: s.name, key: k }); }
-    });
-  });
-  return list;
-}
-
-// -------------- Drawing the compact table on a PORTRAIT page ---------------
-function drawBackPagePortrait(pdf, student, includedExams, perExam, ranksByExam, selectedExamId) {
-  // Page is 2481 x 3509 (portrait)
-  const pageW = 2481, pageH = 3509;
-  const left = 180, top = 350; // top-left start (leave big margins elsewhere)
-  const headerGap = 90;        // space after small header lines
-
-  // Small header (optional, compact)
-  pdf.setFont('helvetica', 'bold'); pdf.setFontSize(28);
-  pdf.setTextColor(15,61,107); // #0f3d6b
-  pdf.text("St. Patrick's School – IIT & NEET FOUNDATION", left, top);
-
-  pdf.setFont('helvetica', 'normal'); pdf.setFontSize(40); pdf.setTextColor(0,0,0);
-  const cls = `${formatClass(student.class)}${student.section ? ' / ' + formatSection(student.section) : ''}`;
-  pdf.text(`Name: ${student.name || ''}`, left, top + 40);
-  pdf.text(`Father: ${student.father || ''}`, left + 800, top + 40);
-  pdf.text(`Class: ${cls}    Roll: ${student.roll ?? ''}`, left, top + 80);
-
-  // Table area starts
-  const y0 = top + headerGap + 40;
-
-  // Compute widths
-  const subjectsColW = 700; // ≈ 30% of useful width
-  let perSubColW = 140;     // width for each subcolumn (Obt., Grade)
-  const examsCols = includedExams.length * 2;
-  // Target total width cap to keep compact:
-  const maxTableW = Math.min(2000, pageW - left - 200);
-  let tableW = subjectsColW + examsCols * perSubColW;
-  if (tableW > maxTableW) {
-    perSubColW = Math.floor((maxTableW - subjectsColW) / examsCols);
-    tableW = subjectsColW + examsCols * perSubColW;
-  }
-
-  const cellH = 50;   // row height
-  const headH1 = 56;  // group headers row
-  const headH2 = 46;  // subheaders row
-
-  const subjects = buildSubjectListForTable(includedExams, selectedExamId);
-
-  // Pre-calc x positions
-  const xSubjects = left;
-  const xAfterSubjects = xSubjects + subjectsColW;
-
-  // Outer border height
-  const bodyRows = subjects.length + 2; // subjects + Total + Rank
-  const totalH = headH1 + headH2 + bodyRows * cellH;
-
-  // Draw outer border
-  pdf.setDrawColor(180,200,233); pdf.setLineWidth(1.2);
-  pdf.rect(left, y0, tableW, totalH);
-
-  // Horizontal lines (header splits + each row)
-  // after head1
-  pdf.line(left, y0 + headH1, left + tableW, y0 + headH1);
-  // after head2
-  pdf.line(left, y0 + headH1 + headH2, left + tableW, y0 + headH1 + headH2);
-  // body row lines
-  for (let i = 0; i <= bodyRows; i++) {
-    const y = y0 + headH1 + headH2 + i * cellH;
-    pdf.line(left, y, left + tableW, y);
-  }
-
-  // Vertical lines
-  // subjects boundary
-  pdf.line(xAfterSubjects, y0, xAfterSubjects, y0 + totalH);
-
-  // subcolumns per exam
-  for (let eIdx = 0; eIdx < includedExams.length; eIdx++) {
-    const xGroupStart = xAfterSubjects + eIdx * 2 * perSubColW;
-    // group boundary
-    pdf.line(xGroupStart + 2 * perSubColW, y0, xGroupStart + 2 * perSubColW, y0 + totalH);
-    // inner split between Obt./Grade
-    pdf.setLineWidth(0.8);
-    pdf.line(xGroupStart + perSubColW, y0, xGroupStart + perSubColW, y0 + totalH);
-    pdf.setLineWidth(1.2);
-  }
-
-  // Header texts
-  // Group header row
-  pdf.setFont('helvetica','bold'); pdf.setFontSize(22); pdf.setTextColor(15,61,107);
-  // SUBJECT
-  pdf.text('SUBJECT', xSubjects + subjectsColW/2, y0 + headH1/2 + 8, {align:'center', baseline:'middle'});
-  // Exams names
-  for (let eIdx=0; eIdx<includedExams.length; eIdx++) {
-    const ex = includedExams[eIdx];
-    const exCenter = xAfterSubjects + eIdx*2*perSubColW + perSubColW; // center over the two subcols
-    const label = (ex.shortName || ex.name || ex.id || '').replace(/\s+/g,' ').trim();
-    pdf.text(label, exCenter, y0 + headH1/2 + 8, {align:'center', baseline:'middle'});
-  }
-
-  // Subheader row background (optional)
-  // (Skip fill to keep minimal; if you want a band, uncomment:)
-  // pdf.setFillColor(229,241,251); pdf.rect(left, y0 + headH1, tableW, headH2, 'F');
-
-  // Subheader texts
-  pdf.setFont('helvetica','bold'); pdf.setFontSize(18); pdf.setTextColor(15,61,107);
-  for (let eIdx=0; eIdx<includedExams.length; eIdx++) {
-    const x0 = xAfterSubjects + eIdx*2*perSubColW;
-    pdf.text('Obt.', x0 + perSubColW/2, y0 + headH1 + headH2/2 + 6, {align:'center', baseline:'middle'});
-    pdf.text('Grade', x0 + 1.5*perSubColW, y0 + headH1 + headH2/2 + 6, {align:'center', baseline:'middle'});
-  }
-
-  // Body: subjects rows
-  pdf.setFont('helvetica','normal'); pdf.setFontSize(18); pdf.setTextColor(0,0,0);
-  const yBodyStart = y0 + headH1 + headH2;
-  const selExam = includedExams.find(e => e.id === selectedExamId);
-
-  for (let r=0; r<subjects.length; r++) {
-    const yC = yBodyStart + r*cellH + cellH/2 + 6;
-    // Subject name
-    pdf.text(subjects[r].name, xSubjects + 10, yC, {align:'left', baseline:'middle'});
-
-    // Each exam’s two cells
-    for (let eIdx=0; eIdx<includedExams.length; eIdx++) {
-      const ex = includedExams[eIdx];
-      const sData = perExam[ex.id][student.id]; // {subjects:{}, total}
-      const cell = sData?.subjects[subjects[r].key];
-      const markTxt = (cell && cell.marks !== undefined && cell.marks !== null) ? String(cell.marks) : 'AB';
-      const gradeTxt = (cell && cell.grade) ? String(cell.grade) : '';
-
-      const x0 = xAfterSubjects + eIdx*2*perSubColW;
-      // Obt.
-      pdf.text(markTxt, x0 + perSubColW/2, yC, {align:'center', baseline:'middle'});
-      // Grade
-      pdf.text(gradeTxt === 'AB' ? '' : gradeTxt, x0 + 1.5*perSubColW, yC, {align:'center', baseline:'middle'});
-    }
-  }
-
-  // Totals row
-  const yTotal = yBodyStart + subjects.length*cellH + cellH/2 + 6;
-  pdf.setFont('helvetica','bold');
-  pdf.text('Total', xSubjects + 10, yTotal, {align:'left', baseline:'middle'});
-  for (let eIdx=0; eIdx<includedExams.length; eIdx++) {
-    const ex = includedExams[eIdx];
-    const sData = perExam[ex.id][student.id];
-    const totalTxt = sData ? String(sData.total) : '';
-    const x0 = xAfterSubjects + eIdx*2*perSubColW;
-    pdf.text(totalTxt, x0 + perSubColW/2, yTotal, {align:'center', baseline:'middle'});
-    // Grade col blank for totals
-  }
-
-  // Rank row
-  const yRank = yBodyStart + (subjects.length+1)*cellH + cellH/2 + 6;
-  pdf.text('Rank', xSubjects + 10, yRank, {align:'left', baseline:'middle'});
-  for (let eIdx=0; eIdx<includedExams.length; eIdx++) {
-    const ex = includedExams[eIdx];
-    const rank = ranksByExam[ex.id]?.[student.id] ?? '';
-    const x0 = xAfterSubjects + eIdx*2*perSubColW;
-    pdf.text(rank ? String(rank) : '', x0 + perSubColW/2, yRank, {align:'center', baseline:'middle'});
-    // Grade col blank for ranks
-  }
-}
-   // Draw the "landscape-looking" back page on a PORTRAIT sheet (rotate 90° CCW)
-function drawBackPageLandscapeRotated(pdf, student, includedExams, perExam, ranksByExam, selectedExamId) {
-  const PORTRAIT_W = 2481; // width of the portrait page
-const PORTRAIT_H = 3509; // height of the portrait page
-
-// CCW rotation mapping with translation so table is landscape on portrait page
-const R = (x, y) => {
-  // rotate counter-clockwise
-  const X = y;
-  const Y = PORTRAIT_H - x;
-
-  // adjust offsets to position table nicely
-  const offsetX = 200;   // move left/right
-  const offsetY = -300;  // move up/down
-
-  return [X + offsetX, Y + offsetY];
-};
-const rText = (txt, x, y, opts = {}) => {
-  const [X, Y] = R(x, y);
-  pdf.text(txt, X, Y, { angle: 90, ...opts });
-};
-
-const rRect = (x, y, w, h) => {
-  const [X, Y] = R(x, y + h);
-  pdf.rect(X, Y, h, w);
-};
-// draw a line using the CW rotation
-const rLine = (x1, y1, x2, y2) => {
-  const [X1, Y1] = R(x1, y1);
-  const [X2, Y2] = R(x2, y2);
-  pdf.line(X1, Y1, X2, Y2);
-};
-  // Use the same layout numbers as the landscape drawer
-  const pageW = 3509, pageH = 2481;
-  const left = 160, top = 160, right = 160;
-
-  // header
-  // School Name (center, bold, large)
-pdf.setFont('helvetica','bold'); 
-pdf.setFontSize(60); 
-pdf.setTextColor(15,61,107);
-rText("St. PATRICK'S SCHOOL", pageW/2, top, {align:'center'});
-
-// Subheading (center, slightly smaller, bold)
-pdf.setFont('helvetica','bold'); 
-pdf.setFontSize(45); 
-pdf.setTextColor(23,98,167);
-rText("IIT & NEET FOUNDATION", pageW/2, top + 50, {align:'center'});
-  pdf.setFont('helvetica','normal'); pdf.setFontSize(36); pdf.setTextColor(0,0,0);
-  const cls = `${formatClass(student.class)}${student.section ? ' / ' + formatSection(student.section) : ''}`;
-  rText(`Name: ${student.name || ''}`, left, top + 44);
-  rText(`Father: ${student.father || ''}`, left + 980, top + 44);
-  rText(`Class: ${cls}    Roll: ${student.roll ?? ''}`, left, top + 88);
-
-  // table layout
-  const y0 = top + 140;
-  const subjectsColW = 900;
-  let perSubColW = 180;
-  const examsCols = includedExams.length * 2;
-  const maxTableW = pageW - left - right;
-  let tableW = subjectsColW + examsCols * perSubColW;
-  if (tableW > maxTableW) {
-    perSubColW = Math.floor((maxTableW - subjectsColW) / examsCols);
-    tableW = subjectsColW + examsCols * perSubColW;
-  }
-
-  let cellH = 58, headH1 = 70, headH2 = 52;
-
-  const subjects = buildSubjectListForTable(includedExams, selectedExamId);
-  const bodyRows = subjects.length + 2;
-  let totalH = headH1 + headH2 + bodyRows * cellH;
-
-  const maxH = pageH - y0 - 140;
-  if (totalH > maxH) {
-    const k = totalH / maxH;
-    cellH = Math.floor(cellH / k);
-    headH1 = Math.floor(headH1 / k);
-    headH2 = Math.floor(headH2 / k);
-    totalH = headH1 + headH2 + bodyRows * cellH;
-  }
-
-  const xSubjects = left, xAfterSubjects = xSubjects + subjectsColW;
-
-  // borders
-  pdf.setDrawColor(180,200,233); pdf.setLineWidth(1.4);
-  rRect(left, y0, tableW, totalH);
-
-  // horizontals
-  rLine(left, y0 + headH1, left + tableW, y0 + headH1);
-  rLine(left, y0 + headH1 + headH2, left + tableW, y0 + headH1 + headH2);
-  for (let i = 0; i <= bodyRows; i++) {
-    const y = y0 + headH1 + headH2 + i * cellH;
-    rLine(left, y, left + tableW, y);
-  }
-
-  // verticals
-  rLine(xAfterSubjects, y0, xAfterSubjects, y0 + totalH);
-  for (let eIdx = 0; eIdx < includedExams.length; eIdx++) {
-    const xGroupStart = xAfterSubjects + eIdx * 2 * perSubColW;
-    rLine(xGroupStart + perSubColW,   y0, xGroupStart + perSubColW,   y0 + totalH);
-    rLine(xGroupStart + 2*perSubColW, y0, xGroupStart + 2*perSubColW, y0 + totalH);
-  }
-
-  // headers
-  pdf.setFont('helvetica','bold'); pdf.setFontSize(36); pdf.setTextColor(15,61,107);
-  rText('SUBJECT', xSubjects + subjectsColW/2, y0 + headH1/2 + 8, {align:'center', baseline:'middle'});
-  for (let eIdx=0; eIdx<includedExams.length; eIdx++) {
-    const ex = includedExams[eIdx];
-    const exCenter = xAfterSubjects + eIdx*2*perSubColW + perSubColW;
-    const label = (ex.shortName || ex.name || ex.id || '').replace(/\s+/g,' ').trim();
-    rText(label, exCenter, y0 + headH1/2 + 8, {align:'center', baseline:'middle'});
-  }
-  pdf.setFont('helvetica','bold'); pdf.setFontSize(34);
-  for (let eIdx=0; eIdx<includedExams.length; eIdx++) {
-    const x0 = xAfterSubjects + eIdx*2*perSubColW;
-    rText('Obt.',  x0 + perSubColW/2,   y0 + headH1 + headH2/2 + 6, {align:'center', baseline:'middle'});
-    rText('Grade', x0 + 1.5*perSubColW, y0 + headH1 + headH2/2 + 6, {align:'center', baseline:'middle'});
-  }
-
-  // body
-  pdf.setFont('helvetica','normal'); pdf.setFontSize(28); pdf.setTextColor(0,0,0);
-  const yBodyStart = y0 + headH1 + headH2;
-
-  for (let r=0; r<subjects.length; r++) {
-    const yC = yBodyStart + r*cellH + Math.floor(cellH/2) + 6;
-    rText(subjects[r].name.toUpperCase(), xSubjects + 12, yC, {align:'left', baseline:'middle'});
-
-    for (let eIdx=0; eIdx<includedExams.length; eIdx++) {
-      const ex = includedExams[eIdx];
-      const sData = perExam[ex.id][student.id];
-      const cell = sData?.subjects[subjects[r].key];
-      const markTxt  = (cell && cell.marks !== undefined && cell.marks !== null) ? String(cell.marks) : 'AB';
-      const gradeTxt = (cell && cell.grade) ? String(cell.grade) : '';
-      const x0 = xAfterSubjects + eIdx*2*perSubColW;
-      rText(markTxt,                          x0 + perSubColW/2,   yC, {align:'center', baseline:'middle'});
-      rText(gradeTxt === 'AB' ? '' : gradeTxt, x0 + 1.5*perSubColW, yC, {align:'center', baseline:'middle'});
-    }
-  }
-
-  // totals
-  const yTotal = yBodyStart + subjects.length*cellH + Math.floor(cellH/2) + 6;
-  pdf.setFont('helvetica','bold');
-  pdf.setFontSize(30);
-  rText('Total', xSubjects + 12, yTotal, {align:'left', baseline:'middle'});
-  for (let eIdx=0; eIdx<includedExams.length; eIdx++) {
-    const ex = includedExams[eIdx];
-    const sData = perExam[ex.id][student.id];
-    const totalTxt = sData ? String(sData.total) : '';
-    const x0 = xAfterSubjects + eIdx*2*perSubColW;
-    rText(totalTxt, x0 + perSubColW/2, yTotal, {align:'center', baseline:'middle'});
-  }
-
-  // ranks
-  const yRank = yBodyStart + (subjects.length+1)*cellH + Math.floor(cellH/2) + 6;
-  rText('Rank', xSubjects + 12, yRank, {align:'left', baseline:'middle'});
-  for (let eIdx=0; eIdx<includedExams.length; eIdx++) {
-    const ex = includedExams[eIdx];
-    const rank = ranksByExam[ex.id]?.[student.id] ?? '';
-    const x0 = xAfterSubjects + eIdx*2*perSubColW;
-    rText(rank ? String(rank) : '', x0 + perSubColW/2, yRank, {align:'center', baseline:'middle'});
-  }
-}
 
 // ======= PDF GENERATION =========
 async function fetchStudentData(stu) {
@@ -1012,7 +560,6 @@ async function getAllStudentFullData() {
   let dataArr = [];
   for (let stu of students) {
     let dat = await fetchStudentData(stu);
-  dat.id = stu.id; 
     dataArr.push(dat);
   }
   dataArr.sort((a,b)=>b.totalMarks-a.totalMarks);
@@ -1035,50 +582,122 @@ function hideSpinner() {
   document.getElementById('spinnerOverlay').style.display = 'none';
 }
 // PDF generation (multi or single)
-// ======================= UPDATED generatePDF =======================
 async function generatePDF(studentArr, isSingle) {
-  const selectedExamName = examSel.options[examSel.selectedIndex].textContent;
-  const selectedExamId = examSel.value;
-  const selectedExamObj = exams.find(e => e.id === selectedExamId);
-
-  // Build included exams and compute section data (once)
-  const includedExams = buildIncludedExams(selectedExamId);
-  // If you only want finalized exams, you can filter by e.finalized === true here.
-  // const includedExams = buildIncludedExams(selectedExamId).filter(e => e.finalized);
-
-  let fullDataArr = await getAllStudentFullData(); // preserves front page behavior (selected exam computations)
-  if (isSingle && studentArr.length === 1) {
-    const s0 = studentArr[0];
-    fullDataArr = [fullDataArr.find(d => d.name === s0.name && d.roll == s0.roll)];
-  }
-
-  // Pre-fetch consolidated (back-page) marks + ranks for the whole section (only once)
-  let consolidated = null;
-  if (includedExams.length > 1) {
-    consolidated = await fetchSectionMarksForExams(includedExams);
-  }
-
-  // Create PDF
-  let pdf = new window.jspdf.jsPDF({orientation: "portrait", unit: "px", format: [2481, 3509]});
-
+  let exam = examSel.options[examSel.selectedIndex].textContent;
+  let examId = examSel.value;
+  let examObj = exams.find(e => e.id === examId);
+  let fullDataArr = [];
+  var pdf = new window.jspdf.jsPDF({orientation: "portrait", unit: "px", format: [2481, 3509]});
+  fullDataArr = await getAllStudentFullData();
+  if (isSingle && studentArr.length === 1)
+    fullDataArr = [fullDataArr.find(d=>d.name===studentArr[0].name && d.roll==studentArr[0].roll)];
   for (let idx = 0; idx < fullDataArr.length; idx++) {
-    const student = fullDataArr[idx];
-    const { cfg, memoImgData } = await getMemoAndMapping(student);
-
-    if (idx !== 0) pdf.addPage([2481,3509], 'p'); // new student => new front page
-    // ---------- FRONT PAGE (selected exam on PNG) ----------
+    let student = fullDataArr[idx];
+    let { cfg, memoImgData } = await getMemoAndMapping(student);
+    if (idx===0 && !isSingle) { pdf = new window.jspdf.jsPDF({orientation: "portrait", unit: "px", format: [2481, 3509]}); }
+    else if (idx > 0 || !isSingle) pdf.addPage([2481,3509], 'p');
     pdf.addImage(memoImgData, "PNG", 0, 0, 2481, 3509);
-
     // Exam Name
-    centerText(pdf, selectedExamName.toUpperCase(), HEAD_EXAM[0], HEAD_EXAM[1], HEAD_EXAM[2]);
-    // Header fields
+    centerText(pdf, exam.toUpperCase(), HEAD_EXAM[0], HEAD_EXAM[1], HEAD_EXAM[2]);
+    // Name (Green), Father (Red)
     leftText(pdf, student.name?.toUpperCase() || '', HEAD_NAME[0], HEAD_NAME[1], HEAD_NAME[2], COLOR_GREEN);
     leftText(pdf, student.father?.toUpperCase() || '', HEAD_FATHER[0], HEAD_FATHER[1], HEAD_FATHER[2], COLOR_RED);
-    leftText(pdf, `${formatClass(student.class)}${student.section ? ' / ' + formatSection(student.section) : ''}`, HEAD_CLASS[0], HEAD_CLASS[1], HEAD_CLASS[2], COLOR_GREEN);
+     // Class (left)
+  leftText(pdf,
+  `${formatClass(student.class)}${student.section ? ' / ' + formatSection(student.section) : ''}`,
+  HEAD_CLASS[0], HEAD_CLASS[1], HEAD_CLASS[2], COLOR_GREEN
+);
+    leftText(pdf, student.roll?.toString() || '', HEAD_ROLL[0], HEAD_ROLL[1], HEAD_ROLL[2], COLOR_GREEN);
+    leftText(pdf, student.percentage, HEAD_PERCENT[0], HEAD_PERCENT[1], HEAD_PERCENT[2], COLOR_GREEN);
+    // Rank Badge - 3D: white with brown border, drop shadow
+    let [cx,cy,s] = HEAD_RANK;
+    pdf.setFillColor(120,80,30); // shadow color (darker brown)
+    pdf.ellipse(cx+10, cy+15, 55, 40, 'F'); // drop shadow
+    pdf.setFillColor(255,255,255);
+    pdf.setDrawColor(...COLOR_BROWN);
+    pdf.setLineWidth(8);
+    pdf.ellipse(cx, cy, 52, 35, 'FD');
+    pdf.setTextColor(0,0,0);
+    pdf.setFontSize(s);
+    pdf.setFont('helvetica','bold');
+    pdf.text(
+  (typeof student.rank !== "undefined" && student.rank !== null) ? student.rank.toString() : "", 
+  cx, cy+33, {align:'center'}
+);
+    pdf.setLineWidth(1);
+
+    // --- Subject rows: Always PNG template order, AB for missing
+    let memoYArr = customSubjectRowsY[cfg.file];
+    let templateSubjects = examObj.subjects || [];
+    let totalMarks = 0, totalMax = 0;
+    function norm(s) { return (s||'').replace(/[\s.]/g,'').toLowerCase(); }
+    for (let i = 0; i < memoYArr.length-1; i++) {
+      let subjName = templateSubjects[i]?.name ?? "";
+      let subjMax = templateSubjects[i]?.max ?? "";
+      let subjMarkObj = student.subjects.find(s => norm(s.name) === norm(subjName));
+      let marks = (subjMarkObj && subjMarkObj.marks !== undefined && subjMarkObj.marks !== null && subjMarkObj.marks !== '') 
+        ? subjMarkObj.marks 
+        : "AB";
+      let grade = (subjMarkObj && subjMarkObj.grade) ? subjMarkObj.grade : (marks === "AB" ? "AB" : "");
+      if (marks !== '' && marks !== null && marks !== undefined && !isNaN(marks)) {
+        totalMarks += +marks;
+      }
+      if (subjMax !== '' && subjMax !== undefined && !isNaN(subjMax)) {
+        totalMax += +subjMax;
+      }
+
+      centerText(pdf, subjMax, X_MAX, memoYArr[i], 60, COLOR_RED);
+
+      // --- RED CIRCLE for <40% ---
+      if (marks !== "" && marks !== "AB" && subjMax && +subjMax > 0 && (marks/subjMax)*100 < 40) {
+        pdf.setDrawColor(...COLOR_RED);
+        pdf.setLineWidth(4);
+        pdf.ellipse(X_MARKS, memoYArr[i]-10, 55, 38, 'D');
+        pdf.setLineWidth(1);
+      }
+      centerText(pdf, marks, X_MARKS, memoYArr[i], 60, COLOR_GREEN);
+      centerText(pdf, (grade+"").toUpperCase(), X_GRADE, memoYArr[i], 60, COLOR_GRADE);
+    }
+    // Draw total row (last Y in array)
+    let totalY = memoYArr[memoYArr.length - 1] + 20;
+    centerText(pdf, totalMax, X_MAX, totalY, 60, COLOR_RED);
+    centerText(pdf, totalMarks, X_MARKS, totalY, 60, COLOR_GREEN);
+    centerText(pdf, student.overallGrade, X_GRADE, totalY, 60, COLOR_GRADE);
+
+    // Attendance numbers font size 60
+    for (let i = 0; i < 10; i++) {
+      let a = student.attendance[i] || {work:'', pres:''};
+      centerText(pdf, String(a.work||''), attWorkCoords[i][0], attWorkCoords[i][1], 60, COLOR_GREEN);
+      centerText(pdf, String(a.pres||''), attPresCoords[i][0], attPresCoords[i][1], 60, COLOR_BROWN);
+    }
+  }
+  pdf.save(isSingle ? `progress_card_${fullDataArr[0].roll || 'student'}.pdf`
+                    : `progress_cards_${classSel.options[classSel.selectedIndex].text}_${sectionSel.options[sectionSel.selectedIndex].text}.pdf`);
+}
+
+// ========== PREVIEW RENDER ===============
+async function showPreviewPDF(stuArr) {
+  let pdf;
+  for (let idx = 0; idx < stuArr.length; idx++) {
+    let student = stuArr[idx];
+    let { cfg, memoImgData } = await getMemoAndMapping(student);
+    if (idx===0) { pdf = new window.jspdf.jsPDF({orientation: "portrait", unit: "px", format: [2481, 3509]}); }
+    else pdf.addPage([2481,3509], 'p');
+    pdf.addImage(memoImgData, "PNG", 0, 0, 2481, 3509);
+    let exam = examSel.options[examSel.selectedIndex].textContent;
+    let examId = examSel.value;
+    let examObj = exams.find(e => e.id === examId);
+    centerText(pdf, exam.toUpperCase(), HEAD_EXAM[0], HEAD_EXAM[1], HEAD_EXAM[2]);
+    leftText(pdf, student.name?.toUpperCase() || '', HEAD_NAME[0], HEAD_NAME[1], HEAD_NAME[2], COLOR_GREEN);
+    leftText(pdf, student.father?.toUpperCase() || '', HEAD_FATHER[0], HEAD_FATHER[1], HEAD_FATHER[2], COLOR_RED);
+    // Class (left)
+    leftText(pdf,
+   `${formatClass(student.class)}${student.section ? ' / ' + formatSection(student.section) : ''}`,
+    HEAD_CLASS[0], HEAD_CLASS[1], HEAD_CLASS[2], COLOR_GREEN
+  );
     leftText(pdf, student.roll?.toString() || '', HEAD_ROLL[0], HEAD_ROLL[1], HEAD_ROLL[2], COLOR_GREEN);
     leftText(pdf, student.percentage, HEAD_PERCENT[0], HEAD_PERCENT[1], HEAD_PERCENT[2], COLOR_GREEN);
 
-    // Rank badge
     let [cx,cy,s] = HEAD_RANK;
     pdf.setFillColor(120,80,30);
     pdf.ellipse(cx+10, cy+15, 55, 40, 'F');
@@ -1089,178 +708,64 @@ async function generatePDF(studentArr, isSingle) {
     pdf.setTextColor(0,0,0);
     pdf.setFontSize(s);
     pdf.setFont('helvetica','bold');
-    pdf.text((student.rank ?? '').toString(), cx, cy+33, {align:'center'});
+    pdf.text(student.rank.toString(), cx, cy+33, {align:'center'});
     pdf.setLineWidth(1);
 
-    // Subject table (as-is from your PNG mapping)
-    const memoYArr = customSubjectRowsY[cfg.file];
-    const templateSubjects = (selectedExamObj && selectedExamObj.subjects) ? selectedExamObj.subjects : [];
+    // --- Subject rows: Always PNG template order, AB for missing
+    let memoYArr = customSubjectRowsY[cfg.file];
+    let templateSubjects = examObj.subjects || [];
     let totalMarks = 0, totalMax = 0;
-    function _norm(s){ return (s||'').replace(/[\s.]/g,'').toLowerCase(); }
-
-    for (let i = 0; i < memoYArr.length - 1; i++) {
-      const subjName = templateSubjects[i]?.name ?? '';
-      const subjMax  = templateSubjects[i]?.max ?? '';
-      const subjMarkObj = student.subjects.find(s => _norm(s.name) === _norm(subjName));
-      const marks = (subjMarkObj && subjMarkObj.marks !== undefined && subjMarkObj.marks !== null && subjMarkObj.marks !== '') ? subjMarkObj.marks : "AB";
-      const grade = (subjMarkObj && subjMarkObj.grade) ? subjMarkObj.grade : (marks === "AB" ? "AB" : "");
-
-      if (marks !== "" && marks !== "AB" && !isNaN(marks)) totalMarks += +marks;
-      if (subjMax !== '' && !isNaN(subjMax)) totalMax += +subjMax;
-
-      // Max, Marks, Grade on the PNG rows
-      centerText(pdf, subjMax, X_MAX, memoYArr[i], 60, COLOR_RED);
-
-      if (marks !== "" && marks !== "AB" && subjMax && +subjMax > 0 && (marks/subjMax)*100 < 40) {
-        pdf.setDrawColor(...COLOR_RED); pdf.setLineWidth(4);
-        pdf.ellipse(X_MARKS, memoYArr[i]-10, 55, 38, 'D');
-        pdf.setLineWidth(1);
-      }
-      centerText(pdf, marks, X_MARKS, memoYArr[i], 60, COLOR_GREEN);
-      centerText(pdf, (grade+"").toUpperCase(), X_GRADE, memoYArr[i], 60, COLOR_GRADE);
-    }
-
-    const totalY = memoYArr[memoYArr.length - 1] + 20;
-    centerText(pdf, totalMax, X_MAX, totalY, 60, COLOR_RED);
-    centerText(pdf, totalMarks, X_MARKS, totalY, 60, COLOR_GREEN);
-    centerText(pdf, student.overallGrade, X_GRADE, totalY, 60, COLOR_GRADE);
-
-    // Attendance
-    for (let i = 0; i < 10; i++) {
-      let a = student.attendance[i] || {work:'', pres:''};
-      centerText(pdf, String(a.work||''), attWorkCoords[i][0], attWorkCoords[i][1], 60, COLOR_GREEN);
-      centerText(pdf, String(a.pres||''), attPresCoords[i][0], attPresCoords[i][1], 60, COLOR_BROWN);
-    }
-    // ---------- BACK PAGE (LANDSCAPE LOOK, PORTRAIT SHEET) ----------
-if (consolidated && includedExams.length > 1) {
-  // add a new **portrait** page and rotate the drawing 90°
-  pdf.addPage([2481,3509], 'p');
-  drawBackPageLandscapeRotated(
-    pdf,
-    { ...student, id: (students.find(s=> s.name===student.name && s.roll==student.roll)?.id) },
-    includedExams,
-    consolidated.perExam,
-    consolidated.ranksByExam,
-    selectedExamId
-  );
-}
-  }
-
-  pdf.save(isSingle
-    ? `progress_card_${fullDataArr[0].roll || 'student'}.pdf`
-    : `progress_cards_${classSel.options[classSel.selectedIndex].text}_${sectionSel.options[sectionSel.selectedIndex].text}.pdf`
-  );
-}
-// ======================= UPDATED showPreviewPDF =======================
-async function showPreviewPDF(stuArr) {
-  const selectedExamName = examSel.options[examSel.selectedIndex].textContent;
-  const selectedExamId = examSel.value;
-
-  const includedExams = buildIncludedExams(selectedExamId);
-  let consolidated = null;
-  if (includedExams.length > 1) {
-    consolidated = await fetchSectionMarksForExams(includedExams);
-  }
-
-  let pdf;
-  for (let idx = 0; idx < stuArr.length; idx++) {
-    const student = stuArr[idx];
-    const { cfg, memoImgData } = await getMemoAndMapping(student);
-    if (idx===0) { pdf = new window.jspdf.jsPDF({orientation: "portrait", unit: "px", format: [2481, 3509]}); }
-    else pdf.addPage([2481,3509], 'p');
-
-    // FRONT (PNG) – same as generatePDF front bits
-    pdf.addImage(memoImgData, "PNG", 0, 0, 2481, 3509);
-
-    centerText(pdf, selectedExamName.toUpperCase(), HEAD_EXAM[0], HEAD_EXAM[1], HEAD_EXAM[2]);
-    leftText(pdf, student.name?.toUpperCase() || '', HEAD_NAME[0], HEAD_NAME[1], HEAD_NAME[2], COLOR_GREEN);
-    leftText(pdf, student.father?.toUpperCase() || '', HEAD_FATHER[0], HEAD_FATHER[1], HEAD_FATHER[2], COLOR_RED);
-    leftText(pdf, `${formatClass(student.class)}${student.section ? ' / ' + formatSection(student.section) : ''}`, HEAD_CLASS[0], HEAD_CLASS[1], HEAD_CLASS[2], COLOR_GREEN);
-    leftText(pdf, student.roll?.toString() || '', HEAD_ROLL[0], HEAD_ROLL[1], HEAD_ROLL[2], COLOR_GREEN);
-    leftText(pdf, student.percentage, HEAD_PERCENT[0], HEAD_PERCENT[1], HEAD_PERCENT[2], COLOR_GREEN);
-
-    let [cx,cy,s] = HEAD_RANK;
-    pdf.setFillColor(120,80,30); pdf.ellipse(cx+10, cy+15, 55, 40, 'F');
-    pdf.setFillColor(255,255,255); pdf.setDrawColor(...COLOR_BROWN); pdf.setLineWidth(8);
-    pdf.ellipse(cx, cy, 52, 35, 'FD');
-    pdf.setTextColor(0,0,0); pdf.setFontSize(s); pdf.setFont('helvetica','bold');
-    pdf.text(student.rank.toString(), cx, cy+33, {align:'center'}); pdf.setLineWidth(1);
-
-    const examObj = exams.find(e => e.id === selectedExamId);
-    const memoYArr = customSubjectRowsY[cfg.file];
-    const templateSubjects = examObj?.subjects || [];
-    let totalMarks = 0, totalMax = 0;
-
-    function _norm(s){ return (s||'').replace(/[\s.]/g,'').toLowerCase(); }
-
+    function norm(s) { return (s||'').replace(/[\s.]/g,'').toLowerCase(); }
     for (let i = 0; i < memoYArr.length-1; i++) {
-      const subjName = templateSubjects[i]?.name ?? "";
-      const subjMax  = templateSubjects[i]?.max ?? "";
-      const subjMarkObj = student.subjects.find(s => _norm(s.name) === _norm(subjName));
-      const marks = (subjMarkObj && subjMarkObj.marks !== undefined && subjMarkObj.marks !== null && subjMarkObj.marks !== '') ? subjMarkObj.marks : "AB";
-      const grade = (subjMarkObj && subjMarkObj.grade) ? subjMarkObj.grade : (marks === "AB" ? "AB" : "");
-
-      if (marks !== '' && marks !== 'AB' && !isNaN(marks)) totalMarks += +marks;
-      if (subjMax !== '' && !isNaN(subjMax)) totalMax += +subjMax;
-
-      // Max
+      let subjName = templateSubjects[i]?.name ?? "";
+      let subjMax = templateSubjects[i]?.max ?? "";
+      let subjMarkObj = student.subjects.find(s => norm(s.name) === norm(subjName));
+      let marks = (subjMarkObj && subjMarkObj.marks !== undefined && subjMarkObj.marks !== null && subjMarkObj.marks !== '') 
+        ? subjMarkObj.marks 
+        : "AB";
+      let grade = (subjMarkObj && subjMarkObj.grade) ? subjMarkObj.grade : (marks === "AB" ? "AB" : "");
+      if (marks !== '' && marks !== null && marks !== undefined && !isNaN(marks)) {
+        totalMarks += +marks;
+      }
+      if (subjMax !== '' && subjMax !== undefined && !isNaN(subjMax)) {
+        totalMax += +subjMax;
+      }
       centerText(pdf, subjMax, X_MAX, memoYArr[i], 60, COLOR_RED);
 
       // --- RED CIRCLE for <40% ---
       if (marks !== "" && marks !== "AB" && subjMax && +subjMax > 0 && (marks/subjMax)*100 < 40) {
         pdf.setDrawColor(...COLOR_RED);
         pdf.setLineWidth(4);
-        pdf.ellipse(X_MARKS, memoYArr[i] - 10, 55, 38, 'D'); // circle around obtained marks
+        pdf.ellipse(X_MARKS, memoYArr[i]-10, 55, 38, 'D');
         pdf.setLineWidth(1);
       }
-
-      // Obtained & Grade
       centerText(pdf, marks, X_MARKS, memoYArr[i], 60, COLOR_GREEN);
       centerText(pdf, (grade+"").toUpperCase(), X_GRADE, memoYArr[i], 60, COLOR_GRADE);
     }
-
-    const totalY = memoYArr[memoYArr.length - 1] + 25;
+    let totalY = memoYArr[memoYArr.length - 1] + 25;
     centerText(pdf, totalMax, X_MAX, totalY, 60, COLOR_RED);
     centerText(pdf, totalMarks, X_MARKS, totalY, 60, COLOR_GREEN);
     centerText(pdf, student.overallGrade, X_GRADE, totalY, 60, COLOR_GRADE);
 
-    // Attendance
     for (let i = 0; i < 10; i++) {
       let a = student.attendance[i] || {work:'', pres:''};
       centerText(pdf, String(a.work||''), attWorkCoords[i][0], attWorkCoords[i][1], 60, COLOR_GREEN);
       centerText(pdf, String(a.pres||''), attPresCoords[i][0], attPresCoords[i][1], 60, COLOR_BROWN);
     }
-
-       // BACK PAGE (LANDSCAPE) only if more than one exam
-    // BACK PAGE (LANDSCAPE LOOK, PORTRAIT SHEET) ----------
-if (consolidated && includedExams.length > 1) {
-  // keep the sheet portrait and rotate the drawing
-  pdf.addPage([2481,3509], 'p');
-  drawBackPageLandscapeRotated(
-    pdf,
-    { ...student, id: (students.find(s=> s.name===student.name && s.roll==student.roll)?.id) },
-    includedExams,
-    consolidated.perExam,
-    consolidated.ranksByExam,
-    selectedExamId
-  );
-}
   }
-
-  // Render preview canvases
-  const data = pdf.output('arraybuffer');
-  const loadingTask = window['pdfjsLib'].getDocument({data});
+  let data = pdf.output('arraybuffer');
+  let loadingTask = window['pdfjsLib'].getDocument({data});
   pdfPreview.innerHTML = '';
   loadingTask.promise.then(function(pdfDoc) {
-    for (let i=1; i<=pdfDoc.numPages; i++) {
+    for(let i=1;i<=pdfDoc.numPages;i++) {
       pdfDoc.getPage(i).then(function(page) {
-        const viewport = page.getViewport({scale: 0.19});
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
+        let viewport = page.getViewport({scale: 0.19});
+        let canvas = document.createElement('canvas');
+        let ctx = canvas.getContext('2d');
         canvas.height = viewport.height;
         canvas.width = viewport.width;
         pdfPreview.appendChild(canvas);
-        page.render({canvasContext: ctx, viewport});
+        page.render({canvasContext: ctx, viewport: viewport});
       });
     }
   });
@@ -1286,22 +791,3 @@ function showToast(msg) {
 </div>
 </body>
 </html>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
