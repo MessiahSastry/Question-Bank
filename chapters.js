@@ -245,7 +245,7 @@ window.textbooks = {
     ],
     "Physics IIT & NEET": [
       "Units and Measurements",
-      "Units and Measurements (Measurements of Length, Mass & Area) ",
+      "Units and Measurements (Measurements of Length, Mass & Area)",
       "Kinematics",
       "Newton's Laws of Motion",
       "Work-Energy and Power",
@@ -708,6 +708,7 @@ window.textbooks = {
     ]
   }
 };
+
 
 
 
