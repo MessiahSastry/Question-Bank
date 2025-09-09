@@ -570,10 +570,12 @@ body.chat-lock { overflow: hidden; height: 100vh; }
     };
     firebase.initializeApp(firebaseConfig);
     const auth = firebase.auth();
-    const db = firebase.firestore(); let stagedFile = null;
-    let currentUserProfile = null;
-    let currentSessionQuestions = [];
-    const aiGeneratorConfig = {
+   const db = firebase.firestore(); let stagedFile = null;
+let currentUserProfile = null;
+let currentSessionQuestions = [];
+// NEW: navigation guards
+let currentPage = 'form';
+let lastSessionParams = null;
       classes: ["3rd Class", "4th Class", "5th Class", "6th Class", "7th Class", "8th Class", "9th Class", "10th Class"],
       subjectMappings: {
         "3rd Class": ["Telugu", "Hindi", "English", "Math", "Science", "Social"],
@@ -604,17 +606,45 @@ body.chat-lock { overflow: hidden; height: 100vh; }
         }
       });
       window.addEventListener('popstate', (event) => {
-        const state = event.state || {};
+  const state = event.state || {};
+
+  // If we are leaving chat, confirm first
+  if (currentPage === 'chat' && state.page !== 'chat') {
+    showLeaveChatConfirm(
+      () => { // proceed
+        currentPage = state.page === 'chat' ? 'chat' : 'form';
         if (state.page === 'chat') {
-            loadAiChatInterface(state.sessionParams);
+          loadAiChatInterface(state.sessionParams || lastSessionParams || {});
         } else {
-            loadAiQuestionGeneratorForm();
+          loadAiQuestionGeneratorForm();
         }
-      });
+      },
+      () => { // cancel -> restore chat state
+        history.pushState({ page: 'chat', sessionParams: lastSessionParams }, 'Chat', '#chat');
+      }
+    );
+    return; // stop default handling until user decides
+  }
+
+  // Normal navigation
+  if (state.page === 'chat') {
+    loadAiChatInterface(state.sessionParams || lastSessionParams || {});
+  } else {
+    loadAiQuestionGeneratorForm();
+  }
+});
+        // Warn if user tries to close/refresh while in chat with unsaved questions
+window.addEventListener('beforeunload', (e) => {
+  if (currentPage === 'chat' && Array.isArray(currentSessionQuestions) && currentSessionQuestions.length > 0) {
+    e.preventDefault();
+    e.returnValue = ''; // required for Chrome/Edge
+  }
+});
     });
     
     function loadAiQuestionGeneratorForm() {
-        document.body.classList.remove('chat-lock');
+    currentPage = 'form';
+    document.body.classList.remove('chat-lock');
       document.getElementById('main-header').style.display = 'flex';
       const container = document.getElementById('ai-container');
       container.innerHTML = '<div class="setup-form-container"></div>';
@@ -668,8 +698,11 @@ body.chat-lock { overflow: hidden; height: 100vh; }
     }
     
     function loadAiChatInterface(sessionParams) {
-        document.body.classList.add('chat-lock');
-        document.getElementById('main-header').style.display = 'none';
+    currentPage = 'chat';
+    lastSessionParams = sessionParams;
+
+    document.body.classList.add('chat-lock');
+    document.getElementById('main-header').style.display = 'none';
         const container = document.getElementById('ai-container');
         currentSessionQuestions = [];
         container.innerHTML = `
@@ -705,7 +738,9 @@ body.chat-lock { overflow: hidden; height: 100vh; }
             </div>
             <button id="scroll-to-bottom" title="Scroll to Bottom">⬇️</button>
         </div>`;
-        document.getElementById('ai-change-setup-btn').onclick = () => history.back();
+        document.getElementById('ai-change-setup-btn').onclick = () => {
+  showLeaveChatConfirm(() => history.back(), () => {});
+};
         document.getElementById('ai-save-all-btn').onclick = () => saveSessionQuestions(sessionParams);
         const chatPromptInput = document.getElementById('chat-prompt-input');
         const fileUploadInput = document.getElementById('file-upload-input');
@@ -848,7 +883,34 @@ body.chat-lock { overflow: hidden; height: 100vh; }
         overlay.remove();
         proceedWithGeneration(originalPrompt, sessionParams);
     };
-} 
+}
+// ===== ADD BELOW (confirm helper that reuses your modal CSS) =====
+function showLeaveChatConfirm(onProceed, onCancel) {
+  const overlay = document.createElement('div');
+  overlay.className = 'confirmation-overlay';
+  overlay.innerHTML = `
+    <div class="confirmation-modal">
+      <h3>Confirm</h3>
+      <p>Are you sure you want to go back? Unsaved questions in this chat will be lost.</p>
+      <div class="modal-buttons">
+        <button id="leave-cancel-btn">Cancel</button>
+        <button id="leave-proceed-btn">Go Back</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  document.getElementById('leave-cancel-btn').onclick = () => {
+    overlay.remove();
+    if (onCancel) onCancel();
+  };
+  document.getElementById('leave-proceed-btn').onclick = () => {
+    overlay.remove();
+    if (onProceed) onProceed();
+  };
+}
+// ===== END ADD =====
+
     async function proceedWithGeneration(originalPrompt, sessionParams) {
     const messagesArea = document.getElementById('chat-messages-area');
     const chatPromptInput = document.getElementById('chat-prompt-input');
@@ -1816,6 +1878,7 @@ questionData.parsedMeta = `Q${currentSessionQuestions.length + 1}: ${level}, ${m
     </script>
 </body>
 </html>
+
 
 
 
