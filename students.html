@@ -977,26 +977,28 @@ if (!name || !father || isNaN(roll) || parentPhone.length < 10 || parentPhone.le
       .collection('sections').doc(currentSectionId)
       .collection('students').add({ name, father, roll, parentPhone });
 
-    // 2) If a photo is selected, upload to Storage and update doc
-    if (window.__addPhotoBlob) {
-      try {
-        const version = 1;
-        const path = `years/${academicYear}/classes/${currentClassId}/sections/${currentSectionId}/students/${docRef.id}/profile_v${version}.jpg`;
-        const ref = storage.ref().child(path);
+    // 2) If a photo is selected, upload to Storage and save URL in Firestore
+if (window.__addPhotoBlob) {
+  try {
+    const path = `years/${academicYear}/classes/${currentClassId}/sections/${currentSectionId}/students/${docRef.id}/profile.jpg`;
+    const ref = storage.ref().child(path);
 
-        await ref.put(window.__addPhotoBlob, {
-          contentType: 'image/jpeg',
-          cacheControl: 'public,max-age=31536000'
-        });
-        const url = await ref.getDownloadURL();
+    // Upload the blob
+    await ref.put(window.__addPhotoBlob, {
+      contentType: 'image/jpeg',
+      cacheControl: 'public,max-age=31536000'
+    });
 
-        await docRef.update({ photoUrl: url, photoPath: path, photoVersion: version });
-      } catch (err) {
-        console.error('Photo upload failed:', err);
-        alert('Student saved. Photo upload failed — you can edit the student to add the photo later.');
-      }
-    }
+    // Get download URL
+    const url = await ref.getDownloadURL();
 
+    // Save the URL into Firestore document
+    await docRef.update({ photoUrl: url, photoPath: path });
+  } catch (err) {
+    console.error('Photo upload failed:', err);
+    alert('Student saved, but photo upload failed.');
+  }
+}
     closePopup();
     renderStudentList();
   });
@@ -1104,43 +1106,44 @@ try {
 }
 
     // If user chose to REMOVE photo (and did not upload a new one)
-    if (window.__editRemovePhoto === true && !window.__editPhotoBlob) {
-      try {
-        if (stu.photoPath) {
-          await storage.ref().child(stu.photoPath).delete().catch(() => {});
-        }
-      } catch (_) {}
-      await docRef.update({
-        photoUrl: firebase.firestore.FieldValue.delete(),
-        photoPath: firebase.firestore.FieldValue.delete(),
-        photoVersion: firebase.firestore.FieldValue.delete()
-      });
+   // If user chose to REMOVE photo (and did not upload a new one)
+if (window.__editRemovePhoto === true && !window.__editPhotoBlob) {
+  try {
+    if (stu.photoPath) {
+      await storage.ref().child(stu.photoPath).delete().catch(() => {});
     }
+    await docRef.update({
+      photoUrl: firebase.firestore.FieldValue.delete(),
+      photoPath: firebase.firestore.FieldValue.delete()
+    });
+  } catch (err) {
+    console.error('Remove photo failed:', err);
+    alert('Details saved, but photo removal failed.');
+  }
+}
 
     // If user uploaded/took a new photo
-    if (window.__editPhotoBlob) {
-      try {
-        const newVersion = (stu.photoVersion || 0) + 1;
-        const path = `years/${academicYear}/classes/${currentClassId}/sections/${currentSectionId}/students/${studentId}/profile_v${newVersion}.jpg`;
-        const ref = storage.ref().child(path);
+if (window.__editPhotoBlob) {
+  try {
+    const path = `years/${academicYear}/classes/${currentClassId}/sections/${currentSectionId}/students/${studentId}/profile.jpg`;
+    const sref = storage.ref().child(path);
 
-        await ref.put(window.__editPhotoBlob, {
-          contentType: 'image/jpeg',
-          cacheControl: 'public,max-age=31536000'
-        });
-        const url = await ref.getDownloadURL();
+    // Upload the blob
+    await sref.put(window.__editPhotoBlob, {
+      contentType: 'image/jpeg',
+      cacheControl: 'public,max-age=31536000'
+    });
 
-        await docRef.update({ photoUrl: url, photoPath: path, photoVersion: newVersion });
+    // Get download URL
+    const url = await sref.getDownloadURL();
 
-        // Try to clean up old file (best-effort)
-        if (stu.photoPath && stu.photoPath !== path) {
-          storage.ref().child(stu.photoPath).delete().catch(() => {});
-        }
-      } catch (err) {
-        console.error('Photo upload failed:', err);
-        alert('Details saved. Photo upload failed — try again later.');
-      }
-    }
+    // Save the URL into Firestore
+    await ref.update({ photoUrl: url, photoPath: path });
+  } catch (err) {
+    console.error('Edit photo error:', err);
+    alert('Details updated, but photo change failed. You can try again.');
+  }
+}
 
     closePopup();
     renderStudentList();
@@ -2717,6 +2720,7 @@ function closeAbsenteesModal() {
 </script>
 </body>
 </html>
+
 
 
 
