@@ -30,6 +30,24 @@
     .btn-main { background:#0f3d6b; color:#fff; }
     .btn-ghost { background:#e9f2fb; color:#0f3d6b; }
     canvas { width:100%; border:1px solid #ccc; border-radius:8px; margin-top:16px; }
+  /* Student photo style for certificates */
+.student-photo {
+  position: absolute; /* so it can float in a fixed place if needed */
+  top: 160px;  /* adjust to your design */
+  left: 160px; /* adjust to your design */
+  width: 200px;
+  height: 240px;
+  border: 3px solid #0f3d6b;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.student-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
   </style>
 </head>
 <body>
@@ -153,13 +171,14 @@ async function fetchStudentData(stu){
     if(m!=='' && !isNaN(m)){ totalMarks+=+m; }
     if(sub.max && !isNaN(sub.max)){ totalMax+=+sub.max; }
   });
-  return {
+    return {
     name: stu.name,
     father: stu.father,
     class: classes.find(c=>c.id===classId)?.name || '',
     section: sections.find(s=>s.id===sectionId)?.name || '',
     totalMarks,totalMax,
-    percentage: totalMax? Math.round((totalMarks/totalMax)*100):''
+    percentage: totalMax? Math.round((totalMarks/totalMax)*100):'',
+    photoUrl: stu.photoUrl || ''  // ✅ include photo
   };
 }
 
@@ -179,11 +198,49 @@ async function getTop3Students(){
 }
 
 // ---------- CERTIFICATE DRAW ----------
-function drawCertificate(stu, examName){
+async function drawCertificate(stu, examName){
   ctx.fillStyle="#fff"; ctx.fillRect(0,0,canvas.width,canvas.height);
   if(bgImage) ctx.drawImage(bgImage,0,0,canvas.width,canvas.height);
   ctx.fillStyle="#000"; ctx.textAlign="center";
 
+  // ✅ Draw student photo if available
+  if(stu.photoUrl){
+    await new Promise((resolve) => {
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.onload = function(){
+        ctx.strokeStyle = "#0f3d6b";
+      ctx.lineWidth = 6;
+      ctx.strokeRect(300, 600, 200, 240); // border for the photo
+        ctx.drawImage(img, 300, 600, 200, 240); 
+        resolve();
+      };
+      img.onerror = resolve; // if photo fails, continue
+      img.src = stu.photoUrl;
+    });
+  }
+
+  ctx.font="48px Segoe UI Bold";
+  ctx.fillText(examName||"",1211,549);
+
+  ctx.font="64px Segoe Script";
+  ctx.fillText(stu.name||"",1223,751);
+
+  ctx.font="40px Segoe UI";
+  ctx.fillText(stu.father? "S/o "+stu.father : "",1214,893);
+
+  ctx.font="40px Segoe UI";
+  ctx.fillText(`Class ${stu.class||""} - ${stu.section||""}`,1214,800);
+
+  ctx.font="48px Segoe UI Bold";
+  ctx.fillText(stu.rank? `Rank ${stu.rank}`:"",2112,772);
+
+  ctx.font="32px Segoe UI Italic";
+  ctx.fillText("Director",772,1400);
+
+  ctx.font="32px Segoe UI Italic";
+  ctx.fillText("Class Teacher",1759,1412);
+}
   ctx.font="48px Segoe UI Bold";
   ctx.fillText(examName||"",1211,549);
 
@@ -216,9 +273,9 @@ async function downloadOnePDF(){
   if(!top3.length) return alert("No top 3 students.");
   const {PDFDocument}=PDFLib;
   const pdfDoc=await PDFDocument.create();
-  for(const stu of top3){
-    drawCertificate(stu, examSel.getValue(true));
-    const jpgUrl=canvas.toDataURL("image/jpeg",0.95);
+ for(const stu of top3){
+  await drawCertificate(stu, examSel.getValue(true)); // ✅ wait for photo
+  const jpgUrl=canvas.toDataURL("image/jpeg",0.95);
     const jpg=await pdfDoc.embedJpg(jpgUrl);
     const page=pdfDoc.addPage([842,595]);
     const {width,height}=jpg.scale(1);
@@ -238,8 +295,8 @@ async function downloadManyPDFs(){
   if(!top3.length) return alert("No top 3 students.");
   const {PDFDocument}=PDFLib;
   for(const stu of top3){
-    drawCertificate(stu, examSel.getValue(true));
-    const jpgUrl=canvas.toDataURL("image/jpeg",0.95);
+  await drawCertificate(stu, examSel.getValue(true)); // ✅ wait for photo
+  const jpgUrl=canvas.toDataURL("image/jpeg",0.95);
     const pdfDoc=await PDFDocument.create();
     const jpg=await pdfDoc.embedJpg(jpgUrl);
     const page=pdfDoc.addPage([842,595]);
@@ -269,3 +326,4 @@ loadYears();
 </script>
 </body>
 </html>
+
