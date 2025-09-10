@@ -199,70 +199,75 @@ async function getTop3Students(){
 
 // ---------- CERTIFICATE DRAW ----------
 async function drawCertificate(stu, examName){
+  // background
   ctx.fillStyle = "#fff";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
-
   if (bgImage) ctx.drawImage(bgImage, 0, 0, canvas.width, canvas.height);
 
+  // DEBUG banner so we know THIS function ran
+  ctx.save();
+  ctx.fillStyle = "rgba(255,0,0,0.15)";
+  ctx.fillRect(0, 0, canvas.width, 120);
+  ctx.fillStyle = "#d00";
+  ctx.font = "bold 54px Segoe UI";
+  ctx.textAlign = "center";
+  ctx.fillText("DEBUG: drawCertificate CALLED", canvas.width/2, 80);
+  ctx.restore();
+
+  // --- student photo slot (always visible) ---
+  const P_X = 300, P_Y = 600, P_W = 220, P_H = 260;
+  ctx.save();
+  // loud placeholder so it’s obvious even if no image loads
+  ctx.fillStyle = "rgba(255,0,255,0.15)";
+  ctx.fillRect(P_X, P_Y, P_W, P_H);
+  ctx.strokeStyle = "#ff00ff";
+  ctx.lineWidth = 8;
+  ctx.strokeRect(P_X, P_Y, P_W, P_H);
+  ctx.fillStyle = "#ff00ff";
+  ctx.font = "bold 28px Segoe UI";
+  ctx.textAlign = "center";
+  ctx.fillText("PHOTO SLOT", P_X + P_W/2, P_Y + P_H/2);
+  ctx.restore();
+
+  // try to draw actual photo
+  try {
+    if (stu && typeof stu.photoUrl === "string" && stu.photoUrl.trim() !== "") {
+      const res = await fetch(stu.photoUrl, { mode: "cors", cache: "no-store" });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      const blob = await res.blob();
+      const bmp  = await createImageBitmap(blob);
+      ctx.drawImage(bmp, P_X, P_Y, P_W, P_H);
+      // green frame on success
+      ctx.strokeStyle = "#16a34a";
+      ctx.lineWidth = 8;
+      ctx.strokeRect(P_X, P_Y, P_W, P_H);
+      console.log("[CERT] Photo drawn OK for:", stu.name, stu.photoUrl);
+    } else {
+      console.warn("[CERT] No photoUrl for:", stu?.name, stu);
+    }
+  } catch (e) {
+    console.error("[CERT] Photo draw FAILED for:", stu?.name, stu?.photoUrl, e);
+    // keep the magenta placeholder
+  }
+
+  // --- text ---
   ctx.fillStyle = "#000";
   ctx.textAlign = "center";
-
- // ✅ Draw student photo (robust) + always show a frame / fallback
-// 🔎 DEBUG: draw photo slot, log URL, try load, show clear success/fail
-const P_X = 300, P_Y = 600, P_W = 220, P_H = 260; // a bit larger
-
-console.log("[CERT] draw start; stu.name=%s url=%s", stu?.name, stu?.photoUrl);
-
-// Always paint a loud placeholder so we SEE the slot
-ctx.fillStyle = "rgba(255,0,0,0.12)";
-ctx.fillRect(P_X, P_Y, P_W, P_H);
-ctx.strokeStyle = "#ff00ff";
-ctx.lineWidth = 10;
-ctx.strokeRect(P_X, P_Y, P_W, P_H);
-ctx.fillStyle = "#ff00ff";
-ctx.font = "bold 28px Segoe UI";
-ctx.textAlign = "center";
-ctx.fillText("PHOTO SLOT", P_X + P_W/2, P_Y + P_H/2);
-
-// Try to load the image
-if (stu && typeof stu.photoUrl === "string" && stu.photoUrl.trim() !== "") {
-  try {
-    const res = await fetch(stu.photoUrl, { mode: "cors", cache: "no-store" });
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    const blob = await res.blob();
-    const bmp  = await createImageBitmap(blob);
-
-    // Clear placeholder, draw photo, draw a green frame
-    ctx.clearRect(P_X-1, P_Y-1, P_W+2, P_H+2);
-    ctx.drawImage(bmp, P_X, P_Y, P_W, P_H);
-    ctx.strokeStyle = "#16a34a"; // green = success
-    ctx.lineWidth = 8;
-    ctx.strokeRect(P_X, P_Y, P_W, P_H);
-
-    console.log("[CERT] photo drawn OK for", stu.name);
-  } catch (e) {
-    console.error("[CERT] photo draw FAILED for", stu?.name, "url=", stu?.photoUrl, e);
-    // keep the magenta placeholder so failure is obvious
-  }
-} else {
-  console.warn("[CERT] no photoUrl present for", stu?.name, stu);
-  // keep the magenta placeholder
-}
 
   ctx.font = "48px Segoe UI Bold";
   ctx.fillText(examName || "", 1211, 549);
 
   ctx.font = "64px Segoe Script";
-  ctx.fillText(stu.name || "", 1223, 751);
+  ctx.fillText(stu?.name || "", 1223, 751);
 
   ctx.font = "40px Segoe UI";
-  ctx.fillText(stu.father ? "S/o " + stu.father : "", 1214, 893);
+  ctx.fillText(stu?.father ? "S/o " + stu.father : "", 1214, 893);
 
   ctx.font = "40px Segoe UI";
-  ctx.fillText(`Class ${stu.class || ""} - ${stu.section || ""}`, 1214, 800);
+  ctx.fillText(`Class ${stu?.class || ""} - ${stu?.section || ""}`, 1214, 800);
 
   ctx.font = "48px Segoe UI Bold";
-  ctx.fillText(stu.rank ? `Rank ${stu.rank}` : "", 2112, 772);
+  ctx.fillText(stu?.rank ? `Rank ${stu.rank}` : "", 2112, 772);
 
   ctx.font = "32px Segoe UI Italic";
   ctx.fillText("Director", 772, 1400);
@@ -270,7 +275,6 @@ if (stu && typeof stu.photoUrl === "string" && stu.photoUrl.trim() !== "") {
   ctx.font = "32px Segoe UI Italic";
   ctx.fillText("Class Teacher", 1759, 1412);
 }
-
 async function renderPreview(stu){
   await drawCertificate(stu || {}, examSel.getValue(true));
 }
@@ -334,6 +338,7 @@ loadYears();
 </script>
 </body>
 </html>
+
 
 
 
