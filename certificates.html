@@ -207,23 +207,41 @@ async function drawCertificate(stu, examName){
   ctx.fillStyle = "#000";
   ctx.textAlign = "center";
 
-  // ✅ Draw student photo if available
-  if (stu.photoUrl) {
-    await new Promise((resolve) => {
-      const img = new Image();
-      img.crossOrigin = "anonymous";
-      img.onload = function () {
-        ctx.strokeStyle = "#0f3d6b";
-        ctx.lineWidth = 6;
-        ctx.strokeRect(300, 600, 200, 240); // border for the photo
-        ctx.drawImage(img, 300, 600, 200, 240); // photo itself
-        resolve();
-      };
-      img.onerror = resolve; // if photo fails, continue
-      img.src = stu.photoUrl;
-    });
-  }
+ // ✅ Draw student photo (robust) + always show a frame / fallback
+const P_X = 300, P_Y = 600, P_W = 200, P_H = 240;
 
+// Always draw the frame so you can see the slot
+ctx.strokeStyle = "#0f3d6b";
+ctx.lineWidth = 6;
+ctx.strokeRect(P_X, P_Y, P_W, P_H);
+
+if (stu.photoUrl) {
+  try {
+    // light fill while loading
+    ctx.fillStyle = "#eef5ff";
+    ctx.fillRect(P_X + 2, P_Y + 2, P_W - 4, P_H - 4);
+
+    // Fetch then draw (more reliable with CORS and caching)
+    const res = await fetch(stu.photoUrl, { mode: "cors", cache: "no-store" });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const blob = await res.blob();
+    const bmp  = await createImageBitmap(blob);
+    ctx.drawImage(bmp, P_X, P_Y, P_W, P_H);
+  } catch (e) {
+    // fallback text if fetch/draw failed
+    ctx.fillStyle = "#999";
+    ctx.font = "28px Segoe UI";
+    ctx.textAlign = "center";
+    ctx.fillText("No Photo", P_X + P_W/2, P_Y + P_H/2 + 10);
+    console.warn("Photo draw failed:", stu.name, stu.photoUrl, e);
+  }
+} else {
+  // no URL present
+  ctx.fillStyle = "#999";
+  ctx.font = "28px Segoe UI";
+  ctx.textAlign = "center";
+  ctx.fillText("No Photo", P_X + P_W/2, P_Y + P_H/2 + 10);
+}
   ctx.font = "48px Segoe UI Bold";
   ctx.fillText(examName || "", 1211, 549);
 
@@ -309,6 +327,7 @@ loadYears();
 </script>
 </body>
 </html>
+
 
 
 
