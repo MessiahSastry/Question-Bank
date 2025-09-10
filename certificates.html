@@ -208,40 +208,47 @@ async function drawCertificate(stu, examName){
   ctx.textAlign = "center";
 
  // ✅ Draw student photo (robust) + always show a frame / fallback
-const P_X = 300, P_Y = 600, P_W = 200, P_H = 240;
+// 🔎 DEBUG: draw photo slot, log URL, try load, show clear success/fail
+const P_X = 300, P_Y = 600, P_W = 220, P_H = 260; // a bit larger
 
-// Always draw the frame so you can see the slot
-ctx.strokeStyle = "#0f3d6b";
-ctx.lineWidth = 6;
+console.log("[CERT] draw start; stu.name=%s url=%s", stu?.name, stu?.photoUrl);
+
+// Always paint a loud placeholder so we SEE the slot
+ctx.fillStyle = "rgba(255,0,0,0.12)";
+ctx.fillRect(P_X, P_Y, P_W, P_H);
+ctx.strokeStyle = "#ff00ff";
+ctx.lineWidth = 10;
 ctx.strokeRect(P_X, P_Y, P_W, P_H);
+ctx.fillStyle = "#ff00ff";
+ctx.font = "bold 28px Segoe UI";
+ctx.textAlign = "center";
+ctx.fillText("PHOTO SLOT", P_X + P_W/2, P_Y + P_H/2);
 
-if (stu.photoUrl) {
+// Try to load the image
+if (stu && typeof stu.photoUrl === "string" && stu.photoUrl.trim() !== "") {
   try {
-    // light fill while loading
-    ctx.fillStyle = "#eef5ff";
-    ctx.fillRect(P_X + 2, P_Y + 2, P_W - 4, P_H - 4);
-
-    // Fetch then draw (more reliable with CORS and caching)
     const res = await fetch(stu.photoUrl, { mode: "cors", cache: "no-store" });
     if (!res.ok) throw new Error("HTTP " + res.status);
     const blob = await res.blob();
     const bmp  = await createImageBitmap(blob);
+
+    // Clear placeholder, draw photo, draw a green frame
+    ctx.clearRect(P_X-1, P_Y-1, P_W+2, P_H+2);
     ctx.drawImage(bmp, P_X, P_Y, P_W, P_H);
+    ctx.strokeStyle = "#16a34a"; // green = success
+    ctx.lineWidth = 8;
+    ctx.strokeRect(P_X, P_Y, P_W, P_H);
+
+    console.log("[CERT] photo drawn OK for", stu.name);
   } catch (e) {
-    // fallback text if fetch/draw failed
-    ctx.fillStyle = "#999";
-    ctx.font = "28px Segoe UI";
-    ctx.textAlign = "center";
-    ctx.fillText("No Photo", P_X + P_W/2, P_Y + P_H/2 + 10);
-    console.warn("Photo draw failed:", stu.name, stu.photoUrl, e);
+    console.error("[CERT] photo draw FAILED for", stu?.name, "url=", stu?.photoUrl, e);
+    // keep the magenta placeholder so failure is obvious
   }
 } else {
-  // no URL present
-  ctx.fillStyle = "#999";
-  ctx.font = "28px Segoe UI";
-  ctx.textAlign = "center";
-  ctx.fillText("No Photo", P_X + P_W/2, P_Y + P_H/2 + 10);
+  console.warn("[CERT] no photoUrl present for", stu?.name, stu);
+  // keep the magenta placeholder
 }
+
   ctx.font = "48px Segoe UI Bold";
   ctx.fillText(examName || "", 1211, 549);
 
@@ -327,6 +334,7 @@ loadYears();
 </script>
 </body>
 </html>
+
 
 
 
