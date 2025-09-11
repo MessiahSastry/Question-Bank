@@ -764,38 +764,105 @@ const assetsReady = Promise.allSettled([
   withTimeout(decodeImg(rank2Img), 4000),
   withTimeout(decodeImg(rank3Img), 4000),
 ]); 
-  function drawCertificate(stu, rank){
-    ctx.clearRect(0,0,canvas.width,canvas.height);
-    if (bgImg && bgImg.naturalWidth > 0) {
-  ctx.drawImage(bgImg, 0, 0, canvas.width, canvas.height);
-} else {
-  // fallback to white background if image isn't ready
-  ctx.fillStyle = "#fff";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  // -- photo loader (with tiny cache) --
+const imgCache = new Map();
+async function loadPhoto(url) {
+  if (!url) return null;
+  if (imgCache.has(url)) return imgCache.get(url);
+  try {
+    const im = new Image();
+    im.crossOrigin = "anonymous";
+    im.referrerPolicy = "no-referrer";
+    im.src = url;
+    await withTimeout(decodeImg(im), 8000);
+    imgCache.set(url, im);
+    return im;
+  } catch (e) {
+    console.warn("Photo load failed:", e);
+    imgCache.set(url, null);
+    return null;
+  }
 }
-    ctx.fillStyle="#000"; ctx.textAlign="center";
+  function drawSquareImageCover(img, x, y, size) {
+  const sw = img.naturalWidth || img.width;
+  const sh = img.naturalHeight || img.height;
+  const s  = Math.min(sw, sh);                 // center-crop to square
+  const sx = Math.floor((sw - s) / 2);
+  const sy = Math.floor((sh - s) / 2);
 
-    // Exam name
-    ctx.font = "bold 64px 'Segoe UI'";
-    ctx.fillText(examName,1211,600);
+  ctx.drawImage(img, sx, sy, s, s, x, y, size, size);
 
-    // Student Name
-    ctx.font = "72px 'Segoe Script'";
-    ctx.fillStyle="#0f3d6b";
-    ctx.fillText(stu.name,1223,800);
-
-    // Class & Section
-    ctx.font = "46px 'Segoe UI'";
-    ctx.fillText(`(${className} / ${sectionName})`,1214,880);
-
-       // Rank badge with emoji
-     let rankImg = rank === 1 ? rank1Img : rank === 2 ? rank2Img : rank === 3 ? rank3Img : null;
-    if (rankImg && rankImg.complete && rankImg.naturalWidth > 0) {
-      const w = 300;  // increase badge width
-      const h = (rankImg.naturalHeight / rankImg.naturalWidth) * w;
-      ctx.drawImage(rankImg, 1850, 600, w, h); 
+  // optional border
+  ctx.lineWidth = 8;
+  ctx.strokeStyle = "#0f3d6b";
+  ctx.strokeRect(x, y, size, size);
+}
+// Prefer stu.photoUrl; if missing, resolve from Firebase Storage using photoPath
+async function resolveStudentPhoto(stu) {
+  if (stu && stu.photoUrl) return stu.photoUrl;
+  if (stu && stu.photoPath) {
+    try {
+      const url = await storage.ref().child(stu.photoPath).getDownloadURL();
+      return url;
+    } catch (e) {
+      console.warn("getDownloadURL failed for", stu.photoPath, e);
+    }
   }
+  return null;
+}
+  function drawCertificate(stu, rank, photoImg){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  if (bgImg && bgImg.naturalWidth > 0) {
+    ctx.drawImage(bgImg, 0, 0, canvas.width, canvas.height);
+  } else {
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
   }
+  ctx.fillStyle="#000"; ctx.textAlign="center";
+
+  // Exam name
+  ctx.font = "bold 64px 'Segoe UI'";
+  ctx.fillText(examName,1211,600);
+
+  // Student Name
+  ctx.font = "72px 'Segoe Script'";
+  ctx.fillStyle="#0f3d6b";
+  ctx.fillText(stu.name,1223,800);
+
+  // Class & Section
+  ctx.font = "46px 'Segoe UI'";
+  ctx.fillText(`(${className} / ${sectionName})`,1214,880);
+
+  // Rank badge
+  let rankImg = rank === 1 ? rank1Img : rank === 2 ? rank2Img : rank === 3 ? rank3Img : null;
+  if (rankImg && rankImg.complete && rankImg.naturalWidth > 0) {
+    const w = 300;
+    const h = (rankImg.naturalHeight / rankImg.naturalWidth) * w;
+    ctx.drawImage(rankImg, 1850, 600, w, h);
+  }
+
+  // --- Photo on right side (square) ---
+const size = 360;                   // side length
+const x    = 2050 - size / 2;       // top-left X (keep on right side)
+const y    = 980  - size / 2;       // top-left Y
+if (photoImg && photoImg.complete && photoImg.naturalWidth > 0) {
+  drawSquareImageCover(photoImg, x, y, size);
+} else {
+  // square fallback with initials
+  ctx.fillStyle = "#e7f1fb";
+  ctx.fillRect(x, y, size, size);
+  ctx.lineWidth = 8;
+  ctx.strokeStyle = "#0f3d6b";
+  ctx.strokeRect(x, y, size, size);
+
+  const initials = getInitials(stu.name || '');
+  ctx.fillStyle = "#0f3d6b";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.font = `bold ${Math.floor(size * 0.36)}px 'Segoe UI'`;
+  ctx.fillText(initials, x + size/2, y + size/2 + 2);
+}
+}
   async function generateCertificates(mode){
   const statusEl = document.getElementById("downloadStatus");
   const statusText = document.getElementById("statusText");
@@ -865,7 +932,9 @@ await nextFrame();
      statusText.textContent = `Generating ${i+1} of ${top3.length}...`;
 await nextFrame();
     
-      drawCertificate(stu,stu.rank);
+      const url = await resolveStudentPhoto(stu);
+      const photoImg = await loadPhoto(url);
+      drawCertificate(stu, stu.rank, photoImg);
       const dataUrl=canvas.toDataURL("image/jpeg",0.95);
       const imgBytes=Uint8Array.from(atob(dataUrl.split(",")[1]),c=>c.charCodeAt(0));
       const jpg=await pdf.embedJpg(imgBytes);
@@ -2720,6 +2789,7 @@ function closeAbsenteesModal() {
 </script>
 </body>
 </html>
+
 
 
 
