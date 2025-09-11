@@ -764,6 +764,9 @@ const assetsReady = Promise.allSettled([
   withTimeout(decodeImg(rank2Img), 4000),
   withTimeout(decodeImg(rank3Img), 4000),
 ]); 
+  // Toggle: set to false if you want the original photo
+const REMOVE_PHOTO_BG = true;
+
   // -- photo loader (with tiny cache) --
 const imgCache = new Map();
 async function loadPhoto(url) {
@@ -810,6 +813,68 @@ async function resolveStudentPhoto(stu) {
   }
   return null;
 }
+  // Draw a square, center-cropped image with the background removed by color-key.
+// It samples the outer border to estimate the background color.
+function drawSquareImageWithRemovedBg(img, x, y, size, threshold = 34, feather = 10) {
+  const sw = img.naturalWidth || img.width;
+  const sh = img.naturalHeight || img.height;
+  const s  = Math.min(sw, sh);
+  const sx = Math.floor((sw - s) / 2);
+  const sy = Math.floor((sh - s) / 2);
+
+  // offscreen canvas
+  const off = document.createElement('canvas');
+  off.width = size; off.height = size;
+  const ox = off.getContext('2d', { willReadFrequently: true });
+  ox.drawImage(img, sx, sy, s, s, 0, 0, size, size);
+
+  const imgData = ox.getImageData(0, 0, size, size);
+  const d = imgData.data;
+
+  // estimate background color from a 10px border
+  const m = Math.max(1, Math.floor(size * 0.03)); // ~3% border
+  let rSum = 0, gSum = 0, bSum = 0, n = 0;
+  for (let i = 0; i < size; i++) {
+    for (let j = 0; j < size; j++) {
+      if (i < m || j < m || i >= size - m || j >= size - m) {
+        const idx = (j * size + i) * 4;
+        rSum += d[idx]; gSum += d[idx + 1]; bSum += d[idx + 2]; n++;
+      }
+    }
+  }
+  const rBg = rSum / n, gBg = gSum / n, bBg = bSum / n;
+
+  // key out pixels close to bg color, with soft feather
+  const thr2 = threshold * threshold;
+  for (let j = 0; j < size; j++) {
+    for (let i = 0; i < size; i++) {
+      const idx = (j * size + i) * 4;
+      const dr = d[idx]   - rBg;
+      const dg = d[idx+1] - gBg;
+      const db = d[idx+2] - bBg;
+      const dist2 = dr*dr + dg*dg + db*db;
+
+      if (dist2 <= thr2) {
+        // fully transparent
+        d[idx+3] = 0;
+      } else if (dist2 <= (threshold + feather) * (threshold + feather)) {
+        // feathered edge
+        const dist = Math.sqrt(dist2);
+        const t = (dist - threshold) / Math.max(1, feather); // 0..1
+        d[idx+3] = d[idx+3] * Math.min(1, Math.max(0, t));
+      }
+    }
+  }
+  ox.putImageData(imgData, 0, 0);
+
+  // draw to main canvas
+  ctx.drawImage(off, x, y, size, size);
+
+  // decorative border
+  ctx.lineWidth = 8;
+  ctx.strokeStyle = "#0f3d6b";
+  ctx.strokeRect(x, y, size, size);
+}
   function drawCertificate(stu, rank, photoImg){
   ctx.clearRect(0,0,canvas.width,canvas.height);
   if (bgImg && bgImg.naturalWidth > 0) {
@@ -846,7 +911,11 @@ const size = 360;
 const x    = 250;
 const y    = 540; // moved up ~60px
 if (photoImg && photoImg.complete && photoImg.naturalWidth > 0) {
-  drawSquareImageCover(photoImg, x, y, size);
+  if (REMOVE_PHOTO_BG) {
+    drawSquareImageWithRemovedBg(photoImg, x, y, size);
+  } else {
+    drawSquareImageCover(photoImg, x, y, size);
+  }
 } else {
   // square fallback with initials
   ctx.fillStyle = "#e7f1fb";
@@ -2789,6 +2858,7 @@ function closeAbsenteesModal() {
 </script>
 </body>
 </html>
+
 
 
 
