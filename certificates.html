@@ -9,6 +9,7 @@
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js"></script>
 
   <!-- PDF Lib -->
   <script src="https://unpkg.com/pdf-lib/dist/pdf-lib.min.js"></script>
@@ -95,6 +96,7 @@ const firebaseConfig = {
 };
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
+const storage = firebase.storage();
 
 // ---------- UI ----------
 const yearSel = new Choices('#yearSel',{searchEnabled:false});
@@ -177,9 +179,16 @@ async function fetchStudentData(stu){
     class: classes.find(c=>c.id===classId)?.name || '',
     section: sections.find(s=>s.id===sectionId)?.name || '',
     totalMarks,totalMax,
-    percentage: totalMax? Math.round((totalMarks/totalMax)*100):'',
-    photoUrl: stu.photoUrl || ''  // ✅ include photo
-  };
+   return {
+  name: stu.name,
+  father: stu.father,
+  class: classes.find(c=>c.id===classId)?.name || '',
+  section: sections.find(s=>s.id===sectionId)?.name || '',
+  totalMarks, totalMax,
+  percentage: totalMax ? Math.round((totalMarks/totalMax)*100) : '',
+  photoUrl: stu.photoUrl || '',     // https download URL (if saved)
+  photoPath: stu.photoPath || ''    // Firebase Storage path (fallback)
+};
 }
 
 async function getTop3Students(){
@@ -196,7 +205,41 @@ async function getTop3Students(){
   });
   return arr.filter(d=>d.rank<=3);
 }
+async function resolvePhotoUrlFromAny(stu) {
+  // Use https URL if already present; otherwise resolve Storage path / gs:// to a download URL
+  if (stu?.photoUrl && /^https?:\/\//i.test(stu.photoUrl)) {
+  console.log("[CERT] Using direct https photoUrl:", stu.photoUrl);
+  return stu.photoUrl;
+}
+  if (!stu?.photoPath) return "";
+  try {
+    const cleanPath = stu.photoPath.replace(/^gs:\/\/[^/]+\//i, ""); // support gs://bucket/path
+    const ref = storage.ref(cleanPath);
+    const url = await ref.getDownloadURL();
+console.log("[CERT] Resolved Storage photoPath → URL:", { path: stu.photoPath, url });
+return url;
+  } catch (e) {
+    console.error("[CERT] getDownloadURL failed:", stu?.photoPath, e);
+    return "";
+  }
+}
 
+function drawImageToCanvas(url, x, y, w, h) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      ctx.drawImage(img, x, y, w, h);
+      // success frame
+      ctx.strokeStyle = "#16a34a";
+      ctx.lineWidth = 8;
+      ctx.strokeRect(x, y, w, h);
+      resolve();
+    };
+    img.onerror = reject;
+    img.src = url + (url.includes("?") ? "&" : "?") + "cb=" + Date.now(); // cache-bust
+  });
+}
 // ---------- CERTIFICATE DRAW ----------
 async function drawCertificate(stu, examName){
   // background
@@ -229,27 +272,19 @@ async function drawCertificate(stu, examName){
   ctx.fillText("PHOTO SLOT", P_X + P_W/2, P_Y + P_H/2);
   ctx.restore();
 
-  // try to draw actual photo
-  try {
-    if (stu && typeof stu.photoUrl === "string" && stu.photoUrl.trim() !== "") {
-      const res = await fetch(stu.photoUrl, { mode: "cors", cache: "no-store" });
-      if (!res.ok) throw new Error("HTTP " + res.status);
-      const blob = await res.blob();
-      const bmp  = await createImageBitmap(blob);
-      ctx.drawImage(bmp, P_X, P_Y, P_W, P_H);
-      // green frame on success
-      ctx.strokeStyle = "#16a34a";
-      ctx.lineWidth = 8;
-      ctx.strokeRect(P_X, P_Y, P_W, P_H);
-      console.log("[CERT] Photo drawn OK for:", stu.name, stu.photoUrl);
-    } else {
-      console.warn("[CERT] No photoUrl for:", stu?.name, stu);
-    }
-  } catch (e) {
-    console.error("[CERT] Photo draw FAILED for:", stu?.name, stu?.photoUrl, e);
-    // keep the magenta placeholder
+ // try to draw actual photo (supports https URL or Firebase Storage path/gs://)
+try {
+  const url = await resolvePhotoUrlFromAny(stu);
+  if (url) {
+    await drawImageToCanvas(url, P_X, P_Y, P_W, P_H);
+    console.log("[CERT] Photo drawn OK for:", stu?.name, url);
+  } else {
+    console.warn("[CERT] No usable photo url/path for:", stu?.name, { photoUrl: stu?.photoUrl, photoPath: stu?.photoPath });
   }
-
+} catch (e) {
+  console.error("[CERT] Photo draw FAILED for:", stu?.name, { photoUrl: stu?.photoUrl, photoPath: stu?.photoPath }, e);
+  // keep the magenta placeholder
+}
   // --- text ---
   ctx.fillStyle = "#000";
   ctx.textAlign = "center";
@@ -328,7 +363,12 @@ async function downloadManyPDFs(){
 // ---------- HOOKS ----------
 previewBtn.onclick = async () => {
   const top3 = await getTop3Students();
-  if (top3.length) await renderPreview(top3[0]);
+  if (!top3.length) return alert("No top 3 students.");
+  // Prefer a student that has either an https photoUrl or a Storage photoPath
+  const withPhoto = top3.find(s =>
+    (s.photoUrl && /^https?:\/\//i.test(s.photoUrl)) || s.photoPath
+  );
+  await renderPreview(withPhoto || top3[0]);
 };
 downloadOneBtn.onclick=downloadOnePDF;
 downloadManyBtn.onclick=downloadManyPDFs;
@@ -338,6 +378,7 @@ loadYears();
 </script>
 </body>
 </html>
+
 
 
 
