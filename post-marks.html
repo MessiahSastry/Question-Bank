@@ -306,33 +306,63 @@ function makeAttendanceText(markDoc = {}, stuDoc = {}, examId = '', examName = '
   // Flatten: student -> byExam -> markDoc (later overrides earlier)
   const flat = { ..._flatten(stuDoc), ..._flatten(byExam || {}), ..._flatten(markDoc) };
 
-  // If there’s already a preformatted string, use it
-  const textStr = flat.attendancetext ?? flat.atttext ?? flat.attendance ?? flat.att;
-  if (typeof textStr === 'string' && textStr.trim()) return textStr.trim();
+  // If there’s already a preformatted string, or a single "attendance" field, use it
+  const pre = flat.attendancetext ?? flat.atttext ?? flat.att;
+  if (typeof pre === 'string' && pre.trim()) return pre.trim();
 
-  // Aliases
-  const p = _toInt(
-    flat.present ?? flat.presentdays ?? flat.attpresent ?? flat.p ?? flat.pdays ?? flat.attp
-  );
-  let w = _toInt(
-    flat.working ?? flat.workingdays ?? flat.totaldays ?? flat.attworking ?? flat.total ?? flat.w ?? flat.wdays ?? flat.attw
-  );
-  const pctNum = Number(
-    flat.attendancepct ?? flat.attpct ?? flat.percent ?? flat.percentage ?? flat.pct
-  );
-  const havePct = Number.isFinite(pctNum);
+  // Accept a numeric "attendance" too (often from keys like "Attendance %")
+  const pctFromAttendance = Number(flat.attendance);
+  if (Number.isFinite(pctFromAttendance)) return `${pctFromAttendance.toFixed(1)}%`;
 
-  // Derive working from present + absent if needed
+  // Broader alias sets
+  const presentAliases = [
+    'present','presentdays','attpresent','p','pdays','attp','dayspresent','presentday','presentcount'
+  ];
+  const workingAliases = [
+    'working','workingdays','totaldays','attworking','total','w','wdays','attw',
+    'totalworkingdays','workdays','workingday'
+  ];
+  const absentAliases = [
+    'absent','absentdays','attabsent','a','adays','atta','daysabsent','absentday'
+  ];
+  const pctAliases = [
+    'attendancepct','attpct','percent','percentage','pct','attendance'
+  ];
+
+  const pick = (keys) => {
+    for (const k of keys) {
+      if (k in flat) {
+        const n = _toInt(flat[k]);
+        if (n !== null) return n;
+      }
+    }
+    return null;
+  };
+
+  const p = pick(presentAliases);
+  let w = pick(workingAliases);
+
+  // If only present+absent are available, derive working = present + absent
   if (p !== null && (w === null || w === 0)) {
-    const a = _toInt(flat.absent ?? flat.absentdays ?? flat.attabsent ?? flat.a ?? flat.adays ?? flat.atta);
+    const a = pick(absentAliases);
     if (a !== null) w = p + a;
   }
 
+  // Percentage candidates
+  let pctNum = null;
+  for (const k of pctAliases) {
+    if (k in flat) {
+      const n = Number(flat[k]);
+      if (Number.isFinite(n)) { pctNum = n; break; }
+    }
+  }
+
   if (p !== null && w !== null && w > 0) {
-    const pct = havePct ? pctNum : Math.round((p / w) * 1000) / 10;
+    const pct = (pctNum !== null) ? pctNum : Math.round((p / w) * 1000) / 10;
     return `${p}/${w} (${pct.toFixed(1)}%)`;
   }
-  if (havePct) return `${pctNum.toFixed(1)}%`;
+  if (pctNum !== null) return `${pctNum.toFixed(1)}%`;
+
   return "";
 }
   async function loadStudentsAndMarks() {
@@ -735,6 +765,7 @@ document.addEventListener('DOMContentLoaded', wireBulkOverlay);
 </script>
  </body>
 </html>
+
 
 
 
