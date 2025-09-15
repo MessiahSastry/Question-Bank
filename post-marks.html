@@ -283,7 +283,29 @@
   }
 
   function safeNumber(n){ return (n===0 || (typeof n === 'number' && !isNaN(n))) ? n : null; }
+  // ===== Attendance helpers =====
+function _int(x){ const n = parseInt(x,10); return Number.isFinite(n) ? n : null; }
 
+function makeAttendanceText(markDoc = {}, stuDoc = {}) {
+  // Try multiple common key names on the marks doc first (per-exam is ideal)
+  const p =
+    _int(markDoc.present ?? markDoc.presentDays ?? markDoc.attPresent ?? markDoc.Present ?? markDoc.att?.present) ??
+    _int(stuDoc.present ?? stuDoc.presentDays ?? stuDoc.attPresent ?? stuDoc.Present ?? stuDoc.att?.present);
+  const w =
+    _int(markDoc.working ?? markDoc.workingDays ?? markDoc.totalDays ?? markDoc.attTotal ?? markDoc.Total ?? markDoc.att?.working) ??
+    _int(stuDoc.working ?? stuDoc.workingDays ?? stuDoc.totalDays ?? stuDoc.attTotal ?? stuDoc.Total ?? stuDoc.att?.working);
+
+  const pctRaw = markDoc.attendancePct ?? markDoc.attPct ?? markDoc.pct ?? stuDoc.attendancePct ?? stuDoc.attPct ?? stuDoc.pct;
+  const pctNum = Number(pctRaw);
+  const havePct = Number.isFinite(pctNum);
+
+  if (_int(p) !== null && _int(w) !== null && w > 0) {
+    const pct = havePct ? pctNum : Math.round((p/w)*1000)/10; // one decimal
+    return `${p}/${w} (${pct.toFixed(1)}%)`;
+  }
+  if (havePct) return `${pctNum.toFixed(1)}%`;
+  return ""; // not available
+}
   async function loadStudentsAndMarks() {
     const year = yearSel.value;
     const classId = classSel.value;
@@ -319,6 +341,7 @@
     const rows = students.map((stu, idx) => {
       const md = markDocs[idx];
       const data = md.exists ? (md.data() || {}) : {};
+      const attText = makeAttendanceText(data, stu);
       const subjMarks = SUBJECTS.map(s => {
         // robust key match
         const want = (s.name||'').replace(/[\s.]/g,'').toLowerCase();
@@ -344,18 +367,19 @@
       });
       const percent = totalMax ? Math.round((obtained/totalMax)*1000)/10 : 0;
 
-      return {
-        studentId: stu.id,
-        roll: stu.roll || '',
-        name: stu.name || '',
-        father: stu.father || '',
-        className: (CLASSES.find(c=>c.id===classId)?.name)||'',
-        sectionName: (SECTIONS.find(s=>s.id===sectionId)?.name)||'',
-        phoneRaw: stu.parentPhone || '',
-        phoneIntl: normalizePhoneIndia(stu.parentPhone || ''),
-        subjMarks, obtained, totalMax, percent,
-        rank: null // will be filled later
-      };
+     return {
+      studentId: stu.id,
+      roll: stu.roll || '',
+      name: stu.name || '',
+      father: stu.father || '',
+      className: (CLASSES.find(c=>c.id===classId)?.name)||'',
+      sectionName: (SECTIONS.find(s=>s.id===sectionId)?.name)||'',
+      phoneRaw: stu.parentPhone || '',
+      phoneIntl: normalizePhoneIndia(stu.parentPhone || ''),
+      subjMarks, obtained, totalMax, percent,
+      rank: null, // will be filled later
+      attendanceText: attText
+    };
     });
 
     ROWS = rows;
@@ -537,6 +561,7 @@ sectionSel.addEventListener('change', async () => {
     const pct = row.totalMax ? (Math.round((row.obtained/row.totalMax)*1000)/10).toFixed(1) : '0.0';
     lines.push(`Total: ${row.obtained}/${row.totalMax}  ( ${pct}% )`);
     lines.push(`Rank: ${row.rank ?? ''}`);
+    if (row.attendanceText) lines.push(`Attendance: ${row.attendanceText}`);
     lines.push('');
     lines.push(`Thank you`);
     lines.push(`St. Patrick's School`);
@@ -676,6 +701,7 @@ document.addEventListener('DOMContentLoaded', wireBulkOverlay);
 </script>
  </body>
 </html>
+
 
 
 
