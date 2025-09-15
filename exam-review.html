@@ -172,7 +172,33 @@
   function setExamPaper(paper) {
     sessionStorage.setItem("examPaper", JSON.stringify(paper));
   }
+// --------- Robust parser for AI output ---------
+function parseAIBlocks(text, expectedCount) {
+  if (!text) return [];
+  const t = String(text).replace(/\r/g, '');
 
+  // Headers like: Q1:, Q1 (Subject: ...):  (Subject part optional)
+  let matches = [...t.matchAll(/(^|\n)\s*Q\s*(\d+)\s*(?:\([^)]*\))?\s*:/g)];
+
+  // Fallback: 1. or 2) etc, if AI omitted the Q
+  if (matches.length === 0) {
+    matches = [...t.matchAll(/(^|\n)\s*(\d+)\s*[\.\)]\s+/g)];
+  }
+
+  if (matches.length === 0) return [];
+
+  const blocks = [];
+  for (let i = 0; i < matches.length; i++) {
+    const start = matches[i].index + (t[matches[i].index] === '\n' ? 1 : 0);
+    const end = i + 1 < matches.length ? matches[i + 1].index : t.length;
+    const chunk = t.slice(start, end).trim();
+    if (chunk) blocks.push(chunk);
+  }
+
+  // If AI returned extra questions, take only what we asked for.
+  if (blocks.length > expectedCount) return blocks.slice(0, expectedCount);
+  return blocks;
+}
   function renderExam() {
     const paper = getExamPaper();
     const area = document.getElementById('exam-review-area');
@@ -438,13 +464,16 @@ Return ONLY the updated questions in the same order and format as above. For eac
       aiFailed = true;
       break;
     }
-    const qBlocks = aiResult.split(/\nQ\d+ \(Subject:/).map((q, i) => (i === 0 && q.startsWith("Q")) ? q : "Q"+(i)+(q ? "\n"+q : "")).filter(q=>q.trim());
+    const qBlocks = parseAIBlocks(aiResult, batchQuestions.length);
 
-    if (qBlocks.length !== batchQuestions.length) {
-      alert(`Number of returned questions from AI does not match for batch ${b+1}. Please check AI output.`);
-      aiFailed = true;
-      break;
-    }
+// If fewer than expected, stop and show a helpful message.
+// If more than expected, parseAIBlocks already truncates safely.
+if (qBlocks.length < batchQuestions.length) {
+  console.warn("AI raw output for batch", b + 1, aiResult);
+  alert(`AI returned ${qBlocks.length} of ${batchQuestions.length} questions in batch ${b+1}. Please check AI output text (console has the raw output).`);
+  aiFailed = true;
+  break;
+}
     updatedBlocks.push(qBlocks);
   }
 
@@ -465,10 +494,12 @@ Return ONLY the updated questions in the same order and format as above. For eac
 while (
   lines.length &&
   (
-    /^Q\d+(\s*\(.*\))?/i.test(lines[0]) || 
-    /^Math [^:]+:.*Section/i.test(lines[0]) || // Catches the "Math 1 IIT, Section: Section A..." junk
-    /Section:.*\(MCQ/.test(lines[0]) ||
-    /^[A-Za-z0-9 ]+, Section:.*$/i.test(lines[0]) // General catch for any "Subject, Section:" junk
+    /^Q\d+(\s*\(.*\))?\s*:/i.test(lines[0]) ||          // "Q1 (Subject ...):"
+    /^Q\d+\s*$/i.test(lines[0]) ||                      // lonely "Q1"
+    /^Math [^:]+:.*Section/i.test(lines[0]) ||          // noisy subject lines
+    /Section:.*\(MCQ/i.test(lines[0]) ||
+    /^[A-Za-z0-9 ]+,\s*Section:.*$/i.test(lines[0]) ||
+    /^\s*(Subject|Section)\s*:/i.test(lines[0])         // even more generic junk
   )
 ) {
   lines.shift();
@@ -490,7 +521,7 @@ if (lines.length === 0) continue;
 const questionText = lines[0].trim();
 let options = [];
 for (let j = 1; j < lines.length; j++) {
-  const m = lines[j].match(/^[A-D]\)\s*(.+)$/);
+  const m = lines[j].match(/^[A-Da-d][\)\.\:]\s*(.+)$/);
   if (m) options.push(m[1].trim());
 }
     // Only update with real questions (not metadata)
@@ -518,6 +549,7 @@ for (let j = 1; j < lines.length; j++) {
 </script>
 </body>
 </html>
+
 
 
 
