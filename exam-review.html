@@ -175,27 +175,33 @@
 // --------- Robust parser for AI output ---------
 function parseAIBlocks(text, expectedCount) {
   if (!text) return [];
-  const t = String(text).replace(/\r/g, '');
+  // normalize
+  let t = String(text).replace(/\r/g, '');
+  // strip code fences if present
+  t = t.replace(/```(?:\w+)?\n([\s\S]*?)```/g, '$1');
 
-  // Headers like: Q1:, Q1 (Subject: ...):  (Subject part optional)
-  let matches = [...t.matchAll(/(^|\n)\s*Q\s*(\d+)\s*(?:\([^)]*\))?\s*:/g)];
+  // 1) Primary: "Q<number> ... :"  (allow ANY chars, including nested parens, until the colon)
+  //    No newline before the colon to avoid over-greedy spans.
+  let matches = [...t.matchAll(/Q\s*\d+[^\n:]*:/gi)];
 
-  // Fallback: 1. or 2) etc, if AI omitted the Q
+  // 2) Fallback: plain numbered lists like "1. " or "2) "
   if (matches.length === 0) {
-    matches = [...t.matchAll(/(^|\n)\s*(\d+)\s*[\.\)]\s+/g)];
+    matches = [...t.matchAll(/(^|\n)\s*\d+\s*[\.\)]\s+/g)];
   }
 
   if (matches.length === 0) return [];
 
+  // Build block slices
+  const starts = matches.map(m => m.index + (t[m.index] === '\n' ? 1 : 0)).sort((a,b)=>a-b);
   const blocks = [];
-  for (let i = 0; i < matches.length; i++) {
-    const start = matches[i].index + (t[matches[i].index] === '\n' ? 1 : 0);
-    const end = i + 1 < matches.length ? matches[i + 1].index : t.length;
+  for (let i = 0; i < starts.length; i++) {
+    const start = starts[i];
+    const end = i + 1 < starts.length ? starts[i + 1] : t.length;
     const chunk = t.slice(start, end).trim();
     if (chunk) blocks.push(chunk);
   }
 
-  // If AI returned extra questions, take only what we asked for.
+  // Trim extras if AI returned more than asked
   if (blocks.length > expectedCount) return blocks.slice(0, expectedCount);
   return blocks;
 }
@@ -549,6 +555,7 @@ for (let j = 1; j < lines.length; j++) {
 </script>
 </body>
 </html>
+
 
 
 
