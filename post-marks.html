@@ -283,28 +283,57 @@
   }
 
   function safeNumber(n){ return (n===0 || (typeof n === 'number' && !isNaN(n))) ? n : null; }
-  // ===== Attendance helpers =====
-function _int(x){ const n = parseInt(x,10); return Number.isFinite(n) ? n : null; }
+  // ===== Attendance helpers (robust, supports nested/alias keys) =====
+function _toInt(x){ const n = Number(x); return Number.isFinite(n) ? Math.trunc(n) : null; }
 
-function makeAttendanceText(markDoc = {}, stuDoc = {}) {
-  // Try multiple common key names on the marks doc first (per-exam is ideal)
-  const p =
-    _int(markDoc.present ?? markDoc.presentDays ?? markDoc.attPresent ?? markDoc.Present ?? markDoc.att?.present) ??
-    _int(stuDoc.present ?? stuDoc.presentDays ?? stuDoc.attPresent ?? stuDoc.Present ?? stuDoc.att?.present);
-  const w =
-    _int(markDoc.working ?? markDoc.workingDays ?? markDoc.totalDays ?? markDoc.attTotal ?? markDoc.Total ?? markDoc.att?.working) ??
-    _int(stuDoc.working ?? stuDoc.workingDays ?? stuDoc.totalDays ?? stuDoc.attTotal ?? stuDoc.Total ?? stuDoc.att?.working);
+function _flatten(obj, out = {}) {
+  for (const [k, v] of Object.entries(obj || {})) {
+    const key = String(k || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (v && typeof v === 'object' && !Array.isArray(v)) _flatten(v, out);
+    else out[key] = v;
+  }
+  return out;
+}
 
-  const pctRaw = markDoc.attendancePct ?? markDoc.attPct ?? markDoc.pct ?? stuDoc.attendancePct ?? stuDoc.attPct ?? stuDoc.pct;
-  const pctNum = Number(pctRaw);
+function makeAttendanceText(markDoc = {}, stuDoc = {}, examId = '', examName = '') {
+  // Pull a per-exam node from the student doc if it exists (e.g., attendance[examId])
+  const byExam =
+    (stuDoc.attendance && (stuDoc.attendance[examId] || stuDoc.attendance[examName])) ||
+    (stuDoc.att && (stuDoc.att[examId] || stuDoc.att[examName])) ||
+    (stuDoc.attd && (stuDoc.attd[examId] || stuDoc.attd[examName])) ||
+    null;
+
+  // Flatten: student -> byExam -> markDoc (later overrides earlier)
+  const flat = { ..._flatten(stuDoc), ..._flatten(byExam || {}), ..._flatten(markDoc) };
+
+  // If there’s already a preformatted string, use it
+  const textStr = flat.attendancetext ?? flat.atttext ?? flat.attendance ?? flat.att;
+  if (typeof textStr === 'string' && textStr.trim()) return textStr.trim();
+
+  // Aliases
+  const p = _toInt(
+    flat.present ?? flat.presentdays ?? flat.attpresent ?? flat.p ?? flat.pdays ?? flat.attp
+  );
+  let w = _toInt(
+    flat.working ?? flat.workingdays ?? flat.totaldays ?? flat.attworking ?? flat.total ?? flat.w ?? flat.wdays ?? flat.attw
+  );
+  const pctNum = Number(
+    flat.attendancepct ?? flat.attpct ?? flat.percent ?? flat.percentage ?? flat.pct
+  );
   const havePct = Number.isFinite(pctNum);
 
-  if (_int(p) !== null && _int(w) !== null && w > 0) {
-    const pct = havePct ? pctNum : Math.round((p/w)*1000)/10; // one decimal
+  // Derive working from present + absent if needed
+  if (p !== null && (w === null || w === 0)) {
+    const a = _toInt(flat.absent ?? flat.absentdays ?? flat.attabsent ?? flat.a ?? flat.adays ?? flat.atta);
+    if (a !== null) w = p + a;
+  }
+
+  if (p !== null && w !== null && w > 0) {
+    const pct = havePct ? pctNum : Math.round((p / w) * 1000) / 10;
     return `${p}/${w} (${pct.toFixed(1)}%)`;
   }
   if (havePct) return `${pctNum.toFixed(1)}%`;
-  return ""; // not available
+  return "";
 }
   async function loadStudentsAndMarks() {
     const year = yearSel.value;
@@ -341,7 +370,12 @@ function makeAttendanceText(markDoc = {}, stuDoc = {}) {
     const rows = students.map((stu, idx) => {
       const md = markDocs[idx];
       const data = md.exists ? (md.data() || {}) : {};
-      const attText = makeAttendanceText(data, stu);
+      const attText = makeAttendanceText(
+  data,
+  stu,
+  examId,
+  (EXAMS.find(e => e.id === examId)?.name) || ''
+);
       const subjMarks = SUBJECTS.map(s => {
         // robust key match
         const want = (s.name||'').replace(/[\s.]/g,'').toLowerCase();
@@ -701,6 +735,7 @@ document.addEventListener('DOMContentLoaded', wireBulkOverlay);
 </script>
  </body>
 </html>
+
 
 
 
