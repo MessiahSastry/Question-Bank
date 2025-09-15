@@ -224,6 +224,12 @@ const HEAD_SECTION  = [900, 1216, 60];  // left, size 60, green
 const HEAD_ROLL     = [1300, 1216, 60]; // left, size 60, green
 const HEAD_PERCENT  = [1836, 1216, 60]; // left, size 60, green
 const HEAD_RANK     = [2137, 755, 100]; // center, size 100, white with brown border
+// Photo box (square) — to the right of Percentage, below the Rank badge
+const HEAD_PHOTO = {
+  size: 240,                                 // photo width/height (px)
+  x: HEAD_PERCENT[0] + 160,                  // to the right of percentage number
+  y: HEAD_PERCENT[1] - 120                   // placed lower than Rank badge
+};
 
 // Attendance 10 months, work & pres (same as before)
 const attWorkCoords = [[725, 2956],[867, 2956],[1049, 2956],[1221, 2956],[1356, 2956],[1491, 2956],[1622, 2956],[1758, 2956],[1889, 2956],[2056, 2956]];
@@ -433,6 +439,49 @@ downloadAllBtn.onclick = async () => {
 };
 
 // ======= PDF Helpers ========
+    // Build a public URL if only a Storage path is saved (e.g., "years/.../photo.jpg")
+function buildStorageUrlFromPath(path) {
+  const bucket = (firebase.app().options.storageBucket || '').replace('gs://','');
+  if (!bucket || !path) return '';
+  return `https://firebasestorage.googleapis.com/v0/b/${bucket}/o/${encodeURIComponent(path)}?alt=media`;
+}
+
+// Fetch any image URL and return a dataURL (base64) for jsPDF.addImage
+async function urlToDataURL(url) {
+  const res = await fetch(url);
+  const blob = await res.blob();
+  return await new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = e => resolve(e.target.result);
+    r.onerror = reject;
+    r.readAsDataURL(blob);
+  });
+}
+
+// Draw the student's photo with a rounded border (if available)
+async function drawStudentPhoto(pdf, stu) {
+  try {
+    let url = stu.photoUrl || stu.photoURL || '';
+    if (!url && stu.photoPath) url = buildStorageUrlFromPath(stu.photoPath);
+    if (!url) return; // nothing to draw
+    console.log('[PHOTO]', { name: stu.name, roll: stu.roll, url });
+
+    const dataURL = await urlToDataURL(url);
+    const imgType = dataURL.startsWith('data:image/png') ? 'PNG' : 'JPEG';
+
+    const { x, y, size } = HEAD_PHOTO;
+
+    // Border around the photo
+    pdf.setDrawColor(15, 61, 107); // #0f3d6b
+    pdf.setLineWidth(6);
+    pdf.roundedRect(x - 6, y - 6, size + 12, size + 12, 18, 18, 'S');
+
+    // Photo itself
+    pdf.addImage(dataURL, imgType, x, y, size, size, undefined, 'FAST');
+  } catch (e) {
+    console.warn('Photo load failed:', e);
+  }
+}
 function centerText(pdf, text, x, y, size=12, color=[0,0,0], fontStyle="bold", fontName="helvetica") {
   if (
     (typeof text !== 'string' && typeof text !== 'number') ||
@@ -553,6 +602,8 @@ if (subj.max !== '' && subj.max !== undefined && !isNaN(subj.max)) { totalMax +=
       : (totalMarks/totalMax)*100 >= 40 ? 'E'
       : 'F')
     : '',
+      photoUrl: stu.photoUrl || stu.photoURL || '',
+    photoPath: stu.photoPath || '',
   attendance: attArr
 };
 }
@@ -609,6 +660,7 @@ async function generatePDF(studentArr, isSingle) {
 );
     leftText(pdf, student.roll?.toString() || '', HEAD_ROLL[0], HEAD_ROLL[1], HEAD_ROLL[2], COLOR_GREEN);
     leftText(pdf, student.percentage, HEAD_PERCENT[0], HEAD_PERCENT[1], HEAD_PERCENT[2], COLOR_GREEN);
+    await drawStudentPhoto(pdf, student);
     // Rank Badge - 3D: white with brown border, drop shadow
     let [cx,cy,s] = HEAD_RANK;
     pdf.setFillColor(120,80,30); // shadow color (darker brown)
@@ -697,6 +749,7 @@ async function showPreviewPDF(stuArr) {
   );
     leftText(pdf, student.roll?.toString() || '', HEAD_ROLL[0], HEAD_ROLL[1], HEAD_ROLL[2], COLOR_GREEN);
     leftText(pdf, student.percentage, HEAD_PERCENT[0], HEAD_PERCENT[1], HEAD_PERCENT[2], COLOR_GREEN);
+    await drawStudentPhoto(pdf, student);
 
     let [cx,cy,s] = HEAD_RANK;
     pdf.setFillColor(120,80,30);
@@ -791,3 +844,4 @@ function showToast(msg) {
 </div>
 </body>
 </html>
+
