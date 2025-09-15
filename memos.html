@@ -720,43 +720,35 @@ if (isSingle && studentArr && studentArr.length === 1) {
 );
     pdf.setLineWidth(1);
 
-    // --- Subject rows: Always PNG template order, AB for missing
-    let memoYArr = customSubjectRowsY[cfg.file];
-    let templateSubjects = examObj.subjects || [];
-    let totalMarks = 0, totalMax = 0;
-    function norm(s) { return (s||'').replace(/[\s.]/g,'').toLowerCase(); }
-    for (let i = 0; i < memoYArr.length-1; i++) {
-      let subjName = templateSubjects[i]?.name ?? "";
-      let subjMax = templateSubjects[i]?.max ?? "";
-      let subjMarkObj = student.subjects.find(s => norm(s.name) === norm(subjName));
-      let marks = (subjMarkObj && subjMarkObj.marks !== undefined && subjMarkObj.marks !== null && subjMarkObj.marks !== '') 
-        ? subjMarkObj.marks 
-        : "AB";
-      let grade = (subjMarkObj && subjMarkObj.grade) ? subjMarkObj.grade : (marks === "AB" ? "AB" : "");
-      if (marks !== '' && marks !== null && marks !== undefined && !isNaN(marks)) {
-        totalMarks += +marks;
-      }
-      if (subjMax !== '' && subjMax !== undefined && !isNaN(subjMax)) {
-        totalMax += +subjMax;
-      }
+   // --- Subject rows: print by index (subjects are printed on the PNG)
+const memoYArr = customSubjectRowsY[cfg.file];
+const rowSubs = Array.isArray(student.subjects) ? student.subjects : [];
 
-      centerText(pdf, subjMax, X_MAX, memoYArr[i], 60, COLOR_RED);
+// Use precomputed totals (computed in fetchStudentData)
+let totalMarks = (typeof student.totalMarks === 'number') ? student.totalMarks : 0;
+let totalMax   = (typeof student.totalMax   === 'number') ? student.totalMax   : 0;
 
-      // --- RED CIRCLE for <40% ---
-      if (marks !== "" && marks !== "AB" && subjMax && +subjMax > 0 && (marks/subjMax)*100 < 40) {
-        pdf.setDrawColor(...COLOR_RED);
-        pdf.setLineWidth(4);
-        pdf.ellipse(X_MARKS, memoYArr[i]-10, 55, 38, 'D');
-        pdf.setLineWidth(1);
-      }
-      centerText(pdf, marks, X_MARKS, memoYArr[i], 60, COLOR_GREEN);
-      centerText(pdf, (grade+"").toUpperCase(), X_GRADE, memoYArr[i], 60, COLOR_GRADE);
-    }
-    // Draw total row (last Y in array)
-    let totalY = memoYArr[memoYArr.length - 1] + 20;
-    centerText(pdf, totalMax, X_MAX, totalY, 60, COLOR_RED);
-    centerText(pdf, totalMarks, X_MARKS, totalY, 60, COLOR_GREEN);
-    centerText(pdf, student.overallGrade, X_GRADE, totalY, 60, COLOR_GRADE);
+for (let i = 0; i < Math.min(rowSubs.length, memoYArr.length - 1); i++) {
+  const s      = rowSubs[i] || {};
+  const sMax   = (s.max   ?? '') === '' ? ''   : s.max;
+  const sMarks = (s.marks ?? '') === '' ? 'AB' : s.marks;
+  const sGrade = s.grade ? String(s.grade).toUpperCase() : (sMarks === 'AB' ? 'AB' : '');
+
+  centerText(pdf, sMax,   X_MAX,   memoYArr[i], 60, COLOR_RED);
+
+  if (sMarks !== 'AB' && sMax && +sMax > 0 && !isNaN(+sMarks) && (+sMarks / +sMax) * 100 < 40) {
+    pdf.setDrawColor(...COLOR_RED); pdf.setLineWidth(4);
+    pdf.ellipse(X_MARKS, memoYArr[i] - 10, 55, 38, 'D'); pdf.setLineWidth(1);
+  }
+  centerText(pdf, String(sMarks), X_MARKS, memoYArr[i], 60, COLOR_GREEN);
+  centerText(pdf, sGrade,         X_GRADE, memoYArr[i], 60, COLOR_GRADE);
+}
+
+// Totals row
+const totalY = memoYArr[memoYArr.length - 1] + 20;
+centerText(pdf, totalMax,             X_MAX,   totalY, 60, COLOR_RED);
+centerText(pdf, totalMarks,           X_MARKS, totalY, 60, COLOR_GREEN);
+centerText(pdf, student.overallGrade, X_GRADE, totalY, 60, COLOR_GRADE);
 
     // Attendance numbers font size 60
     for (let i = 0; i < 10; i++) {
@@ -886,6 +878,7 @@ function showToast(msg) {
 </div>
 </body>
 </html>
+
 
 
 
