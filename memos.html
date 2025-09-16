@@ -167,48 +167,8 @@ function getClassGroupName(className) {
   // Default group (for safety)
   return "6-9";
 }
-const PNG_CONFIG = [
-  {
-    file: "memo-nursery.png",
-    classes: ["Nursery", "LKG", "UKG"]
-  },
-  {
-    file: "memo-1-2.png",
-    classes: [
-      "1", "2", "1st", "2nd",
-      "1st Class", "2nd Class"
-    ]
-  },
-  {
-    file: "memo-3-4-5.png",
-    classes: [
-      "3", "4", "5", "3rd", "4th", "5th",
-      "3rd Class", "4th Class", "5th Class"
-    ]
-  },
-  {
-    file: "memo-6-7-8-9.png",
-    classes: [
-      "6", "7", "8", "9", "6th", "7th", "8th", "9th",
-      "6th Class", "7th Class", "8th Class", "9th Class"
-    ]
-  },
-  {
-    file: "memo-10.png",
-    classes: [
-      "10", "10th", "10th Class"
-    ]
-  }
-];
 
 // Custom Y coordinates (exact order as your template for each memo)
-const customSubjectRowsY = {
-  "memo-nursery.png": [1814, 1923, 2013, 2130, 2232, 2338, 2443, 2547],
-  "memo-1-2.png": [1814, 1923, 2013, 2130, 2232, 2338, 2443],
-  "memo-3-4-5.png": [1814, 1923, 2013, 2130, 2232, 2338, 2443, 2547],
-  "memo-6-7-8-9.png": [1595, 1712, 1814, 1923, 2013, 2130, 2232, 2338, 2443, 2547, 2650, 2760],
-  "memo-10.png": [1814, 1923, 2013, 2130, 2232, 2338, 2443, 2547, 2650]
-};
 
 // X coordinates for (max/marks/grade)
 const X_MAX   = 1236;
@@ -231,7 +191,42 @@ const HEAD_PHOTO = {
   x: HEAD_PERCENT[0] + 160,
   y: HEAD_PERCENT[1] - 160
 };
+// ==== SINGLE MEMO BACKGROUND + DYNAMIC SUBJECT ROWS ====
+// Use one common PNG for all classes
+const MEMO_PNG_FILE = "memo-for-all.png";
 
+// Tune these to match your new PNG's grid
+const SUBJECT_LAYOUT = {
+  startY: 1814,   // first subject row Y
+  rowGap: 109,    // vertical gap between subject rows
+  totalGap: 25,   // gap from last row to "Totals"
+  maxBottomY: 2600 // last Y allowed for the "Totals" text (adjust to your PNG)
+};
+
+
+// Build Y positions for N subjects and the totals row Y
+function buildSubjectY(n) {
+  const { startY, rowGap, totalGap, maxBottomY } = SUBJECT_LAYOUT;
+
+  // Max rows that still keep Totals at/before maxBottomY
+  const maxRows = Math.max(
+    0,
+    Math.floor((maxBottomY - startY - totalGap) / rowGap) + 1
+  );
+
+  const safeN = Math.min(n, maxRows);
+
+  const rowsY = Array.from({ length: safeN }, (_, i) => startY + i * rowGap);
+  const totalY = rowsY.length ? rowsY[rowsY.length - 1] + totalGap : startY;
+
+  return { rowsY, totalY };
+}
+// Load the common memo PNG (dataURL) once per page
+let __memoCache = null;
+async function getMemo() {
+  if (!__memoCache) __memoCache = await loadMemoImg(MEMO_PNG_FILE);
+  return __memoCache;
+}
 // Attendance 10 months, work & pres (same as before)
 const attWorkCoords = [[725, 2956],[867, 2956],[1049, 2956],[1221, 2956],[1356, 2956],[1491, 2956],[1622, 2956],[1758, 2956],[1889, 2956],[2056, 2956]];
 const attPresCoords = [[725, 3027],[867, 3027],[1049, 3027],[1221, 3027],[1356, 3027],[1491, 3027],[1622, 3027],[1758, 3027],[1889, 3027],[2056, 3027]];
@@ -258,16 +253,6 @@ firebase.auth().onAuthStateChanged(function(user) {
   if (!user) { window.location.replace("index.html"); }
 });
 
-function classMemoFile(className) {
-  className = (className+"").replace(/[^a-z0-9]/gi,'').toLowerCase();
-  for (let cfg of PNG_CONFIG) {
-    for (let cl of cfg.classes) {
-      if(className===cl.replace(/[^a-z0-9]/gi,'').toLowerCase()) return cfg;
-      if (className===(cl+"").replace(/[^a-z0-9]/gi,'').toLowerCase().replace("th","")) return cfg;
-    }
-  }
-  return PNG_CONFIG[3];
-}
 function sleep(ms){return new Promise(res=>setTimeout(res,ms));}
 function loadMemoImg(file) {
   return fetch(file).then(resp => resp.blob()).then(blob => new Promise((resolve, reject) => {
@@ -601,15 +586,6 @@ function formatClass(val) {
   const s = String(name).trim();
   return s.replace(/\bsection\b/gi, 'Section'); // "SECTION" -> "Section"
 }
-// --- Get memo PNG file and mapping
-async function getMemoAndMapping(student) {
-  let cfg = classMemoFile(student.class);
-  console.log("Class for memo mapping:", student.class, "→", cfg.file); // <-- ADD THIS
-  // Always load the PNG for the student's class
-  let memoImgData = await loadMemoImg(cfg.file);
-  return { cfg, memoImgData };
-}
-
 // ======= PDF GENERATION =========
 async function fetchStudentData(stu) {
   let year = yearSel.value, classId = classSel.value, sectionId = sectionSel.value, examId = examSel.value;
@@ -743,7 +719,7 @@ if (studentArr && studentArr.length && Array.isArray(studentArr[0].subjects)) {
 }
   for (let idx = 0; idx < fullDataArr.length; idx++) {
     let student = fullDataArr[idx];
-    let { cfg, memoImgData } = await getMemoAndMapping(student);
+    const memoImgData = await getMemo();
     if (idx===0 && !isSingle) { pdf = new window.jspdf.jsPDF({orientation: "portrait", unit: "px", format: [2481, 3509]}); }
     else if (idx > 0 || !isSingle) pdf.addPage([2481,3509], 'p');
     pdf.addImage(memoImgData, "PNG", 0, 0, 2481, 3509);
@@ -777,29 +753,10 @@ if (studentArr && studentArr.length && Array.isArray(studentArr[0].subjects)) {
 );
     pdf.setLineWidth(1);
 
-  // --- Subject rows (robust for Individual + All), with safe fallbacks and diagnostics
-
-// 1) Resolve Y-map case-insensitively; fallback by class group if needed
-const wanted = String(cfg.file || '').toLowerCase();
-const yKey   = Object.keys(customSubjectRowsY).find(k => k.toLowerCase() === wanted);
-let memoYArr = yKey ? customSubjectRowsY[yKey] : [];
-
-if (!memoYArr.length) {
-  const grp = (getClassGroupName(student.class) || '').toLowerCase();
-  const fallbackKey =
-    grp === 'nursery-lkg-ukg' ? 'memo-nursery.png' :
-    grp === '1-2'             ? 'memo-1-2.png'     :
-    grp === '3-5'             ? 'memo-3-4-5.png'   :
-    grp === '6-9'             ? 'memo-6-7-8-9.png' :
-                                'memo-10.png';
-  memoYArr = customSubjectRowsY[fallbackKey] || [];
-  console.warn('[Y-map fallback]', { wanted: cfg.file, grp, fallbackKey, yCount: memoYArr.length });
-}
-
-// 2) Subjects (may be empty in Individual if not enriched)
+ /* --- Subject rows: dynamic for this exam --- */
 let rowSubs = Array.isArray(student.subjects) ? student.subjects : [];
 
-// If missing, recompute now (Individual safety net)
+// Safety net for Individual path:
 if (!rowSubs.length) {
   const rawStu = students.find(s => s.id === student.id) || student;
   const rec = await fetchStudentData(rawStu);
@@ -809,41 +766,46 @@ if (!rowSubs.length) {
   if (!student.attendance?.length && rec.attendance?.length) student.attendance = rec.attendance;
 }
 
-// 3) Totals (prefer precomputed; will be set by recompute above if needed)
-let totalMarks = (typeof student.totalMarks === 'number') ? student.totalMarks : 0;
-let totalMax   = (typeof student.totalMax   === 'number') ? student.totalMax   : 0;
+const { rowsY, totalY } = buildSubjectY(rowSubs.length);
 
-// Debug so we can see counts if something still looks blank
-console.log('[DRAW]', {
-  file: cfg.file, yRows: memoYArr.length, subjects: rowSubs.length,
-  totalMarks, totalMax, name: student.name
-});
-
-// 4) Draw subject rows
-for (let i = 0; i < Math.min(rowSubs.length, Math.max(0, memoYArr.length - 1)); i++) {
+// Draw rows
+for (let i = 0; i < Math.min(rowSubs.length, rowsY.length); i++) {
   const s      = rowSubs[i] || {};
   const sMax   = (s.max   ?? '') === '' ? ''   : s.max;
   const sMarks = (s.marks ?? '') === '' ? 'AB' : s.marks;
   const sGrade = s.grade ? String(s.grade).toUpperCase() : (sMarks === 'AB' ? 'AB' : '');
 
-  centerText(pdf, sMax,   X_MAX,   memoYArr[i], 60, COLOR_RED);
+  centerText(pdf, sMax, X_MAX, rowsY[i], 60, COLOR_RED);
 
+  // Red ring for < 40%
   if (sMarks !== 'AB' && sMax && +sMax > 0 && !isNaN(+sMarks) && (+sMarks / +sMax) * 100 < 40) {
     pdf.setDrawColor(...COLOR_RED);
     pdf.setLineWidth(4);
-    pdf.ellipse(X_MARKS, memoYArr[i] - 10, 55, 38, 'D');
+    pdf.ellipse(X_MARKS, rowsY[i] - 10, 55, 38, 'D');
     pdf.setLineWidth(1);
   }
-  centerText(pdf, String(sMarks), X_MARKS, memoYArr[i], 60, COLOR_GREEN);
-  centerText(pdf, sGrade,         X_GRADE, memoYArr[i], 60, COLOR_GRADE);
+  centerText(pdf, String(sMarks), X_MARKS, rowsY[i], 60, COLOR_GREEN);
+  centerText(pdf, sGrade,         X_GRADE, rowsY[i], 60, COLOR_GRADE);
 }
 
-// 5) Totals row (guard Y-map)
-const totalY = (memoYArr.length ? memoYArr[memoYArr.length - 1] : 2600) + 20;
+// Totals (ensure overallGrade fallback)
+const totalMarks = (typeof student.totalMarks === 'number') ? student.totalMarks : 0;
+const totalMax   = (typeof student.totalMax   === 'number') ? student.totalMax   : 0;
+
+student.overallGrade = student.overallGrade || (totalMax > 0 ? (
+  ((totalMarks/totalMax)*100 >= 95) ? 'A+' :
+  ((totalMarks/totalMax)*100 >= 90) ? 'A'  :
+  ((totalMarks/totalMax)*100 >= 85) ? 'B+' :
+  ((totalMarks/totalMax)*100 >= 80) ? 'B'  :
+  ((totalMarks/totalMax)*100 >= 70) ? 'C+' :
+  ((totalMarks/totalMax)*100 >= 60) ? 'C'  :
+  ((totalMarks/totalMax)*100 >= 50) ? 'D'  :
+  ((totalMarks/totalMax)*100 >= 40) ? 'E'  : 'F'
+) : '');
+
 centerText(pdf, totalMax,             X_MAX,   totalY, 60, COLOR_RED);
 centerText(pdf, totalMarks,           X_MARKS, totalY, 60, COLOR_GREEN);
 centerText(pdf, student.overallGrade, X_GRADE, totalY, 60, COLOR_GRADE);
-
 // 6) Attendance (10 months)
 for (let i = 0; i < 10; i++) {
   const a = (student.attendance && student.attendance[i]) || { work: '', pres: '' };
@@ -867,10 +829,10 @@ async function showPreviewPDF(stuArr) {
   let pdf;
   for (let idx = 0; idx < stuArr.length; idx++) {
     let student = stuArr[idx];
-    let { cfg, memoImgData } = await getMemoAndMapping(student);
-    if (idx===0) { pdf = new window.jspdf.jsPDF({orientation: "portrait", unit: "px", format: [2481, 3509]}); }
-    else pdf.addPage([2481,3509], 'p');
-    pdf.addImage(memoImgData, "PNG", 0, 0, 2481, 3509);
+    const memoImgData = await getMemo();
+if (idx===0) { pdf = new window.jspdf.jsPDF({orientation: "portrait", unit: "px", format: [2481, 3509]}); }
+else pdf.addPage([2481,3509], 'p');
+pdf.addImage(memoImgData, "PNG", 0, 0, 2481, 3509);
     let exam = examSel.options[examSel.selectedIndex].textContent;
     let examId = examSel.value;
     let examObj = exams.find(e => e.id === examId);
@@ -899,48 +861,57 @@ async function showPreviewPDF(stuArr) {
     pdf.text(student.rank.toString(), cx, cy+33, {align:'center'});
     pdf.setLineWidth(1);
 
-    // --- Subject rows: Always PNG template order, AB for missing
-    let memoYArr = customSubjectRowsY[cfg.file];
-    let templateSubjects = examObj.subjects || [];
-    let totalMarks = 0, totalMax = 0;
-    function norm(s) { return (s||'').replace(/[\s.]/g,'').toLowerCase(); }
-    for (let i = 0; i < memoYArr.length-1; i++) {
-      let subjName = templateSubjects[i]?.name ?? "";
-      let subjMax = templateSubjects[i]?.max ?? "";
-      let subjMarkObj = student.subjects.find(s => norm(s.name) === norm(subjName));
-      let marks = (subjMarkObj && subjMarkObj.marks !== undefined && subjMarkObj.marks !== null && subjMarkObj.marks !== '') 
-        ? subjMarkObj.marks 
-        : "AB";
-      let grade = (subjMarkObj && subjMarkObj.grade) ? subjMarkObj.grade : (marks === "AB" ? "AB" : "");
-      if (marks !== '' && marks !== null && marks !== undefined && !isNaN(marks)) {
-        totalMarks += +marks;
-      }
-      if (subjMax !== '' && subjMax !== undefined && !isNaN(subjMax)) {
-        totalMax += +subjMax;
-      }
-      centerText(pdf, subjMax, X_MAX, memoYArr[i], 60, COLOR_RED);
+    /* --- Subject rows: dynamic for this exam (preview) --- */
+let rowSubs = Array.isArray(student.subjects) ? student.subjects : [];
 
-      // --- RED CIRCLE for <40% ---
-      if (marks !== "" && marks !== "AB" && subjMax && +subjMax > 0 && (marks/subjMax)*100 < 40) {
-        pdf.setDrawColor(...COLOR_RED);
-        pdf.setLineWidth(4);
-        pdf.ellipse(X_MARKS, memoYArr[i]-10, 55, 38, 'D');
-        pdf.setLineWidth(1);
-      }
-      centerText(pdf, marks, X_MARKS, memoYArr[i], 60, COLOR_GREEN);
-      centerText(pdf, (grade+"").toUpperCase(), X_GRADE, memoYArr[i], 60, COLOR_GRADE);
-    }
-    let totalY = memoYArr[memoYArr.length - 1] + 25;
-    centerText(pdf, totalMax, X_MAX, totalY, 60, COLOR_RED);
-    centerText(pdf, totalMarks, X_MARKS, totalY, 60, COLOR_GREEN);
-    centerText(pdf, student.overallGrade, X_GRADE, totalY, 60, COLOR_GRADE);
+// Safety net for preview path:
+if (!rowSubs.length) {
+  const rec = await fetchStudentData(student);
+  rowSubs = Array.isArray(rec.subjects) ? rec.subjects : [];
+  if (typeof student.totalMarks !== 'number' && typeof rec.totalMarks === 'number') student.totalMarks = rec.totalMarks;
+  if (typeof student.totalMax   !== 'number' && typeof rec.totalMax   === 'number') student.totalMax   = rec.totalMax;
+  if (!student.attendance?.length && rec.attendance?.length) student.attendance = rec.attendance;
+}
 
-    for (let i = 0; i < 10; i++) {
-      let a = student.attendance[i] || {work:'', pres:''};
-      centerText(pdf, String(a.work||''), attWorkCoords[i][0], attWorkCoords[i][1], 60, COLOR_GREEN);
-      centerText(pdf, String(a.pres||''), attPresCoords[i][0], attPresCoords[i][1], 60, COLOR_BROWN);
-    }
+const { rowsY, totalY } = buildSubjectY(rowSubs.length);
+
+let totalMarks = 0, totalMax = 0;
+for (let i = 0; i < rowSubs.length; i++) {
+  const s      = rowSubs[i] || {};
+  const sMax   = (s.max   ?? '') === '' ? ''   : s.max;
+  const sMarks = (s.marks ?? '') === '' ? 'AB' : s.marks;
+  const sGrade = s.grade ? String(s.grade).toUpperCase() : (sMarks === 'AB' ? 'AB' : '');
+
+  if (sMarks !== 'AB' && !isNaN(+sMarks)) totalMarks += +sMarks;
+  if (sMax   !== ''   && !isNaN(+sMax))   totalMax   += +sMax;
+
+  centerText(pdf, sMax, X_MAX, rowsY[i], 60, COLOR_RED);
+
+  // Red ring for < 40%
+  if (sMarks !== 'AB' && sMax && +sMax > 0 && !isNaN(+sMarks) && (+sMarks / +sMax) * 100 < 40) {
+    pdf.setDrawColor(...COLOR_RED);
+    pdf.setLineWidth(4);
+    pdf.ellipse(X_MARKS, rowsY[i] - 10, 55, 38, 'D');
+    pdf.setLineWidth(1);
   }
+  centerText(pdf, String(sMarks), X_MARKS, rowsY[i], 60, COLOR_GREEN);
+  centerText(pdf, sGrade,         X_GRADE, rowsY[i], 60, COLOR_GRADE);
+}
+
+student.overallGrade = student.overallGrade || (totalMax > 0 ? (
+  ((totalMarks/totalMax)*100 >= 95) ? 'A+' :
+  ((totalMarks/totalMax)*100 >= 90) ? 'A'  :
+  ((totalMarks/totalMax)*100 >= 85) ? 'B+' :
+  ((totalMarks/totalMax)*100 >= 80) ? 'B'  :
+  ((totalMarks/totalMax)*100 >= 70) ? 'C+' :
+  ((totalMarks/totalMax)*100 >= 60) ? 'C'  :
+  ((totalMarks/totalMax)*100 >= 50) ? 'D'  :
+  ((totalMarks/totalMax)*100 >= 40) ? 'E'  : 'F'
+) : '');
+
+centerText(pdf, totalMax,             X_MAX,   totalY, 60, COLOR_RED);
+centerText(pdf, totalMarks,           X_MARKS, totalY, 60, COLOR_GREEN);
+centerText(pdf, student.overallGrade, X_GRADE, totalY, 60, COLOR_GRADE);
   let data = pdf.output('arraybuffer');
   let loadingTask = window['pdfjsLib'].getDocument({data});
   pdfPreview.innerHTML = '';
@@ -979,6 +950,7 @@ function showToast(msg) {
 </div>
 </body>
 </html>
+
 
 
 
