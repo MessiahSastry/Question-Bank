@@ -497,71 +497,81 @@ async function urlToDataURL(url) {
 }
 
 async function drawStudentPhoto(pdf, stu) {
-  let outerPushed = false;
-  let innerPushed = false;
-
   try {
-    // Resolve a usable URL
+    // 1) Resolve a URL for the photo
     let url = stu.photoUrl || stu.photoURL || '';
     if (!url && stu.photoPath) url = buildStorageUrlFromPath(stu.photoPath);
     if (!url) return;
 
-    // Load image
+    // 2) Load image as dataURL (already have in your code)
     const dataURL = await urlToDataURL(url);
-    const imgType = dataURL.startsWith('data:image/png') ? 'PNG' : 'JPEG';
-
     const { x, y, w, h } = HEAD_PHOTO;
 
-    // Border parameters
+    // 3) Compose rounded photo + gradient ring ON A CANVAS (no PDF clipping)
     const border = 18;
     const rOuter = 22;
     const rInner = Math.max(6, rOuter - 6);
 
-    // Gradient background (behind photo)
-    const gradURL = makeGradientDataURL(
-      w, h,
-      [
-        { offset: 0.00, color: '#FF6EC4' },
-        { offset: 0.50, color: '#7C4DFF' },
-        { offset: 1.00, color: '#4ADEDE' }
-      ],
-      'diag'
-    );
-
-    // ---- Block 1: outer rounded-rect gradient (with guaranteed restore)
-    try {
-      pdf.saveGraphicsState();
-      outerPushed = true;
-      pdf.roundedRect(x, y, w, h, rOuter, rOuter, 'S');
-      pdf.clip();
-      pdf.addImage(gradURL, 'PNG', x, y, w, h, undefined, 'FAST');
-    } finally {
-      if (outerPushed) {
-        pdf.restoreGraphicsState();
-        outerPushed = false;
-      }
+    // helper: rounded rect path
+    function rr(ctx, x, y, w, h, r) {
+      const r2 = Math.min(r, w / 2, h / 2);
+      ctx.beginPath();
+      ctx.moveTo(x + r2, y);
+      ctx.lineTo(x + w - r2, y);
+      ctx.quadraticCurveTo(x + w, y, x + w, y + r2);
+      ctx.lineTo(x + w, y + h - r2);
+      ctx.quadraticCurveTo(x + w, y + h, x + w - r2, y + h);
+      ctx.lineTo(x + r2, y + h);
+      ctx.quadraticCurveTo(x, y + h, x, y + h - r2);
+      ctx.lineTo(x, y + r2);
+      ctx.quadraticCurveTo(x, y, x + r2, y);
+      ctx.closePath();
     }
 
-    // ---- Block 2: inner rounded-rect clipped photo (with guaranteed restore)
-    try {
-      pdf.saveGraphicsState();
-      innerPushed = true;
-      pdf.roundedRect(x + border, y + border, w - 2 * border, h - 2 * border, rInner, rInner, 'S');
-      pdf.clip();
-      pdf.addImage(dataURL, imgType, x + border, y + border, w - 2 * border, h - 2 * border, undefined, 'FAST');
-    } finally {
-      if (innerPushed) {
-        pdf.restoreGraphicsState();
-        innerPushed = false;
-      }
-    }
+    // create canvas
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(2, Math.round(w));
+    canvas.height = Math.max(2, Math.round(h));
+    const ctx = canvas.getContext('2d');
+
+    // 3a) draw gradient outer rounded rect
+    const grad = ctx.createLinearGradient(0, 0, w, h);
+    grad.addColorStop(0.00, '#FF6EC4');
+    grad.addColorStop(0.50, '#7C4DFF');
+    grad.addColorStop(1.00, '#4ADEDE');
+    ctx.fillStyle = grad;
+    rr(ctx, 0, 0, w, h, rOuter);
+    ctx.fill();
+
+    // 3b) “knock out” inner area to make the ring
+    ctx.globalCompositeOperation = 'destination-out';
+    rr(ctx, border, border, w - 2 * border, h - 2 * border, rInner);
+    ctx.fill();
+
+    // 3c) draw the photo inside the inner rounded rect
+    ctx.globalCompositeOperation = 'destination-over'; // draw below the transparent knockout
+    const img = new Image();
+    await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = dataURL; });
+    ctx.save();
+    rr(ctx, border, border, w - 2 * border, h - 2 * border, rInner);
+    ctx.clip();
+    ctx.drawImage(img, border, border, w - 2 * border, h - 2 * border);
+    ctx.restore();
+
+    // 4) Add the precomposed PNG to the PDF (no PDF clip at all)
+    const composedURL = canvas.toDataURL('image/png');
+    pdf.addImage(composedURL, 'PNG', x, y, w, h, undefined, 'FAST');
   } catch (e) {
-    console.warn('Photo load failed:', e);
-    // Belt & suspenders: if anything threw between save/restore
-    try { if (outerPushed) pdf.restoreGraphicsState(); } catch {}
-    try { if (innerPushed) pdf.restoreGraphicsState(); } catch {}
+    console.warn('Photo compose failed:', e);
+    // hard fallback: draw plain photo without any mask
+    try {
+      const dataURL = await urlToDataURL(stu.photoUrl || stu.photoURL || buildStorageUrlFromPath(stu.photoPath));
+      const { x, y, w, h } = HEAD_PHOTO;
+      pdf.addImage(dataURL, 'JPEG', x, y, w, h, undefined, 'FAST');
+    } catch {}
   }
 }
+
 function centerText(pdf, text, x, y, size=12, color=[0,0,0], fontStyle="bold", fontName="helvetica") {
   if (
     (typeof text !== 'string' && typeof text !== 'number') ||
@@ -969,6 +979,7 @@ function showToast(msg) {
 </div>
 </body>
 </html>
+
 
 
 
