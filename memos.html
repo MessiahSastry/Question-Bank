@@ -743,34 +743,49 @@ if (studentArr && studentArr.length && Array.isArray(studentArr[0].subjects)) {
 );
     pdf.setLineWidth(1);
 
-   // --- Subject rows: print by index (subjects are printed on the PNG)
-// Case-insensitive lookup + console diagnostics
-const _wanted = String(cfg.file || '').toLowerCase();
-const _yKey = Object.keys(customSubjectRowsY).find(k => k.toLowerCase() === _wanted);
-let memoYArr = _yKey ? customSubjectRowsY[_yKey] : [];
+  // --- Subject rows (robust for Individual + All), with safe fallbacks and diagnostics
 
-if (!memoYArr) {
-  console.error('[No Y-map]', { wanted: cfg.file, keys: Object.keys(customSubjectRowsY) });
+// 1) Resolve Y-map case-insensitively; fallback by class group if needed
+const wanted = String(cfg.file || '').toLowerCase();
+const yKey   = Object.keys(customSubjectRowsY).find(k => k.toLowerCase() === wanted);
+let memoYArr = yKey ? customSubjectRowsY[yKey] : [];
+
+if (!memoYArr.length) {
+  const grp = (getClassGroupName(student.class) || '').toLowerCase();
+  const fallbackKey =
+    grp === 'nursery-lkg-ukg' ? 'memo-nursery.png' :
+    grp === '1-2'             ? 'memo-1-2.png'     :
+    grp === '3-5'             ? 'memo-3-4-5.png'   :
+    grp === '6-9'             ? 'memo-6-7-8-9.png' :
+                                'memo-10.png';
+  memoYArr = customSubjectRowsY[fallbackKey] || [];
+  console.warn('[Y-map fallback]', { wanted: cfg.file, grp, fallbackKey, yCount: memoYArr.length });
 }
+
+// 2) Subjects (may be empty in Individual if not enriched)
 let rowSubs = Array.isArray(student.subjects) ? student.subjects : [];
 
-// Fallback: if subjects are missing, recompute now for this student
+// If missing, recompute now (Individual safety net)
 if (!rowSubs.length) {
   const rawStu = students.find(s => s.id === student.id) || student;
-  const recomputed = await fetchStudentData(rawStu);
-  rowSubs = Array.isArray(recomputed.subjects) ? recomputed.subjects : [];
-
-  // Keep totals in sync if available in this scope
-  if (typeof totalMarks !== 'undefined' && typeof totalMax !== 'undefined') {
-    if (typeof recomputed.totalMarks === 'number') totalMarks = recomputed.totalMarks;
-    if (typeof recomputed.totalMax   === 'number') totalMax   = recomputed.totalMax;
-  }
+  const rec = await fetchStudentData(rawStu);
+  rowSubs = Array.isArray(rec.subjects) ? rec.subjects : [];
+  if (typeof student.totalMarks !== 'number' && typeof rec.totalMarks === 'number') student.totalMarks = rec.totalMarks;
+  if (typeof student.totalMax   !== 'number' && typeof rec.totalMax   === 'number') student.totalMax   = rec.totalMax;
+  if (!student.attendance?.length && rec.attendance?.length) student.attendance = rec.attendance;
 }
 
-// Use precomputed totals (computed in fetchStudentData)
+// 3) Totals (prefer precomputed; will be set by recompute above if needed)
 let totalMarks = (typeof student.totalMarks === 'number') ? student.totalMarks : 0;
 let totalMax   = (typeof student.totalMax   === 'number') ? student.totalMax   : 0;
 
+// Debug so we can see counts if something still looks blank
+console.log('[DRAW]', {
+  file: cfg.file, yRows: memoYArr.length, subjects: rowSubs.length,
+  totalMarks, totalMax, name: student.name
+});
+
+// 4) Draw subject rows
 for (let i = 0; i < Math.min(rowSubs.length, Math.max(0, memoYArr.length - 1)); i++) {
   const s      = rowSubs[i] || {};
   const sMax   = (s.max   ?? '') === '' ? ''   : s.max;
@@ -780,18 +795,27 @@ for (let i = 0; i < Math.min(rowSubs.length, Math.max(0, memoYArr.length - 1)); 
   centerText(pdf, sMax,   X_MAX,   memoYArr[i], 60, COLOR_RED);
 
   if (sMarks !== 'AB' && sMax && +sMax > 0 && !isNaN(+sMarks) && (+sMarks / +sMax) * 100 < 40) {
-    pdf.setDrawColor(...COLOR_RED); pdf.setLineWidth(4);
-    pdf.ellipse(X_MARKS, memoYArr[i] - 10, 55, 38, 'D'); pdf.setLineWidth(1);
+    pdf.setDrawColor(...COLOR_RED);
+    pdf.setLineWidth(4);
+    pdf.ellipse(X_MARKS, memoYArr[i] - 10, 55, 38, 'D');
+    pdf.setLineWidth(1);
   }
   centerText(pdf, String(sMarks), X_MARKS, memoYArr[i], 60, COLOR_GREEN);
   centerText(pdf, sGrade,         X_GRADE, memoYArr[i], 60, COLOR_GRADE);
 }
 
-// Totals row
+// 5) Totals row (guard Y-map)
 const totalY = (memoYArr.length ? memoYArr[memoYArr.length - 1] : 2600) + 20;
 centerText(pdf, totalMax,             X_MAX,   totalY, 60, COLOR_RED);
 centerText(pdf, totalMarks,           X_MARKS, totalY, 60, COLOR_GREEN);
 centerText(pdf, student.overallGrade, X_GRADE, totalY, 60, COLOR_GRADE);
+
+// 6) Attendance (10 months)
+for (let i = 0; i < 10; i++) {
+  const a = (student.attendance && student.attendance[i]) || { work: '', pres: '' };
+  centerText(pdf, String(a.work || ''), attWorkCoords[i][0], attWorkCoords[i][1], 60, COLOR_GREEN);
+  centerText(pdf, String(a.pres || ''), attPresCoords[i][0], attPresCoords[i][1], 60, COLOR_BROWN);
+}
 
     // Attendance numbers font size 60
     for (let i = 0; i < 10; i++) {
@@ -921,5 +945,6 @@ function showToast(msg) {
 </div>
 </body>
 </html>
+
 
 
