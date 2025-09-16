@@ -737,18 +737,31 @@ if (studentArr && studentArr.length && Array.isArray(studentArr[0].subjects)) {
 // Case-insensitive lookup + console diagnostics
 const _wanted = String(cfg.file || '').toLowerCase();
 const _yKey = Object.keys(customSubjectRowsY).find(k => k.toLowerCase() === _wanted);
-const memoYArr = _yKey ? customSubjectRowsY[_yKey] : null;
+let memoYArr = _yKey ? customSubjectRowsY[_yKey] : [];
 
 if (!memoYArr) {
   console.error('[No Y-map]', { wanted: cfg.file, keys: Object.keys(customSubjectRowsY) });
 }
-const rowSubs = Array.isArray(student.subjects) ? student.subjects : [];
+let rowSubs = Array.isArray(student.subjects) ? student.subjects : [];
+
+// Fallback: if subjects are missing, recompute now for this student
+if (!rowSubs.length) {
+  const rawStu = students.find(s => s.id === student.id) || student;
+  const recomputed = await fetchStudentData(rawStu);
+  rowSubs = Array.isArray(recomputed.subjects) ? recomputed.subjects : [];
+
+  // Keep totals in sync if available in this scope
+  if (typeof totalMarks !== 'undefined' && typeof totalMax !== 'undefined') {
+    if (typeof recomputed.totalMarks === 'number') totalMarks = recomputed.totalMarks;
+    if (typeof recomputed.totalMax   === 'number') totalMax   = recomputed.totalMax;
+  }
+}
 
 // Use precomputed totals (computed in fetchStudentData)
 let totalMarks = (typeof student.totalMarks === 'number') ? student.totalMarks : 0;
 let totalMax   = (typeof student.totalMax   === 'number') ? student.totalMax   : 0;
 
-for (let i = 0; i < Math.min(rowSubs.length, memoYArr.length - 1); i++) {
+for (let i = 0; i < Math.min(rowSubs.length, Math.max(0, memoYArr.length - 1)); i++) {
   const s      = rowSubs[i] || {};
   const sMax   = (s.max   ?? '') === '' ? ''   : s.max;
   const sMarks = (s.marks ?? '') === '' ? 'AB' : s.marks;
@@ -765,7 +778,7 @@ for (let i = 0; i < Math.min(rowSubs.length, memoYArr.length - 1); i++) {
 }
 
 // Totals row
-const totalY = memoYArr[memoYArr.length - 1] + 20;
+const totalY = (memoYArr.length ? memoYArr[memoYArr.length - 1] : 2600) + 20;
 centerText(pdf, totalMax,             X_MAX,   totalY, 60, COLOR_RED);
 centerText(pdf, totalMarks,           X_MARKS, totalY, 60, COLOR_GREEN);
 centerText(pdf, student.overallGrade, X_GRADE, totalY, 60, COLOR_GRADE);
@@ -898,6 +911,7 @@ function showToast(msg) {
 </div>
 </body>
 </html>
+
 
 
 
