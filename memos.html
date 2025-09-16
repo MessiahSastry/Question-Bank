@@ -496,46 +496,70 @@ async function urlToDataURL(url) {
   });
 }
 
-// Draw the student's photo with a rounded border (if available)
 async function drawStudentPhoto(pdf, stu) {
+  let outerPushed = false;
+  let innerPushed = false;
+
   try {
+    // Resolve a usable URL
     let url = stu.photoUrl || stu.photoURL || '';
     if (!url && stu.photoPath) url = buildStorageUrlFromPath(stu.photoPath);
-    if (!url) return; // nothing to draw
-    
+    if (!url) return;
 
+    // Load image
     const dataURL = await urlToDataURL(url);
     const imgType = dataURL.startsWith('data:image/png') ? 'PNG' : 'JPEG';
 
     const { x, y, w, h } = HEAD_PHOTO;
 
-  // Clip image to a rounded rect (no white gap at corners)
-// ==== Gradient multi-colour border around the photo ====
-const border = 18;          // thickness of the multi-colour ring
-const rOuter = 22;          // outer corner radius
-const rInner = Math.max(6, rOuter - 6);
+    // Border parameters
+    const border = 18;
+    const rOuter = 22;
+    const rInner = Math.max(6, rOuter - 6);
 
-// 1) Paint gradient behind, clipped to the OUTER rounded rect
-const gradURL = makeGradientDataURL(w, h, [
-  { offset: 0.00, color: '#FF6EC4' },  // pink
-  { offset: 0.50, color: '#7C4DFF' },  // violet
-  { offset: 1.00, color: '#4ADEDE' }   // teal
-], 'diag');
+    // Gradient background (behind photo)
+    const gradURL = makeGradientDataURL(
+      w, h,
+      [
+        { offset: 0.00, color: '#FF6EC4' },
+        { offset: 0.50, color: '#7C4DFF' },
+        { offset: 1.00, color: '#4ADEDE' }
+      ],
+      'diag'
+    );
 
-pdf.saveGraphicsState();
-pdf.roundedRect(x, y, w, h, rOuter, rOuter, 'S'); // outer clip
-pdf.clip();
-pdf.addImage(gradURL, 'PNG', x, y, w, h, undefined, 'FAST');
-pdf.restoreGraphicsState();
+    // ---- Block 1: outer rounded-rect gradient (with guaranteed restore)
+    try {
+      pdf.saveGraphicsState();
+      outerPushed = true;
+      pdf.roundedRect(x, y, w, h, rOuter, rOuter, 'S');
+      pdf.clip();
+      pdf.addImage(gradURL, 'PNG', x, y, w, h, undefined, 'FAST');
+    } finally {
+      if (outerPushed) {
+        pdf.restoreGraphicsState();
+        outerPushed = false;
+      }
+    }
 
-// 2) Draw the PHOTO inside an INNER rounded rect (inset by border thickness)
-pdf.saveGraphicsState();
-pdf.roundedRect(x + border, y + border, w - 2*border, h - 2*border, rInner, rInner, 'S');
-pdf.clip();
-pdf.addImage(dataURL, imgType, x + border, y + border, w - 2*border, h - 2*border, undefined, 'FAST');
-pdf.restoreGraphicsState();
+    // ---- Block 2: inner rounded-rect clipped photo (with guaranteed restore)
+    try {
+      pdf.saveGraphicsState();
+      innerPushed = true;
+      pdf.roundedRect(x + border, y + border, w - 2 * border, h - 2 * border, rInner, rInner, 'S');
+      pdf.clip();
+      pdf.addImage(dataURL, imgType, x + border, y + border, w - 2 * border, h - 2 * border, undefined, 'FAST');
+    } finally {
+      if (innerPushed) {
+        pdf.restoreGraphicsState();
+        innerPushed = false;
+      }
+    }
   } catch (e) {
     console.warn('Photo load failed:', e);
+    // Belt & suspenders: if anything threw between save/restore
+    try { if (outerPushed) pdf.restoreGraphicsState(); } catch {}
+    try { if (innerPushed) pdf.restoreGraphicsState(); } catch {}
   }
 }
 function centerText(pdf, text, x, y, size=12, color=[0,0,0], fontStyle="bold", fontName="helvetica") {
@@ -945,6 +969,7 @@ function showToast(msg) {
 </div>
 </body>
 </html>
+
 
 
 
