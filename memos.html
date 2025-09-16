@@ -410,9 +410,19 @@ examSel.onchange = () => loadStudents();
 window.downloadOne = async function(studentId) {
   showSpinner();
   try {
-    let stu = students.find(s => s.id === studentId);
-    if (!stu) return;
-    await generatePDF([stu], true);
+    // Use the same path as "All" to compute marks, totals, attendance, grade, etc.
+    const all = await getAllStudentFullData();
+    let one = all.find(s => s.id === studentId) || null;
+
+    // Fallback: if not found (edge case), compute just this one now
+    if (!one) {
+      const raw = students.find(s => s.id === studentId);
+      if (!raw) return;
+      one = await fetchStudentData(raw);
+    }
+
+    // Pass the fully computed record into generatePDF
+    await generatePDF([one], true);
     showToast("Download completed.");
   } finally {
     hideSpinner();
@@ -618,13 +628,14 @@ if (subj.max !== '' && subj.max !== undefined && !isNaN(subj.max)) { totalMax +=
     }
   });
  return {
+  id: stu.id,
   name: stu.name,
   father: stu.father,
   roll: stu.roll,
   class: classes.find(c=>c.id===classId)?.name || '',
-  section: (sections.find(s=>s.id===sectionId)?.name) || (sectionSel.options[sectionSel.selectedIndex]?.text || ''), // NEW
+  section: (sections.find(s=>s.id===sectionId)?.name) || (sectionSel.options[sectionSel.selectedIndex]?.text || ''),
   percentage: totalMax ? Math.round((totalMarks/totalMax)*100) : '',
-  rank: '', // Will fill later
+  rank: '',
   subjects: stuSubjects,
   totalMarks, totalMax,
   overallGrade: totalMax
@@ -638,8 +649,8 @@ if (subj.max !== '' && subj.max !== undefined && !isNaN(subj.max)) { totalMax +=
       : (totalMarks/totalMax)*100 >= 40 ? 'E'
       : 'F')
     : '',
-      photoUrl: stu.photoUrl || stu.photoURL || '',
-    photoPath: stu.photoPath || '',
+  photoUrl: stu.photoUrl || stu.photoURL || '',
+  photoPath: stu.photoPath || '',
   attendance: attArr
 };
 }
@@ -676,9 +687,11 @@ async function generatePDF(studentArr, isSingle) {
   let fullDataArr = [];
 var pdf = new window.jspdf.jsPDF({orientation: "portrait", unit: "px", format: [2481, 3509]});
 
-// Build the dataset
-if (isSingle && studentArr && studentArr.length === 1) {
-  // Fetch this student's marks directly to avoid matching issues
+// Build the dataset (prefer precomputed objects if provided)
+if (studentArr && studentArr.length && Array.isArray(studentArr[0].subjects)) {
+  // Already computed (from getAllStudentFullData or fetchStudentData)
+  fullDataArr = studentArr;
+} else if (isSingle && studentArr && studentArr.length === 1) {
   const singleData = await fetchStudentData(studentArr[0]);
   fullDataArr = [singleData];
 } else {
@@ -878,6 +891,7 @@ function showToast(msg) {
 </div>
 </body>
 </html>
+
 
 
 
