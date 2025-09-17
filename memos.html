@@ -6,6 +6,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+  <script>
+    if (window.pdfjsLib) {
+      pdfjsLib.GlobalWorkerOptions.workerSrc =
+        "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js";
+    }
+  </script>
   <link href="https://fonts.googleapis.com/css?family=Segoe+UI:400,600,700&display=swap" rel="stylesheet">
   <style>
     html, body { background: #f4f8fc; margin:0; padding:0; font-family:'Segoe UI',Arial,sans-serif;}
@@ -413,9 +420,6 @@ console.log("📝 Individual download student data:", {
   attendance: one.attendance
 });
 
-// ✅ Generate single PDF using the same complete data pipeline
-await generatePDF([one], true);
-
     // ✅ Generate single PDF using the same complete data pipeline
     await generatePDF([one], true);
     showToast("Download completed.");
@@ -813,12 +817,6 @@ for (let i = 0; i < 10; i++) {
   centerText(pdf, String(a.pres || ''), attPresCoords[i][0], attPresCoords[i][1], 60, COLOR_BROWN);
 }
 
-    // Attendance numbers font size 60
-    for (let i = 0; i < 10; i++) {
-      let a = student.attendance[i] || {work:'', pres:''};
-      centerText(pdf, String(a.work||''), attWorkCoords[i][0], attWorkCoords[i][1], 60, COLOR_GREEN);
-      centerText(pdf, String(a.pres||''), attPresCoords[i][0], attPresCoords[i][1], 60, COLOR_BROWN);
-    }
   }
   pdf.save(isSingle ? `progress_card_${fullDataArr[0].roll || 'student'}.pdf`
                     : `progress_cards_${classSel.options[classSel.selectedIndex].text}_${sectionSel.options[sectionSel.selectedIndex].text}.pdf`);
@@ -827,112 +825,114 @@ for (let i = 0; i < 10; i++) {
 // ========== PREVIEW RENDER ===============
 async function showPreviewPDF(stuArr) {
   let pdf;
+
   for (let idx = 0; idx < stuArr.length; idx++) {
-    let student = stuArr[idx];
+    const student = stuArr[idx];
     const memoImgData = await getMemo();
-if (idx===0) { pdf = new window.jspdf.jsPDF({orientation: "portrait", unit: "px", format: [2481, 3509]}); }
-else pdf.addPage([2481,3509], 'p');
-pdf.addImage(memoImgData, "PNG", 0, 0, 2481, 3509);
-    let exam = examSel.options[examSel.selectedIndex].textContent;
-    let examId = examSel.value;
-    let examObj = exams.find(e => e.id === examId);
+
+    // create/add page
+    if (idx === 0) {
+      pdf = new window.jspdf.jsPDF({ orientation: "portrait", unit: "px", format: [2481, 3509] });
+    } else {
+      pdf.addPage([2481, 3509], "p");
+    }
+    pdf.addImage(memoImgData, "PNG", 0, 0, 2481, 3509);
+
+    // header
+    const exam = examSel.options[examSel.selectedIndex].textContent;
     centerText(pdf, exam.toUpperCase(), HEAD_EXAM[0], HEAD_EXAM[1], HEAD_EXAM[2]);
-    leftText(pdf, student.name?.toUpperCase() || '', HEAD_NAME[0], HEAD_NAME[1], HEAD_NAME[2], COLOR_GREEN);
-    leftText(pdf, student.father?.toUpperCase() || '', HEAD_FATHER[0], HEAD_FATHER[1], HEAD_FATHER[2], COLOR_RED);
-    // Class (left)
-    leftText(pdf,
-   `${formatClass(student.class)}${student.section ? ' / ' + formatSection(student.section) : ''}`,
-    HEAD_CLASS[0], HEAD_CLASS[1], HEAD_CLASS[2], COLOR_GREEN
-  );
-    leftText(pdf, student.roll?.toString() || '', HEAD_ROLL[0], HEAD_ROLL[1], HEAD_ROLL[2], COLOR_GREEN);
-    leftText(pdf, student.percentage, HEAD_PERCENT[0], HEAD_PERCENT[1], HEAD_PERCENT[2], COLOR_GREEN);
+    leftText(pdf, student.name?.toUpperCase() || "",   HEAD_NAME[0],    HEAD_NAME[1],    HEAD_NAME[2],    COLOR_GREEN);
+    leftText(pdf, student.father?.toUpperCase() || "", HEAD_FATHER[0],  HEAD_FATHER[1],  HEAD_FATHER[2],  COLOR_RED);
+    leftText(pdf, `${formatClass(student.class)}${student.section ? ' / ' + formatSection(student.section) : ''}`,
+                    HEAD_CLASS[0],  HEAD_CLASS[1],  HEAD_CLASS[2],  COLOR_GREEN);
+    leftText(pdf, student.roll?.toString() || "",      HEAD_ROLL[0],    HEAD_ROLL[1],    HEAD_ROLL[2],    COLOR_GREEN);
+    leftText(pdf, student.percentage,                  HEAD_PERCENT[0], HEAD_PERCENT[1], HEAD_PERCENT[2], COLOR_GREEN);
     await drawStudentPhoto(pdf, student);
 
-    let [cx,cy,s] = HEAD_RANK;
-    pdf.setFillColor(120,80,30);
-    pdf.ellipse(cx+10, cy+15, 55, 40, 'F');
-    pdf.setFillColor(255,255,255);
-    pdf.setDrawColor(...COLOR_BROWN);
-    pdf.setLineWidth(8);
-    pdf.ellipse(cx, cy, 52, 35, 'FD');
-    pdf.setTextColor(0,0,0);
-    pdf.setFontSize(s);
-    pdf.setFont('helvetica','bold');
-    pdf.text(student.rank.toString(), cx, cy+33, {align:'center'});
+    // rank badge
+    const [cx, cy, s] = HEAD_RANK;
+    pdf.setFillColor(120, 80, 30); pdf.ellipse(cx+10, cy+15, 55, 40, "F");
+    pdf.setFillColor(255, 255, 255); pdf.setDrawColor(...COLOR_BROWN); pdf.setLineWidth(8);
+    pdf.ellipse(cx, cy, 52, 35, "FD"); pdf.setTextColor(0,0,0); pdf.setFontSize(s); pdf.setFont("helvetica", "bold");
+    pdf.text((student.rank ?? "").toString(), cx, cy + 33, { align: "center" });
     pdf.setLineWidth(1);
 
     /* --- Subject rows: dynamic for this exam (preview) --- */
-let rowSubs = Array.isArray(student.subjects) ? student.subjects : [];
+    let rowSubs = Array.isArray(student.subjects) ? student.subjects : [];
+    if (!rowSubs.length) {
+      const rec = await fetchStudentData(student);
+      rowSubs = Array.isArray(rec.subjects) ? rec.subjects : [];
+      if (typeof student.totalMarks !== "number" && typeof rec.totalMarks === "number") student.totalMarks = rec.totalMarks;
+      if (typeof student.totalMax   !== "number" && typeof rec.totalMax   === "number") student.totalMax   = rec.totalMax;
+      if (!student.attendance?.length && rec.attendance?.length) student.attendance = rec.attendance;
+    }
 
-// Safety net for preview path:
-if (!rowSubs.length) {
-  const rec = await fetchStudentData(student);
-  rowSubs = Array.isArray(rec.subjects) ? rec.subjects : [];
-  if (typeof student.totalMarks !== 'number' && typeof rec.totalMarks === 'number') student.totalMarks = rec.totalMarks;
-  if (typeof student.totalMax   !== 'number' && typeof rec.totalMax   === 'number') student.totalMax   = rec.totalMax;
-  if (!student.attendance?.length && rec.attendance?.length) student.attendance = rec.attendance;
-}
+    const { rowsY, totalY } = buildSubjectY(rowSubs.length);
 
-const { rowsY, totalY } = buildSubjectY(rowSubs.length);
+    let totalMarks = 0, totalMax = 0;
+    for (let i = 0; i < Math.min(rowSubs.length, rowsY.length); i++) {
+      const sObj   = rowSubs[i] || {};
+      const sMax   = (sObj.max   ?? "") === "" ? ""   : sObj.max;
+      const sMarks = (sObj.marks ?? "") === "" ? "AB" : sObj.marks;
+      const sGrade = sObj.grade ? String(sObj.grade).toUpperCase() : (sMarks === "AB" ? "AB" : "");
 
-let totalMarks = 0, totalMax = 0;
-for (let i = 0; i < rowSubs.length; i++) {
-  const s      = rowSubs[i] || {};
-  const sMax   = (s.max   ?? '') === '' ? ''   : s.max;
-  const sMarks = (s.marks ?? '') === '' ? 'AB' : s.marks;
-  const sGrade = s.grade ? String(s.grade).toUpperCase() : (sMarks === 'AB' ? 'AB' : '');
+      if (sMarks !== "AB" && !isNaN(+sMarks)) totalMarks += +sMarks;
+      if (sMax   !== ""   && !isNaN(+sMax))   totalMax   += +sMax;
 
-  if (sMarks !== 'AB' && !isNaN(+sMarks)) totalMarks += +sMarks;
-  if (sMax   !== ''   && !isNaN(+sMax))   totalMax   += +sMax;
+      centerText(pdf, sMax, X_MAX, rowsY[i], 60, COLOR_RED);
 
-  centerText(pdf, sMax, X_MAX, rowsY[i], 60, COLOR_RED);
+      if (sMarks !== "AB" && sMax && +sMax > 0 && !isNaN(+sMarks) && (+sMarks / +sMax) * 100 < 40) {
+        pdf.setDrawColor(...COLOR_RED); pdf.setLineWidth(4);
+        pdf.ellipse(X_MARKS, rowsY[i] - 10, 55, 38, "D");
+        pdf.setLineWidth(1);
+      }
+      centerText(pdf, String(sMarks), X_MARKS, rowsY[i], 60, COLOR_GREEN);
+      centerText(pdf, sGrade,         X_GRADE, rowsY[i], 60, COLOR_GRADE);
+    }
 
-  // Red ring for < 40%
-  if (sMarks !== 'AB' && sMax && +sMax > 0 && !isNaN(+sMarks) && (+sMarks / +sMax) * 100 < 40) {
-    pdf.setDrawColor(...COLOR_RED);
-    pdf.setLineWidth(4);
-    pdf.ellipse(X_MARKS, rowsY[i] - 10, 55, 38, 'D');
-    pdf.setLineWidth(1);
-  }
-  centerText(pdf, String(sMarks), X_MARKS, rowsY[i], 60, COLOR_GREEN);
-  centerText(pdf, sGrade,         X_GRADE, rowsY[i], 60, COLOR_GRADE);
-}
+    student.overallGrade = student.overallGrade || (totalMax > 0 ? (
+      ((totalMarks/totalMax)*100 >= 95) ? "A+" :
+      ((totalMarks/totalMax)*100 >= 90) ? "A"  :
+      ((totalMarks/totalMax)*100 >= 85) ? "B+" :
+      ((totalMarks/totalMax)*100 >= 80) ? "B"  :
+      ((totalMarks/totalMax)*100 >= 70) ? "C+" :
+      ((totalMarks/totalMax)*100 >= 60) ? "C"  :
+      ((totalMarks/totalMax)*100 >= 50) ? "D"  :
+      ((totalMarks/totalMax)*100 >= 40) ? "E"  : "F"
+    ) : "");
 
-student.overallGrade = student.overallGrade || (totalMax > 0 ? (
-  ((totalMarks/totalMax)*100 >= 95) ? 'A+' :
-  ((totalMarks/totalMax)*100 >= 90) ? 'A'  :
-  ((totalMarks/totalMax)*100 >= 85) ? 'B+' :
-  ((totalMarks/totalMax)*100 >= 80) ? 'B'  :
-  ((totalMarks/totalMax)*100 >= 70) ? 'C+' :
-  ((totalMarks/totalMax)*100 >= 60) ? 'C'  :
-  ((totalMarks/totalMax)*100 >= 50) ? 'D'  :
-  ((totalMarks/totalMax)*100 >= 40) ? 'E'  : 'F'
-) : '');
+    centerText(pdf, totalMax,             X_MAX,   totalY, 60, COLOR_RED);
+    centerText(pdf, totalMarks,           X_MARKS, totalY, 60, COLOR_GREEN);
+    centerText(pdf, student.overallGrade, X_GRADE, totalY, 60, COLOR_GRADE);
 
-centerText(pdf, totalMax,             X_MAX,   totalY, 60, COLOR_RED);
-centerText(pdf, totalMarks,           X_MARKS, totalY, 60, COLOR_GREEN);
-centerText(pdf, student.overallGrade, X_GRADE, totalY, 60, COLOR_GRADE);
-  let data = pdf.output('arraybuffer');
-  let loadingTask = window['pdfjsLib'].getDocument({data});
-  pdfPreview.innerHTML = '';
-  loadingTask.promise.then(function(pdfDoc) {
-    for(let i=1;i<=pdfDoc.numPages;i++) {
-      pdfDoc.getPage(i).then(function(page) {
-        let viewport = page.getViewport({scale: 0.19});
-        let canvas = document.createElement('canvas');
-        let ctx = canvas.getContext('2d');
+    // Attendance on preview
+    for (let i = 0; i < 10; i++) {
+      const a = (student.attendance && student.attendance[i]) || { work: "", pres: "" };
+      centerText(pdf, String(a.work || ""), attWorkCoords[i][0], attWorkCoords[i][1], 60, COLOR_GREEN);
+      centerText(pdf, String(a.pres || ""), attPresCoords[i][0], attPresCoords[i][1], 60, COLOR_BROWN);
+    }
+  } // ← end for loop
+
+  // SAFETY: if no pages were created
+  if (!pdf) { pdfPreview.innerHTML = ""; return; }
+
+  // Render the built PDF to canvases
+  const data = pdf.output("arraybuffer");
+  const loadingTask = window["pdfjsLib"].getDocument({ data });
+  pdfPreview.innerHTML = "";
+  loadingTask.promise.then(function (pdfDoc) {
+    for (let i = 1; i <= pdfDoc.numPages; i++) {
+      pdfDoc.getPage(i).then(function (page) {
+        const viewport = page.getViewport({ scale: 0.19 });
+        const canvas = document.createElement("canvas");
+        const ctx = canvas.getContext("2d");
         canvas.height = viewport.height;
-        canvas.width = viewport.width;
+        canvas.width  = viewport.width;
         pdfPreview.appendChild(canvas);
-        page.render({canvasContext: ctx, viewport: viewport});
+        page.render({ canvasContext: ctx, viewport });
       });
     }
   });
-}
-function showToast(msg) {
-  toastDiv.innerHTML = msg;
-  toastDiv.style.display = 'block';
-  setTimeout(()=>{toastDiv.style.display='none';}, 2000);
 }
 // INIT
 (async function() {
@@ -950,6 +950,7 @@ function showToast(msg) {
 </div>
 </body>
 </html>
+
 
 
 
