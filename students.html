@@ -1443,22 +1443,38 @@ function showExamSettingsPopup() {
                   <strong>${exam.name}</strong>
                   ${isAdmin ? `<button type="button" class="popup-action-btn" data-edit="${exam.id}" style="margin-left:10px;padding:2px 8px;font-size:0.9em;">Edit</button>` : ''}
                   <div style="margin-top:6px;margin-left:8px;font-size:0.99em;">
-                    ${Array.isArray(exam.subjects) && exam.subjects.length > 0
-                      ? exam.subjects.map(subj => `${subj.name} <span style="color:#888;">(Max: ${subj.max})</span>`).join(', ')
-                      : '<span style="color:#aaa;">No subjects</span>'
-                    }
-                  </div>
+                  ${Array.isArray(exam.subjects) && exam.subjects.length > 0
+                    ? exam.subjects.map(subj => `${subj.name} <span style="color:#888;">(Max: ${subj.max})</span>`).join(', ')
+                    : '<span style="color:#aaa;">No subjects</span>'
+                  }
                 </div>
+                <div style="margin-top:4px;margin-left:8px;font-size:0.95em;color:#444;">
+                  ${
+                    Array.isArray(exam.subtopics) && exam.subtopics.length > 0
+                      ? 'Subtopics: ' + exam.subtopics.map(st => `${st.name} <span style="color:#888;">(${st.max})</span>`).join(', ')
+                      : ''
+                  }
+                </div>
+               </div>
               `).join('')}
         </div>
         ${isAdmin ? `
       <form id="addExamForm" style="display:flex; flex-direction:column; max-height:58vh;">
         <div style="flex:1; overflow-y:auto; padding-right:4px;">
           <label>Exam Name</label>
-          <input name="examName" maxlength="30" required placeholder="e.g., FA1">
-          <label>Subjects</label>
-          <div id="subjectsContainer"></div>
-          <button type="button" id="addSubjectBtn"
+        <input name="examName" maxlength="30" required placeholder="e.g., FA1">
+        
+        <label>Subtopics</label>
+        <div id="subtopicsContainer"></div>
+        <button type="button" id="addSubtopicBtn"
+          style="margin:6px 0 14px 0; background:#1762a7;color:#fff;
+                 padding:7px 13px;border:none;border-radius:7px;font-weight:600;">
+          + Add Subtopic
+        </button>
+        
+        <label>Subjects</label>
+        <div id="subjectsContainer"></div>
+        <button type="button" id="addSubjectBtn"
             style="margin:6px 0 14px 0; background:#1762a7;color:#fff;
                    padding:7px 13px;border:none;border-radius:7px;font-weight:600;">
             + Add Subject
@@ -1512,29 +1528,33 @@ function showExamSettingsPopup() {
             db.collection('years').doc(academicYear)
               .collection('exams').doc('classGroups')
               .collection(classGroup)
-              .add({ name, nameKey, subjects })
+              .add({ name, nameKey, subjects, subtopics })
               .then(() => { closePopup(); showExamSettingsPopup(); });
           });
       });
 
-      // --- Subject Fields Logic ---
-      const subjectsContainer = popupContent.querySelector('#subjectsContainer');
-      const addSubjectBtn = popupContent.querySelector('#addSubjectBtn');
-      function addSubjectField(name = '', max = '') {
-        const idx = subjectsContainer.children.length;
+     // --- Subtopic Fields Logic (name + max, decimals allowed) ---
+      const subtopicsContainer = popupContent.querySelector('#subtopicsContainer');
+      const addSubtopicBtn = popupContent.querySelector('#addSubtopicBtn');
+      function addSubtopicField(name = '', max = '') {
+        const idx = subtopicsContainer.children.length;
         const div = document.createElement('div');
-        div.setAttribute("data-subject-row", "");
-        div.style = "display:flex;align-items:center;gap:8px;margin-bottom:7px;";
+        div.setAttribute('data-subtopic-row', '');
+        div.style = 'display:flex;align-items:center;gap:8px;margin-bottom:7px;';
         div.innerHTML = `
-         <input type="text" name="subjectName_${idx}" placeholder="Subject Name" value="${name}" required style="width:80%; padding: 8px; border-radius: 6px; border: 1px solid #c7d7ea; background: #f7fafd; margin-right:7px;" />
-         <input type="number" name="maxMarks_${idx}" placeholder="Max Marks" min="1" max="200" value="${max}" required style="width:25%; padding: 8px; border-radius: 6px; border: 1px solid #c7d7ea; background: #f7fafd;" />
-         ${isAdmin ? `<button type="button" class="option-btn" style="width: 70px; padding: 5px;" onclick="this.parentNode.remove()">Remove</button>` : ''}
+          <input type="text" data-subtopic-name placeholder="Subtopic Name" value="${name}"
+                 required style="width:80%; padding: 8px; border-radius: 6px; border: 1px solid #c7d7ea; background: #f7fafd; margin-right:7px;" />
+          <input type="number" data-subtopic-max placeholder="Max Marks" step="0.01"
+                 value="${max}" required style="width:25%; padding: 8px; border-radius: 6px; border: 1px solid #c7d7ea; background: #f7fafd;" />
+          ${isAdmin ? `<button type="button" class="option-btn" style="width: 70px; padding: 5px;" onclick="this.parentNode.remove()">Remove</button>` : ''}
         `;
-        subjectsContainer.appendChild(div);
+        subtopicsContainer.appendChild(div);
       }
-      addSubjectBtn.onclick = () => addSubjectField();
-      addSubjectField();
-
+      if (addSubtopicBtn) {
+        addSubtopicBtn.onclick = () => addSubtopicField();
+        // start with one empty row
+        addSubtopicField();
+      }
       // Attach Edit button handlers
       setTimeout(() => {
         popupContent.querySelectorAll('[data-edit]').forEach(btn => {
@@ -1564,6 +1584,15 @@ function showEditExamPopup(examId) {
           <div class="popup-title">Edit Exam</div>
           <label>Exam Name</label>
           <input name="examName" maxlength="30" required value="${exam.name}">
+          
+          <label>Subtopics</label>
+          <div id="editSubtopicsContainer"></div>
+          <button type="button" id="editAddSubtopicBtn"
+            style="margin:6px 0 14px 0; background:#1762a7;color:#fff;
+                   padding:7px 13px;border:none;border-radius:7px;font-weight:600;">
+            + Add Subtopic
+          </button>
+          
           <label>Subjects</label>
           <div id="editSubjectsContainer"></div>
           <button type="button" id="editAddSubjectBtn"
@@ -1598,6 +1627,58 @@ function showEditExamPopup(examId) {
           alert("Please enter exam name and at least one subject!");
           return;
         }
+        // --- Subtopics (name + max, decimals allowed, quietly deduped) ---
+let subtopics = [];
+{
+  const subC = popupContent.querySelector('#editSubtopicsContainer');
+  if (subC) {
+    const rows = subC.querySelectorAll('div[data-subtopic-row]');
+    rows.forEach(div => {
+      const nameInput = div.querySelector('input[data-subtopic-name]');
+      const maxInput  = div.querySelector('input[data-subtopic-max]');
+      const rawName = nameInput ? nameInput.value.trim() : '';
+      const rawMax  = maxInput  ? maxInput.value.trim()  : '';
+      if (!rawName) return;
+      const parsed = parseFloat(rawMax);
+      if (isNaN(parsed)) return;
+      subtopics.push({ name: rawName, max: parsed });
+    });
+  }
+  // quiet dedupe by name (case-insensitive, trimmed); keep first occurrence
+  const seen = new Set();
+  subtopics = subtopics.filter(st => {
+    const k = st.name.trim().toLowerCase();
+    if (!k || seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}
+        // --- Subtopics (name + max, decimals allowed, quietly deduped) ---
+let subtopics = [];
+{
+  const subC = popupContent.querySelector('#subtopicsContainer');
+  if (subC) {
+    const rows = subC.querySelectorAll('div[data-subtopic-row]');
+    rows.forEach(div => {
+      const nameInput = div.querySelector('input[data-subtopic-name]');
+      const maxInput  = div.querySelector('input[data-subtopic-max]');
+      const rawName = nameInput ? nameInput.value.trim() : '';
+      const rawMax  = maxInput  ? maxInput.value.trim()  : '';
+      if (!rawName) return;
+      const parsed = parseFloat(rawMax);
+      if (isNaN(parsed)) return;
+      subtopics.push({ name: rawName, max: parsed });
+    });
+  }
+  // quiet dedupe by name (case-insensitive, trimmed); keep first
+  const seen = new Set();
+  subtopics = subtopics.filter(st => {
+    const k = st.name.trim().toLowerCase();
+    if (!k || seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}
         // Check for duplicates (but exclude this examId itself)
         db.collection('years').doc(academicYear)
           .collection('exams').doc('classGroups')
@@ -1619,7 +1700,7 @@ function showEditExamPopup(examId) {
             db.collection('years').doc(academicYear)
               .collection('exams').doc('classGroups')
               .collection(classGroup).doc(examId)
-              .update({ name, nameKey, subjects })
+              .update({ name, nameKey, subjects, subtopics })
               .then(() => { 
                 closePopup(); 
                 showExamSettingsPopup(); 
@@ -1646,6 +1727,33 @@ function showEditExamPopup(examId) {
         exam.subjects.forEach(subj => addSubjectField(subj.name, subj.max));
       }
       addSubjectBtn.onclick = () => addSubjectField();
+      // --- Subtopic Fields Logic for Edit ---
+const editSubtopicsContainer = popupContent.querySelector('#editSubtopicsContainer');
+const editAddSubtopicBtn = popupContent.querySelector('#editAddSubtopicBtn');
+
+function editAddSubtopicField(name = '', max = '') {
+  const div = document.createElement('div');
+  div.setAttribute('data-subtopic-row', '');
+  div.style = 'display:flex;align-items:center;gap:8px;margin-bottom:7px;';
+  div.innerHTML = `
+    <input type="text" data-subtopic-name placeholder="Subtopic Name" value="${name}"
+           required style="width:80%; padding: 8px; border-radius: 6px; border: 1px solid #c7d7ea; background: #f7fafd; margin-right:7px;" />
+    <input type="number" data-subtopic-max placeholder="Max Marks" step="0.01"
+           value="${max}" required style="width:25%; padding: 8px; border-radius: 6px; border: 1px solid #c7d7ea; background: #f7fafd;" />
+    ${isAdmin ? `<button type="button" class="option-btn" style="width: 70px; padding: 5px;" onclick="this.parentNode.remove()">Remove</button>` : ''}
+  `;
+  editSubtopicsContainer.appendChild(div);
+}
+
+if (editAddSubtopicBtn) {
+  editAddSubtopicBtn.onclick = () => editAddSubtopicField();
+  // Prefill existing subtopics if any
+  if (exam.subtopics && Array.isArray(exam.subtopics) && exam.subtopics.length) {
+    exam.subtopics.forEach(st => editAddSubtopicField(st.name || '', (st.max ?? '').toString()));
+  } else {
+    editAddSubtopicField(); // start with one empty row
+  }
+}
     });
 }
 
@@ -2822,6 +2930,7 @@ function closeAbsenteesModal() {
 </script>
 </body>
 </html>
+
 
 
 
