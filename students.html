@@ -1830,8 +1830,13 @@ db.collection('years').doc(academicYear)
             const exam = exams.find(ex => ex.id === examId);
             const subj = (exam && exam.subjects) ? exam.subjects.find(s => s.name === subjectName) : null;
             const max = subj ? subj.max : 100;
+            const subtopics = Array.isArray(exam.subtopics) ? exam.subtopics : [];
+            
             // --- Begin: Marks Entry Popup Block ---
-            let marksData = {};
+            const hasSubs = subtopics.length > 0;
+            let marksData = {};       // overall total per student (number)
+            let breakdownData = {};   // per-subtopic map per student (object)
+            
             let marksPromises = students.map(stu =>
               db.collection('years').doc(academicYear)
                 .collection('classes').doc(currentClassId)
@@ -1839,32 +1844,86 @@ db.collection('years').doc(academicYear)
                 .collection('students').doc(stu.id)
                 .collection('marks').doc(examId)
                 .get().then(doc => {
-                  if (doc.exists && doc.data()[subjectName] !== undefined) {
-                    marksData[stu.id] = doc.data()[subjectName];
+                  if (!doc.exists) return;
+                  const d = doc.data() || {};
+                  if (d[subjectName] !== undefined) marksData[stu.id] = d[subjectName];
+                  if (hasSubs && d.__subs && d.__subs[subjectName]) {
+                    breakdownData[stu.id] = d.__subs[subjectName] || {};
                   }
                 })
             );
             Promise.all(marksPromises).then(() => {
-              let html2 = `
+             let html2 = `
                 <form id="marksEntryForm" style="max-height:77vh;overflow-y:auto;">
                   <div class="popup-title">Marks: ${exam.name} – ${subjectName} (Max: ${max})</div>
                   <div style="display:flex;flex-direction:column;gap:8px;">
+              
                     ${
                       students.length === 0
                         ? '<div style="color:#888;font-style:italic;">No students found.</div>'
-                        : students.map(stu => `
-                      <div class="marks-row">
-                      <span class="roll-name">${stu.roll ? stu.roll + '. ' : ''}${stu.name}</span>
-                      <input
-                        type="number"
-                        name="marks_${stu.id}"
-                        value="${marksData[stu.id] !== undefined ? marksData[stu.id] : ''}"
-                        min="0" max="${max}" step="1"
-                        class="marks-input"
-                      />
-                    </div>
-                    `).join('')
+                        : students.map(stu => {
+                            // two-line layout when subtopics exist
+                            if (hasSubs) {
+                              const subBoxes = (exam.subtopics || []).map(st => {
+                                const pre = (breakdownData[stu.id] && breakdownData[stu.id][st.name] != null)
+                                  ? breakdownData[stu.id][st.name]
+                                  : '';
+                                return `
+                                  <input
+                                    type="number"
+                                    class="marks-input sub-input"
+                                    data-stu="${stu.id}"
+                                    data-sub="${st.name.replace(/"/g, '&quot;')}"
+                                    placeholder="${st.name}"
+                                    step="0.01" min="0"
+                                    value="${pre}"
+                                    style="width:68px;"
+                                  />
+                                `;
+                              }).join('');
+              
+                              const totalPre = (marksData[stu.id] != null) ? marksData[stu.id] : '';
+              
+                              return `
+                                <div class="marks-row" style="flex-direction:column; align-items:flex-start;">
+                                  <span class="roll-name" style="margin-bottom:2px;">
+                                    ${stu.roll ? stu.roll + '. ' : ''}${stu.name}
+                                  </span>
+                                  <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                                    ${subBoxes}
+                                    <input
+                                      type="number"
+                                      class="marks-input total-input"
+                                      data-stu="${stu.id}"
+                                      placeholder="Total"
+                                      step="0.01" min="0" max="${max}"
+                                      value="${totalPre}"
+                                      readonly
+                                      style="width:78px;"
+                                    />
+                                    <small class="total-hint" data-stu="${stu.id}" style="color:#888;"></small>
+                                  </div>
+                                </div>
+                              `;
+                            }
+              
+                            // fallback: no subtopics → single total input (original flow)
+                            const soloPre = (marksData[stu.id] != null) ? marksData[stu.id] : '';
+                            return `
+                              <div class="marks-row">
+                                <span class="roll-name">${stu.roll ? stu.roll + '. ' : ''}${stu.name}</span>
+                                <input
+                                  type="number"
+                                  name="marks_${stu.id}"
+                                  value="${soloPre}"
+                                  min="0" max="${max}" step="1"
+                                  class="marks-input"
+                                />
+                              </div>
+                            `;
+                          }).join('')
                     }
+              
                   </div>
                   <div class="popup-btn-row" style="margin-top:12px;">
                     <button type="button" class="popup-cancel-btn">Cancel</button>
@@ -1874,29 +1933,83 @@ db.collection('years').doc(academicYear)
               `;
               showPopup(html2, 'marksEntryForm', function(ev) {
                 ev.preventDefault();
-                let formData = new FormData(ev.target);
-                let batch = db.batch();
-                students.forEach(stu => {
-  let marksStr = formData.get('marks_' + stu.id);
-  let markRef = db.collection('years').doc(academicYear)
-    .collection('classes').doc(currentClassId)
-    .collection('sections').doc(currentSectionId)
-    .collection('students').doc(stu.id).collection('marks').doc(examId);
+               let batch = db.batch();
 
-  if (marksStr === "" || marksStr == null) {
-    // Remove the field from Firestore
-    batch.set(markRef, { [subjectName]: firebase.firestore.FieldValue.delete() }, { merge: true });
-  } else {
-    let marks = parseFloat(marksStr);
-    batch.set(markRef, { [subjectName]: marks }, { merge: true });
-  }
-});
+          students.forEach(stu => {
+            const markRef = db.collection('years').doc(academicYear)
+              .collection('classes').doc(currentClassId)
+              .collection('sections').doc(currentSectionId)
+              .collection('students').doc(stu.id).collection('marks').doc(examId);
+          
+            // collect subtopic values
+            const subBoxes = popupContent.querySelectorAll(`.sub-input[data-stu="${stu.id}"]`);
+            let subsMap = {};
+            subBoxes.forEach(b => {
+              const name = b.getAttribute('data-subname');
+              const val  = parseFloat(b.value);
+              if (name && !isNaN(val)) subsMap[name] = val;
+            });
+          
+            // compute total
+            const totalEl = popupContent.querySelector(`.total-input[data-stu="${stu.id}"]`);
+            const totalVal = totalEl && totalEl.value !== '' ? parseFloat(totalEl.value) : NaN;
+          
+            if (Object.keys(subsMap).length === 0 && (isNaN(totalVal) || totalEl.value === '')) {
+              // nothing entered → delete this subject’s fields
+              batch.set(markRef, {
+                [subjectName]: firebase.firestore.FieldValue.delete(),
+                [`__subs.${subjectName}`]: firebase.firestore.FieldValue.delete()
+              }, { merge: true });
+            } else {
+              // save total and breakdown
+              const toSaveTotal = isNaN(totalVal) ? 0 : totalVal;
+              batch.set(markRef, {
+                [subjectName]: toSaveTotal,
+                [`__subs.${subjectName}`]: subsMap
+              }, { merge: true });
+            }
+          });
                  batch.commit().then(() => {
                   alert("Marks saved successfully!");
                   closePopup();
                 }).catch(error => alert("Error saving marks: " + error.message));
               });
             });
+            // Auto-sum per student
+setTimeout(() => {
+  function recomputeFor(stuId) {
+    const boxes = popupContent.querySelectorAll(`.sub-input[data-stu="${stuId}"]`);
+    let sum = 0;
+    boxes.forEach(b => {
+      const v = parseFloat(b.value);
+      if (!isNaN(v)) sum += v;
+    });
+    const totalEl = popupContent.querySelector(`.total-input[data-stu="${stuId}"]`);
+    const hintEl  = popupContent.querySelector(`.total-hint[data-stu="${stuId}"]`);
+    if (totalEl) totalEl.value = sum ? Number(sum.toFixed(2)) : '';
+    if (totalEl) totalEl.style.borderColor = sum > max ? '#d43f3a' : '#bbb';
+    if (hintEl) {
+      if (sum > max) {
+        hintEl.textContent = `> Max ${max}`;
+        hintEl.style.color = '#d43f3a';
+      } else {
+        hintEl.textContent = '';
+        hintEl.style.color = '#888';
+      }
+    }
+  }
+
+  // attach listeners
+  popupContent.querySelectorAll('.sub-input').forEach(inp => {
+    inp.addEventListener('input', () => {
+      const sid = inp.getAttribute('data-stu');
+      recomputeFor(sid);
+    });
+  });
+
+  // initial compute for any prefilled rows
+  students.forEach(s => recomputeFor(s.id));
+}, 50);
           });
       });
 
@@ -2947,6 +3060,7 @@ function closeAbsenteesModal() {
 </script>
 </body>
 </html>
+
 
 
 
