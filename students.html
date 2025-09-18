@@ -1981,41 +1981,52 @@ db.collection('years').doc(academicYear)
                 }).catch(error => alert("Error saving marks: " + error.message));
               });
             });
-            // Auto-sum per student
-setTimeout(() => {
-  function recomputeFor(stuId) {
-    const boxes = popupContent.querySelectorAll(`.sub-input[data-stu="${stuId}"]`);
-    let sum = 0;
-    boxes.forEach(b => {
-      const v = parseFloat(b.value);
-      if (!isNaN(v)) sum += v;
-    });
-    const totalEl = popupContent.querySelector(`.total-input[data-stu="${stuId}"]`);
-    const hintEl  = popupContent.querySelector(`.total-hint[data-stu="${stuId}"]`);
-    if (totalEl) totalEl.value = sum ? Number(sum.toFixed(2)) : '';
-    if (totalEl) totalEl.style.borderColor = sum > max ? '#d43f3a' : '#bbb';
-    if (hintEl) {
-      if (sum > max) {
-        hintEl.textContent = `> Max ${max}`;
-        hintEl.style.color = '#d43f3a';
-      } else {
-        hintEl.textContent = '';
-        hintEl.style.color = '#888';
-      }
-    }
-  }
-
-  // attach listeners
-  popupContent.querySelectorAll('.sub-input').forEach(inp => {
-    inp.addEventListener('input', () => {
-      const sid = inp.getAttribute('data-stu');
-      recomputeFor(sid);
-    });
-  });
-
-  // initial compute for any prefilled rows
-  students.forEach(s => recomputeFor(s.id));
-}, 50);
+            // Auto-sum per student (after DOM fully painted)
+          {
+            const nextFrame = () => new Promise(r => requestAnimationFrame(r));
+            (async () => {
+              // wait 2 frames to ensure inputs are in the DOM
+              await nextFrame(); 
+              await nextFrame();
+          
+              function recomputeFor(stuId) {
+                const boxes = popupContent.querySelectorAll(`.sub-input[data-stu="${stuId}"]`);
+                let sum = 0;
+                boxes.forEach(b => {
+                  const v = parseFloat(b.value);
+                  if (!isNaN(v)) sum += v;
+                });
+          
+                const totalEl = popupContent.querySelector(`.total-input[data-stu="${stuId}"]`);
+                const hintEl  = popupContent.querySelector(`.total-hint[data-stu="${stuId}"]`);
+          
+                if (totalEl) {
+                  totalEl.value = boxes.length ? Number(sum.toFixed(2)) : '';
+                  totalEl.style.borderColor = sum > max ? '#d43f3a' : '#bbb';
+                }
+                if (hintEl) {
+                  if (sum > max) { 
+                    hintEl.textContent = `> Max ${max}`;
+                    hintEl.style.color = '#d43f3a';
+                  } else {
+                    hintEl.textContent = '';
+                    hintEl.style.color = '#888';
+                  }
+                }
+              }
+          
+              // attach multiple event types for reliability on mobile
+              popupContent.querySelectorAll('.sub-input').forEach(inp => {
+                const sid = inp.getAttribute('data-stu');
+                ['input','change','keyup','blur'].forEach(evt =>
+                  inp.addEventListener(evt, () => recomputeFor(sid))
+                );
+              });
+          
+              // initial compute (prefilled values)
+              students.forEach(s => recomputeFor(s.id));
+            })();
+          }
           });
       });
 
@@ -3066,6 +3077,7 @@ function closeAbsenteesModal() {
 </script>
 </body>
 </html>
+
 
 
 
