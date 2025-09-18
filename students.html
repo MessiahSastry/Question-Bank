@@ -1879,7 +1879,7 @@ db.collection('years').doc(academicYear)
                                       type="number"
                                       class="marks-input sub-input"
                                       data-stu="${stu.id}"
-                                      data-sub="${st.name.replace(/"/g, '&quot;')}"
+                                      data-subname="${st.name.replace(/"/g, '&quot;')}"
                                       step="0.01" min="0"
                                       value="${pre}"
                                       style="width:90px; text-align:right;"
@@ -1980,6 +1980,45 @@ db.collection('years').doc(academicYear)
                   closePopup();
                 }).catch(error => alert("Error saving marks: " + error.message));
               });
+              // Auto-sum per student (robust, with event delegation)
+              {
+                function recomputeFor(stuId) {
+                  const boxes = popupContent.querySelectorAll(`.sub-input[data-stu="${stuId}"]`);
+                  let sum = 0;
+                  boxes.forEach(b => {
+                    const v = parseFloat(b.value);
+                    if (!isNaN(v)) sum += v;
+                  });
+              
+                  const totalEl = popupContent.querySelector(`.total-input[data-stu="${stuId}"]`);
+                  const hintEl  = popupContent.querySelector(`.total-hint[data-stu="${stuId}"]`);
+              
+                  if (totalEl) {
+                    totalEl.value = boxes.length ? Number(sum.toFixed(2)) : '';
+                    totalEl.style.borderColor = sum > max ? '#d43f3a' : '#bbb';
+                  }
+                  if (hintEl) {
+                    if (sum > max) {
+                      hintEl.textContent = `> Max ${max}`;
+                      hintEl.style.color = '#d43f3a';
+                    } else {
+                      hintEl.textContent = '';
+                      hintEl.style.color = '#888';
+                    }
+                  }
+                }
+              
+                // One listener for all subtopic inputs (works well on mobile)
+                popupContent.addEventListener('input', (e) => {
+                  if (e.target && e.target.classList.contains('sub-input')) {
+                    const sid = e.target.getAttribute('data-stu');
+                    recomputeFor(sid);
+                  }
+                });
+              
+                // Initial compute after the DOM is painted
+                setTimeout(() => { students.forEach(s => recomputeFor(s.id)); }, 0);
+              }
             });
             // Auto-sum per student (after DOM fully painted)
           {
@@ -3077,6 +3116,7 @@ function closeAbsenteesModal() {
 </script>
 </body>
 </html>
+
 
 
 
