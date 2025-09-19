@@ -861,71 +861,86 @@ examList.onclick = function(e) {
     return `<tr style="background:${bgcolor};min-height:${rowPx}px;height:${rowPx}px;">${tds}</tr>`;
   }
 
-     // Page metrics (A4 landscape height is 21cm). SAME margins as html2pdf.
-    const CM_TO_PX = 37.795;
-const TOP_CM = 0, RIGHT_CM = 1, BOTTOM_CM = 1.27, LEFT_CM = 1; // no top margin
-const pageContentHeightPx = (21 - TOP_CM - BOTTOM_CM) * CM_TO_PX;
-const SAFETY_PX = 8; // small buffer to avoid overflow
+     // Page metrics (A4 landscape). Keep margins in sync with html2pdf.
+const CM_TO_PX = 37.795;
+const TOP_CM = 0.10, RIGHT_CM = 1, BOTTOM_CM = 1.27, LEFT_CM = 1; // small top margin
+const CONTENT_H_PX = (21 - TOP_CM - BOTTOM_CM) * CM_TO_PX;
+const CONTENT_W_PX = (29.7 - LEFT_CM - RIGHT_CM) * CM_TO_PX;
+const SAFETY_PX = 6; // tiny buffer
 
-  let studentCount = students.length;
-  let rowHeight = 26;
-  if (studentCount <= 35)      { rowHeight = 26; }
-  else if (studentCount <= 40) { rowHeight = 17; }
-  else if (studentCount <= 45) { rowHeight = 13; }
-  else if (studentCount <= 50) { rowHeight = 9.5; }
-  else if (studentCount <= 60) { rowHeight = 7.6; }
-  else                         { rowHeight = 5.8; }
-  const rowPx = Math.max(24, rowHeight);
+let studentCount = students.length;
+let rowHeight = 26;
+if (studentCount <= 35)      { rowHeight = 26; }
+else if (studentCount <= 40) { rowHeight = 17; }
+else if (studentCount <= 45) { rowHeight = 13; }
+else if (studentCount <= 50) { rowHeight = 9.5; }
+else if (studentCount <= 60) { rowHeight = 7.6; }
+else                         { rowHeight = 5.8; }
+const rowPx = Math.max(24, rowHeight);
 
-// Measure ACTUAL heading height (first page)
-const headingProbe = document.createElement('div');
-headingProbe.style.cssText = 'position:absolute;visibility:hidden;left:-9999px;top:-9999px;';
-headingProbe.innerHTML = `
-  <div style="width:100%;text-align:center;margin-top:-8px;margin-bottom:0;padding-top:0;">
-    <div style="display:inline-flex;align-items:center;justify-content:center;">
-      <img src="schoollogo1.png" style="height:110px;width:auto;max-width:140px;border-radius:8px;margin-right:10px;" onerror="this.style.display='none'">
-      <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:110px;line-height:1.09;">
-        <span style="font-size:2.19em;font-weight:bold;letter-spacing:0.01em;font-family:'Times New Roman', Times, serif;color:#c81929;line-height:1.08;">St. Patrick's School</span>
-        <span style="font-size:1.19em;font-weight:700;color:#224a74;letter-spacing:0.01em;line-height:1.06;">IIT & NEET FOUNDATION</span>
-        <span style="font-size:1.17em;font-weight:bold;letter-spacing:0.01em;color:#187141;line-height:1.05;">${className}${sectionName ? ' - ' + sectionName : ''}</span>
-        <span style="font-size:1.12em;font-weight:bold;color:#b80000;letter-spacing:0.01em;line-height:1.05;">${selectedExamObj.name} Results</span>
+// Build the SAME heading HTML used on page 1
+function headingHTML() {
+  return `
+    <div style="width:100%;text-align:center;margin-top:0;margin-bottom:0;">
+      <div style="display:inline-flex;align-items:center;justify-content:center;">
+        <img src="schoollogo1.png" style="display:block;height:110px;width:auto;max-width:140px;border-radius:8px;margin-right:10px;" onerror="this.style.display='none';">
+        <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:110px;line-height:1.09;">
+          <span style="font-size:2.19em;font-weight:bold;letter-spacing:0.01em;font-family:'Times New Roman', Times, serif;color:#c81929;line-height:1.08;">
+            St. Patrick's School
+          </span>
+          <span style="font-size:1.19em;font-weight:700;color:#224a74;letter-spacing:0.01em;line-height:1.06;">
+            IIT & NEET FOUNDATION
+          </span>
+          <span style="font-size:1.17em;font-weight:bold;letter-spacing:0.01em;color:#187141;line-height:1.05;">
+            ${className}${sectionName ? ' - ' + sectionName : ''}
+          </span>
+          <span style="font-size:1.12em;font-weight:bold;color:#b80000;letter-spacing:0.01em;line-height:1.05;">
+            ${selectedExamObj.name} Results
+          </span>
+        </div>
+        <img src="schoollogo2.png" style="display:block;height:110px;width:auto;max-width:140px;border-radius:8px;margin-left:10px;" onerror="this.style.display='none';">
       </div>
-      <img src="schoollogo2.png" style="height:110px;width:auto;max-width:140px;border-radius:8px;margin-left:10px;" onerror="this.style.display='none'">
-    </div>
-  </div>`;
-document.body.appendChild(headingProbe);
-const HEADING_PX = Math.ceil(headingProbe.getBoundingClientRect().height);
-document.body.removeChild(headingProbe);
+    </div>`;
+}
 
-// Measure ACTUAL TABLE HEADER using your exact <th> markup + borders/padding
-const theadProbeDiv = document.createElement('div');
-theadProbeDiv.style.cssText = 'position:absolute;visibility:hidden;left:-9999px;top:-9999px;';
-theadProbeDiv.innerHTML = `
-  <style>
-    td, th { border:1px solid #444; padding:0 1px; white-space:nowrap; font-size:0.98em; }
-  </style>
-  <table cellspacing="0" cellpadding="0"
-         style="border-collapse:collapse;width:100%;font-size:0.70em;line-height:1.12;table-layout:auto;">
-    <thead>
-      <tr style="background:#1762a7;color:#fff;font-weight:bold;">
-        ${tableHeaders}
-      </tr>
-    </thead>
-  </table>`;
-document.body.appendChild(theadProbeDiv);
-const TABLE_HEADER_PX = Math.ceil(theadProbeDiv.getBoundingClientRect().height);
-document.body.removeChild(theadProbeDiv);
+// Measure how many rows fit given the actual DOM rendering
+function countRowsFit(includeHeading) {
+  const probe = document.createElement('div');
+  probe.style.cssText = `position:absolute;visibility:hidden;left:-9999px;top:-9999px;width:${CONTENT_W_PX}px;`;
+  probe.innerHTML = `
+    <style>
+      tr { page-break-inside: avoid !important; }
+      td, th { border: 1px solid #444 !important; padding: 0 1px; white-space: nowrap; font-size: 0.98em; }
+    </style>
+    <div style="font-family:'Times New Roman', Times, serif; color:#1a1a1a;">
+      ${includeHeading ? headingHTML() : ''}
+      <table cellspacing="0" cellpadding="0" style="border-collapse:collapse;width:100%;font-size:0.70em;margin-top:0;text-align:center;line-height:1.12;table-layout:auto;word-break:break-word;margin-bottom:10px;">
+        <thead>
+          <tr style="background:#1762a7;color:#fff;font-weight:bold;">${tableHeaders}</tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>`;
+  document.body.appendChild(probe);
+  const tbody = probe.querySelector('tbody');
 
-// Account for per-row border accumulation (shared borders ≈ ~1–1.5px/row)
-const PER_ROW_OVERHEAD = 1.5;
+  let fit = 0;
+  for (let i = 0; i < rankedRows.length; i++) {
+    tbody.insertAdjacentHTML('beforeend', buildRowHtml(rankedRows[i], i, rowPx));
+    // stop when the total height exceeds the available content height
+    if (probe.getBoundingClientRect().height > (CONTENT_H_PX - SAFETY_PX)) {
+      tbody.lastElementChild.remove();
+      break;
+    }
+    fit++;
+  }
+  document.body.removeChild(probe);
+  return Math.max(1, fit);
+}
 
-// Compute rows per page using measured heights
-let rowsOnFirstPage = Math.max(1,
-  Math.floor((pageContentHeightPx - HEADING_PX - TABLE_HEADER_PX - SAFETY_PX) / (rowPx + PER_ROW_OVERHEAD))
-);
-let rowsOnNextPages = Math.max(1,
-  Math.floor((pageContentHeightPx - TABLE_HEADER_PX - SAFETY_PX) / (rowPx + PER_ROW_OVERHEAD))
-);
+let rowsOnFirstPage = countRowsFit(true);
+// reserve one row on later pages for the repeated header we’ll insert in <tbody>
+let rowsOnNextPages = Math.max(1, countRowsFit(false) - 1);
 
   let pagesHtml = [];
   let start = 0;
@@ -936,16 +951,22 @@ let rowsOnNextPages = Math.max(1,
     const slice = rankedRows.slice(start, start + perPage);
     const rowsHtml = slice.map((row, idx) => buildRowHtml(row, start + idx, rowPx)).join('');
 
-    const tableHtml = `
-      <table cellspacing="0" cellpadding="0" style="border-collapse:collapse;width:100%;max-width:100%;font-size:0.70em;margin-top:0;text-align:center;line-height:1.12;table-layout:auto;word-break:break-word;margin-bottom:10px;">
-        <thead>
-          <tr style="background:#1762a7;color:#fff;font-weight:bold;">${tableHeaders}</tr>
-        </thead>
-        <tbody>
-          ${rowsHtml}
-        </tbody>
-      </table>
-    `;
+    // Duplicate the header row inside <tbody> for pages after the first
+const repeatHeaderHtml = (pageIndex === 0)
+  ? ''
+  : `<tr class="repeat-header" style="background:#1762a7;color:#fff;font-weight:bold;">${tableHeaders}</tr>`;
+
+const tableHtml = `
+  <table cellspacing="0" cellpadding="0" style="border-collapse:collapse;width:100%;max-width:100%;font-size:0.70em;margin-top:0;text-align:center;line-height:1.12;table-layout:auto;word-break:break-word;margin-bottom:10px;">
+    <thead>
+      <tr style="background:#1762a7;color:#fff;font-weight:bold;">${tableHeaders}</tr>
+    </thead>
+    <tbody>
+      ${repeatHeaderHtml}
+      ${rowsHtml}
+    </tbody>
+  </table>
+`;
 
    const headingBlockHtml = (pageIndex === 0) ? `
   <div style="width:100%;text-align:center;margin-top:0;margin-bottom:0;">
@@ -1020,6 +1041,7 @@ let rowsOnNextPages = Math.max(1,
  </script>
 </body>
 </html>
+
 
 
 
