@@ -141,13 +141,32 @@
     <div class="setup-form-container">
       <h2 id="classSectionHeading">Class & Section</h2>
 
-      <div class="form-row">
-        <div class="form-label">Select Exam:</div>
-        <div class="custom-dropdown" id="examDropdown" tabindex="0" style="margin-bottom: 18px;">
-          <div class="dropdown-selected" id="examSelected" data-value="">--Select--</div>
-          <div class="dropdown-list" id="examList"></div>
-        </div>
-      </div>
+<!-- Select Class -->
+<div class="form-row">
+  <div class="form-label">Select Class:</div>
+  <div class="custom-dropdown" id="classDropdown" tabindex="0" style="margin-bottom: 18px;">
+    <div class="dropdown-selected" id="classSelected" data-id="">--Select--</div>
+    <div class="dropdown-list" id="classList"></div>
+  </div>
+</div>
+
+<!-- Select Section (hidden until a class is chosen) -->
+<div class="form-row" id="sectionRow" style="display:none;">
+  <div class="form-label">Select Section:</div>
+  <div class="custom-dropdown" id="sectionDropdown" tabindex="0" style="margin-bottom: 18px;">
+    <div class="dropdown-selected" id="sectionSelected" data-id="">--Select--</div>
+    <div class="dropdown-list" id="sectionList"></div>
+  </div>
+</div>
+
+<!-- Select Exam -->
+<div class="form-row">
+  <div class="form-label">Select Exam:</div>
+  <div class="custom-dropdown" id="examDropdown" tabindex="0" style="margin-bottom: 18px;">
+    <div class="dropdown-selected" id="examSelected" data-value="">--Select--</div>
+    <div class="dropdown-list" id="examList"></div>
+  </div>
+</div>
       <button class="download-btn" id="excelBtn" disabled>
         <i class="fa-solid fa-file-excel"></i> Download Excel
       </button>
@@ -240,7 +259,144 @@ function getShortSubjectName(subj) {
   let students = [];
   let marksMap = {}; // [studentId][examId]={subj:mark,...}
   let selectedExam = null, selectedExamObj = null;
-  
+  let isExporting = false; // prevents double-clicks while generating files
+  // Load classes for the selected academicYear
+async function loadClasses() {
+  try {
+    classSelected.textContent = 'Loading...';
+    classSelected.dataset.id = '';
+    classList.innerHTML = '';
+    sectionRow.style.display = 'none';
+    sectionSelected.textContent = '--Select--';
+    sectionSelected.dataset.id = '';
+    sectionList.innerHTML = '';
+
+    if (!academicYear) {
+      statusDiv.textContent = "Academic year not set.";
+      classSelected.textContent = "--Select--";
+      return;
+    }
+
+    const snap = await db.collection('years').doc(academicYear)
+      .collection('classes').orderBy('name').get();
+
+    const classDocs = [];
+    snap.forEach(doc => classDocs.push({ id: doc.id, ...(doc.data() || {}) }));
+
+    if (!classDocs.length) {
+      classSelected.textContent = "--Select--";
+      classList.innerHTML = `<div class="dropdown-option" style="color:#aaa;cursor:default;">No classes</div>`;
+      return;
+    }
+
+    classList.innerHTML = classDocs.map(c =>
+      `<div class="dropdown-option" data-id="${c.id}" data-name="${c.name || c.id}">${c.name || c.id}</div>`
+    ).join('');
+
+    // Preselect from storage if possible
+    const stored = classDocs.find(c => c.id === classId);
+    if (stored) {
+      setSelectedClass(stored, { fromPreselect: true });
+    } else {
+      classSelected.textContent = "--Select--";
+    }
+  } catch (err) {
+    statusDiv.textContent = "Error: " + err.message;
+    classSelected.textContent = "--Select--";
+  }
+}
+
+// Load sections for a given class
+async function loadSectionsForClass(classIdToLoad) {
+  try {
+    sectionRow.style.display = 'block';
+    sectionSelected.textContent = 'Loading...';
+    sectionSelected.dataset.id = '';
+    sectionList.innerHTML = '';
+
+    const snap = await db.collection('years').doc(academicYear)
+      .collection('classes').doc(classIdToLoad)
+      .collection('sections').orderBy('name').get();
+
+    const secDocs = [];
+    snap.forEach(doc => secDocs.push({ id: doc.id, ...(doc.data() || {}) }));
+
+    if (!secDocs.length) {
+      sectionSelected.textContent = "--Select--";
+      sectionList.innerHTML = `<div class="dropdown-option" style="color:#aaa;cursor:default;">No sections</div>`;
+      return;
+    }
+
+    sectionList.innerHTML = secDocs.map(s =>
+      `<div class="dropdown-option" data-id="${s.id}" data-name="${s.name || s.id}">${s.name || s.id}</div>`
+    ).join('');
+
+    // Preselect from storage if possible
+    const storedSec = secDocs.find(s => s.id === sectionId);
+    if (storedSec) {
+      setSelectedSection(storedSec, { fromPreselect: true });
+    } else {
+      sectionSelected.textContent = "--Select--";
+    }
+  } catch (err) {
+    statusDiv.textContent = "Error: " + err.message;
+    sectionSelected.textContent = "--Select--";
+  }
+}
+
+// Set selected class (updates UI, storage, and loads sections)
+function setSelectedClass(cls, opts = {}) {
+  classId = cls.id;
+  className = cls.name || cls.id;
+  localStorage.setItem('sp_selectedClassId', classId);
+  localStorage.setItem('sp_selectedClassName', className);
+
+  classSelected.dataset.id = classId;
+  classSelected.textContent = className;
+
+  // Reset section & exam until chosen
+  sectionSelected.textContent = "--Select--";
+  sectionSelected.dataset.id = "";
+  sectionList.innerHTML = "";
+  sectionRow.style.display = 'block';
+
+  selectedExam = null;
+  selectedExamObj = null;
+  examSelected.textContent = "--Select--";
+  examSelected.dataset.value = "";
+  examList.innerHTML = "";
+  examSelected.classList.add('disabled');
+  excelBtn.disabled = pdfBtn.disabled = true;
+  statusDiv.textContent = "";
+
+  refreshHeading();
+  loadSectionsForClass(classId);
+}
+
+// Set selected section (updates UI, storage, and then loads exams & students)
+function setSelectedSection(sec, opts = {}) {
+  sectionId = sec.id;
+  sectionName = sec.name || sec.id;
+  localStorage.setItem('sp_selectedSectionId', sectionId);
+  localStorage.setItem('sp_selectedSectionName', sectionName);
+
+  sectionSelected.dataset.id = sectionId;
+  sectionSelected.textContent = sectionName;
+
+  // Reset exam until loaded
+  selectedExam = null;
+  selectedExamObj = null;
+  examSelected.textContent = "--Select--";
+  examSelected.dataset.value = "";
+  examList.innerHTML = "";
+  examSelected.classList.add('disabled');
+  excelBtn.disabled = pdfBtn.disabled = true;
+  statusDiv.textContent = "";
+
+  refreshHeading();
+  // Use your existing loader (it reads classId/sectionId from vars/localStorage)
+  loadExams();
+}
   // -- DOM refs --
   const examDropdown = document.getElementById('examDropdown');
   const examSelected = document.getElementById('examSelected');
@@ -249,6 +405,31 @@ function getShortSubjectName(subj) {
   const pdfBtn = document.getElementById('pdfBtn');
   const statusDiv = document.getElementById('status');
   const headerYear = document.getElementById('header-year');
+  // Class/Section dropdown refs
+const classDropdown   = document.getElementById('classDropdown');
+const classSelected   = document.getElementById('classSelected');
+const classList       = document.getElementById('classList');
+const sectionRow      = document.getElementById('sectionRow');
+const sectionDropdown = document.getElementById('sectionDropdown');
+const sectionSelected = document.getElementById('sectionSelected');
+const sectionList     = document.getElementById('sectionList');
+
+// Helper to refresh page heading
+function refreshHeading() {
+  document.getElementById('classSectionHeading').textContent =
+    (className ? className : 'Class') +
+    (sectionName ? (' – ' + sectionName + ' Section') : ' – Section');
+}
+// Remember last-picked exam per (year, class, section)
+function lastExamKey() {
+  return `sp_lastExam_${academicYear || ''}_${classId || ''}_${sectionId || ''}`;
+}
+function saveLastExam(examId) {
+  try { localStorage.setItem(lastExamKey(), examId || ''); } catch(e){}
+}
+function loadLastExam() {
+  try { return localStorage.getItem(lastExamKey()) || ''; } catch(e){ return ''; }
+}
 
   // -- Get session/class/section from storage (as in your other htmls) --
   let academicYear = localStorage.getItem('sp_selectedYear') || '';
@@ -264,139 +445,211 @@ function getShortSubjectName(subj) {
   headerYear.textContent = academicYear ? `${academicYear}` : '';
 
   // ------------- LOAD DATA -----------
-  auth.onAuthStateChanged(function(user) {
-    if (!user) {
-      statusDiv.textContent = "Please login.";
-      pdfBtn.disabled = excelBtn.disabled = true;
-      return;
-    }
-    loadExams();
-  });
+auth.onAuthStateChanged(function(user) {
+  if (!user) {
+    statusDiv.textContent = "Please login.";
+    pdfBtn.disabled = excelBtn.disabled = true;
+    return;
+  }
+  // Disable exam UI until class & section chosen
+  examSelected.textContent = "--Select--";
+  examSelected.dataset.value = "";
+  examSelected.classList.add('disabled');
+  excelBtn.disabled = pdfBtn.disabled = true;
+  statusDiv.textContent = "";
+
+  loadClasses(); // Step 2C will add this
+});
 
   async function loadExams() {
-    // Show loading in dropdown
+  try {
+    // Reset & disable exam UI while loading
     examSelected.textContent = 'Loading...';
     examSelected.dataset.value = '';
-    examList.innerHTML = '';
     examSelected.classList.add('disabled');
-    excelBtn.disabled = pdfBtn.disabled = true;
+    examList.innerHTML = '';
+    excelBtn.disabled = true;
+    pdfBtn.disabled = true;
     statusDiv.textContent = "";
 
     if (!academicYear || !classId || !sectionId) {
-      statusDiv.textContent = "Class or section not selected.";
+      statusDiv.textContent = "Select class & section first.";
       examSelected.textContent = "--Select--";
-      examSelected.classList.add('disabled');
       return;
     }
-    try {
-      // 1. Exams for class group
-      let classGroup = getClassGroupName(className);
-      let examsSnap = await db.collection('years').doc(academicYear)
-        .collection('exams').doc('classGroups')
-        .collection(classGroup).orderBy('name').get();
-      exams = [];
-      examMap = {};
-      examsSnap.forEach(doc => {
-        let ex = doc.data();
-        ex.id = doc.id;
-        exams.push(ex);
-        examMap[ex.id] = ex;
-      });
-      if (!exams.length) {
-        statusDiv.textContent = "No exams found for this class group.";
-        examList.innerHTML = `<div class="dropdown-option" style="color:#aaa;cursor:default;">No exams</div>`;
-        examSelected.textContent = "--Select--";
-        examSelected.classList.add('disabled');
-        return;
-      }
-      // 2. List exams in dropdown
-      examList.innerHTML = exams.map(ex => 
-        `<div class="dropdown-option" data-id="${ex.id}">${ex.name}</div>`
-      ).join('');
-      examSelected.textContent = "--Select--";
-      examSelected.dataset.value = '';
-      examSelected.classList.remove('disabled');
-      // 3. Students for section
-      let studentsSnap = await db.collection('years').doc(academicYear)
-        .collection('classes').doc(classId)
-        .collection('sections').doc(sectionId)
-        .collection('students').orderBy('roll').get();
-      students = [];
-      studentsSnap.forEach(doc => {
-        let s = doc.data();
-        if (!s.isDeleted) students.push({ id: doc.id, ...s });
-      });
-      // 4. Preload marks for all students for all exams
-      marksMap = {};
-      for (let stu of students) {
-        marksMap[stu.id] = {};
-        for (let ex of exams) {
-          let markDoc = await db.collection('years').doc(academicYear)
-            .collection('classes').doc(classId)
-            .collection('sections').doc(sectionId)
-            .collection('students').doc(stu.id)
-            .collection('marks').doc(ex.id).get();
-          marksMap[stu.id][ex.id] = markDoc.exists ? markDoc.data() : {};
-        }
-      }
-      statusDiv.textContent = "";
-      excelBtn.disabled = pdfBtn.disabled = false;
-    } catch (err) {
-      statusDiv.textContent = "Error: " + err.message;
-      examSelected.textContent = "--Select--";
-      examSelected.classList.add('disabled');
-    }
-  }
 
-  // ---- Modern Dropdown Logic ----
-  examSelected.onclick = function(e) {
-    if (examSelected.classList.contains('disabled')) return;
-    examList.style.display = (examList.style.display === 'block') ? 'none' : 'block';
-    e.stopPropagation();
-  };
-  document.addEventListener('click', function(e) {
-    examList.style.display = 'none';
-  });
-  examList.onclick = function(e) {
-    const opt = e.target.closest('.dropdown-option');
-    if (!opt) return;
-    examSelected.textContent = opt.textContent;
-    examSelected.dataset.value = opt.dataset.id;
-    examList.style.display = 'none';
-    selectedExam = opt.dataset.id;
-    selectedExamObj = examMap[selectedExam];
-  };
+    // 1) Load exams for CURRENT class group
+    const classGroup = getClassGroupName(className);
+    const examsSnap = await db.collection('years').doc(academicYear)
+      .collection('exams').doc('classGroups')
+      .collection(classGroup).orderBy('name').get();
+
+    exams = [];
+    examMap = {};
+    examsSnap.forEach(doc => {
+      let ex = doc.data() || {};
+      ex.id = doc.id;
+      exams.push(ex);
+      examMap[ex.id] = ex;
+    });
+
+    if (!exams.length) {
+      statusDiv.textContent = "No exams found for this class group.";
+      examSelected.textContent = "--Select--";
+      return;
+    }
+
+    // Fill exam dropdown (don’t auto-select)
+    examList.innerHTML = exams.map(ex =>
+      `<div class="dropdown-option" data-id="${ex.id}">${ex.name}</div>`
+    ).join('');
+    examSelected.textContent = "--Select--";
+    // Try to preselect the last-used exam for this (year, class, section)
+const last = loadLastExam();
+if (last && examMap[last]) {
+  selectedExam = last;
+  selectedExamObj = examMap[last];
+  examSelected.textContent = selectedExamObj.name;
+  examSelected.dataset.value = last;
+  // Data already preloaded above, so enable buttons
+  excelBtn.disabled = false;
+  pdfBtn.disabled  = false;
+}
+
+    // 2) Load students for CURRENT section
+    const studentsSnap = await db.collection('years').doc(academicYear)
+      .collection('classes').doc(classId)
+      .collection('sections').doc(sectionId)
+      .collection('students').orderBy('roll').get();
+
+    students = [];
+    studentsSnap.forEach(doc => {
+      const s = doc.data() || {};
+      if (!s.isDeleted) students.push({ id: doc.id, ...s });
+    });
+
+    // 3) Preload marks for ALL exams (keep existing behavior)
+    marksMap = {};
+    for (const stu of students) {
+      marksMap[stu.id] = {};
+      for (const ex of exams) {
+        const markDoc = await db.collection('years').doc(academicYear)
+          .collection('classes').doc(classId)
+          .collection('sections').doc(sectionId)
+          .collection('students').doc(stu.id)
+          .collection('marks').doc(ex.id).get();
+        marksMap[stu.id][ex.id] = markDoc.exists ? (markDoc.data() || {}) : {};
+      }
+    }
+
+    // Enable choosing an exam now (buttons stay disabled until exam is picked)
+    examSelected.classList.remove('disabled');
+    statusDiv.textContent = "";
+  } catch (err) {
+    statusDiv.textContent = "Error: " + err.message;
+    examSelected.textContent = "--Select--";
+    examSelected.classList.add('disabled');
+    excelBtn.disabled = true;
+    pdfBtn.disabled = true;
+  }
+}
+  // ---- Modern Dropdown Logic (Class, Section, Exam) ----
+function hideAllLists() {
+  if (classList)   classList.style.display = 'none';
+  if (sectionList) sectionList.style.display = 'none';
+  if (examList)    examList.style.display = 'none';
+}
+
+// Toggle open
+classSelected.onclick = function(e) {
+  classList.style.display = (classList.style.display === 'block') ? 'none' : 'block';
+  e.stopPropagation();
+};
+sectionSelected.onclick = function(e) {
+  if (sectionRow.style.display === 'none') return;
+  sectionList.style.display = (sectionList.style.display === 'block') ? 'none' : 'block';
+  e.stopPropagation();
+};
+examSelected.onclick = function(e) {
+  if (examSelected.classList.contains('disabled')) return;
+  examList.style.display = (examList.style.display === 'block') ? 'none' : 'block';
+  e.stopPropagation();
+};
+
+// Close on outside click
+document.addEventListener('click', function() { hideAllLists(); });
+// Also hide lists on scroll/resizing to avoid overlap glitches
+window.addEventListener('scroll', hideAllLists, true);
+window.addEventListener('resize', hideAllLists);
+
+// Select handlers
+classList.onclick = function(e) {
+  const opt = e.target.closest('.dropdown-option');
+  if (!opt) return;
+  hideAllLists();
+  setSelectedClass({ id: opt.dataset.id, name: opt.dataset.name });
+};
+
+sectionList.onclick = function(e) {
+  const opt = e.target.closest('.dropdown-option');
+  if (!opt) return;
+  hideAllLists();
+  setSelectedSection({ id: opt.dataset.id, name: opt.dataset.name });
+};
+
+examList.onclick = function(e) {
+  const opt = e.target.closest('.dropdown-option');
+  if (!opt) return;
+  hideAllLists();
+  examSelected.textContent = opt.textContent;
+  examSelected.dataset.value = opt.dataset.id;
+  selectedExam = opt.dataset.id;
+  selectedExamObj = examMap[selectedExam];
+
+  // Persist last-picked exam for this (year, class, section)
+  saveLastExam(selectedExam);
+
+  // Enable export buttons (marks for all exams are preloaded)
+  excelBtn.disabled = false;
+  pdfBtn.disabled  = false;
+};
 
   // ------------- EXCEL EXPORT -------------
   excelBtn.onclick = function() {
-    if (!selectedExamObj) {
-      selectedExam = examSelected.dataset.value;
-      selectedExamObj = examMap[selectedExam];
-    }
-    if (!selectedExamObj) { statusDiv.textContent = "Select an exam."; return; }
-    statusDiv.textContent = "Preparing Excel...";
+  if (isExporting) return;
+  if (!selectedExamObj) {
+    selectedExam = examSelected.dataset.value;
+    selectedExamObj = examMap[selectedExam];
+  }
+  if (!selectedExamObj) { statusDiv.textContent = "Select an exam."; return; }
 
+  isExporting = true;
+  excelBtn.disabled = true;
+  pdfBtn.disabled  = true;
+  statusDiv.textContent = "Preparing Excel...";
+
+  try {
     // Build headers
     let headers = ['Roll', 'Name'];
     let subjectObjs = (selectedExamObj.subjects || []);
     let subjects = subjectObjs.map(s => s.name);
     let subjectShorts = subjectObjs.map(s => getShortSubjectName(s.name));
-      headers.push(...subjects, 'Total', 'Grade', 'Rank');
+    headers.push(...subjects, 'Total', 'Grade', 'Rank');
+
     // Build data rows
     let rows = [];
-    // --- Calculate totals and ranks
     let totalArr = [];
     students.forEach(stu => {
       let marks = marksMap[stu.id][selectedExamObj.id] || {};
       let row = [stu.roll, stu.name];
-      let rowStyles = [null, null]; // For custom styles in SheetJS
+      let rowStyles = [null, null];
       let total = 0, tmax = 0, allAbsent = true;
       for (let i = 0; i < subjects.length; ++i) {
         let subj = subjects[i];
         let v = marks[subj];
         let subjMax = (selectedExamObj.subjects.find(s => s.name === subj)?.max) || 100;
         let percentMark = (typeof v === 'number' && subjMax) ? (v / subjMax) * 100 : null;
-      
+
         if (typeof v === 'number' && !isNaN(v)) {
           row.push(v);
           rowStyles.push(percentMark < 40 ? {
@@ -412,44 +665,45 @@ function getShortSubjectName(subj) {
           tmax += subjMax;
         }
       }
-      // After loop:
       let percent = tmax ? (total / tmax) * 100 : 0;
       let grade = allAbsent ? '-' : getGrade(percent);
       let totalDisplay = allAbsent ? '-' : total;
-      row.push(totalDisplay, grade, ''); // Rank filled later
+      row.push(totalDisplay, grade, '');
       rowStyles.push(null, null, null);
-   
+
       totalArr.push({ id: stu.id, total: totalDisplay });
       rows.push({ values: row, styles: rowStyles });
     });
-    // Ranks (competition style: 1,2,2,4)
-let ranks = {};
-let valid = totalArr.filter(x => x.total !== '-').sort((a, b) => Number(b.total) - Number(a.total));
-let currRank = 0, prevTotal = null, countSeen = 0;
-for (let item of valid) {
-  countSeen += 1;
-  if (item.total !== prevTotal) { currRank = countSeen; prevTotal = item.total; }
-  ranks[item.id] = currRank;
-}
-totalArr.filter(x => x.total === '-').forEach(x => { ranks[x.id] = '-'; });
-for (let i = 0; i < rows.length; ++i) {
-  rows[i].values[headers.length - 1] = ranks[students[i].id];
-}
 
-      // Sort: put rank '-' (all absent) students at the end
-      rows = rows.sort((a, b) => {
-        let rA = a.values[headers.length-1], rB = b.values[headers.length-1];
-        if (rA === '-' && rB !== '-') return 1;
-        if (rA !== '-' && rB === '-') return -1;
-        if (rA === '-' && rB === '-') return 0;
-        return rA - rB;
-      });
+    // Ranks (competition style)
+    let ranks = {};
+    let valid = totalArr.filter(x => x.total !== '-').sort((a, b) => Number(b.total) - Number(a.total));
+    let currRank = 0, prevTotal = null, countSeen = 0;
+    for (let item of valid) {
+      countSeen += 1;
+      if (item.total !== prevTotal) { currRank = countSeen; prevTotal = item.total; }
+      ranks[item.id] = currRank;
+    }
+    totalArr.filter(x => x.total === '-').forEach(x => { ranks[x.id] = '-'; });
+    for (let i = 0; i < rows.length; ++i) {
+      rows[i].values[headers.length - 1] = ranks[students[i].id];
+    }
+
+    // Sort: put rank '-' (all absent) at end
+    rows = rows.sort((a, b) => {
+      let rA = a.values[headers.length-1], rB = b.values[headers.length-1];
+      if (rA === '-' && rB !== '-') return 1;
+      if (rA !== '-' && rB === '-') return -1;
+      if (rA === '-' && rB === '-') return 0;
+      return rA - rB;
+    });
+
     // SheetJS export
     let data = [headers, ...rows.map(r => r.values)];
     let ws = XLSX.utils.aoa_to_sheet(data);
-    
+
     // Apply cell styles (red fill + white font for <40%)
-    for (let i = 1; i < rows.length + 1; ++i) { // Skip header row (i=0)
+    for (let i = 1; i < rows.length + 1; ++i) {
       let rowObj = rows[i-1];
       if (!rowObj.styles) continue;
       for (let j = 0; j < rowObj.styles.length; ++j) {
@@ -466,244 +720,247 @@ for (let i = 0; i < rows.length; ++i) {
     let fname = `Marks_${className}_${sectionName}_${selectedExamObj.name}_${academicYear}.xlsx`;
     XLSX.writeFile(wb, fname);
     statusDiv.textContent = "Excel downloaded!";
-  };
+  } catch (err) {
+    statusDiv.textContent = "Error generating Excel: " + err.message;
+  } finally {
+    isExporting = false;
+    excelBtn.disabled = false;
+    pdfBtn.disabled  = false;
+  }
+};
 
   // --------- PDF EXPORT -----------
-  pdfBtn.onclick = function() {
-    if (!selectedExamObj) {
-      selectedExam = examSelected.dataset.value;
-      selectedExamObj = examMap[selectedExam];
-    }
-    if (!selectedExamObj) { statusDiv.textContent = "Select an exam."; return; }
-    statusDiv.textContent = "Preparing PDF...";
-
-    // --- Prepare marks data
-    let subjectObjs = (selectedExamObj.subjects || []);
-let subjects = subjectObjs.map(s => s.name);
-let subjectShorts = subjectObjs.map(s => getShortSubjectName(s.name));
-      let subjMaxs = (selectedExamObj.subjects || []).map(s => s.max || 100);
-    // 1. Calculate totals, grades, percent, ranks
-    let studentRows = [];
-    let totalArr = [];
-    students.forEach(stu => {
-      let marks = marksMap[stu.id][selectedExamObj.id] || {};
-      let row = [stu.roll, stu.name];
-      let total = 0, tmax = 0, allAbsent = true;
-      for (let i = 0; i < subjects.length; ++i) {
-        let subj = subjects[i];
-        let v = marks[subj];
-        if (v !== undefined && v !== null && v !== '' && typeof v === 'number' && !isNaN(v)) {
-          allAbsent = false;
-        }
-        row.push((v !== undefined && v !== null && v !== '') ? v : 'Ab');
-        let mmax = subjMaxs[i];
-        if (typeof v === 'number' && !isNaN(v)) { total += mmax ? v : 0; tmax += mmax; }
-        else { tmax += mmax; }
-      }
-      let percent = tmax ? (total / tmax) * 100 : 0;
-      let grade = allAbsent ? '-' : getGrade(percent);
-      let totalDisplay = allAbsent ? '-' : total;
-      row.push(totalDisplay, grade, ''); // rank later
-      totalArr.push({ id: stu.id, total: totalDisplay, percent, allAbsent, row });
-    });
-    // Rank
-// Rank (competition style: 1,2,2,4)
-let ranks = {};
-let valid = totalArr.filter(x => x.total !== '-').sort((a, b) => Number(b.total) - Number(a.total));
-let currRank = 0, prevTotal = null, countSeen = 0;
-for (let item of valid) {
-  countSeen += 1;
-  if (item.total !== prevTotal) { currRank = countSeen; prevTotal = item.total; }
-  ranks[item.id] = currRank;
-}
-totalArr.filter(x => x.total === '-').forEach(x => { ranks[x.id] = '-'; });
-for (let x of totalArr) x.row[x.row.length - 1] = ranks[x.id];
-// By rank, place all-ab students at the end
-let rankedRows = totalArr.sort((a, b) => {
-  let rA = ranks[a.id], rB = ranks[b.id];
-  if (rA === '-' && rB !== '-') return 1;
-  if (rA !== '-' && rB === '-') return -1;
-  if (rA === '-' && rB === '-') return 0;
-  return rA - rB;
-}).map(x => x.row);
-
-   // --- Generate HTML for PDF  (repeat ONLY the table header on every page)
-let tableHeaders = `<th>ROLL</th><th style="text-align:left;padding-left:10px;min-width:110px;">NAME</th>` +
-  subjects.map(s =>
-    s === "Spoken English"
-      ? `<th><span>SPOKEN</span><br><span>ENGLISH</span></th>`
-      : `<th>${s.toUpperCase()}</th>`
-  ).join('') +
-  `<th>TOTAL</th><th>GRADE</th><th>RANK</th>`;
-
-// Build one row's HTML (keeps your styles; uses rowHeight for consistent paging)
-function buildRowHtml(row, idx, rowPx) {
-  const nameShrink = (name) => {
-    let fsize = "1.14em";
-    if (name.length > 22) fsize = "1.05em";
-    if (name.length > 32) fsize = "0.93em";
-    if (name.length > 40) fsize = "0.83em";
-    if (name.length > 48) fsize = "0.73em";
-    if (name.length > 55) fsize = "0.62em";
-    if (name.length > 65) fsize = "0.54em";
-    if (name.length > 75) fsize = "0.47em";
-    return fsize;
-  };
-
-  let tds = '';
-  for (let j = 0; j < row.length; ++j) {
-    if (j === 0) {
-      tds += `<td style="font-size:1.25em;font-weight:600;min-height:${rowPx}px;height:${rowPx}px;">${row[j]}</td>`;
-    } else if (j === 1) {
-      let name = row[j] || '';
-      let fsize = nameShrink(name);
-      tds += `<td style="text-align:left;padding-left:10px;font-size:${fsize};white-space:nowrap;min-height:${rowPx}px;height:${rowPx}px;">${name}</td>`;
-    } else if (j >= 2 && j < 2 + subjects.length) {
-      let v = row[j];
-      let subjMax = subjMaxs[j-2];
-      if (v !== undefined && v !== null && v !== "" && typeof v === "number" && !isNaN(v) && subjMax && ((v / subjMax) * 100) < 40) {
-        tds += `<td style="padding:0;vertical-align:middle;font-size:1.19em;min-height:${rowPx}px;height:${rowPx}px;">
-          <div style="display:flex;align-items:center;justify-content:center;position:relative;min-height:${rowPx}px;min-width:${Math.max(24, rowPx)}px;">
-            <span style="font-weight:bold;z-index:2;font-size:1.08em;">${v}</span>
-            <span style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-size:1.24em;color:#c81929;z-index:1;">◯</span>
-          </div>
-        </td>`;
-      } else {
-        tds += `<td style="font-size:1.19em;min-height:${rowPx}px;height:${rowPx}px;">${(v !== undefined && v !== null && v !== "") ? v : 'Ab'}</td>`;
-      }
-    } else if (j === row.length - 3) {
-      tds += `<td style="font-size:1.19em;font-weight:600;min-height:${rowPx}px;height:${rowPx}px;">${row[j]}</td>`;
-    } else if (j === row.length - 2) {
-      tds += `<td style="font-size:1.19em;font-weight:600;min-height:${rowPx}px;height:${rowPx}px;">${row[j]}</td>`;
-    } else if (j === row.length - 1) {
-      tds += `<td style="font-size:1.19em;font-weight:600;min-height:${rowPx}px;height:${rowPx}px;">${row[j]}</td>`;
-    } else {
-      tds += `<td style="min-height:${rowPx}px;height:${rowPx}px;">${row[j]}</td>`;
-    }
+ pdfBtn.onclick = function() {
+  if (isExporting) return;
+  if (!selectedExamObj) {
+    selectedExam = examSelected.dataset.value;
+    selectedExamObj = examMap[selectedExam];
   }
-  let bgcolor = idx % 2 ? "#eaf1fa" : "#f8fbff";
-  return `<tr style="background:${bgcolor};min-height:${rowPx}px;height:${rowPx}px;">${tds}</tr>`;
-}
+  if (!selectedExamObj) { statusDiv.textContent = "Select an exam."; return; }
 
-// ===== Pagination to repeat only the COLUMN HEADERS on each page =====
+  isExporting = true;
+  excelBtn.disabled = true;
+  pdfBtn.disabled  = true;
+  statusDiv.textContent = "Preparing PDF...";
 
-// Page metrics (A4 landscape height is 21cm). Use same margins as html2pdf config.
-const CM_TO_PX = 37.795; // approx CSS px per cm
-const pageContentHeightPx = (21 - 1.27 - 1.27) * CM_TO_PX; // top/bottom margins = 1.27cm
-const tableHeaderPx = 28; // approx height of <thead> row
-const headingBlockPx = 140; // first-page big heading (logos etc.)
+  // --- Prepare marks data (unchanged; same as your current code) ---
+  let subjectObjs = (selectedExamObj.subjects || []);
+  let subjects = subjectObjs.map(s => s.name);
+  let subjectShorts = subjectObjs.map(s => getShortSubjectName(s.name));
+  let subjMaxs = (selectedExamObj.subjects || []).map(s => s.max || 100);
 
-// ✅ Define rowHeight before using it:
-let studentCount = students.length;
-let rowHeight = 26;
-if (studentCount <= 35)      { rowHeight = 26; }
-else if (studentCount <= 40) { rowHeight = 17; }
-else if (studentCount <= 45) { rowHeight = 13; }
-else if (studentCount <= 50) { rowHeight = 9.5; }
-else if (studentCount <= 60) { rowHeight = 7.6; }
-else                         { rowHeight = 5.8; }
+  let studentRows = [];
+  let totalArr = [];
+  students.forEach(stu => {
+    let marks = marksMap[stu.id][selectedExamObj.id] || {};
+    let row = [stu.roll, stu.name];
+    let total = 0, tmax = 0, allAbsent = true;
+    for (let i = 0; i < subjects.length; ++i) {
+      let subj = subjects[i];
+      let v = marks[subj];
+      if (v !== undefined && v !== null && v !== '' && typeof v === 'number' && !isNaN(v)) {
+        allAbsent = false;
+      }
+      row.push((v !== undefined && v !== null && v !== '') ? v : 'Ab');
+      let mmax = subjMaxs[i];
+      if (typeof v === 'number' && !isNaN(v)) { total += mmax ? v : 0; tmax += mmax; }
+      else { tmax += mmax; }
+    }
+    let percent = tmax ? (total / tmax) * 100 : 0;
+    let grade = allAbsent ? '-' : getGrade(percent);
+    let totalDisplay = allAbsent ? '-' : total;
+    row.push(totalDisplay, grade, '');
+    totalArr.push({ id: stu.id, total: totalDisplay, percent, allAbsent, row });
+  });
 
-// Use the computed rowHeight for paging
-const rowPx = Math.max(24, rowHeight);
+  let ranks = {};
+  let valid = totalArr.filter(x => x.total !== '-').sort((a, b) => Number(b.total) - Number(a.total));
+  let currRank = 0, prevTotal = null, countSeen = 0;
+  for (let item of valid) {
+    countSeen += 1;
+    if (item.total !== prevTotal) { currRank = countSeen; prevTotal = item.total; }
+    ranks[item.id] = currRank;
+  }
+  totalArr.filter(x => x.total === '-').forEach(x => { ranks[x.id] = '-'; });
+  for (let x of totalArr) x.row[x.row.length - 1] = ranks[x.id];
 
-// How many body rows fit on pages
-let rowsOnFirstPage = Math.max(1, Math.floor((pageContentHeightPx - headingBlockPx - tableHeaderPx) / rowPx));
-let rowsOnNextPages = Math.max(1, Math.floor((pageContentHeightPx - tableHeaderPx) / rowPx));
+  let rankedRows = totalArr.sort((a, b) => {
+    let rA = ranks[a.id], rB = ranks[b.id];
+    if (rA === '-' && rB !== '-') return 1;
+    if (rA !== '-' && rB === '-') return -1;
+    if (rA === '-' && rB === '-') return 0;
+    return rA - rB;
+  }).map(x => x.row);
 
-// Slice rankedRows into pages
-let pagesHtml = [];
-let start = 0;
-let pageIndex = 0;
+  // --- Build HTML for PDF (unchanged) ---
+  let tableHeaders = `<th>ROLL</th><th style="text-align:left;padding-left:10px;min-width:110px;">NAME</th>` +
+    subjects.map(s => s === "Spoken English"
+      ? `<th><span>SPOKEN</span><br><span>ENGLISH</span></th>`
+      : `<th>${s.toUpperCase()}</th>`).join('') +
+    `<th>TOTAL</th><th>GRADE</th><th>RANK</th>`;
 
-while (start < rankedRows.length) {
-  const perPage = pageIndex === 0 ? rowsOnFirstPage : rowsOnNextPages;
-  const slice = rankedRows.slice(start, start + perPage);
-  const rowsHtml = slice.map((row, idx) => buildRowHtml(row, start + idx, rowPx)).join('');
+  function buildRowHtml(row, idx, rowPx) {
+    const nameShrink = (name) => {
+      let fsize = "1.14em";
+      if (name.length > 22) fsize = "1.05em";
+      if (name.length > 32) fsize = "0.93em";
+      if (name.length > 40) fsize = "0.83em";
+      if (name.length > 48) fsize = "0.73em";
+      if (name.length > 55) fsize = "0.62em";
+      if (name.length > 65) fsize = "0.54em";
+      if (name.length > 75) fsize = "0.47em";
+      return fsize;
+    };
 
-  // Table (header repeated on every page)
-  const tableHtml = `
-    <table cellspacing="0" cellpadding="0" style="border-collapse:collapse;width:100%;max-width:100%;font-size:0.70em;margin-top:8px;text-align:center;line-height:1.12;table-layout:auto;word-break:break-word;margin-bottom:10px;">
-      <thead>
-        <tr style="background:#1762a7;color:#fff;font-weight:bold;">${tableHeaders}</tr>
-      </thead>
-      <tbody>
-        ${rowsHtml}
-      </tbody>
-    </table>
+    let tds = '';
+    for (let j = 0; j < row.length; ++j) {
+      if (j === 0) {
+        tds += `<td style="font-size:1.25em;font-weight:600;min-height:${rowPx}px;height:${rowPx}px;">${row[j]}</td>`;
+      } else if (j === 1) {
+        let name = row[j] || '';
+        let fsize = nameShrink(name);
+        tds += `<td style="text-align:left;padding-left:10px;font-size:${fsize};white-space:nowrap;min-height:${rowPx}px;height:${rowPx}px;">${name}</td>`;
+      } else if (j >= 2 && j < 2 + subjects.length) {
+        let v = row[j];
+        let subjMax = subjMaxs[j-2];
+        if (v !== undefined && v !== null && v !== "" && typeof v === "number" && !isNaN(v) && subjMax && ((v / subjMax) * 100) < 40) {
+          tds += `<td style="padding:0;vertical-align:middle;font-size:1.19em;min-height:${rowPx}px;height:${rowPx}px;">
+            <div style="display:flex;align-items:center;justify-content:center;position:relative;min-height:${rowPx}px;min-width:${Math.max(24, rowPx)}px;">
+              <span style="font-weight:bold;z-index:2;font-size:1.08em;">${v}</span>
+              <span style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-size:1.24em;color:#c81929;z-index:1;">◯</span>
+            </div>
+          </td>`;
+        } else {
+          tds += `<td style="font-size:1.19em;min-height:${rowPx}px;height:${rowPx}px;">${(v !== undefined && v !== null && v !== "") ? v : 'Ab'}</td>`;
+        }
+      } else if (j === row.length - 3) {
+        tds += `<td style="font-size:1.19em;font-weight:600;min-height:${rowPx}px;height:${rowPx}px;">${row[j]}</td>`;
+      } else if (j === row.length - 2) {
+        tds += `<td style="font-size:1.19em;font-weight:600;min-height:${rowPx}px;height:${rowPx}px;">${row[j]}</td>`;
+      } else if (j === row.length - 1) {
+        tds += `<td style="font-size:1.19em;font-weight:600;min-height:${rowPx}px;height:${rowPx}px;">${row[j]}</td>`;
+      } else {
+        tds += `<td style="min-height:${rowPx}px;height:${rowPx}px;">${row[j]}</td>`;
+      }
+    }
+    let bgcolor = idx % 2 ? "#eaf1fa" : "#f8fbff";
+    return `<tr style="background:${bgcolor};min-height:${rowPx}px;height:${rowPx}px;">${tds}</tr>`;
+  }
+
+  const CM_TO_PX = 37.795;
+  const pageContentHeightPx = (21 - 1.27 - 1.27) * CM_TO_PX;
+  const tableHeaderPx = 28;
+  const headingBlockPx = 140;
+
+  let studentCount = students.length;
+  let rowHeight = 26;
+  if (studentCount <= 35)      { rowHeight = 26; }
+  else if (studentCount <= 40) { rowHeight = 17; }
+  else if (studentCount <= 45) { rowHeight = 13; }
+  else if (studentCount <= 50) { rowHeight = 9.5; }
+  else if (studentCount <= 60) { rowHeight = 7.6; }
+  else                         { rowHeight = 5.8; }
+  const rowPx = Math.max(24, rowHeight);
+
+  let rowsOnFirstPage = Math.max(1, Math.floor((pageContentHeightPx - headingBlockPx - tableHeaderPx) / rowPx));
+  let rowsOnNextPages = Math.max(1, Math.floor((pageContentHeightPx - tableHeaderPx) / rowPx));
+
+  let pagesHtml = [];
+  let start = 0;
+  let pageIndex = 0;
+
+  while (start < rankedRows.length) {
+    const perPage = pageIndex === 0 ? rowsOnFirstPage : rowsOnNextPages;
+    const slice = rankedRows.slice(start, start + perPage);
+    const rowsHtml = slice.map((row, idx) => buildRowHtml(row, start + idx, rowPx)).join('');
+
+    const tableHtml = `
+      <table cellspacing="0" cellpadding="0" style="border-collapse:collapse;width:100%;max-width:100%;font-size:0.70em;margin-top:8px;text-align:center;line-height:1.12;table-layout:auto;word-break:break-word;margin-bottom:10px;">
+        <thead>
+          <tr style="background:#1762a7;color:#fff;font-weight:bold;">${tableHeaders}</tr>
+        </thead>
+        <tbody>
+          ${rowsHtml}
+        </tbody>
+      </table>
+    `;
+
+    const headingBlockHtml = (pageIndex === 0) ? `
+      <div style="width:100%;text-align:center;margin-bottom:2px;">
+        <div style="display:inline-flex;align-items:center;justify-content:center;">
+          <img src="schoollogo1.png" style="height:110px;width:auto;max-width:140px;border-radius:8px;margin-right:10px;" onerror="this.style.display='none';">
+          <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:110px;line-height:1.09;">
+            <span style="font-size:2.19em;font-weight:bold;letter-spacing:0.01em;font-family:'Times New Roman', Times, serif;color:#c81929;line-height:1.08;">
+              St. Patrick's School
+            </span>
+            <span style="font-size:1.19em;font-weight:700;color:#224a74;letter-spacing:0.01em;line-height:1.06;">
+              IIT & NEET FOUNDATION
+            </span>
+            <span style="font-size:1.17em;font-weight:bold;letter-spacing:0.01em;color:#187141;line-height:1.05;">
+              ${className}${sectionName ? ' - ' + sectionName : ''}
+            </span>
+            <span style="font-size:1.12em;font-weight:bold;color:#b80000;letter-spacing:0.01em;line-height:1.05;">
+              ${selectedExamObj.name} Results
+            </span>
+          </div>
+          <img src="schoollogo2.png" style="height:110px;width:auto;max-width:140px;border-radius:8px;margin-left:10px;" onerror="this.style.display='none';">
+        </div>
+      </div>
+    ` : '';
+
+    pagesHtml.push(`
+      <div class="pdf-page" style="${start + perPage < rankedRows.length ? 'page-break-after:always;' : ''}">
+        ${headingBlockHtml}
+        ${tableHtml}
+      </div>
+    `);
+
+    start += perPage;
+    pageIndex += 1;
+  }
+
+  let pdfHTML = `
+    <div style="font-family:'Times New Roman', Times, serif; color:#1a1a1a; margin:0; padding:0;">
+      <style>
+        tr { page-break-inside: avoid !important; }
+        thead { display: table-header-group; }
+        tfoot { display: table-footer-group; }
+        td, th { border: 1px solid #444 !important; padding: 0 1px; white-space: nowrap; font-size:0.98em; }
+      </style>
+      ${pagesHtml.join('')}
+    </div>
   `;
 
-  // Only the first page gets the big heading (logos/school/exam)
-  const headingBlockHtml = (pageIndex === 0) ? `
-    <div style="width:100%;text-align:center;margin-bottom:2px;">
-      <div style="display:inline-flex;align-items:center;justify-content:center;">
-        <img src="schoollogo1.png" style="height:110px;width:auto;max-width:140px;border-radius:8px;margin-right:10px;" onerror="this.style.display='none';">
-        <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:110px;line-height:1.09;">
-          <span style="font-size:2.19em;font-weight:bold;letter-spacing:0.01em;font-family:'Times New Roman', Times, serif;color:#c81929;line-height:1.08;">
-            St. Patrick's School
-          </span>
-          <span style="font-size:1.19em;font-weight:700;color:#224a74;letter-spacing:0.01em;line-height:1.06;">
-            IIT & NEET FOUNDATION
-          </span>
-          <span style="font-size:1.17em;font-weight:bold;letter-spacing:0.01em;color:#187141;line-height:1.05;">
-            ${className}${sectionName ? ' - ' + sectionName : ''}
-          </span>
-          <span style="font-size:1.12em;font-weight:bold;color:#b80000;letter-spacing:0.01em;line-height:1.05;">
-            ${selectedExamObj.name} Results
-          </span>
-        </div>
-        <img src="schoollogo2.png" style="height:110px;width:auto;max-width:140px;border-radius:8px;margin-left:10px;" onerror="this.style.display='none';">
-      </div>
-    </div>
-  ` : '';
+  let printable = document.createElement('div');
+  printable.innerHTML = pdfHTML;
+  document.body.appendChild(printable);
 
-  pagesHtml.push(`
-    <div class="pdf-page" style="${start + perPage < rankedRows.length ? 'page-break-after:always;' : ''}">
-      ${headingBlockHtml}
-      ${tableHtml}
-    </div>
-  `);
-
-  start += perPage;
-  pageIndex += 1;
-}
-
-// Final wrapper HTML (thead rule kept but chunking ensures repetition)
-let pdfHTML = `
-  <div style="font-family:'Times New Roman', Times, serif; color:#1a1a1a; margin:0; padding:0;">
-    <style>
-      tr { page-break-inside: avoid !important; }
-      thead { display: table-header-group; }
-      tfoot { display: table-footer-group; }
-      td, th { border: 1px solid #444 !important; padding: 0 1px; white-space: nowrap; font-size:0.98em; }
-    </style>
-    ${pagesHtml.join('')}
-  </div>
-`;
-
-// Render and export (unchanged)
-let printable = document.createElement('div');
-printable.innerHTML = pdfHTML;
-document.body.appendChild(printable);
-html2pdf().set({
-  margin: [1.27, 1, 1.27, 1], // cm: top, right, bottom, left
-  filename: `Marks_${className}_${sectionName}_${selectedExamObj.name}_${academicYear}.pdf`,
-  html2canvas: { scale: 2, useCORS: true },
-  jsPDF: { unit: 'cm', format: 'a4', orientation: 'landscape' }
-})
-.from(printable)
-.save()
-.then(() => {
-  document.body.removeChild(printable);
-  statusDiv.textContent = "PDF downloaded!";
-})
-.catch(err => {
-  document.body.removeChild(printable);
-  statusDiv.textContent = "Error generating PDF: " + err;
-});
-  };
+  html2pdf().set({
+    margin: [1.27, 1, 1.27, 1],
+    filename: `Marks_${className}_${sectionName}_${selectedExamObj.name}_${academicYear}.pdf`,
+    html2canvas: { scale: 2, useCORS: true },
+    jsPDF: { unit: 'cm', format: 'a4', orientation: 'landscape' }
+  })
+  .from(printable)
+  .save()
+  .then(() => {
+    document.body.removeChild(printable);
+    statusDiv.textContent = "PDF downloaded!";
+  })
+  .catch(err => {
+    document.body.removeChild(printable);
+    statusDiv.textContent = "Error generating PDF: " + err;
+  })
+  .finally(() => {
+    isExporting = false;
+    excelBtn.disabled = false;
+    pdfBtn.disabled  = false;
+  });
+};
  </script>
 </body>
 </html>
+
 
 
 
