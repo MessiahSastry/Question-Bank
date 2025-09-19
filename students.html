@@ -2941,6 +2941,8 @@ function closeAbsenteesModal() {
   document.getElementById('absenteesModalBg').onclick = function(e) {
     if (e.target === this) closeAbsenteesModal();
   };
+
+    // ---- Upload marks Ecell ----
         function showBulkMarksUploadPopup() {
   db.collection('years').doc(academicYear)
     .collection('exams').doc('classGroups')
@@ -2955,18 +2957,46 @@ function closeAbsenteesModal() {
         `);
         return;
       }
-      let html = `
+     let html = `
         <div class="popup-title">Upload Marks (Excel)</div>
+      
         <label>Select Exam</label>
         <div class="custom-dropdown" id="examDropdown" tabindex="0">
           <div class="dropdown-selected" id="examSelected" data-value="">--Select--</div>
           <div class="dropdown-list" id="examList" style="display:none;"></div>
         </div>
+      
         <input type="file" id="marksFileInput" accept=".xls,.xlsx" style="margin:12px 0 15px 0;" />
-        <div style="font-size:0.97em; color:#555; margin-bottom:10px;">
+      
+        <div style="font-size:0.97em; color:#555; margin-bottom:12px;">
           Please upload the Evalbee Excel file.<br>
-          Only <b>Roll number</b> is matched; subject marks will be updated for this exam only.
+          You can manually map columns below. Enter column letters like <b>A</b>, <b>B</b>, <b>C</b>…
         </div>
+      
+        <!-- Manual Column Mapping card -->
+        <div style="border:1px solid #e6eef6; border-radius:10px; padding:10px; margin-bottom:12px;">
+          <div style="font-weight:600; margin-bottom:8px;">Manual Column Mapping</div>
+      
+          <!-- Roll mapping (always visible) -->
+          <div style="display:grid; grid-template-columns:140px 1fr; gap:8px; align-items:center; margin-bottom:6px;">
+            <div>Roll</div>
+            <input type="text" id="rollColInput" placeholder="A" maxlength="3"
+                   style="padding:8px 10px; border:1px solid #ccd7e1; border-radius:8px;">
+          </div>
+      
+          <!-- Subjects mapping (populated after exam selection) -->
+          <div id="colMapArea" style="margin-top:8px;">
+            <div style="font-size:0.9em; color:#777;">Select an exam to load subject mappings…</div>
+          </div>
+      
+          <div style="margin-top:10px;">
+            <label style="display:flex; align-items:center; gap:8px; font-size:0.92em;">
+              <input type="checkbox" id="rememberMapChk">
+              Remember this mapping for this exam & section
+            </label>
+          </div>
+        </div>
+      
         <div class="popup-btn-row">
           <button type="button" class="popup-cancel-btn">Cancel</button>
           <button type="button" class="popup-action-btn" id="doBulkMarksUploadBtn">Upload</button>
@@ -2974,6 +3004,124 @@ function closeAbsenteesModal() {
       `;
       showPopup(html);
 
+// ==== Live mapping preview & badges ====
+const previewState = { headers: null, sample: null };
+
+// letters/numbers -> 0-based index
+function colToIndex(s) {
+  if (!s) return -1;
+  s = String(s).trim();
+  if (/^\d+$/.test(s)) return Math.max(0, parseInt(s, 10) - 1); // 1-based -> 0-based
+  let sum = 0;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i].toUpperCase();
+    if (ch < 'A' || ch > 'Z') continue;
+    sum = sum * 26 + (ch.charCodeAt(0) - 64);
+  }
+  return sum > 0 ? (sum - 1) : -1;
+}
+
+// ensure a hint <div> exists just after the input
+function ensureHintEl(inputEl) {
+  let hint = inputEl.nextElementSibling;
+  if (!hint || !hint.classList || !hint.classList.contains('mapHint')) {
+    hint = document.createElement('div');
+    hint.className = 'mapHint';
+    hint.style.fontSize = '0.85em';
+    hint.style.marginTop = '4px';
+    hint.style.color = '#777';
+    inputEl.parentElement.appendChild(hint);
+  }
+  return hint;
+}
+
+function setHint(inputEl, msg, ok = null) {
+  const hint = ensureHintEl(inputEl);
+  hint.textContent = msg;
+  if (ok === true) { hint.style.color = '#137333'; }       // green
+  else if (ok === false) { hint.style.color = '#d43f3a'; } // red
+  else { hint.style.color = '#777'; }                      // neutral
+}
+
+function updateOne(inputEl) {
+  if (!inputEl) return;
+  const val = (inputEl.value || '').trim();
+  const idx = colToIndex(val);
+  if (!val) {
+    setHint(inputEl, 'Enter column like A, B, C…', null);
+    return;
+  }
+  if (idx < 0) {
+    setHint(inputEl, 'Invalid column', false);
+    return;
+  }
+  // If we don't have a loaded file preview yet
+  if (!previewState.headers) {
+    setHint(inputEl, `Column #${idx + 1}`, true);
+    return;
+  }
+  const maxIdx = previewState.headers.length - 1;
+  if (idx > maxIdx) {
+    setHint(inputEl, `Out of range (max ${maxIdx + 1})`, false);
+    return;
+  }
+  const headerTxt = (previewState.headers[idx] || '').toString();
+  const sample = previewState.sample ? previewState.sample[idx] : '';
+  const sampleStr = (sample !== undefined && sample !== null) ? String(sample) : '';
+  const msg = sampleStr
+    ? `OK • Header: "${headerTxt || '-'}" • Sample: "${sampleStr.slice(0, 30)}"`
+    : `OK • Header: "${headerTxt || '-'}"`;
+  setHint(inputEl, msg, true);
+}
+
+function updateAllHints() {
+  const rollEl = popupContent.querySelector('#rollColInput');
+  const subs = Array.from(popupContent.querySelectorAll('.colInput'));
+  updateOne(rollEl);
+  subs.forEach(el => updateOne(el));
+}
+
+function attachMapListeners() {
+  const rollEl = popupContent.querySelector('#rollColInput');
+  const subs = Array.from(popupContent.querySelectorAll('.colInput'));
+  if (rollEl) rollEl.addEventListener('input', () => updateOne(rollEl));
+  subs.forEach(el => el.addEventListener('input', () => updateOne(el)));
+  // Initial render of hints (for prefilled mappings)
+  updateAllHints();
+}
+
+// load a lightweight preview (headers + 2nd row) when a file is chosen
+function loadPreviewFromFile(file) {
+  return new Promise(resolve => {
+    const r = new FileReader();
+    r.onload = e => {
+      try {
+        const data = new Uint8Array(e.target.result);
+        const wb = XLSX.read(data, { type: 'array' });
+        const sheet = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+        if (rows && rows.length) {
+          previewState.headers = rows[0].map(x => String(x).trim());
+          previewState.sample = rows[1] || [];
+          updateAllHints();
+        }
+      } catch (err) {
+        console.warn('Preview parse error:', err);
+      }
+      resolve();
+    };
+    r.readAsArrayBuffer(file);
+  });
+}
+
+// hook file input to build preview
+const marksFileInput = popupContent.querySelector('#marksFileInput');
+if (marksFileInput) {
+  marksFileInput.addEventListener('change', (ev) => {
+    const f = ev.target.files && ev.target.files[0];
+    if (f) loadPreviewFromFile(f);
+  });
+}
       // Populate exam dropdown
       const examDropdown = popupContent.querySelector('#examDropdown');
       const examSelected = popupContent.querySelector('#examSelected');
@@ -2994,171 +3142,227 @@ function closeAbsenteesModal() {
       });
       let selectedExam = null;
       examList.querySelectorAll('.dropdown-option').forEach(opt => {
-        opt.onclick = function () {
-          examSelected.textContent = this.textContent;
-          examSelected.dataset.value = this.dataset.id;
-          examList.style.display = 'none';
-          selectedExam = exams.find(e => e.id === this.dataset.id);
-        };
+  opt.onclick = function () {
+    examSelected.textContent = this.textContent;
+    examSelected.dataset.value = this.dataset.id;
+    examList.style.display = 'none';
+    selectedExam = exams.find(e => e.id === this.dataset.id);
+
+    // === Build the subject column-mapping inputs ===
+    const colMapArea = popupContent.querySelector('#colMapArea');
+    const rollInput = popupContent.querySelector('#rollColInput');
+    const rememberChk = popupContent.querySelector('#rememberMapChk');
+
+    // Load any saved mapping for this exam/section (optional)
+    const storageKey = `colmap_${academicYear}_${currentClassId}_${currentSectionId}_${selectedExam.id}`;
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem(storageKey) || 'null'); } catch(e){ saved = null; }
+
+    // Prefill Roll (default A if nothing saved)
+    if (rollInput) rollInput.value = (saved && saved.roll) ? saved.roll : (rollInput.value || '');
+
+    // Build rows for each subject
+    if (!selectedExam || !Array.isArray(selectedExam.subjects) || selectedExam.subjects.length === 0) {
+      colMapArea.innerHTML = `<div style="font-size:0.9em; color:#777;">No subjects defined for this exam.</div>`;
+      return;
+    }
+
+    let rowsHtml = selectedExam.subjects.map(subj => {
+      const preset = (saved && saved.subjects && saved.subjects[subj.name]) ? saved.subjects[subj.name] : '';
+      return `
+        <div style="display:grid; grid-template-columns:140px 1fr; gap:8px; align-items:center; margin-bottom:6px;">
+          <div>${subj.name}</div>
+          <input type="text" class="colInput" data-subject="${subj.name}"
+                 placeholder="e.g., B" value="${preset}" maxlength="3"
+                 style="padding:8px 10px; border:1px solid #ccd7e1; border-radius:8px;">
+        </div>
+      `;
+    }).join('');
+
+    colMapArea.innerHTML = rowsHtml;
+    attachMapListeners();
+
+    // Prefill the "remember" toggle based on saved state (default off)
+    if (rememberChk) rememberChk.checked = !!(saved && saved.remember === true);
+  };
+});
+      document.getElementById('doBulkMarksUploadBtn').onclick = async function () {
+  const fileInput = document.getElementById('marksFileInput');
+  if (!fileInput.files.length) return alert('Please select a file!');
+  if (!selectedExam) return alert('Please select an exam!');
+
+  // === Read manual mapping from the popup ===
+  const rollColStr = (popupContent.querySelector('#rollColInput')?.value || '').trim();
+  if (!rollColStr) return alert('Please enter the Roll column (e.g., A).');
+
+  const colInputs = Array.from(popupContent.querySelectorAll('.colInput'));
+  const rememberChk = popupContent.querySelector('#rememberMapChk');
+  const storageKey = `colmap_${academicYear}_${currentClassId}_${currentSectionId}_${selectedExam.id}`;
+
+  // Letter(s)/number -> zero-based column index
+  function colToIndex(s) {
+    if (!s) return -1;
+    s = String(s).trim();
+    // numeric 1-based (e.g., "3" -> index 2)
+    if (/^\d+$/.test(s)) return Math.max(0, parseInt(s, 10) - 1);
+    // letters (e.g., "A" -> 0, "AA" -> 26)
+    let sum = 0;
+    for (let i = 0; i < s.length; i++) {
+      const ch = s[i].toUpperCase();
+      if (ch < 'A' || ch > 'Z') continue;
+      sum = sum * 26 + (ch.charCodeAt(0) - 64);
+    }
+    return sum > 0 ? (sum - 1) : -1;
+  }
+
+  const file = fileInput.files[0];
+  const reader = new FileReader();
+  reader.onload = async function (e) {
+    const data = new Uint8Array(e.target.result);
+    const workbook = XLSX.read(data, { type: 'array' });
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+
+    if (!rows || rows.length < 2) {
+      alert('The Excel sheet appears empty or missing data rows.');
+      return;
+    }
+
+    const headers = rows[0].map(x => String(x).trim().toLowerCase());
+    const lastColIndex = headers.length - 1;
+
+    // Build indexes from manual inputs
+    const rollIdx = colToIndex(rollColStr);
+    if (rollIdx < 0 || rollIdx > lastColIndex) {
+      alert(`Roll column "${rollColStr}" is invalid or out of range. Sheet has ${headers.length} columns.`);
+      return;
+    }
+
+    const colIndexes = {};
+    const unmappedSubjects = [];   // left blank by user
+    const invalidSubjects = [];    // invalid/out-of-range inputs
+
+    selectedExam.subjects.forEach(subj => {
+      const el = colInputs.find(inp => inp.dataset.subject === subj.name);
+      const valStr = (el?.value || '').trim();
+      if (!valStr) {
+        unmappedSubjects.push(subj.name);
+        colIndexes[subj.name] = -1;
+      } else {
+        const idx = colToIndex(valStr);
+        if (idx < 0 || idx > lastColIndex) {
+          invalidSubjects.push(`${subj.name} (${valStr})`);
+          colIndexes[subj.name] = -1;
+        } else {
+          colIndexes[subj.name] = idx;
+        }
+      }
+    });
+
+    if (invalidSubjects.length > 0) {
+      alert(`These subject columns are invalid/out of range:\n• ${invalidSubjects.join('\n• ')}`);
+      return;
+    }
+
+    // Optionally remember this mapping
+    if (rememberChk && rememberChk.checked) {
+      const saveObj = {
+        remember: true,
+        roll: rollColStr.toUpperCase(),
+        subjects: {}
+      };
+      selectedExam.subjects.forEach(subj => {
+        const el = colInputs.find(inp => inp.dataset.subject === subj.name);
+        const v = (el?.value || '').trim();
+        if (v) saveObj.subjects[subj.name] = v.toUpperCase();
+      });
+      try { localStorage.setItem(storageKey, JSON.stringify(saveObj)); } catch (_) {}
+    }
+
+    // === Fetch students ===
+    const stuSnap = await db.collection('years').doc(academicYear)
+      .collection('classes').doc(currentClassId)
+      .collection('sections').doc(currentSectionId)
+      .collection('students').orderBy('roll').get();
+
+    const students = [];
+    stuSnap.forEach(doc => students.push({ id: doc.id, ...doc.data() }));
+
+    const batch = db.batch();
+    let updates = 0;
+    const matchedRolls = [];
+    const notFoundRolls = [];
+
+    for (let i = 1; i < rows.length; i++) {
+      const row = rows[i];
+      const roll = parseInt(row[rollIdx]);
+      if (isNaN(roll)) continue;
+
+      const stu = students.find(s => parseInt(s.roll) === roll);
+      if (!stu) {
+        notFoundRolls.push(roll);
+        continue;
+      }
+      matchedRolls.push(roll);
+
+      const marksObj = {};
+      selectedExam.subjects.forEach(subj => {
+        const idx = colIndexes[subj.name];
+        if (idx >= 0) {
+          const val = row[idx];
+          // keep original behavior: non-numeric -> 0
+          marksObj[subj.name] = isNaN(val) ? 0 : Number(val);
+        }
       });
 
-      document.getElementById('doBulkMarksUploadBtn').onclick = async function() {
-        const fileInput = document.getElementById('marksFileInput');
-        if (!fileInput.files.length) return alert('Please select a file!');
-        if (!selectedExam) return alert('Please select an exam!');
-        const file = fileInput.files[0];
-        const reader = new FileReader();
-        reader.onload = async function(e) {
-          let data = new Uint8Array(e.target.result);
-          let workbook = XLSX.read(data, {type: 'array'});
-          let sheet = workbook.Sheets[workbook.SheetNames[0]];
-          let rows = XLSX.utils.sheet_to_json(sheet, {header:1, defval: ''});
+      const markRef = db.collection('years').doc(academicYear)
+        .collection('classes').doc(currentClassId)
+        .collection('sections').doc(currentSectionId)
+        .collection('students').doc(stu.id)
+        .collection('marks').doc(selectedExam.id);
 
-          // Map Excel columns
-          let headers = rows[0].map(x => x.toString().trim().toLowerCase());
-          let rollIdx = 2; // Usually column C (index 2)
-          // let rollIdx = headers.findIndex(h => h === 'roll' || h.startsWith('roll'));
-          let colIndexes = {};
-          let missingSubjects = [];
-          selectedExam.subjects.forEach(subj => {
-            let idx = headers.findIndex(h => h.includes(subj.name.toLowerCase()));
-            if (idx === -1) {
-              // Fallback mapping
-              if (subj.name.toLowerCase() === 'math') idx = 10;
-              if (subj.name.toLowerCase() === 'physics') idx = 11;
-              if (subj.name.toLowerCase() === 'chemistry') idx = 12;
-              if (subj.name.toLowerCase() === 'biology') idx = 13;
-            }
-            colIndexes[subj.name] = idx;
-            if (idx === -1) missingSubjects.push(subj.name);
-          });
+      batch.set(markRef, marksObj, { merge: true });
+      updates++;
+    }
 
-          // Get all students for this section
-          let stuSnap = await db.collection('years').doc(academicYear)
-            .collection('classes').doc(currentClassId)
-            .collection('sections').doc(currentSectionId)
-            .collection('students').orderBy('roll').get();
-          let students = [];
-          stuSnap.forEach(doc => students.push({ id: doc.id, ...doc.data() }));
+    if (updates === 0) {
+      alert('No matching students found by roll number!');
+      return;
+    }
 
-          let batch = db.batch();
-          let updates = 0;
-          let matchedRolls = [];
-          let notFoundRolls = [];
-          let foundRollSet = new Set(students.map(s => parseInt(s.roll)));
+    await batch.commit();
 
-          for (let i = 1; i < rows.length; i++) {
-            let row = rows[i];
-            let roll = parseInt(row[rollIdx]);
-            if (isNaN(roll)) continue;
-            let stu = students.find(s => parseInt(s.roll) === roll);
-            if (!stu) {
-              notFoundRolls.push(roll);
-              continue;
-            }
-            matchedRolls.push(roll);
+    // --- Build the Summary Message ---
+    let summary = `<div class="popup-title">Upload Summary</div>
+      <div style="font-size:1.1em;margin-bottom:7px;"><b>${updates}</b> students updated!</div>`;
 
-            // Build marks object for this exam's subjects
-            let marksObj = {};
-            selectedExam.subjects.forEach(subj => {
-              let idx = colIndexes[subj.name];
-              if (typeof idx === "number" && idx >= 0) {
-                let val = row[idx];
-                marksObj[subj.name] = isNaN(val) ? 0 : Number(val);
-              }
-            });
+    if (matchedRolls.length > 0) {
+      summary += `<div><b>Matched Roll Numbers:</b><br>
+        <span style="font-size:.97em;">${matchedRolls.sort((a,b)=>a-b).join(', ')}</span></div>`;
+    }
+    if (notFoundRolls.length > 0) {
+      summary += `<div style="margin-top:9px;"><b>Roll Numbers NOT found:</b><br>
+        <span style="color:#d43f3a;">${notFoundRolls.sort((a,b)=>a-b).join(', ')}</span></div>`;
+    }
+    if (unmappedSubjects.length > 0) {
+      summary += `<div style="margin-top:10px;"><b>Subjects not mapped (left blank):</b><br>
+        <span style="color:#d43f3a;">${unmappedSubjects.join(', ')}</span>
+        <br><span style="font-size:.97em;color:#999;">These subjects were skipped.</span></div>`;
+    }
 
-            // Save under students/{id}/marks/{examId}
-            let markRef = db.collection('years').doc(academicYear)
-              .collection('classes').doc(currentClassId)
-              .collection('sections').doc(currentSectionId)
-              .collection('students').doc(stu.id)
-              .collection('marks').doc(selectedExam.id);
+    summary += `<div class="popup-btn-row" style="margin-top:18px;">
+      <button class="popup-action-btn">Close</button></div>`;
 
-            batch.set(markRef, marksObj, { merge: true });
-            updates++;
-          }
-          if (updates === 0) {
-            alert('No matching students found by roll number!');
-            return;
-          }
-          await batch.commit();
-
-          // --- Build the Summary Message ---
-          let summary = `<div class="popup-title">Upload Summary</div>
-            <div style="font-size:1.1em;margin-bottom:7px;"><b>${updates}</b> students updated!</div>`;
-
-          if (matchedRolls.length > 0) {
-            summary += `<div><b>Matched Roll Numbers:</b><br>
-              <span style="font-size:.97em;">${matchedRolls.sort((a,b)=>a-b).join(', ')}</span></div>`;
-          }
-          if (notFoundRolls.length > 0) {
-            summary += `<div style="margin-top:9px;"><b>Roll Numbers NOT found:</b><br>
-              <span style="color:#d43f3a;">${notFoundRolls.sort((a,b)=>a-b).join(', ')}</span></div>`;
-          }
-          if (missingSubjects.length > 0) {
-            summary += `<div style="margin-top:10px;"><b>Subjects in Exam <span style="color:#0f3d6b;">not found in Excel header</span>:</b><br>
-              <span style="color:#d43f3a;">${missingSubjects.join(', ')}</span>
-              <br><span style="font-size:.97em;color:#999;">Check spelling or header row in Excel.</span>
-              </div>`;
-          }
-          summary += `<div class="popup-btn-row" style="margin-top:18px;"><button class="popup-action-btn">Close</button></div>`;
-
-          showPopup(summary);
-          setTimeout(() => {
-          let closeBtn = popupContent.querySelector('.popup-action-btn');
-          if (closeBtn) closeBtn.onclick = closePopup;
-        }, 100);
-        };
-        reader.readAsArrayBuffer(file);
-      }
+    showPopup(summary);
+    setTimeout(() => {
+      const closeBtn = popupContent.querySelector('.popup-action-btn');
+      if (closeBtn) closeBtn.onclick = closePopup;
+    }, 100);
+  };
+  reader.readAsArrayBuffer(file);
+};
     });
 }
 </script>
 </body>
 </html>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
