@@ -504,16 +504,14 @@ auth.onAuthStateChanged(function(user) {
       `<div class="dropdown-option" data-id="${ex.id}">${ex.name}</div>`
     ).join('');
     examSelected.textContent = "--Select--";
-    // Try to preselect the last-used exam for this (year, class, section)
+   // Try to preselect the last-used exam for this (year, class, section)
 const last = loadLastExam();
 if (last && examMap[last]) {
   selectedExam = last;
   selectedExamObj = examMap[last];
   examSelected.textContent = selectedExamObj.name;
   examSelected.dataset.value = last;
-  // Data already preloaded above, so enable buttons
-  excelBtn.disabled = false;
-  pdfBtn.disabled  = false;
+  // Buttons stay disabled until marks finish loading
 }
 
     // 2) Load students for CURRENT section
@@ -528,20 +526,21 @@ if (last && examMap[last]) {
       if (!s.isDeleted) students.push({ id: doc.id, ...s });
     });
 
-    // 3) Preload marks for ALL exams (keep existing behavior)
-    marksMap = {};
-    for (const stu of students) {
-      marksMap[stu.id] = {};
-      for (const ex of exams) {
-        const markDoc = await db.collection('years').doc(academicYear)
-          .collection('classes').doc(classId)
-          .collection('sections').doc(sectionId)
-          .collection('students').doc(stu.id)
-          .collection('marks').doc(ex.id).get();
-        marksMap[stu.id][ex.id] = markDoc.exists ? (markDoc.data() || {}) : {};
-      }
-    }
-
+    // 3) Preload marks for ALL exams (build locally to avoid race conditions)
+        const newMarksMap = {};
+        for (const stu of students) {
+          newMarksMap[stu.id] = {};
+          for (const ex of exams) {
+            const markDoc = await db.collection('years').doc(academicYear)
+              .collection('classes').doc(classId)
+              .collection('sections').doc(sectionId)
+              .collection('students').doc(stu.id)
+              .collection('marks').doc(ex.id).get();
+            newMarksMap[stu.id][ex.id] = markDoc.exists ? (markDoc.data() || {}) : {};
+          }
+        }
+        marksMap = newMarksMap;
+        if (selectedExamObj) { excelBtn.disabled = false; pdfBtn.disabled = false; }
     // Enable choosing an exam now (buttons stay disabled until exam is picked)
     examSelected.classList.remove('disabled');
     statusDiv.textContent = "";
@@ -975,6 +974,7 @@ examList.onclick = function(e) {
  </script>
 </body>
 </html>
+
 
 
 
