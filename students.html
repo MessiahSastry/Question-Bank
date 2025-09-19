@@ -1839,7 +1839,15 @@ console.log('Subject:', subjectName, 'Subtopics count:', subtopics.length, subto
             const hasSubs = subtopics.length > 0;
             let marksData = {};       // overall total per student (number)
             let breakdownData = {};   // per-subtopic map per student (object)
-            
+            function _normKey(s) {
+              return (s || '')
+                .toString()
+                .normalize('NFKC')     // fix look-alike Unicode
+                .replace(/\s+/g, ' ')  // collapse any whitespace (incl. NBSP)
+                .trim()
+                .toLowerCase();
+            }
+
             let marksPromises = students.map(stu =>
               db.collection('years').doc(academicYear)
                 .collection('classes').doc(currentClassId)
@@ -1851,13 +1859,13 @@ console.log('Subject:', subjectName, 'Subtopics count:', subtopics.length, subto
                   const d = doc.data() || {};
                   if (d[subjectName] !== undefined) marksData[stu.id] = d[subjectName];
                   if (hasSubs && d.__subs) {
-  // match subject key case/space-insensitively
-  const want = (subjectName || '').trim().toLowerCase();
-  const subjKey = Object.keys(d.__subs).find(k => (k || '').trim().toLowerCase() === want);
-  if (subjKey && d.__subs[subjKey]) {
-    breakdownData[stu.id] = d.__subs[subjKey] || {};
-  }
-}
+                  const want = _normKey(subjectName);
+                  const subjKey = Object.keys(d.__subs).find(k => _normKey(k) === want);
+                  if (subjKey && d.__subs[subjKey]) {
+                  breakdownData[stu.id] = d.__subs[subjKey] || {};
+                  console.log('DBG subs for', stu.name, subjectName, '→', breakdownData[stu.id]);
+                }
+                }
                 })
             );
             Promise.all(marksPromises).then(() => {
@@ -1888,16 +1896,16 @@ console.log('Subject:', subjectName, 'Subtopics count:', subtopics.length, subto
                               
                                     ${
                                       (subtopics || []).map(st => {
-                                        const bd = breakdownData[stu.id] || {};
+                                       const bd = breakdownData[stu.id] || {};
                                         let pre = '';
                                         if (Object.prototype.hasOwnProperty.call(bd, st.name) && bd[st.name] != null) {
                                           pre = bd[st.name];
                                         } else {
-                                          // case/space-insensitive fallback
-                                          const want = (st.name || '').trim().toLowerCase();
-                                          const k = Object.keys(bd).find(key => (key || '').trim().toLowerCase() === want);
+                                          const want = _normKey(st.name);
+                                          const k = Object.keys(bd).find(key => _normKey(key) === want);
                                           if (k && bd[k] != null) pre = bd[k];
                                         }
+
                                         return `
                                           <div style="grid-column:1;">&nbsp;</div>
                                           <div class="sub-label"
@@ -3419,6 +3427,7 @@ if (marksFileInput) {
 </script>
 </body>
 </html>
+
 
 
 
