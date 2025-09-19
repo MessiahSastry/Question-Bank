@@ -260,6 +260,7 @@ function getShortSubjectName(subj) {
   let marksMap = {}; // [studentId][examId]={subj:mark,...}
   let selectedExam = null, selectedExamObj = null;
   let isExporting = false; // prevents double-clicks while generating files
+  let marksReady = false;  // becomes true after marks are fully preloaded
   // Load classes for the selected academicYear
 async function loadClasses() {
   try {
@@ -542,9 +543,18 @@ if (last && examMap[last]) {
           }
         }
         marksMap = newMarksMap;
-        if (selectedExamObj) { excelBtn.disabled = false; pdfBtn.disabled = false; }
-    // Enable choosing an exam now (buttons stay disabled until exam is picked)
-    examSelected.classList.remove('disabled');
+marksReady = true;
+
+// If an exam is already chosen, enable exports now
+if (selectedExamObj || examSelected.dataset.value) {
+  excelBtn.disabled = false;
+  pdfBtn.disabled  = false;
+}
+
+// Enable choosing an exam now
+examSelected.classList.remove('disabled');
+statusDiv.textContent = "";
+
     statusDiv.textContent = "";
   } catch (err) {
     statusDiv.textContent = "Error: " + err.message;
@@ -625,10 +635,13 @@ examList.onclick = function(e) {
   // Persist last-picked exam for this (year, class, section)
   saveLastExam(selectedExam);
 
-  // Enable export buttons (marks for all exams are preloaded)
+ // Enable export buttons only if marks are ready
+if (marksReady) {
   excelBtn.disabled = false;
   pdfBtn.disabled  = false;
-};
+} else {
+  statusDiv.textContent = "Loading marks… please wait.";
+}
 
   // ------------- EXCEL EXPORT -------------
   excelBtn.onclick = function() {
@@ -638,6 +651,7 @@ examList.onclick = function(e) {
     selectedExamObj = examMap[selectedExam];
   }
   if (!selectedExamObj) { statusDiv.textContent = "Select an exam."; return; }
+if (!marksReady) { statusDiv.textContent = "Marks are still loading. Please wait a moment."; return; }
 
   isExporting = true;
   excelBtn.disabled = true;
@@ -656,7 +670,8 @@ examList.onclick = function(e) {
     let rows = [];
     let totalArr = [];
     students.forEach(stu => {
-      let marks = marksMap[stu.id][selectedExamObj.id] || {};
+      let allMarks = (marksMap && marksMap[stu.id]) || {};
+      let marks = allMarks[selectedExamObj.id] || {};
       let row = [stu.roll, stu.name];
       let rowStyles = [null, null];
       let total = 0, tmax = 0, allAbsent = true;
@@ -768,7 +783,8 @@ examList.onclick = function(e) {
   let studentRows = [];
   let totalArr = [];
   students.forEach(stu => {
-    let marks = marksMap[stu.id][selectedExamObj.id] || {};
+    let allMarks = (marksMap && marksMap[stu.id]) || {};
+    let marks = allMarks[selectedExamObj.id] || {};
     let row = [stu.roll, stu.name];
     let total = 0, tmax = 0, allAbsent = true;
     for (let i = 0; i < subjects.length; ++i) {
@@ -1043,3 +1059,4 @@ const tableHtml = `
  </script>
 </body>
 </html>
+
