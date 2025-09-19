@@ -863,7 +863,7 @@ examList.onclick = function(e) {
 
      // Page metrics (A4 landscape height is 21cm). SAME margins as html2pdf.
     const CM_TO_PX = 37.795;
-const TOP_CM = 0.5, RIGHT_CM = 1, BOTTOM_CM = 1.27, LEFT_CM = 1; // reclaim ~0.77cm on top
+const TOP_CM = 0.3, RIGHT_CM = 1, BOTTOM_CM = 1.27, LEFT_CM = 1;
 const pageContentHeightPx = (21 - TOP_CM - BOTTOM_CM) * CM_TO_PX;
 const SAFETY_PX = 8; // small buffer to avoid overflow
 
@@ -877,7 +877,7 @@ const SAFETY_PX = 8; // small buffer to avoid overflow
   else                         { rowHeight = 5.8; }
   const rowPx = Math.max(24, rowHeight);
 
-// Measure ACTUAL heading height (first page) and table header height
+// Measure ACTUAL heading height (first page)
 const headingProbe = document.createElement('div');
 headingProbe.style.cssText = 'position:absolute;visibility:hidden;left:-9999px;top:-9999px;';
 headingProbe.innerHTML = `
@@ -897,17 +897,35 @@ document.body.appendChild(headingProbe);
 const HEADING_PX = Math.ceil(headingProbe.getBoundingClientRect().height);
 document.body.removeChild(headingProbe);
 
-const theadProbe = document.createElement('table');
-theadProbe.style.cssText = 'position:absolute;visibility:hidden;left:-9999px;top:-9999px;border-collapse:collapse;width:100%;font-size:0.70em;line-height:1.12;';
-theadProbe.innerHTML = `<thead><tr style="background:#1762a7;color:#fff;font-weight:bold;">${tableHeaders}</tr></thead>`;
-document.body.appendChild(theadProbe);
-const TABLE_HEADER_PX = Math.ceil(theadProbe.getBoundingClientRect().height);
-document.body.removeChild(theadProbe);
+// Measure ACTUAL TABLE HEADER using your exact <th> markup + borders/padding
+const theadProbeDiv = document.createElement('div');
+theadProbeDiv.style.cssText = 'position:absolute;visibility:hidden;left:-9999px;top:-9999px;';
+theadProbeDiv.innerHTML = `
+  <style>
+    td, th { border:1px solid #444; padding:0 1px; white-space:nowrap; font-size:0.98em; }
+  </style>
+  <table cellspacing="0" cellpadding="0"
+         style="border-collapse:collapse;width:100%;font-size:0.70em;line-height:1.12;table-layout:auto;">
+    <thead>
+      <tr style="background:#1762a7;color:#fff;font-weight:bold;">
+        ${tableHeaders}
+      </tr>
+    </thead>
+  </table>`;
+document.body.appendChild(theadProbeDiv);
+const TABLE_HEADER_PX = Math.ceil(theadProbeDiv.getBoundingClientRect().height);
+document.body.removeChild(theadProbeDiv);
 
-// Compute rows per page using *measured* heights
-let rowsOnFirstPage = Math.max(1, Math.floor((pageContentHeightPx - HEADING_PX - TABLE_HEADER_PX - SAFETY_PX) / rowPx));
-let rowsOnNextPages = Math.max(1, Math.floor((pageContentHeightPx - TABLE_HEADER_PX - SAFETY_PX) / rowPx));
+// Account for per-row border accumulation (shared borders ≈ ~1–1.5px/row)
+const PER_ROW_OVERHEAD = 1.5;
 
+// Compute rows per page using measured heights
+let rowsOnFirstPage = Math.max(1,
+  Math.floor((pageContentHeightPx - HEADING_PX - TABLE_HEADER_PX - SAFETY_PX) / (rowPx + PER_ROW_OVERHEAD))
+);
+let rowsOnNextPages = Math.max(1,
+  Math.floor((pageContentHeightPx - TABLE_HEADER_PX - SAFETY_PX) / (rowPx + PER_ROW_OVERHEAD))
+);
 
   let pagesHtml = [];
   let start = 0;
@@ -932,7 +950,7 @@ let rowsOnNextPages = Math.max(1, Math.floor((pageContentHeightPx - TABLE_HEADER
    const headingBlockHtml = (pageIndex === 0) ? `
   <div style="width:100%;text-align:center;margin-top:0;margin-bottom:0;">
         <div style="display:inline-flex;align-items:center;justify-content:center;">
-          <img src="schoollogo1.png" style="height:110px;width:auto;max-width:140px;border-radius:8px;margin-right:10px;" onerror="this.style.display='none';">
+          <img src="schoollogo1.png" style="height:100px;width:auto;max-width:140px;border-radius:8px;margin-right:10px;" onerror="this.style.display='none';">
           <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:110px;line-height:1.09;">
             <span style="font-size:2.19em;font-weight:bold;letter-spacing:0.01em;font-family:'Times New Roman', Times, serif;color:#c81929;line-height:1.08;">
               St. Patrick's School
@@ -1002,6 +1020,7 @@ let rowsOnNextPages = Math.max(1, Math.floor((pageContentHeightPx - TABLE_HEADER
  </script>
 </body>
 </html>
+
 
 
 
