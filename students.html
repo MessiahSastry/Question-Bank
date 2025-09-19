@@ -1939,7 +1939,13 @@ db.collection('years').doc(academicYear)
                 </form>
               `;
               showPopup(html2, 'marksEntryForm', function(ev) {
-                ev.preventDefault();
+               ev.preventDefault();
+            // Make sure we can query inside the popup
+            const popupContent =
+              document.getElementById('popupContent') ||
+              document.querySelector('.popup .popup-content') ||
+              document.querySelector('.popup') ||
+              document;
                let batch = db.batch();
 
           students.forEach(stu => {
@@ -1960,21 +1966,43 @@ db.collection('years').doc(academicYear)
             // compute total
             const totalEl = popupContent.querySelector(`.total-input[data-stu="${stu.id}"]`);
             const totalVal = totalEl && totalEl.value !== '' ? parseFloat(totalEl.value) : NaN;
-          
-            if (Object.keys(subsMap).length === 0 && (isNaN(totalVal) || totalEl.value === '')) {
-              // nothing entered → delete this subject’s fields
-              batch.set(markRef, {
-                [subjectName]: firebase.firestore.FieldValue.delete(),
-                [`__subs.${subjectName}`]: firebase.firestore.FieldValue.delete()
-              }, { merge: true });
-            } else {
-              // save total and breakdown
-              const toSaveTotal = isNaN(totalVal) ? 0 : totalVal;
-              batch.set(markRef, {
-                [subjectName]: toSaveTotal,
-                [`__subs.${subjectName}`]: subsMap
-              }, { merge: true });
+            // when there are NO subtopics, read the single input
+            let soloVal = NaN;
+            if (!hasSubs) {
+              const soloEl = popupContent.querySelector(`input[name="marks_${stu.id}"]`);
+              if (soloEl && soloEl.value !== '') soloVal = parseFloat(soloEl.value);
             }
+
+            if (hasSubs) {
+  // SUBTOPICS MODE
+  if (Object.keys(subsMap).length === 0 && (isNaN(totalVal) || !totalEl || totalEl.value === '')) {
+    // nothing entered → delete
+    batch.set(markRef, {
+      [subjectName]: firebase.firestore.FieldValue.delete(),
+      [`__subs.${subjectName}`]: firebase.firestore.FieldValue.delete()
+    }, { merge: true });
+  } else {
+    const toSaveTotal = isNaN(totalVal) ? 0 : totalVal;
+    batch.set(markRef, {
+      [subjectName]: toSaveTotal,
+      [`__subs.${subjectName}`]: subsMap
+    }, { merge: true });
+  }
+} else {
+  // NO SUBTOPICS (single input)
+  if (isNaN(soloVal)) {
+    batch.set(markRef, {
+      [subjectName]: firebase.firestore.FieldValue.delete(),
+      [`__subs.${subjectName}`]: firebase.firestore.FieldValue.delete()
+    }, { merge: true });
+  } else {
+    batch.set(markRef, {
+      [subjectName]: soloVal,
+      // ensure any previous breakdown is cleared
+      [`__subs.${subjectName}`]: firebase.firestore.FieldValue.delete()
+    }, { merge: true });
+  }
+}
           });
                  batch.commit().then(() => {
                   alert("Marks saved successfully!");
@@ -3373,4 +3401,5 @@ if (marksFileInput) {
 </script>
 </body>
 </html>
+
 
