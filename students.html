@@ -1858,14 +1858,24 @@ console.log('Subject:', subjectName, 'Subtopics count:', subtopics.length, subto
                   if (!doc.exists) return;
                   const d = doc.data() || {};
                   if (d[subjectName] !== undefined) marksData[stu.id] = d[subjectName];
-                  if (hasSubs && d.__subs) {
-                  const want = _normKey(subjectName);
-                  const subjKey = Object.keys(d.__subs).find(k => _normKey(k) === want);
-                  if (subjKey && d.__subs[subjKey]) {
-                  breakdownData[stu.id] = d.__subs[subjKey] || {};
-                  console.log('DBG subs for', stu.name, subjectName, '→', breakdownData[stu.id]);
-                }
-                }
+                 if (hasSubs && d.__subs) {
+  const subsKeys = Object.keys(d.__subs);
+  const want = _normKey(subjectName);
+  // exact match first
+  let subjKey = subsKeys.find(k => _normKey(k) === want);
+  // if not found and only one subject stored, use it
+  if (!subjKey && subsKeys.length === 1) subjKey = subsKeys[0];
+  // fuzzy fallback (handles stray spaces/NBSP or minor diffs)
+  if (!subjKey) subjKey = subsKeys.find(k => {
+    const nk = _normKey(k);
+    return nk.includes(want) || want.includes(nk);
+  });
+  if (subjKey) {
+    breakdownData[stu.id] = d.__subs[subjKey] || {};
+    // debug verify
+    console.log('DBG subs for', stu.name, '→ subjectKey:', subjKey, 'data:', breakdownData[stu.id]);
+  }
+}
                 })
             );
             Promise.all(marksPromises).then(() => {
@@ -3427,6 +3437,7 @@ if (marksFileInput) {
 </script>
 </body>
 </html>
+
 
 
 
