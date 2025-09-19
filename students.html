@@ -1836,7 +1836,6 @@ if (subj && Array.isArray(subj.subtopics) && subj.subtopics.length > 0) {
 console.log('Subject:', subjectName, 'Subtopics count:', subtopics.length, subtopics);
             
             // --- Begin: Marks Entry Popup Block ---
-            // --- Begin: Marks Entry Popup Block ---
 const hasSubs = subtopics.length > 0;
 let marksData = {};       // overall total per student (number)
 let breakdownData = {};   // per-subtopic map per student (object)
@@ -1864,16 +1863,7 @@ function _resolveKey(obj, wantName) {
   });
   return k || null;
 }
-            function _normKey(s) {
-              return (s || '')
-                .toString()
-                .normalize('NFKC')     // fix look-alike Unicode
-                .replace(/\s+/g, ' ')  // collapse any whitespace (incl. NBSP)
-                .trim()
-                .toLowerCase();
-            }
-
-            let marksPromises = students.map(stu =>
+             let marksPromises = students.map(stu =>
               db.collection('years').doc(academicYear)
                 .collection('classes').doc(currentClassId)
                 .collection('sections').doc(currentSectionId)
@@ -1913,6 +1903,15 @@ function _resolveKey(obj, wantName) {
                         console.log('DBG subs MISS for', stu.name, 'keys:', subsKeys, 'want:', subjectName);
                       }
                     }
+                  // Back-compat: older writes may have used a flat field "__subs.<Subject>"
+                    if (hasSubs && (!d.__subs || !Object.keys(d.__subs).length)) {
+                      const flatKey = _resolveKey(d, `__subs.${subjectName}`);
+                      if (flatKey && d[flatKey] && typeof d[flatKey] === 'object') {
+                        breakdownData[stu.id] = d[flatKey];
+                        console.log('DBG back-compat subs for', stu.name, '→', flatKey, breakdownData[stu.id]);
+                      }
+                    }
+
                 })
             );
             Promise.all(marksPromises).then(() => {
@@ -2048,33 +2047,34 @@ function _resolveKey(obj, wantName) {
 
             if (hasSubs) {
   // SUBTOPICS MODE
-  if (Object.keys(subsMap).length === 0 && (isNaN(totalVal) || !totalEl || totalEl.value === '')) {
-    // nothing entered → delete
-    batch.set(markRef, {
-      [subjectName]: firebase.firestore.FieldValue.delete(),
-      [`__subs.${subjectName}`]: firebase.firestore.FieldValue.delete()
-    }, { merge: true });
-  } else {
+if (Object.keys(subsMap).length === 0 && (isNaN(totalVal) || !totalEl || totalEl.value === '')) {
+  // nothing entered → delete (use update for dotted path)
+  batch.update(markRef, {
+    [subjectName]: firebase.firestore.FieldValue.delete(),
+    [`__subs.${subjectName}`]: firebase.firestore.FieldValue.delete()
+  });
+} else {
     const toSaveTotal = isNaN(totalVal) ? 0 : totalVal;
     batch.set(markRef, {
-      [subjectName]: toSaveTotal,
-      [`__subs.${subjectName}`]: subsMap
-    }, { merge: true });
+  [subjectName]: toSaveTotal,
+  __subs: { [subjectName]: subsMap }
+}, { merge: true });
   }
 } else {
   // NO SUBTOPICS (single input)
   if (isNaN(soloVal)) {
-    batch.set(markRef, {
-      [subjectName]: firebase.firestore.FieldValue.delete(),
-      [`__subs.${subjectName}`]: firebase.firestore.FieldValue.delete()
-    }, { merge: true });
+    batch.update(markRef, {
+  [subjectName]: firebase.firestore.FieldValue.delete(),
+  [`__subs.${subjectName}`]: firebase.firestore.FieldValue.delete()
+});
   } else {
-    batch.set(markRef, {
-      [subjectName]: soloVal,
-      // ensure any previous breakdown is cleared
-      [`__subs.${subjectName}`]: firebase.firestore.FieldValue.delete()
-    }, { merge: true });
-  }
+  // save total
+  batch.set(markRef, { [subjectName]: soloVal }, { merge: true });
+  // clear any previous breakdown using update (dotted path)
+  batch.update(markRef, {
+    [`__subs.${subjectName}`]: firebase.firestore.FieldValue.delete()
+  });
+}
 }
           });
                  batch.commit().then(() => {
@@ -3474,6 +3474,7 @@ if (marksFileInput) {
 </script>
 </body>
 </html>
+
 
 
 
