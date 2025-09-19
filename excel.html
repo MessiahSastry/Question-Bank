@@ -465,17 +465,17 @@ auth.onAuthStateChanged(function(user) {
   async function loadExams() {
   try {
     // Reset & disable exam UI while loading
-   examSelected.textContent = 'Loading...';
-examSelected.dataset.value = '';
-// leave it clickable; we’ll just fill the list when ready
+    examSelected.textContent = 'Loading...';
+    examSelected.dataset.value = '';
     examList.innerHTML = '';
     excelBtn.disabled = true;
-    pdfBtn.disabled = true;
+    pdfBtn.disabled   = true;
     statusDiv.textContent = "";
 
     if (!academicYear || !classId || !sectionId) {
       statusDiv.textContent = "Select class & section first.";
       examSelected.textContent = "--Select--";
+      examSelected.classList.add('disabled');
       return;
     }
 
@@ -488,8 +488,7 @@ examSelected.dataset.value = '';
     exams = [];
     examMap = {};
     examsSnap.forEach(doc => {
-      let ex = doc.data() || {};
-      ex.id = doc.id;
+      const ex = { id: doc.id, ...(doc.data() || {}) };
       exams.push(ex);
       examMap[ex.id] = ex;
     });
@@ -497,25 +496,28 @@ examSelected.dataset.value = '';
     if (!exams.length) {
       statusDiv.textContent = "No exams found for this class group.";
       examSelected.textContent = "--Select--";
+      examSelected.classList.add('disabled');
       return;
     }
 
-    // Fill exam dropdown (don’t auto-select)
+    // Fill exam dropdown (don’t auto-select unless we have a remembered one)
     examList.innerHTML = exams.map(ex =>
-    `<div class="dropdown-option" data-id="${ex.id}">${ex.name}</div>`
-  ).join('');
-  examSelected.textContent = "--Select--";
-  // let user open the exam dropdown now (don’t wait for marks preload)
-  examSelected.classList.remove('disabled');
-   // Try to preselect the last-used exam for this (year, class, section)
-const last = loadLastExam();
-if (last && examMap[last]) {
-  selectedExam = last;
-  selectedExamObj = examMap[last];
-  examSelected.textContent = selectedExamObj.name;
-  examSelected.dataset.value = last;
-  // Buttons stay disabled until marks finish loading
-}
+      `<div class="dropdown-option" data-id="${ex.id}">${ex.name}</div>`
+    ).join('');
+    examSelected.textContent = "--Select--";
+    examSelected.classList.remove('disabled');
+
+    // Try to preselect the last-used exam for this (year, class, section)
+    const last = loadLastExam();
+    if (last && examMap[last]) {
+      selectedExam = last;
+      selectedExamObj = examMap[last];
+      examSelected.textContent = selectedExamObj.name;
+      examSelected.dataset.value = last;
+    } else {
+      selectedExam = null;
+      selectedExamObj = null;
+    }
 
     // 2) Load students for CURRENT section
     const studentsSnap = await db.collection('years').doc(academicYear)
@@ -529,49 +531,46 @@ if (last && examMap[last]) {
       if (!s.isDeleted) students.push({ id: doc.id, ...s });
     });
 
-    // 3) Preload marks for ALL exams (build locally to avoid race conditions)
-        const newMarksMap = {};
-        for (const stu of students) {
-          newMarksMap[stu.id] = {};
-          for (const ex of exams) {
-            const markDoc = await db.collection('years').doc(academicYear)
-              .collection('classes').doc(classId)
-              .collection('sections').doc(sectionId)
-              .collection('students').doc(stu.id)
-              .collection('marks').doc(ex.id).get();
-            newMarksMap[stu.id][ex.id] = markDoc.exists ? (markDoc.data() || {}) : {};
-          }
-        }
-        marksMap = newMarksMap;
-marksReady = true;
+    // 3) Preload marks for ALL exams
+    const newMarksMap = {};
+    for (const stu of students) {
+      newMarksMap[stu.id] = {};
+      for (const ex of exams) {
+        const markDoc = await db.collection('years').doc(academicYear)
+          .collection('classes').doc(classId)
+          .collection('sections').doc(sectionId)
+          .collection('students').doc(stu.id)
+          .collection('marks').doc(ex.id).get();
+        newMarksMap[stu.id][ex.id] = markDoc.exists ? (markDoc.data() || {}) : {};
+      }
+    }
+    marksMap = newMarksMap;
+    marksReady = true;
 
-// centralized enable/disable logic
-updateExportState();
+    // Centralized enable/disable logic
+    function updateExportState() {
+      const haveExam = !!(selectedExamObj || examSelected.dataset.value);
+      if (marksReady && haveExam) {
+        excelBtn.disabled = false;
+        pdfBtn.disabled   = false;
+        if (statusDiv.textContent.includes('Loading marks')) statusDiv.textContent = '';
+      } else if (haveExam && !marksReady) {
+        statusDiv.textContent = 'Loading marks… please wait.';
+        excelBtn.disabled = true;
+        pdfBtn.disabled   = true;
+      } else {
+        excelBtn.disabled = true;
+        pdfBtn.disabled   = true;
+      }
+    }
+    updateExportState();
 
-// helper lives in loadExams scope
-function updateExportState() {
-  const haveExam = !!(selectedExamObj || examSelected.dataset.value);
-  if (marksReady && haveExam) {
-    excelBtn.disabled = false;
-    pdfBtn.disabled  = false;
-    if (statusDiv.textContent.includes('Loading marks')) statusDiv.textContent = '';
-  } else if (haveExam && !marksReady) {
-    statusDiv.textContent = 'Loading marks… please wait.';
+  } catch (err) {
+    statusDiv.textContent = "Error: " + err.message;
+    examSelected.textContent = "--Select--";
+    examSelected.classList.add('disabled');
     excelBtn.disabled = true;
-    pdfBtn.disabled  = true;
-  } else {
-    excelBtn.disabled = true;
-    pdfBtn.disabled  = true;
-  }
-}
-    if (statusDiv.textContent.includes('Loading marks')) statusDiv.textContent = '';
-  } else if (haveExam && !marksReady) {
-    statusDiv.textContent = 'Loading marks… please wait.';
-    excelBtn.disabled = true;
-    pdfBtn.disabled  = true;
-  } else {
-    excelBtn.disabled = true;
-    pdfBtn.disabled  = true;
+    pdfBtn.disabled   = true;
   }
 }
 
@@ -1070,6 +1069,7 @@ const tableHtml = `
  </script>
 </body>
 </html>
+
 
 
 
