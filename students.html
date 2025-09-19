@@ -1844,9 +1844,14 @@ db.collection('years').doc(academicYear)
                   if (!doc.exists) return;
                   const d = doc.data() || {};
                   if (d[subjectName] !== undefined) marksData[stu.id] = d[subjectName];
-                  if (hasSubs && d.__subs && d.__subs[subjectName]) {
-                    breakdownData[stu.id] = d.__subs[subjectName] || {};
-                  }
+                  if (hasSubs && d.__subs) {
+  // match subject key case/space-insensitively
+  const want = (subjectName || '').trim().toLowerCase();
+  const subjKey = Object.keys(d.__subs).find(k => (k || '').trim().toLowerCase() === want);
+  if (subjKey && d.__subs[subjKey]) {
+    breakdownData[stu.id] = d.__subs[subjKey] || {};
+  }
+}
                 })
             );
             Promise.all(marksPromises).then(() => {
@@ -1877,9 +1882,16 @@ db.collection('years').doc(academicYear)
                               
                                     ${
                                       (subtopics || []).map(st => {
-                                        const pre = (breakdownData[stu.id] && breakdownData[stu.id][st.name] != null)
-                                          ? breakdownData[stu.id][st.name]
-                                          : '';
+                                        const bd = breakdownData[stu.id] || {};
+                                        let pre = '';
+                                        if (Object.prototype.hasOwnProperty.call(bd, st.name) && bd[st.name] != null) {
+                                          pre = bd[st.name];
+                                        } else {
+                                          // case/space-insensitive fallback
+                                          const want = (st.name || '').trim().toLowerCase();
+                                          const k = Object.keys(bd).find(key => (key || '').trim().toLowerCase() === want);
+                                          if (k && bd[k] != null) pre = bd[k];
+                                        }
                                         return `
                                           <div style="grid-column:1;">&nbsp;</div>
                                           <div class="sub-label"
@@ -3401,6 +3413,7 @@ if (marksFileInput) {
 </script>
 </body>
 </html>
+
 
 
 
