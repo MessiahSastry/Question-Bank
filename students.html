@@ -1836,9 +1836,34 @@ if (subj && Array.isArray(subj.subtopics) && subj.subtopics.length > 0) {
 console.log('Subject:', subjectName, 'Subtopics count:', subtopics.length, subtopics);
             
             // --- Begin: Marks Entry Popup Block ---
-            const hasSubs = subtopics.length > 0;
-            let marksData = {};       // overall total per student (number)
-            let breakdownData = {};   // per-subtopic map per student (object)
+            // --- Begin: Marks Entry Popup Block ---
+const hasSubs = subtopics.length > 0;
+let marksData = {};       // overall total per student (number)
+let breakdownData = {};   // per-subtopic map per student (object)
+
+function _normKey(s) {
+  return (s || '')
+    .toString()
+    .normalize('NFKC')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+function _resolveKey(obj, wantName) {
+  if (!obj) return null;
+  const keys = Object.keys(obj);
+  const want = _normKey(wantName);
+  // exact normalized match
+  let k = keys.find(x => _normKey(x) === want);
+  // single-key fallback
+  if (!k && keys.length === 1) k = keys[0];
+  // fuzzy contains fallback
+  if (!k) k = keys.find(x => {
+    const nx = _normKey(x);
+    return nx.includes(want) || want.includes(nx);
+  });
+  return k || null;
+}
             function _normKey(s) {
               return (s || '')
                 .toString()
@@ -1857,25 +1882,37 @@ console.log('Subject:', subjectName, 'Subtopics count:', subtopics.length, subto
                 .get().then(doc => {
                   if (!doc.exists) return;
                   const d = doc.data() || {};
-                  if (d[subjectName] !== undefined) marksData[stu.id] = d[subjectName];
-                 if (hasSubs && d.__subs) {
-                  const subsKeys = Object.keys(d.__subs);
-                  const want = _normKey(subjectName);
-                  // exact match first
-                  let subjKey = subsKeys.find(k => _normKey(k) === want);
-                  // if not found and only one subject stored, use it
-                  if (!subjKey && subsKeys.length === 1) subjKey = subsKeys[0];
-                  // fuzzy fallback (handles stray spaces/NBSP or minor diffs)
-                  if (!subjKey) subjKey = subsKeys.find(k => {
-                    const nk = _normKey(k);
-                    return nk.includes(want) || want.includes(nk);
-                  });
-                  if (subjKey) {
-                    breakdownData[stu.id] = d.__subs[subjKey] || {};
-                    // debug verify
-                    console.log('DBG subs for', stu.name, '→ subjectKey:', subjKey, 'data:', breakdownData[stu.id]);
-                  }
+                  console.log('DBG', stu.name, 'keys:', Object.keys(d), 'subsKeys:', d.__subs ? Object.keys(d.__subs) : []);
+                  const totKey = _resolveKey(d, subjectName);
+                if (totKey && d[totKey] !== undefined && totKey !== '__subs') {
+                  marksData[stu.id] = d[totKey];
                 }
+                 if (hasSubs && d.__subs) {
+                      const subsKeys = Object.keys(d.__subs);
+                      const want = _normKey(subjectName);
+                      let subjKey = subsKeys.find(k => _normKey(k) === want);
+                      if (!subjKey && subsKeys.length === 1) subjKey = subsKeys[0];
+                      if (!subjKey) subjKey = subsKeys.find(k => {
+                        const nk = _normKey(k);
+                        return nk.includes(want) || want.includes(nk);
+                      });
+                      // as a last resort, pick the key that has the most numeric values
+                      if (!subjKey) {
+                        let best = null, bestScore = -1;
+                        subsKeys.forEach(k => {
+                          const obj = d.__subs[k] || {};
+                          const score = Object.values(obj).filter(v => typeof v === 'number' && !isNaN(v)).length;
+                          if (score > bestScore) { best = k; bestScore = score; }
+                        });
+                        subjKey = best;
+                      }
+                      if (subjKey) {
+                        breakdownData[stu.id] = d.__subs[subjKey] || {};
+                        console.log('DBG subs for', stu.name, '→ subjectKey:', subjKey, 'data:', breakdownData[stu.id]);
+                      } else {
+                        console.log('DBG subs MISS for', stu.name, 'keys:', subsKeys, 'want:', subjectName);
+                      }
+                    }
                 })
             );
             Promise.all(marksPromises).then(() => {
@@ -1907,14 +1944,14 @@ console.log('Subject:', subjectName, 'Subtopics count:', subtopics.length, subto
                                     ${
                                       (subtopics || []).map(st => {
                                        const bd = breakdownData[stu.id] || {};
-                                        let pre = '';
-                                        if (Object.prototype.hasOwnProperty.call(bd, st.name) && bd[st.name] != null) {
-                                          pre = bd[st.name];
-                                        } else {
-                                          const want = _normKey(st.name);
-                                          const k = Object.keys(bd).find(key => _normKey(key) === want);
-                                          if (k && bd[k] != null) pre = bd[k];
-                                        }
+                                      let pre = '';
+                                      if (Object.prototype.hasOwnProperty.call(bd, st.name) && bd[st.name] != null) {
+                                        pre = bd[st.name];
+                                      } else {
+                                        const k = _resolveKey(bd, st.name);
+                                        if (k && bd[k] != null) pre = bd[k];
+                                      }
+
 
                                         return `
                                           <div style="grid-column:1;">&nbsp;</div>
@@ -3437,6 +3474,7 @@ if (marksFileInput) {
 </script>
 </body>
 </html>
+
 
 
 
