@@ -1848,21 +1848,6 @@ function _normKey(s) {
     .trim()
     .toLowerCase();
 }
-function _resolveKey(obj, wantName) {
-  if (!obj) return null;
-  const keys = Object.keys(obj);
-  const want = _normKey(wantName);
-  // exact normalized match
-  let k = keys.find(x => _normKey(x) === want);
-  // single-key fallback
-  if (!k && keys.length === 1) k = keys[0];
-  // fuzzy contains fallback
-  if (!k) k = keys.find(x => {
-    const nx = _normKey(x);
-    return nx.includes(want) || want.includes(nx);
-  });
-  return k || null;
-}
             function _resolveSubKeyExact(obj, wantName) {
             if (!obj) return null;
             const want = _normKey(wantName);
@@ -1882,45 +1867,31 @@ function _resolveKey(obj, wantName) {
                   if (!doc.exists) return;
                   const d = doc.data() || {};
                   console.log('DBG', stu.name, 'keys:', Object.keys(d), 'subsKeys:', d.__subs ? Object.keys(d.__subs) : []);
-                  const totKey = _resolveKey(d, subjectName);
+                  const totKey = Object.keys(d).find(k =>
+                  k !== '__subs' && _normKey(k) === _normKey(subjectName)
+                );
                 if (totKey && d[totKey] !== undefined && totKey !== '__subs') {
                   marksData[stu.id] = d[totKey];
                 }
                  if (hasSubs && d.__subs) {
-                      const subsKeys = Object.keys(d.__subs);
-                      const want = _normKey(subjectName);
-                      let subjKey = subsKeys.find(k => _normKey(k) === want);
-                      if (!subjKey && subsKeys.length === 1) subjKey = subsKeys[0];
-                      if (!subjKey) subjKey = subsKeys.find(k => {
-                        const nk = _normKey(k);
-                        return nk.includes(want) || want.includes(nk);
-                      });
-                      // as a last resort, pick the key that has the most numeric values
-                      if (!subjKey) {
-                        let best = null, bestScore = -1;
-                        subsKeys.forEach(k => {
-                          const obj = d.__subs[k] || {};
-                          const score = Object.values(obj).filter(v => typeof v === 'number' && !isNaN(v)).length;
-                          if (score > bestScore) { best = k; bestScore = score; }
-                        });
-                        subjKey = best;
-                      }
-                      if (subjKey) {
-                        breakdownData[stu.id] = d.__subs[subjKey] || {};
-                        console.log('DBG subs for', stu.name, '→ subjectKey:', subjKey, 'data:', breakdownData[stu.id]);
-                      } else {
-                        console.log('DBG subs MISS for', stu.name, 'keys:', subsKeys, 'want:', subjectName);
-                      }
-                    }
-                  // Back-compat: older writes may have used a flat field "__subs.<Subject>"
-                    if (hasSubs && (!d.__subs || !Object.keys(d.__subs).length)) {
-                      const flatKey = _resolveKey(d, `__subs.${subjectName}`);
-                      if (flatKey && d[flatKey] && typeof d[flatKey] === 'object') {
-                        breakdownData[stu.id] = d[flatKey];
-                        console.log('DBG back-compat subs for', stu.name, '→', flatKey, breakdownData[stu.id]);
-                      }
-                    }
-
+  const want = _normKey(subjectName);
+  const subjKey = Object.keys(d.__subs).find(k => _normKey(k) === want);
+  if (subjKey) {
+    breakdownData[stu.id] = d.__subs[subjKey] || {};
+    console.log('DBG subs (exact) for', stu.name, '→', subjKey, breakdownData[stu.id]);
+  } else {
+    console.log('DBG subs MISS (exact-only) for', stu.name, 'want:', subjectName);
+  }
+}
+                  // Back-compat (exact-only): older writes ".__subs.<Subject>"
+              if (hasSubs && (!d.__subs || !Object.keys(d.__subs).length)) {
+                const wantFlat = `__subs.${subjectName}`;
+                const flatKey = Object.keys(d).find(k => _normKey(k) === _normKey(wantFlat));
+                if (flatKey && d[flatKey] && typeof d[flatKey] === 'object') {
+                  breakdownData[stu.id] = d[flatKey];
+                  console.log('DBG back-compat subs (exact) for', stu.name, '→', flatKey, breakdownData[stu.id]);
+                }
+              }
                 })
             );
             Promise.all(marksPromises).then(() => {
@@ -2061,12 +2032,12 @@ if (Object.keys(subsMap).length === 0 && (isNaN(totalVal) || !totalEl || totalEl
     [`__subs.${subjectName}`]: firebase.firestore.FieldValue.delete()
   });
 } else {
-    const toSaveTotal = isNaN(totalVal) ? 0 : totalVal;
-    batch.set(markRef, {
-  [subjectName]: toSaveTotal,
-  __subs: { [subjectName]: subsMap }
-}, { merge: true });
-  }
+  const toSaveTotal = isNaN(totalVal) ? 0 : totalVal;
+  // save total (merge)
+  batch.set(markRef, { [subjectName]: toSaveTotal }, { merge: true });
+  // save breakdown via dotted path (touch only this subject)
+  batch.update(markRef, { [`__subs.${subjectName}`]: subsMap });
+}
 } else {
   // NO SUBTOPICS (single input)
   if (isNaN(soloVal)) {
@@ -3481,6 +3452,7 @@ if (marksFileInput) {
 </script>
 </body>
 </html>
+
 
 
 
