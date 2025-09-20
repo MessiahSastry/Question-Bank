@@ -133,6 +133,9 @@
       background-color: #fff8e1; border-top: 2px solid #ffecb3; padding: 10px 14px; margin-top: 10px; border-radius: 0 0 12px 12px;
       font-style: italic; color: #5d4037; white-space: pre-wrap;
     }
+    /* Prevent any hidden accessibility markup from being captured into the PDF image */
+    mjx-assistive-mml { display: none !important; }
+    .mjx-tex-setting { display: inline !important; }
   </style>
 </head>
 <body>
@@ -386,45 +389,22 @@
             </div>`;
         }
 
-        // UNIVERSAL QUESTION TEXT + OPTIONS EXTRACTION
-        const textDiv = clone.querySelector('.question-text');
-        let questionLine = '';
-        let options = [];
-        if (textDiv) {
-          let html = textDiv.innerHTML.replace(/<img[^>]*>/gi, '');
-          let parts = html.split(/<br\s*\/?>|<\/div>|<div[^>]*>/gi)
-            .map(s => s.replace(/&nbsp;/g, ' ').trim())
-            .filter(Boolean);
-
-          parts = parts.filter(line => line && !/^<br\s*\/?>$/i.test(line));
-
-          if (parts.length > 0) {
-            questionLine = parts[0];
-            let optionLines = [];
-            for (let i = 1; i < parts.length; i++) {
-              let line = parts[i];
-              let inlineOpts = line.match(/([A-D][).][^A-D]*)/g);
-              if (inlineOpts && inlineOpts.length >= 2) {
-                optionLines.push(...inlineOpts.map(opt => opt.trim()));
-              } else if (line) {
-                optionLines.push(line);
-              }
-            }
-            if (optionLines.length === 4) {
-              options = optionLines.map((opt, i) =>
-                /^[A-D][).]/.test(opt) ? opt : String.fromCharCode(65 + i) + ") " + opt
-              );
-            } else {
-              options = optionLines;
-            }
-          }
-        }
-        const isMCQ = options.length === 4;
+       // === ALWAYS read RAW strings to avoid duplicating MathJax output ===
+          let questionLine = (item.getAttribute('data-raw-question') || '').trim();
+          
+          let options = [];
+          const ra = (item.getAttribute('data-raw-opt-a') || '').replace(/^[A-D][).]\s*/, '');
+          const rb = (item.getAttribute('data-raw-opt-b') || '').replace(/^[A-D][).]\s*/, '');
+          const rc = (item.getAttribute('data-raw-opt-c') || '').replace(/^[A-D][).]\s*/, '');
+          const rd = (item.getAttribute('data-raw-opt-d') || '').replace(/^[A-D][).]\s*/, '');
+          if (ra || rb || rc || rd) options = [ra, rb, rc, rd].filter(v => v !== '');
+          
+          const isMCQ = options.length === 4;
 
         const questionHtml = `
           <div class="question-container" style="display:flex;align-items:flex-start;margin-bottom:10px;page-break-inside:avoid;break-inside:avoid;">
             <div class="question-body" style="flex:1;">
-              ${createHangingDiv(qCounter, questionLine, isMCQ)}
+              ${createHangingDiv(qCounter, wrapLatex(questionLine), isMCQ)}
               ${imgHtml ? imgHtml : ''}
               <div class="options-block" style="margin-top:2px;">
                 ${
@@ -469,9 +449,9 @@
                           <span style="min-width:70px;display:inline-block;vertical-align:top;">${optionLines[3]}</span>
                         </div>`;
                     } else {
-                      return optionLines
-                        .map(opt => `<div style="margin-bottom:2px;margin-left:2px;">${opt.trim().replace(/\n/g, '<br>')}</div>`)
-                        .join('');
+                     return optionLines
+                  .map(opt => `<div style="margin-bottom:2px;margin-left:2px;">${wrapLatex(opt.trim()).replace(/\n/g, '<br>')}</div>`)
+                  .join('');
                     }
                   })()
                   : (options.length > 0
@@ -515,11 +495,25 @@
         buckets[''].forEach(item => printable.appendChild(buildQuestionHTML(item)));
       }
 
-      if (window.MathJax && typeof window.MathJax.typesetPromise === 'function') {
-        await window.MathJax.typesetPromise([printable]);
-        await new Promise(res => setTimeout(res, 100));
-      }
+     if (window.MathJax) {
+  // 1) Remove any pre-rendered MathJax artifacts inside the printable node
+  printable.querySelectorAll('mjx-container, mjx-assistive-mml').forEach(n => n.remove());
 
+  // 2) Clear MathJax state for this element (if API exists)
+  if (typeof window.MathJax.typesetClear === 'function') {
+    window.MathJax.typesetClear([printable]);
+  }
+
+  // 3) Typeset exactly once
+  if (typeof window.MathJax.typesetPromise === 'function') {
+    await window.MathJax.typesetPromise([printable]);
+  } else if (typeof window.MathJax.typeset === 'function') {
+    window.MathJax.typeset([printable]);
+  }
+
+  // 4) Small delay to ensure SVG is in the DOM before html2pdf capture
+  await new Promise(res => setTimeout(res, 150));
+}
       html2pdf().set({
         margin: [1.5, 1.5, 1.5, 1.5],
         filename: `Question_Bank_${(classVal || '').replace(/ /g, "_")}_${(subjectVal || '').replace(/ /g, "_")}_${(chapterVal || '').replace(/ /g, "_")}.pdf`,
@@ -877,7 +871,16 @@
 
           questionCount++;
           questionsHTML += `
-            <div class="question-item" data-id="${doc.id}" data-level="${data.difficulty || data.level || ''}" style="position:relative;">
+            <div class="question-item"
+     data-id="${doc.id}"
+     data-level="${data.difficulty || data.level || ''}"
+     data-raw-question="${(data.question || data.body || data.text || '').replace(/"/g,'&quot;')}"
+     data-raw-opt-a="${Array.isArray(data.options) ? (data.options[0]||'').replace(/"/g,'&quot;') : ''}"
+     data-raw-opt-b="${Array.isArray(data.options) ? (data.options[1]||'').replace(/"/g,'&quot;') : ''}"
+     data-raw-opt-c="${Array.isArray(data.options) ? (data.options[2]||'').replace(/"/g,'&quot;') : ''}"
+     data-raw-opt-d="${Array.isArray(data.options) ? (data.options[3]||'').replace(/"/g,'&quot;') : ''}"
+     style="position:relative;">
+
               <div class="question-meta">
                 Q${questionCount}: ${(data.difficulty || data.level || 'N/A')}, ${(data.marks ?? 'N/A')} Mark(s)${data.mcqType ? ` [${data.mcqType}]` : ''}
               </div>
@@ -1348,3 +1351,4 @@ All the Best`;
   </div>
 </body>
 </html>
+
