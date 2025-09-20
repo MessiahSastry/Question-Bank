@@ -922,7 +922,9 @@ const HEADER_PULLUP_PX = 96;              // page-1 banner pull-up
 const NON_FIRST_TOP_PAD_PX = 0;          // small gap before header on page 2+
 const CONTENT_H_PX = (21 - TOP_CM - BOTTOM_CM) * CM_TO_PX;
 const CONTENT_W_PX = (29.7 - LEFT_CM - RIGHT_CM) * CM_TO_PX;
-const SAFETY_PX = 40;
+const SAFETY_PX = 72;                 // more conservative base safety
+const PDF_RENDER_OVERHEAD_PX = 24;    // html2pdf/jspdf render variance (~px)
+
 
 // --- DYNAMIC ROW COUNTS (set after safety constants) ---
 // placeholder; will assign after EXTRA_SAFETY_* are defined
@@ -948,7 +950,9 @@ const RENDER_FUDGE_PX       = Math.ceil(rowPx * 0.6);  // extra guard (~0.6 row)
 /* Set dynamic rows per page (must come after EXTRA_SAFETY_* are defined) */
 rowsOnFirstPage = countRowsFit(true, 0, EXTRA_SAFETY_FIRST_PX + RENDER_FUDGE_PX);
 rowsOnNextPages = countRowsFit(false, NON_FIRST_TOP_PAD_PX, EXTRA_SAFETY_NEXT_PX + RENDER_FUDGE_PX);
-// Spill guard: html2pdf can render a hair taller; drop 1 row on page 2+
+
+// Clamp slightly so page-1 never spills; header will repeat on page-2
+rowsOnFirstPage = Math.max(1, rowsOnFirstPage - 1);
 rowsOnNextPages = Math.max(1, rowsOnNextPages - 1);
 
 // Build the SAME heading HTML used on page 1
@@ -978,6 +982,7 @@ function headingHTML() {
 
 // Measure how many rows fit given the actual DOM rendering
 function countRowsFit(includeHeading, extraTopPx = 0, extraSafetyPx = 0) {
+  // Build a hidden page that matches the real PDF page exactly
   const probe = document.createElement('div');
   probe.style.cssText = `position:absolute;visibility:hidden;left:-9999px;top:-9999px;width:${CONTENT_W_PX}px;`;
   probe.innerHTML = `
@@ -986,9 +991,7 @@ function countRowsFit(includeHeading, extraTopPx = 0, extraSafetyPx = 0) {
       td, th { border: 1px solid #444 !important; padding: 0 1px; white-space: nowrap; font-size: 0.98em; }
     </style>
     <div style="font-family:'Times New Roman', Times, serif; color:#1a1a1a; padding-top:${includeHeading ? 0 : extraTopPx}px; box-sizing:border-box;">
-     ${includeHeading
-  ? `<div style="margin-top:-${HEADER_PULLUP_PX}px;">${headingHTML()}</div>`
-  : ``}
+      ${includeHeading ? `<div style="margin-top:-${HEADER_PULLUP_PX}px;">${headingHTML()}</div>` : ``}
       <table cellspacing="0" cellpadding="0" style="border-collapse:collapse;width:100%;font-size:0.70em;margin-top:0;text-align:center;line-height:1.12;table-layout:auto;word-break:break-word;margin-bottom:0;">
         <thead>
           <tr style="background:#1762a7;color:#fff;font-weight:bold;">${tableHeaders}</tr>
@@ -997,22 +1000,24 @@ function countRowsFit(includeHeading, extraTopPx = 0, extraSafetyPx = 0) {
       </table>
     </div>`;
   document.body.appendChild(probe);
+
   const tbody = probe.querySelector('tbody');
+  const maxHeight = CONTENT_H_PX - SAFETY_PX - extraSafetyPx - PDF_RENDER_OVERHEAD_PX;
 
   let fit = 0;
   for (let i = 0; i < rankedRows.length; i++) {
     tbody.insertAdjacentHTML('beforeend', buildRowHtml(rankedRows[i], i, rowPx));
-    // stop when the total height exceeds the available content height
-    if (probe.getBoundingClientRect().height > (CONTENT_H_PX - SAFETY_PX - extraSafetyPx)) {
+    // Use offsetHeight (layout height) to match html2pdf better
+    if (probe.offsetHeight > maxHeight) {
       tbody.lastElementChild.remove();
       break;
     }
     fit++;
   }
+
   document.body.removeChild(probe);
   return Math.max(1, fit);
 }
-
   let pagesHtml = [];
   let start = 0;
   let pageIndex = 0;
@@ -1085,6 +1090,7 @@ const tableHtml = `
  </script>
 </body>
 </html>
+
 
 
 
