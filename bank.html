@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+    <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8" />
@@ -6,13 +6,19 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
     <script>
-      window.MathJax = { tex: { inlineMath: [["$", "$"], ["\\(", "\\)"]] } };
-    </script>
+  window.MathJax = {
+    tex: {
+      inlineMath: [["$", "$"], ["\\(", "\\)"]],
+      displayMath: [["$$","$$"], ["\\[","\\]"]],
+      processEscapes: true
+    },
+    svg: { fontCache: "global" }
+  };
+</script>
     <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/dom-to-image/2.6.0/dom-to-image.min.js"></script>
-    <script src="https://unpkg.com/docx@8.4.0/build/index.umd.js"></script>
+     <script src="https://unpkg.com/docx@8.4.0/build/index.umd.js"></script>
 
     <style>
         :root { --header-height: 90px; }
@@ -266,7 +272,75 @@
     color: #5d4037;
     white-space: pre-wrap;
 }
-    </style>
+    /* --- MathJax & page-break safety --- */
+mjx-container {
+  break-inside: avoid;
+  page-break-inside: avoid;
+  -webkit-column-break-inside: avoid;
+  -moz-column-break-inside: avoid;
+  line-height: 1.25;
+}
+mjx-container[display="true"] { /* display math */
+  display: block;
+  margin: 8px 0;
+}
+mjx-container:not([display="true"]) { /* inline math: keep on one line */
+  display: inline-block;
+  white-space: nowrap;
+  vertical-align: baseline;
+}
+/* Ensure question cards also never split (both on-screen & export) */
+.question-item,
+.question-container {
+  break-inside: avoid;
+  page-break-inside: avoid;
+  -webkit-column-break-inside: avoid;
+  -moz-column-break-inside: avoid;
+}
+        /* Prevent SVG clipping and keep math readable */
+mjx-container svg { overflow: visible; }
+.question-text { line-height: 1.5; overflow: visible; }
+/* Keep whole question + its math + its options together */
+#printable-export .question-container,
+#printable-export .question-item,
+#printable-export .options-block,
+#printable-export mjx-container {
+  break-inside: avoid;
+  page-break-inside: avoid;
+  -webkit-column-break-inside: avoid;
+}
+
+/* Headings should stay with the first question below */
+#printable-export .keep-with-next {
+  break-after: avoid;
+  page-break-after: avoid;
+}
+
+/* Prevent image-induced reflow that can move equations mid-capture */
+#printable-export img {
+  max-width: 95%;
+  height: auto;
+  display: block;
+  overflow: visible;
+}
+/* micro-padding so radicals/summations don’t clip at page edges */
+mjx-container { padding: 2px 1px; }
+/* Freeze UI during PDF export */
+.export-mode * {
+  transition: none !important;
+  animation: none !important;
+}
+
+/* Hide sticky header and any floating controls while capturing */
+.export-mode #main-header,
+.export-mode .q-action-btn,
+.export-mode .actions-menu,
+.export-mode .question-img-btn,
+.export-mode .delete-img-btn,
+.export-mode .question-image-input {
+  visibility: hidden !important;
+}
+</style>
 </head>
 <body>
         <div class="page-wrapper">
@@ -387,11 +461,13 @@
             printable.id = 'printable-export';
             printable.style.background = "#fff";
             printable.style.color = "#000";
-            printable.style.fontFamily = "'Times New Roman', Times, serif";
+            // Match on-screen font to keep MathJax line breaks stable
+            printable.style.fontFamily = "'Segoe UI', Arial, sans-serif";
             printable.style.fontSize = "11pt";
             printable.style.maxWidth = "820px";
             printable.style.margin = "0 auto";
-            printable.style.padding = "0";
+            // small internal padding prevents svg clipping at page edges
+            printable.style.padding = "12px 18px 18px 18px";
             printable.style.lineHeight = "1.6";
 
             // Header
@@ -432,31 +508,26 @@
 
             // Helper for hanging indent
             function createHangingDiv(qNum, text, isMCQ = false) {
-                if (isMCQ) {
-                    return `<div style="margin-bottom:2px;">
-      <div style="text-indent:-20px;padding-left:20px;font-size:11pt;display:flex;justify-content:space-between;align-items:center;max-width:98%;">
-        <span style="flex:1;">${qNum}. ${text}</span>
-        <span style="
-    display:inline-block;
-    text-align:right;
-    font-weight:normal;
-    font-size:1.15em;
-    letter-spacing:2px;
-    min-width:38px;
-    font-family:'Times New Roman', Times, serif;
-    ">
-  ( &nbsp;&nbsp; )
-</span>
-      </div>
-    </div>`;
-                } else {
-                    return `<div style="margin-bottom:2px;">
-      <div style="text-indent:-20px;padding-left:20px;font-size:11pt;">
-        ${qNum}. ${text}
-      </div>
-    </div>`;
-                }
-            }
+  const numCell = `<span style="min-width:26px;display:inline-block;">${qNum}.</span>`;
+  if (isMCQ) {
+    return `
+      <div style="margin-bottom:2px;">
+        <div style="font-size:11pt;display:flex;align-items:flex-start;gap:6px;max-width:98%;">
+          ${numCell}
+          <span style="flex:1;">${text}</span>
+          <span style="display:inline-block;text-align:right;font-weight:normal;font-size:1.15em;letter-spacing:2px;min-width:38px;font-family:'Times New Roman', Times, serif;">( &nbsp;&nbsp; )</span>
+        </div>
+      </div>`;
+  } else {
+    return `
+      <div style="margin-bottom:2px;">
+        <div style="font-size:11pt;display:flex;align-items:flex-start;gap:6px;">
+          ${numCell}
+          <span style="flex:1;">${text}</span>
+        </div>
+      </div>`;
+  }
+}
 
             // MCQ Option Formatter
             function formatOptions(options) {
@@ -564,48 +635,29 @@ function buildQuestionHTML(item) {
            ${
              isMCQ
                ? (() => {
-                   // === MCQ layout block (keep your existing code here unchanged) ===
-                   let optionLines = options.slice(0, 4).map((opt, i) => {
-                     let cleaned = opt.replace(/^[A-D][\)\.\-]\s*/, '');
-                     return String.fromCharCode(65 + i) + ") " + cleaned;
-                   });
-                   function fitsInLine(a, b) {
-                     let d = document.createElement('span');
-                     d.style.cssText = 'visibility:hidden;position:absolute;white-space:nowrap;padding:0;margin:0;border:none;font-family:Times New Roman,Times,serif;font-size:1.11em;';
-                     d.innerText = a + "    " + b;
-                     document.body.appendChild(d);
-                     let fits = d.offsetWidth < 450;
-                     document.body.removeChild(d);
-                     return fits;
-                   }
-                   let dummyDiv = document.createElement('div');
-                   dummyDiv.style.cssText = 'visibility:hidden;position:absolute;white-space:nowrap;padding:0;margin:0;border:none;z-index:-1;font-family:Times New Roman,Times,serif;font-size:1.11em;';
-                   dummyDiv.innerHTML = optionLines.map(opt => `<span style="display:inline-block;vertical-align:middle;margin-right:32px;">${opt.trim()}</span>`).join('');
-                   document.body.appendChild(dummyDiv);
-                   let fitsFour = dummyDiv.offsetWidth < 700;
-                   document.body.removeChild(dummyDiv);
+                   // === MCQ layout block — deterministic, no DOM measuring ===
+let optionLines = options.slice(0, 4).map((opt, i) => {
+  let cleaned = String(opt || '').replace(/^[A-D][\)\.\-]\s*/, '');
+  return String.fromCharCode(65 + i) + ") " + cleaned.trim();
+});
 
-                   let abFits = fitsInLine(optionLines[0], optionLines[1]);
-                   let cdFits = fitsInLine(optionLines[2], optionLines[3]);
+// If all options are reasonably short, render as 2×2 grid. Else, stacked.
+const SHORT_LIMIT = 36;
+const allShort = optionLines.every(opt => opt.length <= SHORT_LIMIT);
 
-                   if (fitsFour) {
-                     return `<div style="display:flex;gap:32px;flex-wrap:wrap;margin-bottom:3px;margin-left:2px;">
-                       ${optionLines.map(opt => `<span style="min-width:70px;display:inline-block;vertical-align:top;">${opt.trim()}</span>`).join('')}
-                     </div>`;
-                   } else if (abFits && cdFits) {
-                     return `
-                       <div style="display:grid;grid-template-columns:auto auto;column-gap:24px;row-gap:0;margin-bottom:2px;margin-left:2px;width:max-content;">
-                         <span style="min-width:70px;display:inline-block;vertical-align:top;">${optionLines[0]}</span>
-                         <span style="min-width:70px;display:inline-block;vertical-align:top;">${optionLines[1]}</span>
-                         <span style="min-width:70px;display:inline-block;vertical-align:top;">${optionLines[2]}</span>
-                         <span style="min-width:70px;display:inline-block;vertical-align:top;">${optionLines[3]}</span>
-                       </div>
-                     `;
-                   } else {
-                     return optionLines.map(opt =>
-                       `<div style="margin-bottom:2px;margin-left:2px;">${opt.trim().replace(/\n/g, '<br>')}</div>`
-                     ).join('');
-                   }
+if (allShort) {
+  return `
+    <div style="display:grid;grid-template-columns:1fr 1fr;column-gap:24px;row-gap:2px;margin-left:2px;margin-top:2px;break-inside:avoid;page-break-inside:avoid;">
+      <div>${optionLines[0]}</div>
+      <div>${optionLines[1]}</div>
+      <div>${optionLines[2]}</div>
+      <div>${optionLines[3]}</div>
+    </div>`;
+} else {
+  return optionLines
+    .map(opt => `<div style="margin:2px 0 0 2px;break-inside:avoid;page-break-inside:avoid;">${opt.replace(/\n/g, '<br>')}</div>`)
+    .join('');
+}
                  })()
                : (options.length > 0
                    ? options.map(opt => `<div style="margin-bottom:2px;margin-left:2px;">${opt.trim().replace(/\n/g, '<br>')}</div>`).join('')
@@ -634,11 +686,11 @@ levelsOrder.forEach(levelName => {
   const keepBlock = document.createElement('div');
   keepBlock.style.cssText = 'page-break-inside: avoid; break-inside: avoid;';
   keepBlock.innerHTML = `
-    <div style="
-      font-size:1.15em;font-weight:800;letter-spacing:0.02em;
-      text-align:left;margin:16px 0 8px 0; page-break-after: avoid;">
-      ${levelName.toUpperCase()}
-    </div>`;
+  <div class="keep-with-next" style="
+    font-size:1.15em;font-weight:800;letter-spacing:0.02em;
+    text-align:left;margin:16px 0 8px 0;">
+    ${levelName.toUpperCase()}
+  </div>`;
   printable.appendChild(keepBlock);
 
   list.forEach((item, idx) => {
@@ -656,17 +708,53 @@ levelsOrder.forEach(levelName => {
 if (buckets[''] && buckets[''].length) {
   buckets[''].forEach(item => printable.appendChild(buildQuestionHTML(item)));
 }
-          // Final export using html2pdf
-            if (window.MathJax && typeof window.MathJax.typesetPromise === 'function') {
-                await window.MathJax.typesetPromise([printable]);
-                await new Promise(res => setTimeout(res, 100)); // Let browser paint SVG
-            }
+            // Attach printable off-screen so MathJax can measure correctly
+            printable.style.position = 'fixed';
+            printable.style.left = '-10000px';
+            printable.style.top = '0';
+            document.body.appendChild(printable);
+
+         // Final export using html2pdf  — ensure fonts, images, and MathJax are fully ready
+// 1) wait for any images inside the printable area
+const imgs = Array.from(printable.querySelectorAll('img'));
+await Promise.all(
+  imgs.map(img => (img.decode ? img.decode().catch(() => {}) : Promise.resolve()))
+);
+
+// 2) wait for fonts (important for MathJax sizing)
+if (document.fonts && document.fonts.ready) {
+  try { await document.fonts.ready; } catch (_) {}
+}
+
+// 3) (re)typeset only the printable wrapper
+if (window.MathJax && typeof window.MathJax.typesetPromise === 'function') {
+  await window.MathJax.typesetPromise([printable]);
+}
+
+// 4) give the browser a couple of frames to paint the SVGs
+await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+            document.documentElement.classList.add('export-mode');
                html2pdf().set({
-              margin: [1.5, 1.5, 1.5, 1.5],
+              // extra headroom for tall display equations
+                margin: [2.0, 1.6, 2.2, 1.6],
               filename: `Question_Bank_${classVal || ''}_${subjectVal || ''}_${chapterVal || ''}.pdf`.replace(/ /g, "_"),
-              html2canvas: { scale: 2, useCORS: true },
-              jsPDF: { unit: 'cm', format: 'a4', orientation: 'portrait' },
-              pagebreak: { mode: ['css', 'legacy'] }
+              html2canvas: {
+  scale: Math.min(3, Math.max(2, window.devicePixelRatio || 2)),
+  useCORS: true,
+  letterRendering: true,
+  imageTimeout: 0,
+  ignoreElements: el => el && (
+    el.classList?.contains('q-action-btn') ||
+    el.classList?.contains('actions-menu') ||
+    el.classList?.contains('question-img-btn') ||
+    el.classList?.contains('question-image-input')
+  )
+},
+jsPDF: { unit: 'cm', format: 'a4', orientation: 'portrait' },
+pagebreak: {
+  mode: ['css', 'legacy', 'avoid-all'],
+  before: '#printable-export .keep-with-next'
+}
             }).from(printable)
                 .toPdf()
                 .get('pdf')
@@ -678,15 +766,19 @@ if (buckets[''] && buckets[''].length) {
                         pdf.text(`Page : ${i}`, pdf.internal.pageSize.getWidth() - 2.5, pdf.internal.pageSize.getHeight() - 1, { align: 'right' });
                     }
                 })
-                .save()
-                .then(() => {
-                    pdfBtn.innerHTML = '<i class="fa-solid fa-file-pdf"></i> Download Worksheet';
-                    pdfBtn.disabled = false;
-                }).catch((err) => {
-                    alert("Failed to export PDF: " + err);
-                    pdfBtn.innerHTML = '<i class="fa-solid fa-file-pdf"></i> Download Worksheet';
-                    pdfBtn.disabled = false;
-                });
+                }).save()
+          .then(() => {
+              pdfBtn.innerHTML = '<i class="fa-solid fa-file-pdf"></i> Download Worksheet';
+              pdfBtn.disabled = false;
+          })
+          .catch((err) => {
+              alert("Failed to export PDF: " + err);
+              pdfBtn.innerHTML = '<i class="fa-solid fa-file-pdf"></i> Download Worksheet';
+              pdfBtn.disabled = false;
+          })
+          .finally(() => {
+              document.documentElement.classList.remove('export-mode');
+          });
         }
    
        async function exportWord() {
@@ -1044,12 +1136,12 @@ async function fetchAndDisplayQuestions() {
                    ${
                       Array.isArray(data.options) && data.options.length === 4
                       ? `
-                        <div style="font-weight:bold;margin-bottom:0;padding-bottom:0;">${autoLatexAll(data.question)}</div>
+                        <div style="font-weight:bold;margin-bottom:0;padding-bottom:0;">${data.question}</div>
                         <div style="margin-left:18px;">
-                          <div>${autoLatexAll(data.options[0].replace(/^[A-D][).]\s*/, ''))}</div>
-                          <div>${autoLatexAll(data.options[1].replace(/^[A-D][).]\s*/, ''))}</div>
-                          <div>${autoLatexAll(data.options[2].replace(/^[A-D][).]\s*/, ''))}</div>
-                          <div>${autoLatexAll(data.options[3].replace(/^[A-D][).]\s*/, ''))}</div>
+                          <div>${data.options[0].replace(/^[A-D][).]\s*/, '')}</div>
+                          <div>${data.options[1].replace(/^[A-D][).]\s*/, '')}</div>
+                          <div>${data.options[2].replace(/^[A-D][).]\s*/, '')}</div>
+                          <div>${data.options[3].replace(/^[A-D][).]\s*/, '')}</div>
                         </div>
                       `
                       : (data.body || data.text || data.question || '')
@@ -1133,19 +1225,7 @@ async function fetchAndDisplayQuestions() {
         displayArea.innerHTML = '<p class="no-questions-message">An error occurred while fetching questions.</p>';
     }
 }
-        function autoLatexAll(str) {
-    if (!str) return '';
-    // 1. Find many $...$ in a line and combine
-    // Example: $x^2$ + $y^2$ + $z^2$ = 1  --> $x^2 + y^2 + z^2 = 1$
-    // Only if there are 2 or more $...$ pairs in a line
-    let match = str.match(/(\$[^\$]+\$)/g);
-    if (match && match.length >= 2) {
-        // Remove all single $ and keep the content
-        let joined = str.replace(/\$([^\$]+)\$/g, '$1');
-        str = '$' + joined.replace(/\s*\+\s*/g, ' + ') + '$';
-    }
-    return str;
-}
+        function autoLatexAll(str) { return str || ''; }
         // --- 3-dot menu actions for each question in Question Bank ---
         
         function setupQuestionActionMenus() {
@@ -1559,6 +1639,7 @@ All the Best
 </div>
 </body>
 </html>
+
 
 
 
