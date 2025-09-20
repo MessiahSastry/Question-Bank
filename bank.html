@@ -736,32 +736,34 @@ if (window.MathJax && typeof window.MathJax.typesetPromise === 'function') {
 // 4) give the browser a couple of frames to paint the SVGs
 await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
             document.documentElement.classList.add('export-mode');
-               html2pdf().set({
-              // extra headroom for tall display equations
-                margin: [2.0, 1.6, 2.2, 1.6],
-              filename: `Question_Bank_${classVal || ''}_${subjectVal || ''}_${chapterVal || ''}.pdf`.replace(/ /g, "_"),
-              html2canvas: {
+              const opts = {
+  margin: [18, 15, 22, 15], // mm (because jsPDF unit below is mm)
+  filename: `Question_Bank_${(classVal || '').replace(/\s+/g,'_')}_${(subjectVal || '').replace(/\s+/g,'_')}_${(chapterVal || '').replace(/\s+/g,'_')}.pdf`,
+  image: { type: 'jpeg', quality: 0.98 },
+  html2canvas: {
     scale: Math.min(3, Math.max(2, window.devicePixelRatio || 2)),
-  useCORS: true,
-  letterRendering: true,
-  imageTimeout: 0,
-  scrollX: 0,
-  scrollY: 0,
-  windowWidth: document.getElementById('printable-export')?.scrollWidth || document.documentElement.scrollWidth,
-  windowHeight: document.getElementById('printable-export')?.scrollHeight || document.documentElement.scrollHeight,
-  ignoreElements: el => el && (
-    el.classList?.contains('q-action-btn') ||
-    el.classList?.contains('actions-menu') ||
-    el.classList?.contains('question-img-btn') ||
-    el.classList?.contains('question-image-input')
-  )
-},
-jsPDF: { unit: 'cm', format: 'a4', orientation: 'portrait' },
-pagebreak: {
-  mode: ['css', 'legacy', 'avoid-all'],
-  before: '#printable-export .keep-with-next'
-}
-            }).from(printable)
+    useCORS: true,
+    backgroundColor: '#ffffff',
+    letterRendering: true,
+    imageTimeout: 0,
+    scrollX: 0,
+    scrollY: 0,
+    windowWidth: printable.scrollWidth || document.documentElement.scrollWidth,
+    windowHeight: printable.scrollHeight || document.documentElement.scrollHeight,
+    ignoreElements: el => el && (
+      el.classList?.contains('q-action-btn') ||
+      el.classList?.contains('actions-menu') ||
+      el.classList?.contains('question-img-btn') ||
+      el.classList?.contains('question-image-input')
+    )
+  },
+  jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+  pagebreak: { mode: ['css','legacy','avoid-all'], before: '#printable-export .keep-with-next' }
+};
+
+document.documentElement.classList.add('export-mode');
+
+html2pdf().set(opts).from(printable)
   .toPdf()
   .get('pdf')
   .then(function (pdf) {
@@ -771,8 +773,8 @@ pagebreak: {
       pdf.setFontSize(11);
       pdf.text(
         `Page : ${i}`,
-        pdf.internal.pageSize.getWidth() - 2.5,
-        pdf.internal.pageSize.getHeight() - 1,
+        pdf.internal.pageSize.getWidth() - 10,  // mm
+        pdf.internal.pageSize.getHeight() - 8,  // mm
         { align: 'right' }
       );
     }
@@ -1096,8 +1098,13 @@ async function fetchAndDisplayQuestions() {
         query = query.where('difficulty', '==', levelVal);
         }
 
-        query = query.orderBy("questionNumber");
-
+        // Try to order by questionNumber only if you actually use that field
+        // Otherwise skip ordering to avoid empty results
+        try {
+          query = query.orderBy("questionNumber", "asc");
+        } catch (_) {
+          /* ignore */
+        }
         const snapshot = await query.get();
 
         if (snapshot.empty) {
@@ -1650,6 +1657,7 @@ All the Best
 </div>
 </body>
 </html>
+
 
 
 
