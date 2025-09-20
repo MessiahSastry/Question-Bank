@@ -432,7 +432,21 @@ function saveLastExam(examId) {
 function loadLastExam() {
   try { return localStorage.getItem(lastExamKey()) || ''; } catch(e){ return ''; }
 }
-
+function updateExportState() {
+  const haveExam = !!(selectedExamObj || examSelected.dataset.value);
+  if (marksReady && haveExam) {
+    excelBtn.disabled = false;
+    pdfBtn.disabled   = false;
+    if (statusDiv.textContent.includes('Loading marks')) statusDiv.textContent = '';
+  } else if (haveExam && !marksReady) {
+    statusDiv.textContent = 'Loading marks… please wait.';
+    excelBtn.disabled = true;
+    pdfBtn.disabled   = true;
+  } else {
+    excelBtn.disabled = true;
+    pdfBtn.disabled   = true;
+  }
+}
   // -- Get session/class/section from storage (as in your other htmls) --
   let academicYear = localStorage.getItem('sp_selectedYear') || '';
   let classId = localStorage.getItem('sp_selectedClassId') || '';
@@ -519,7 +533,9 @@ auth.onAuthStateChanged(function(user) {
       selectedExam = null;
       selectedExamObj = null;
     }
-
+  if (selectedExam) {
+  await loadMarksForExam(selectedExam);
+}
     // 2) Load students for CURRENT section
     const studentsSnap = await db.collection('years').doc(academicYear)
       .collection('classes').doc(classId)
@@ -533,38 +549,17 @@ auth.onAuthStateChanged(function(user) {
     });
 
     // 3) Preload marks for ALL exams
-    const newMarksMap = {};
-    for (const stu of students) {
-      newMarksMap[stu.id] = {};
-      for (const ex of exams) {
-        const markDoc = await db.collection('years').doc(academicYear)
-          .collection('classes').doc(classId)
-          .collection('sections').doc(sectionId)
-          .collection('students').doc(stu.id)
-          .collection('marks').doc(ex.id).get();
-        newMarksMap[stu.id][ex.id] = markDoc.exists ? (markDoc.data() || {}) : {};
-      }
-    }
-    marksMap = newMarksMap;
-    marksReady = true;
+    // 3) Load marks ONLY for the currently selected exam (much fewer reads)
+marksMap = {};           // reset (we'll fill per exam)
+marksReady = false;
+updateExportState();
 
-    // Centralized enable/disable logic
-    function updateExportState() {
-      const haveExam = !!(selectedExamObj || examSelected.dataset.value);
-      if (marksReady && haveExam) {
-        excelBtn.disabled = false;
-        pdfBtn.disabled   = false;
-        if (statusDiv.textContent.includes('Loading marks')) statusDiv.textContent = '';
-      } else if (haveExam && !marksReady) {
-        statusDiv.textContent = 'Loading marks… please wait.';
-        excelBtn.disabled = true;
-        pdfBtn.disabled   = true;
-      } else {
-        excelBtn.disabled = true;
-        pdfBtn.disabled   = true;
-      }
-    }
-    updateExportState();
+// If an exam was remembered, load it now; otherwise wait for user pick
+if (selectedExam) {
+  await loadMarksForExam(selectedExam);
+} else {
+  // nothing selected yet; keep buttons disabled
+}
 
   } catch (err) {
     statusDiv.textContent = "Error: " + err.message;
@@ -576,6 +571,39 @@ auth.onAuthStateChanged(function(user) {
 }
 
   // ---- Modern Dropdown Logic (Class, Section, Exam) ----
+  async function loadMarksForExam(examId) {
+  try {
+    marksReady = false;
+    statusDiv.textContent = 'Loading marks… please wait.';
+    updateExportState();
+
+    // Build all doc refs for this exam across students, then read in parallel
+    const reads = students.map(stu =>
+      db.collection('years').doc(academicYear)
+        .collection('classes').doc(classId)
+        .collection('sections').doc(sectionId)
+        .collection('students').doc(stu.id)
+        .collection('marks').doc(examId).get()
+        .then(snap => ({ sid: stu.id, data: snap.exists ? (snap.data() || {}) : {} }))
+    );
+
+    const results = await Promise.all(reads);
+
+    // Merge into marksMap shape: marksMap[studentId][examId] = {...}
+    for (const r of results) {
+      if (!marksMap[r.sid]) marksMap[r.sid] = {};
+      marksMap[r.sid][examId] = r.data;
+    }
+
+    marksReady = true;
+    if (statusDiv.textContent.startsWith('Loading marks')) statusDiv.textContent = '';
+  } catch (e) {
+    marksReady = false;
+    statusDiv.textContent = 'Error loading marks: ' + e.message;
+  } finally {
+    updateExportState();
+  }
+}
 function hideAllLists() {
   if (classList)   classList.style.display = 'none';
   if (sectionList) sectionList.style.display = 'none';
@@ -645,18 +673,10 @@ examList.onclick = function(e) {
 
   saveLastExam(selectedExam);
 
-// update buttons via central logic
-if (typeof updateExportState === 'function') {
-  updateExportState();
-} else {
-  // fallback
-  if (marksReady) {
-    excelBtn.disabled = false;
-    pdfBtn.disabled  = false;
-  } else {
-    statusDiv.textContent = 'Loading marks… please wait.';
-  }
-}
+// Load just this exam's marks quickly, then enable exports
+(async () => {
+  await loadMarksForExam(selectedExam);
+})();
 }; 
 
   // ------------- EXCEL EXPORT -------------
@@ -920,11 +940,16 @@ else if (studentCount <= 60) { rowHeight = 7.6; }
 else                         { rowHeight = 5.8; }
 const rowPx = Math.max(24, rowHeight);
 // Extra safety so rows don't spill onto the next page before the header
-const EXTRA_SAFETY_FIRST_PX = Math.round(rowPx * 1.4); // ~1.4 rows cushion for page 1
-const EXTRA_SAFETY_NEXT_PX  = Math.round(rowPx * 0.8); // ~0.8 row cushion for page 2+
+// Bigger cushions + a small render fudge to account for html2pdf differences
+const EXTRA_SAFETY_FIRST_PX = Math.round(rowPx * 1.8); // page 1 cushion
+const EXTRA_SAFETY_NEXT_PX  = Math.round(rowPx * 1.2); // page 2+ cushion
+const RENDER_FUDGE_PX       = Math.ceil(rowPx * 0.6);  // extra guard (~0.6 row)
+
 /* Set dynamic rows per page (must come after EXTRA_SAFETY_* are defined) */
-rowsOnFirstPage = countRowsFit(true, 0, EXTRA_SAFETY_FIRST_PX);
-rowsOnNextPages = countRowsFit(false, NON_FIRST_TOP_PAD_PX, EXTRA_SAFETY_NEXT_PX);
+rowsOnFirstPage = countRowsFit(true, 0, EXTRA_SAFETY_FIRST_PX + RENDER_FUDGE_PX);
+rowsOnNextPages = countRowsFit(false, NON_FIRST_TOP_PAD_PX, EXTRA_SAFETY_NEXT_PX + RENDER_FUDGE_PX);
+// Spill guard: html2pdf can render a hair taller; drop 1 row on page 2+
+rowsOnNextPages = Math.max(1, rowsOnNextPages - 1);
 
 // Build the SAME heading HTML used on page 1
 function headingHTML() {
@@ -1060,6 +1085,7 @@ const tableHtml = `
  </script>
 </body>
 </html>
+
 
 
 
