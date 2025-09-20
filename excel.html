@@ -1020,57 +1020,37 @@ function countRowsFit(includeHeading, extraTopPx = 0, extraSafetyPx = 0) {
   document.body.removeChild(probe);
   return Math.max(1, fit);
 }
-  let pagesHtml = [];
-  let start = 0;
-  let pageIndex = 0;
+  // Build ONE long table and let html2pdf paginate it automatically.
+// thead will repeat on every page because of display: table-header-group.
+const allRowsHtml = rankedRows.map((row, idx) => buildRowHtml(row, idx, rowPx)).join('');
 
-  while (start < rankedRows.length) {
-    const perPage = pageIndex === 0 ? rowsOnFirstPage : rowsOnNextPages;
-    const slice = rankedRows.slice(start, start + perPage);
-    const rowsHtml = slice.map((row, idx) => buildRowHtml(row, start + idx, rowPx)).join('');
-
-    
-const tableHtml = `
-  <table cellspacing="0" cellpadding="0" style="border-collapse:collapse;width:100%;max-width:100%;font-size:0.70em;margin-top:0;text-align:center;line-height:1.12;table-layout:auto;word-break:break-word;margin-bottom:0;">
+const oneTableHtml = `
+  <table cellspacing="0" cellpadding="0"
+         style="border-collapse:collapse;width:100%;max-width:100%;
+                font-size:0.70em;margin-top:0;text-align:center;line-height:1.12;
+                table-layout:auto;word-break:break-word;margin-bottom:0;">
     <thead>
       <tr style="background:#1762a7;color:#fff;font-weight:bold;">${tableHeaders}</tr>
     </thead>
     <tbody>
-  ${rowsHtml}
-</tbody>
+      ${allRowsHtml}
+    </tbody>
   </table>
 `;
 
- pagesHtml.push(`
-  <div class="pdf-page" style="box-sizing:border-box; padding-top:0; ${pageIndex > 0 ? 'page-break-before:always;' : ''}">
-    ${
-      pageIndex === 0
-        ? `<div style="margin-top:-${HEADER_PULLUP_PX}px;">${headingHTML()}</div>\n${tableHtml}`
-        : `
-          <div style="transform: translateY(-${NON_FIRST_PULLUP_PX}px); will-change: transform;">
-            ${tableHtml}
-          </div>
-          <div style="height:${NON_FIRST_PULLUP_PX}px;"></div>
-        `
-    }
+// Page-1 banner only once; table flows across pages
+let pdfHTML = `
+  <div style="font-family:'Times New Roman', Times, serif; color:#1a1a1a; margin:0; padding:0;">
+    <style>
+      tr { page-break-inside: avoid !important; }
+      thead { display: table-header-group; }
+      tfoot { display: table-footer-group; }
+      td, th { border: 1px solid #444 !important; padding: 0 1px; white-space: nowrap; font-size:0.98em; }
+    </style>
+    <div style="margin-top:-${HEADER_PULLUP_PX}px;">${headingHTML()}</div>
+    ${oneTableHtml}
   </div>
-`);
-
-    start += perPage;
-    pageIndex += 1;
-  }
-
-  let pdfHTML = `
-    <div style="font-family:'Times New Roman', Times, serif; color:#1a1a1a; margin:0; padding:0;">
-      <style>
-        tr { page-break-inside: avoid !important; }
-        thead { display: table-header-group; }
-        tfoot { display: table-footer-group; }
-        td, th { border: 1px solid #444 !important; padding: 0 1px; white-space: nowrap; font-size:0.98em; }
-      </style>
-      ${pagesHtml.join('')}
-    </div>
-  `;
+`;
 
   let printable = document.createElement('div');
   printable.innerHTML = pdfHTML;
@@ -1101,6 +1081,7 @@ const tableHtml = `
  </script>
 </body>
 </html>
+
 
 
 
