@@ -604,7 +604,45 @@ const TABLE_LAYOUT = {
   gradeX: 1802,           // column center for "Grade"
   rightPad: 100           // right margin from page edge
 };
+// ==== Exam-wide subtopic schema (names + header max) ====
+let __examSubtopicSchema = null;
 
+function getExamSubtopicSchema() {
+  if (!__examStructure || !Array.isArray(__examStructure.subjects)) {
+    __examSubtopicSchema = [];
+    return __examSubtopicSchema;
+  }
+  const norm = s => String(s || '').replace(/[\s._-]+/g, '').toLowerCase();
+
+  const order = [];          // preserves first-seen order across subjects
+  const seen  = new Set();   // normalized names we've already added
+  const maxBy = {};          // normalized name -> first non-null max
+
+  for (const subj of __examStructure.subjects) {
+    const subs = Array.isArray(subj.subtopics) ? subj.subtopics : [];
+    for (const st of subs) {
+      const name = st?.name || '';
+      const key  = norm(name);
+      if (!key) continue;
+
+      if (!seen.has(key)) {
+        seen.add(key);
+        order.push(name);    // keep original casing for display
+      }
+      const m = (typeof st?.max === 'number' && !isNaN(st.max)) ? st.max : null;
+      if (m != null && maxBy[key] == null) {
+        maxBy[key] = m;      // take the first non-null max encountered
+      }
+    }
+  }
+
+  __examSubtopicSchema = order.map(n => {
+    const key = norm(n);
+    const m   = maxBy[key];
+    return { name: n, max: (m != null ? m : null) };
+  });
+  return __examSubtopicSchema;
+}
 function _shortLabel(s, maxLen = 10) {
   const t = String(s || '').trim();
   return t.length > maxLen ? t.slice(0, maxLen - 1) + '…' : t;
@@ -623,107 +661,133 @@ function _fmtCell(mark, max) {
  * Draw the single header row: "Subject | Subtopics | Total (M/Max) | Grade"
  * y: baseline Y where text will be placed (we draw a faint line above it).
  */
+// We cache the computed subtopic columns (name, max, x) for row rendering
+let __subtopicCols = [];
+
+/** Compute subtopic column centers between subtopicsL and (totalX - 120) */
+function computeSubtopicCols() {
+  const schema = getExamSubtopicSchema(); // [{name,max}]
+  __subtopicCols = [];
+  if (!schema || !schema.length) return __subtopicCols;
+
+  const left  = TABLE_LAYOUT.subtopicsL;
+  const right = TABLE_LAYOUT.totalX - 120; // breathing room before "Total"
+  const width = Math.max(150, right - left);
+  const n     = schema.length;
+
+  // equal-width columns, small natural gap
+  const cellW = Math.max(120, Math.floor(width / n));
+  const totalW = cellW * n;
+  const startX = left + Math.floor((width - totalW) / 2) + cellW / 2;
+
+  for (let i = 0; i < n; i++) {
+    const s = schema[i];
+    const x = startX + i * cellW;
+    __subtopicCols.push({ name: s.name, max: (s.max ?? null), x });
+  }
+  return __subtopicCols;
+}
+function _subtopicHeaderFont(n) {
+  if (n >= 12) return 30;
+  if (n >= 10) return 34;
+  if (n >= 8)  return 38;
+  if (n >= 6)  return 44;
+  return 48; // default
+}
+
+function _subtopicCellFont(n) {
+  if (n >= 12) return 36;
+  if (n >= 10) return 40;
+  if (n >= 8)  return 44;
+  if (n >= 6)  return 50;
+  return 56; // default
+}
 function drawSubjectsHeader(pdf, y) {
   // faint divider above the header
   pdf.setDrawColor(200, 220, 245);
   pdf.setLineWidth(2);
   pdf.line(480, y - 38, 2320, y - 38);
 
-  // Decide layout based on structure
-  const hasSubs = !!(__examStructure && __examStructure.hasSubtopics);
+  // Fixed headers
+  leftText(pdf, 'SUBJECT',     TABLE_LAYOUT.subjectX, y, 52, [15, 61, 107]);
+  centerText(pdf, 'MAX MARKS', X_MAX,                 y, 52, [15, 61, 107]);
 
-  // "Subject"
-  leftText(pdf, 'SUBJECT', TABLE_LAYOUT.subjectX, y, 52, [15, 61, 107]);
+  // Subtopic headers: names (with (max) if known)
+  const cols = computeSubtopicCols();   // uses exam schema; fills __subtopicCols
+  const n    = cols.length;
+  const hfs  = _subtopicHeaderFont(n);  // responsive font size
 
-  if (hasSubs) {
-    // Subtopics layout
-    leftText(pdf, 'SUBTOPICS', TABLE_LAYOUT.subtopicsL, y, 52, [15, 61, 107]);
-    centerText(pdf, 'TOTAL (M/MAX)', TABLE_LAYOUT.totalX, y, 52, [15, 61, 107]);
-    centerText(pdf, 'GRADE', TABLE_LAYOUT.gradeX, y, 52, [15, 61, 107]);
-  } else {
-    // Classic layout
-    centerText(pdf, 'MAX',   X_MAX,   y, 52, [15, 61, 107]);
-    centerText(pdf, 'MARKS', X_MARKS, y, 52, [15, 61, 107]);
-    centerText(pdf, 'GRADE', X_GRADE, y, 52, [15, 61, 107]);
+  if (n > 0) {
+    for (const c of cols) {
+      const label = (c.max != null && c.max !== '')
+        ? `${_shortLabel(c.name, 14)} (${c.max})`
+        : _shortLabel(c.name, 16);
+      centerText(pdf, label, c.x, y, hfs, [15, 61, 107], 'bold');
+    }
   }
+
+  // End columns
+  centerText(pdf, 'TOTAL', TABLE_LAYOUT.totalX, y, 52, [15, 61, 107]);
+  centerText(pdf, 'GRADE', TABLE_LAYOUT.gradeX, y, 52, [15, 61, 107]);
 }
+
 /**
  * Draw one subject row with its subtopic cells.
  * rowY is the baseline for the row text.
  * Returns nothing (caller controls vertical positions).
  */
 function drawSubjectRow(pdf, rowY, subject) {
-  const hasSubs = !!(__examStructure && __examStructure.hasSubtopics);
-  const { subtopicsL, totalX, gradeX } = TABLE_LAYOUT;
+  const cols = (__subtopicCols || []);
+  const norm = s => String(s || '').replace(/[\s._-]+/g, '').toLowerCase();
 
-  // Subject name (left)
-  leftText(pdf, String(subject.name || '').toUpperCase(), TABLE_LAYOUT.subjectX, rowY, 60, [22, 163, 74]);
+  // Subject name
+  leftText(pdf, String(subject.name || '').toUpperCase(), TABLE_LAYOUT.subjectX, rowY, 60, COLOR_GREEN);
 
-  if (hasSubs && Array.isArray(subject.subtopics) && subject.subtopics.length > 0 && !(subject.subtopics.length === 1 && subject.subtopics[0]?.name === '-')) {
-    // -------- Subtopics layout --------
-    const subtopics = subject.subtopics;
+  // Subject max in "Max Marks" column
+  const subjMax = (typeof subject.max === 'number' ? subject.max : (subject.max === '' ? '' : subject.max));
+  centerText(pdf, String(subjMax ?? ''), X_MAX, rowY, 60, COLOR_RED);
 
-    // Compute available width for subtopics region up to the "Total" column
-    const regionR = totalX - 120; // breathing room before Total column
-    const regionL = subtopicsL;
-    const regionW = Math.max(120, regionR - regionL);
-
-    const n = Math.max(1, subtopics.length);
-    const cellW = Math.max(120, Math.floor(regionW / n) - 8); // gap between cells
-    const startX = regionL + Math.floor((regionW - (cellW * n + 8 * (n - 1))) / 2); // center within region
-
-    // Each subtopic cell: small label + value
-    for (let i = 0; i < n; i++) {
-      const st = subtopics[i] || {};
-      const x = startX + i * (cellW + 8);
-      const yTop = rowY - 54; // top box ref (row font is 60 baseline)
-      const boxH = 78;
-
-      // cell box
-      pdf.setDrawColor(180, 200, 233);
-      pdf.setLineWidth(2);
-      pdf.roundedRect(x - 12, yTop - 12, cellW + 24, boxH + 24, 10, 10, 'S');
-
-      // label (tiny)
-      leftText(pdf, _shortLabel(st.name, 12), x, rowY - 22, 36, [20, 48, 90], 'normal');
-
-      // value (center)
-      const val = _fmtCell(st.mark, st.max);
-      centerText(pdf, val, x + cellW / 2, rowY + 4, 56, [22, 163, 74], 'bold');
+  if (cols.length) {
+    // Build lookup for subtopic marks on this subject
+    const subArr = Array.isArray(subject.subtopics) ? subject.subtopics : [];
+    const byKey = {};
+    for (const st of subArr) {
+      const key = norm(st?.name);
+      if (key) byKey[key] = (st?.mark === 'AB' ? 'AB' : (typeof st?.mark === 'number' ? st.mark : ''));
     }
 
-    // Subject Total (marks/max)
+    const _cSize = _subtopicCellFont(cols.length);
+// Each schema column → mark only (no /max)
+for (const c of cols) {
+  const key = norm(c.name);
+  const val = (key in byKey) ? byKey[key] : '';
+  centerText(pdf, String(val ?? ''), c.x, rowY, _cSize, COLOR_GREEN, 'bold');
+}
+    // Total (marks-only)
     const tMarks = (subject.marks === 'AB' ? 'AB' : (typeof subject.marks === 'number' ? subject.marks : ''));
-    const tMax   = (typeof subject.max === 'number' ? subject.max : (subject.max === '' ? '' : subject.max));
-    const tVal   = _fmtCell(tMarks, tMax);
-    centerText(pdf, tVal, totalX, rowY, 60, [220, 38, 38]);
+    centerText(pdf, String(tMarks ?? ''), TABLE_LAYOUT.totalX, rowY, 60, [220, 38, 38]);
 
     // Grade
-    centerText(pdf, String(subject.grade || ''), gradeX, rowY, 60, [139, 69, 19]);
+    centerText(pdf, String(subject.grade || ''), TABLE_LAYOUT.gradeX, rowY, 60, COLOR_GRADE);
 
-    // Fail ring around TOTAL cell
-    if (tMarks !== 'AB' && typeof tMarks === 'number' && typeof tMax === 'number' && tMax > 0) {
-      const pct = (tMarks / tMax) * 100;
+    // Fail ring on TOTAL if % < 40 and we have a numeric max
+    if (tMarks !== 'AB' && typeof tMarks === 'number' && typeof subjMax === 'number' && subjMax > 0) {
+      const pct = (tMarks / subjMax) * 100;
       if (pct < 40) {
         pdf.setDrawColor(...COLOR_RED);
         pdf.setLineWidth(4);
-        pdf.ellipse(totalX, rowY - 10, 55, 38, 'D');
+        pdf.ellipse(TABLE_LAYOUT.totalX, rowY - 10, 55, 38, 'D');
         pdf.setLineWidth(1);
       }
     }
   } else {
-    // -------- Classic layout (no subtopics) --------
-    const maxVal   = (typeof subject.max === 'number' ? subject.max : (subject.max === '' ? '' : subject.max));
+    // Classic fallback (no subtopics anywhere)
     const marksVal = (subject.marks === 'AB' ? 'AB' : (typeof subject.marks === 'number' ? subject.marks : ''));
-
-    // Classic columns
-    centerText(pdf, String(maxVal ?? ''),   X_MAX,   rowY, 60, COLOR_RED);
     centerText(pdf, String(marksVal ?? ''), X_MARKS, rowY, 60, COLOR_GREEN);
     centerText(pdf, String(subject.grade || ''), X_GRADE, rowY, 60, COLOR_GRADE);
 
-    // Fail ring around MARKS cell (classic % check)
-    if (marksVal !== 'AB' && typeof marksVal === 'number' && typeof maxVal === 'number' && maxVal > 0) {
-      const pct = (marksVal / maxVal) * 100;
+    if (marksVal !== 'AB' && typeof marksVal === 'number' && typeof subjMax === 'number' && subjMax > 0) {
+      const pct = (marksVal / subjMax) * 100;
       if (pct < 40) {
         pdf.setDrawColor(...COLOR_RED);
         pdf.setLineWidth(4);
@@ -1173,15 +1237,19 @@ pdf.setDrawColor(15, 61, 107);
 pdf.setLineWidth(4);
 pdf.roundedRect(TABLE_LAYOUT.subjectX - 40, tBoxY, (TABLE_LAYOUT.gradeX + 150) - (TABLE_LAYOUT.subjectX - 40), tBoxHeight, 20, 20, 'S');
 
-// Label "TOTAL" at Subject column
+// "TOTAL" label
 leftText(pdf, "TOTAL", TABLE_LAYOUT.subjectX, totalY, 60, COLOR_GREEN);
 
-// Centered Total (M/Max) at Total column
-const totalCell = (totalMax > 0) ? `${totalMarks}/${totalMax}` : String(totalMarks);
-centerText(pdf, totalCell, TABLE_LAYOUT.totalX, totalY, 60, COLOR_RED);
+// ▼ Per your spec: grand total marks shown under **Max Marks** column
+centerText(pdf, String(totalMarks ?? ''), X_MAX, totalY, 60, COLOR_RED);
 
-// Grade at Grade column
+// Subtopic columns: blank (no text)
+
+// Total column: blank (no text)
+
+// Overall Grade at Grade column
 centerText(pdf, student.overallGrade, TABLE_LAYOUT.gradeX, totalY, 60, COLOR_GRADE);
+
 
 
 // 6) Attendance (10 months)
@@ -1270,14 +1338,17 @@ pdf.setDrawColor(15, 61, 107);
 pdf.setLineWidth(4);
 pdf.roundedRect(TABLE_LAYOUT.subjectX - 40, tBoxY, (TABLE_LAYOUT.gradeX + 150) - (TABLE_LAYOUT.subjectX - 40), tBoxHeight, 20, 20, 'S');
 
-// Label "TOTAL" at Subject column
+// "TOTAL" label
 leftText(pdf, "TOTAL", TABLE_LAYOUT.subjectX, totalY, 60, COLOR_GREEN);
 
-// Centered Total (M/Max) at Total column
-const totalCell = (totalMax > 0) ? `${totalMarks}/${totalMax}` : String(totalMarks);
-centerText(pdf, totalCell, TABLE_LAYOUT.totalX, totalY, 60, COLOR_RED);
+// ▼ Grand total marks under **Max Marks** column
+centerText(pdf, String(totalMarks ?? ''), X_MAX, totalY, 60, COLOR_RED);
 
-// Grade at Grade column
+// Subtopic columns: blank
+
+// Total column: blank
+
+// Overall Grade at Grade column
 centerText(pdf, student.overallGrade, TABLE_LAYOUT.gradeX, totalY, 60, COLOR_GRADE);
 
     // Attendance on preview
@@ -1325,6 +1396,7 @@ centerText(pdf, student.overallGrade, TABLE_LAYOUT.gradeX, totalY, 60, COLOR_GRA
 </div>
 </body>
 </html>
+
 
 
 
