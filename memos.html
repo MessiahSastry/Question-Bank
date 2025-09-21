@@ -681,11 +681,15 @@ function computeColumns() {
   const headerSize = _subtopicHeaderFont(schema.length);
   const avgCharPx  = headerSize * 0.60;
 
-  // Base (comfortable) sizes
-  const BASE_GAP  = 28;
-  const MIN_GAP   = 12;
+  // Base sizes (smaller than before)
+  const BASE_GAP  = 20;   // edge gaps
+  const MIN_GAP   = 6;
 
-  const MIN_SUBJECT = 240, MIN_MAX = 150, MIN_TOTAL = 150, MIN_GRADE = 140, MIN_SUBTOPIC = 120;
+  // Inner gaps (between subtopic columns) will be 60% of the edge gap
+  const innerGapFor = g => Math.max(6, Math.floor(g * 0.6));
+
+  // Minimum widths (slightly tightened except subject/max kept larger)
+  const MIN_SUBJECT = 300, MIN_MAX = 180, MIN_TOTAL = 150, MIN_GRADE = 140, MIN_SUBTOPIC = 110;
   const MAX_COL     = 420;
 
   function estWidth(label, minW, maxW = MAX_COL) {
@@ -694,83 +698,84 @@ function computeColumns() {
     return Math.max(minW, Math.min(maxW, w));
   }
 
-  // Compute natural widths + per-column minimums
-  const widths = {};
-  const mins   = {};
+  // widths + mins
+  const widths = {}, mins = {};
   for (const h of headers) {
-    if (h.key === '__subject') {
-      mins[h.key]   = MIN_SUBJECT;
-      widths[h.key] = estWidth(h.label, MIN_SUBJECT);
-    } else if (h.key === '__max') {
-      mins[h.key]   = MIN_MAX;
-      widths[h.key] = estWidth(h.label, MIN_MAX);
-    } else if (h.key === '__total') {
-      mins[h.key]   = MIN_TOTAL;
-      widths[h.key] = estWidth(h.label, MIN_TOTAL);
-    } else if (h.key === '__grade') {
-      mins[h.key]   = MIN_GRADE;
-      widths[h.key] = estWidth(h.label, MIN_GRADE);
-    } else {
-      mins[h.key]   = MIN_SUBTOPIC;
-      widths[h.key] = estWidth(h.label, MIN_SUBTOPIC);
-    }
+    if (h.key === '__subject') { mins[h.key] = MIN_SUBJECT; widths[h.key] = estWidth(h.label, MIN_SUBJECT); }
+    else if (h.key === '__max') { mins[h.key] = MIN_MAX; widths[h.key] = estWidth(h.label, MIN_MAX); }
+    else if (h.key === '__total') { mins[h.key] = MIN_TOTAL; widths[h.key] = estWidth(h.label, MIN_TOTAL); }
+    else if (h.key === '__grade') { mins[h.key] = MIN_GRADE; widths[h.key] = estWidth(h.label, MIN_GRADE); }
+    else { mins[h.key] = MIN_SUBTOPIC; widths[h.key] = estWidth(h.label, MIN_SUBTOPIC); }
   }
 
   const L = PAGE_MARGINS.left, R = PAGE_MARGINS.right;
   const avail = Math.max(0, R - L);
 
-  function totalWidth(gap, ws) {
-    const keys = headers.map(h => h.key);
+  const keys = headers.map(h => h.key);
+
+  // compute total width using pair-wise gaps (inner subtopic gaps are smaller)
+  function totalWidth(edgeGap, ws) {
     const sumW = keys.reduce((a,k) => a + ws[k], 0);
-    const gaps = gap * Math.max(0, headers.length - 1);
+    let gaps = 0;
+    for (let i = 0; i < headers.length - 1; i++) {
+      const left = headers[i].key, right = headers[i+1].key;
+      const isInnerSubGap =
+        left !== '__subject' && right !== '__grade' &&
+        left !== '__max' && right !== '__total'; // i.e., between subtopic-like columns
+      gaps += isInnerSubGap ? innerGapFor(edgeGap) : edgeGap;
+    }
     return sumW + gaps;
   }
 
-  // 1) Try with base gap
+  // 1) try base gap
   let gap = BASE_GAP;
   let ws  = { ...widths };
 
-  // 2) If overflow, shrink gap down to MIN_GAP
-  if (totalWidth(gap, ws) > avail) {
-    gap = MIN_GAP;
-  }
+  // 2) shrink to MIN_GAP if needed
+  if (totalWidth(gap, ws) > avail) gap = MIN_GAP;
 
-  // 3) If still overflow, scale widths toward their minimums
+  // 3) scale widths toward mins if still overflow
   if (totalWidth(gap, ws) > avail) {
-    // Binary search a scale 0..1 applied to (w - min) + min
     let lo = 0, hi = 1, best = 1;
     for (let it = 0; it < 22; it++) {
       const mid = (lo + hi) / 2;
       const trial = {};
       for (const h of headers) {
         const k = h.key;
-        trial[k] = Math.max(mins[k], Math.floor(mins[k] + (widths[k] - mins[k]) * mid));
+        // Give subtopic columns a slightly higher shrink rate (pull them more)
+        const bias = (k !== '__subject' && k !== '__max' && k !== '__total' && k !== '__grade') ? 0.9 : 1.0;
+        trial[k] = Math.max(mins[k], Math.floor(mins[k] + (widths[k] - mins[k]) * (mid * bias)));
       }
-      if (totalWidth(gap, trial) <= avail) {
-        best = mid; lo = mid; // fits — try larger
-      } else {
-        hi = mid; // too big — shrink more
-      }
+      if (totalWidth(gap, trial) <= avail) { best = mid; lo = mid; }
+      else { hi = mid; }
     }
-    // Apply best scale
     for (const h of headers) {
       const k = h.key;
-      ws[k] = Math.max(mins[k], Math.floor(mins[k] + (widths[k] - mins[k]) * best));
+      const bias = (k !== '__subject' && k !== '__max' && k !== '__total' && k !== '__grade') ? 0.9 : 1.0;
+      ws[k] = Math.max(mins[k], Math.floor(mins[k] + (widths[k] - mins[k]) * (best * bias)));
     }
   }
 
-  // Final table width and centered startX
+  // final centering
   const tableW = totalWidth(gap, ws);
   const startX = Math.round(L + Math.max(0, (avail - tableW) / 2));
 
-  // Lay out columns
+  // lay out with pair-wise gaps
   let cursorX = startX;
-  __cols = headers.map(h => {
+  __cols = headers.map((h, i) => {
     const k = h.key;
     const w = ws[k];
     const cx = cursorX + Math.round(w / 2);
-    cursorX += w + gap;
-    return { ...h, x: cx, width: w };
+    const def = { ...h, x: cx, width: w };
+    // choose next gap: smaller between subtopic-like columns
+    if (i < headers.length - 1) {
+      const nextK = headers[i+1].key;
+      const isInnerSubGap =
+        k !== '__subject' && nextK !== '__grade' &&
+        k !== '__max' && nextK !== '__total';
+      cursorX += w + (isInnerSubGap ? innerGapFor(gap) : gap);
+    }
+    return def;
   });
 
   return __cols;
@@ -868,8 +873,8 @@ function drawSubjectRow(pdf, rowY, subject) {
     switch (c.key) {
       case '__subject': {
   // left-align within the subject column box
-  const leftEdge = Math.round(c.x - (c.width ? c.width / 2 : 0)) + 12; // 12px padding
-  leftText(pdf, subjName, leftEdge, rowY, 60, COLOR_GREEN, 'bold');
+  const leftEdge = Math.round(c.x - (c.width ? c.width / 2 : 0)) + 28; // more padding
+leftText(pdf, subjName, leftEdge, rowY, 60, COLOR_GREEN, 'bold');
   break;
 }
       case '__max':
@@ -1321,7 +1326,7 @@ if (!rowSubs.length) {
 
 // Build vertical positions and draw header
 const { rowsY, totalY } = buildSubjectY(rowSubs.length);
-drawSubjectsHeader(pdf, rowsY.length ? (rowsY[0] - 70) : (SUBJECT_LAYOUT.startY - 70));
+drawSubjectsHeader(pdf, rowsY.length ? (rowsY[0] - 100) : (SUBJECT_LAYOUT.startY - 100));
 
 // Draw each subject row
 for (let i = 0; i < Math.min(rowSubs.length, rowsY.length); i++) {
@@ -1514,5 +1519,6 @@ centerText(pdf, student.overallGrade, xGrade, totalY, 60, COLOR_GRADE);
 </div>
 </body>
 </html>
+
 
 
