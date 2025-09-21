@@ -480,8 +480,18 @@ async function buildExamStructure(examObj, { year, classId, sectionId } = {}) {
 
   if (!examObj) return { subjects: [], hasSubtopics: false };
 
-  // 1) Start from explicit exam definition if available
+    // 1) Start from explicit exam definition if available
   let subjects = [];
+
+  // NEW: allow exam-wide subtopics at root of exam doc
+  const examWideSubs = Array.isArray(examObj?.subtopics)
+    ? examObj.subtopics.map(t => ({
+        name: t?.name || '',
+        max: (typeof t?.max === 'number' && !isNaN(t.max)) ? t.max : null
+      }))
+    : null;
+  if (examWideSubs && examWideSubs.length) __examHasSubtopics = true;
+
   if (Array.isArray(examObj.subjects)) {
     subjects = examObj.subjects.map(s => {
       const name = s?.name || '';
@@ -497,8 +507,13 @@ async function buildExamStructure(examObj, { year, classId, sectionId } = {}) {
         subjectMax = (sum > 0 ? sum : null);
       }
 
+           // If subject has no explicit subtopics but exam has an exam-wide schema, use it
+      if ((!subtopics || subtopics.length === 0) && examWideSubs && examWideSubs.length) {
+        subtopics = examWideSubs.map(t => ({ name: t.name, max: t.max }));
+      }
       if (subtopics.length) __examHasSubtopics = true;
       return { name, subtopics, subjectMax };
+
     });
   }
 
@@ -521,8 +536,16 @@ async function buildExamStructure(examObj, { year, classId, sectionId } = {}) {
        // If examObj.subjects existed, map against them; else derive subjects from marks keys (excluding __subs).
 if (subjects.length === 0) {
   const rootKeys = Object.keys(marksData).filter(k => k !== '__subs');
-  subjects = rootKeys.map(sn => ({ name: sn, subtopics: [], subjectMax: null }));
+  subjects = rootKeys.map(sn => ({
+    name: sn,
+    subtopics: (examWideSubs && examWideSubs.length)
+      ? examWideSubs.map(t => ({ name: t.name, max: t.max }))
+      : [],
+    subjectMax: null
+  }));
+  if (examWideSubs && examWideSubs.length) __examHasSubtopics = true;
 }
+
 
 // Prefer subtopics from marksData.__subs[subject]; fallback to object-at-root heuristic
 const subsRoot = (marksData && typeof marksData.__subs === 'object') ? marksData.__subs : {};
@@ -560,6 +583,11 @@ subjects = subjects.map(s => {
   }
 
   return s;
+    // If still missing subtopics and exam-wide schema exists, apply it
+  if ((!s.subtopics || s.subtopics.length === 0) && examWideSubs && examWideSubs.length) {
+    s.subtopics = examWideSubs.map(t => ({ name: t.name, max: t.max }));
+    __examHasSubtopics = true;
+  }
 });
       }
     } catch (e) {
@@ -650,40 +678,44 @@ function computeColumns() {
     { key: '__grade',   label: 'GRADE' }
   ];
 
-  // Estimate text widths using header font size (kept in your helpers)
   const headerSize = _subtopicHeaderFont(schema.length);
-  const avgCharPx  = headerSize * 0.60; // heuristic; works well with Helvetica bold
+  const avgCharPx  = headerSize * 0.60;
 
-  // Tunable bounds and spacing
-  const COL_GAP    = 35;   // gap between columns
-  const MIN_COL    = 140;  // generic min width for subtopic-like columns
-  const MAX_COL    = 420;  // generic max width so it never explodes
-
-  // Subject/Max/Total/Grade deserve slightly different mins
-  const MIN_SUBJECT = 260;
-  const MIN_MAX     = 180;
-  const MIN_TOTAL   = 180;
-  const MIN_GRADE   = 160;
+  const COL_GAP    = 35;
+  const MIN_COL    = 140;
+  const MAX_COL    = 420;
+  const MIN_SUBJECT = 260, MIN_MAX = 180, MIN_TOTAL = 180, MIN_GRADE = 160;
 
   function estWidth(label, minW = MIN_COL, maxW = MAX_COL) {
     const L = String(label || '').toUpperCase();
-    const w = Math.round((L.length + 2) * avgCharPx);  // +2 padding characters
+    const w = Math.round((L.length + 2) * avgCharPx);
     return Math.max(minW, Math.min(maxW, w));
   }
 
-  // Compute natural width for each column
+  // widths
   const widths = {};
   for (const h of headers) {
     if (h.key === '__subject') widths[h.key] = estWidth(h.label, MIN_SUBJECT, MAX_COL);
     else if (h.key === '__max') widths[h.key] = estWidth(h.label, MIN_MAX, MAX_COL);
     else if (h.key === '__total') widths[h.key] = estWidth(h.label, MIN_TOTAL, MAX_COL);
     else if (h.key === '__grade') widths[h.key] = estWidth(h.label, MIN_GRADE, MAX_COL);
-    else widths[h.key] = estWidth(h.label, MIN_COL, MAX_COL); // subtopics
+    else widths[h.key] = estWidth(h.label, MIN_COL, MAX_COL);
   }
 
-  // Lay out from left margin with gaps, NOT stretched to right margin
-  let cursorX = PAGE_MARGINS.left;
-  __cols = headers.map((h, i) => {
+  // compute total table width
+  const keys = headers.map(h => h.key);
+  const totalColsWidth = keys.reduce((a,k) => a + widths[k], 0);
+  const totalGaps      = COL_GAP * Math.max(0, headers.length - 1);
+  const tableWidth     = totalColsWidth + totalGaps;
+
+  // center between margins
+  const L = PAGE_MARGINS.left, R = PAGE_MARGINS.right;
+  const avail = Math.max(0, R - L);
+  const startX = Math.round(L + Math.max(0, (avail - tableWidth) / 2));
+
+  // lay out
+  let cursorX = startX;
+  __cols = headers.map(h => {
     const w = widths[h.key];
     const center = cursorX + Math.round(w / 2);
     const def = { ...h, x: center, width: w };
@@ -691,7 +723,6 @@ function computeColumns() {
     return def;
   });
 
-  // Note: table may end before PAGE_MARGINS.right (natural width). That’s intended.
   return __cols;
 }
 
@@ -786,9 +817,9 @@ function drawSubjectRow(pdf, rowY, subject) {
   for (const c of cols) {
     switch (c.key) {
       case '__subject': {
-  // right-align within the subject column box (uses computed column width)
-  const rightEdge = Math.round(c.x + (c.width ? c.width / 2 : 0)) - 12; // 12px padding
-  rightText(pdf, subjName, rightEdge, rowY, 60, COLOR_GREEN, 'bold');
+  // left-align within the subject column box
+  const leftEdge = Math.round(c.x - (c.width ? c.width / 2 : 0)) + 12; // 12px padding
+  leftText(pdf, subjName, leftEdge, rowY, 60, COLOR_GREEN, 'bold');
   break;
 }
       case '__max':
@@ -1272,9 +1303,10 @@ const tBoxHeight = 80;
 const tBoxY = totalY - 55;
 pdf.setDrawColor(15, 61, 107);
 pdf.setLineWidth(4);
-pdf.roundedRect(PAGE_MARGINS.left - 40, tBoxY,
-  (PAGE_MARGINS.right - PAGE_MARGINS.left) + 80,
-  tBoxHeight, 20, 20, 'S');
+const cols = computeColumns();
+const firstLeft = Math.round(cols[0].x - cols[0].width / 2) - 40; // padding
+const lastRight = Math.round(cols[cols.length - 1].x + cols[cols.length - 1].width / 2) + 40;
+pdf.roundedRect(firstLeft, tBoxY, lastRight - firstLeft, tBoxHeight, 20, 20, 'S');
 
 // "TOTAL" label centered in SUBJECT column
 centerText(pdf, "TOTAL", xSubject, totalY, 60, COLOR_GREEN);
@@ -1432,3 +1464,4 @@ centerText(pdf, student.overallGrade, xGrade, totalY, 60, COLOR_GRADE);
 </div>
 </body>
 </html>
+
