@@ -460,6 +460,9 @@ document.getElementById('randomize-numbers-btn').onclick = async function() {
     alert('No exam paper found!');
     return;
   }
+ // Deep copy backup to restore any question if parsing fails
+const backup = JSON.parse(JSON.stringify(paper));
+
   // Gather all eligible questions
   let allQuestions = [];
   paper.subjects.forEach((subjectBlock, subjIdx) => {
@@ -500,30 +503,41 @@ document.getElementById('randomize-numbers-btn').onclick = async function() {
   for (let b = 0; b < totalBatches; b++) {
     const batchQuestions = allQuestions.slice(b * BATCH_SIZE, (b + 1) * BATCH_SIZE);
     const prompt = `
-    For each question below, if it is a numerical/problem-solving question, change all numbers in the question and all options to new reasonable values, without changing the concept or difficulty.
-
-**Instructions for MCQs:**
-- For "MCQ (Single)": Ensure only one correct answer is present, and shuffle the options. Randomly place the correct answer.
-- For "MCQ (Multiple)":
-    - Randomly assign the number of correct options for each question as follows:
+You will receive a batch of questions (mostly numerical). For EACH question:
+- Keep the SAME wording/structure; only change the numeric values to new reasonable integers (avoid 0/1 unless appropriate).
+- Recompute all options so they match the new numbers.
+- MCQ (Single): exactly one correct option.
+- MCQ (Multiple): 1–4 correct options (you choose per question).
+ - **Randomly should assign the number of correct options for each question as follows with out fail:**
         - 20% questions: 1 correct option
         - 30% questions: 2 correct options
         - 30% questions: 3 correct options
         - 20% questions: 4 correct options (all correct)
-    - For each question, actually solve the problem, and ensure that the answer key corresponds exactly to the correct options based on your new numbers.
-    - **Never return a question where none of the options are correct. Double-check that at least one, and only the specified number, of correct options are present.**
-    - Shuffle the options and the correct answer(s) every time. Make sure the answer key matches.
-- For all questions, double-check that the answer key matches the new numbers and options, and that only the specified number of answers is marked correct.
-- **Never include options like "All of the above", "None of the above", "None of these", or similar phrases. All options must be concrete, meaningful answers.**
-- Do not change anything for theory or conceptual questions.
-Input:
-${batchQuestions.map((q, idx) => 
-`Q${idx+1} (Subject: ${q.subject}, Section: ${q.sectionLabel}${q.options.length === 4 ? (q.options.filter(opt => opt.includes("(Multiple)")).length ? ", MCQ (Multiple)" : ", MCQ (Single)") : ""}):
-${q.question}
-${q.options && q.options.length ? q.options.map((o,i)=>String.fromCharCode(65+i)+') '+o).join('\n') : ''}` 
-).join('\n\n')}
+- **Never return a question where none of the options are correct.** Ensure at least one—and exactly the intended number—of correct options.
+- **Shuffle the options AND the correct answer letters** each time; ensure the answer key matches the shuffled options.
+- **Double-check** that the answer key corresponds to the recomputed options after number changes.
+- **Never include** options like "All of the above", "None of the above", "None of these", or similar—use only concrete answers.
+- If a question is theoretical/non-numerical, **leave it unchanged**.
+- Preserve any TeX/Math formatting already present (e.g., \\( ... \\)).
 
-Return ONLY the updated questions in the same order and format as above. For each MCQ, at the end, add a line: "Answer: A,B" (for multiple correct), or "Answer: C" (for single correct).
+Return **STRICT JSON only** (no prose, no markdown fences). EXACT shape:
+[
+  {
+    "stem": "<updated question text>",
+    "options": ["A text","B text","C text","D text"],
+    "answer": ["A"]                 // or ["A","C"] for multiple; letters only A–D
+  },
+  ...
+]
+
+Input items (JSON per line):
+${batchQuestions.map((q, idx) => JSON.stringify({
+  index: idx + 1,
+  subject: q.subject,
+  section: q.sectionLabel,
+  stem: q.question,
+  options: q.options
+})).join('\n')}
 `;
     let aiResult;
     try {
@@ -540,18 +554,27 @@ Return ONLY the updated questions in the same order and format as above. For eac
       aiFailed = true;
       break;
     }
-    const qBlocks = parseAIBlocks(aiResult, batchQuestions.length);
-
-// If fewer than expected, stop and show a helpful message.
-// If more than expected, parseAIBlocks already truncates safely.
-if (qBlocks.length < batchQuestions.length) {
-  console.warn("AI raw output for batch", b + 1, aiResult);
-  alert(`AI returned ${qBlocks.length} of ${batchQuestions.length} questions in batch ${b+1}. Please check AI output text (console has the raw output).`);
+    // --- Parse STRICT JSON ---
+let items;
+try {
+  const cleaned = String(aiResult).replace(/```json|```/gi, '').trim();
+  items = JSON.parse(cleaned);
+} catch (e) {
+  console.warn("AI raw output (invalid JSON) for batch", b + 1, aiResult);
+  alert(`AI returned invalid JSON for batch ${b + 1}. No changes applied for this batch.`);
   aiFailed = true;
   break;
 }
-    updatedBlocks.push(qBlocks);
-  }
+
+// Validate array length matches this batch
+if (!Array.isArray(items) || items.length !== batchQuestions.length) {
+  console.warn("AI JSON length mismatch for batch", b + 1, items);
+  alert(`AI returned ${Array.isArray(items) ? items.length : 0} of ${batchQuestions.length} items in batch ${b + 1}. No changes applied for this batch.`);
+  aiFailed = true;
+  break;
+}
+
+updatedBlocks.push(items);
 
   if (aiFailed) {
     btn.disabled = false;
@@ -559,62 +582,65 @@ if (qBlocks.length < batchQuestions.length) {
     return;
   }
 
-  // Apply AI results back to paper
-  let applied = 0;
-  for (let b = 0; b < updatedBlocks.length; b++) {
-  let batchQuestions = allQuestions.slice(b * BATCH_SIZE, (b + 1) * BATCH_SIZE);
-  for (let i = 0; i < updatedBlocks[b].length; i++) {
-    const { subjIdx, sIdx, qIdx } = batchQuestions[i];
-    let lines = updatedBlocks[b][i].split('\n').filter(x => x.trim());
-// Remove any AI metadata/header lines before the real question
-while (
-  lines.length &&
-  (
-    /^Q\d+(\s*\(.*\))?\s*:/i.test(lines[0]) ||          // "Q1 (Subject ...):"
-    /^Q\d+\s*$/i.test(lines[0]) ||                      // lonely "Q1"
-    /^Math [^:]+:.*Section/i.test(lines[0]) ||          // noisy subject lines
-    /Section:.*\(MCQ/i.test(lines[0]) ||
-    /^[A-Za-z0-9 ]+,\s*Section:.*$/i.test(lines[0]) ||
-    /^\s*(Subject|Section)\s*:/i.test(lines[0])         // even more generic junk
-  )
-) {
-  lines.shift();
-}
-// Additional: If still not a question, keep shifting until a line looks like a question
-while (
-  lines.length && (
-    lines[0].length < 8 ||
-    /^[A-Za-z0-9 ]+, Section:.*$/i.test(lines[0]) ||
-    /^[A-Z][a-zA-Z0-9 ]*:$/.test(lines[0]) ||
-    /^[A-Z ]+\(.*\):$/i.test(lines[0]) ||
-    !/[\?\.\)]/.test(lines[0])
-  )
-) {
-  lines.shift();
-}
+ // ===== Apply AI JSON results back to paper (safe) =====
+let applied = 0;
+for (let b = 0; b < updatedBlocks.length; b++) {
+  const batchQuestions = allQuestions.slice(b * BATCH_SIZE, (b + 1) * BATCH_SIZE);
+  const items = updatedBlocks[b]; // array of { stem, options[4], answer[...] }
 
-if (lines.length === 0) continue;
-const questionText = lines[0].trim();
-let options = [];
-for (let j = 1; j < lines.length; j++) {
-  const m = lines[j].match(/^[A-Da-d][\)\.\:]\s*(.+)$/);
-  if (m) options.push(m[1].trim());
-}
-    // Only update with real questions (not metadata)
-    if (
-      questionText &&
-      questionText.length > 10 &&
-      !/^Q\d+/.test(questionText) &&
-      !/^Math [^:]+:.*Section/i.test(questionText) &&
-      !/Section:.*\(MCQ/.test(questionText)
-    ) {
-      paper.subjects[subjIdx].sections[sIdx].questions[qIdx].text = questionText;
+  for (let i = 0; i < items.length; i++) {
+    const { subjIdx, sIdx, qIdx } = batchQuestions[i];
+    const out = items[i] || {};
+
+    const stem = (out.stem || '').trim();
+    const opts = Array.isArray(out.options) ? out.options.map(x => String(x || '').trim()) : [];
+    let ansLetters = Array.isArray(out.answer) ? out.answer.map(x => String(x || '').trim().toUpperCase()) : [];
+
+    // Normalize answer letters: keep only A–D, unique, preserve order
+    const seen = new Set();
+    ansLetters = ansLetters.filter(L => /^[A-D]$/.test(L) && !seen.has(L) && (seen.add(L), true));
+
+    const qObj = paper.subjects[subjIdx].sections[sIdx].questions[qIdx];
+
+    // Overwrite ONLY if valid
+    const validStem = stem.replace(/<[^>]+>/g, '').length >= 3;
+    const validOpts = opts.length === 4 && opts.every(s => s.length > 0);
+    const validAns  = ansLetters.length >= 1;
+
+    if (validStem) qObj.text = stem;
+    if (validOpts) qObj.options = opts;
+    if (validAns)  qObj.answer = ansLetters.join(ansLetters.length > 1 ? ',' : '');
+
+    // Guard: if MCQ options exist but answer ended up empty, restore original answer
+    if (Array.isArray(qObj.options) && qObj.options.length === 4 && !qObj.answer) {
+      const orig = backup.subjects[subjIdx].sections[sIdx].questions[qIdx];
+      if (orig?.answer) qObj.answer = orig.answer;
     }
-    if (options.length)
-      paper.subjects[subjIdx].sections[sIdx].questions[qIdx].options = options;
+
+    // Guard: if stem ended up empty, restore original stem
+    if (!qObj.text || !qObj.text.trim()) {
+      const orig = backup.subjects[subjIdx].sections[sIdx].questions[qIdx];
+      if (orig?.text) qObj.text = orig.text;
+    }
+
     applied++;
   }
 }
+   // Final safety net: restore any question that lost its stem entirely
+paper.subjects.forEach((subjectBlock, si) => {
+  (subjectBlock.sections || []).forEach((section, sj) => {
+    (section.questions || []).forEach((q, qk) => {
+      const txt = (q.text || q.question || '').trim();
+      if (!txt) {
+        const orig = (((backup.subjects || [])[si] || {}).sections || [])[sj]?.questions?.[qk];
+        if (orig && (orig.text || orig.question)) {
+          q.text = (orig.text || orig.question);
+        }
+      }
+    });
+  });
+});
+
   setExamPaper(paper);
   renderExam();
   alert("Numbers in all numerical problems have been randomized!");
@@ -625,3 +651,4 @@ for (let j = 1; j < lines.length; j++) {
 </script>
 </body>
 </html>
+
