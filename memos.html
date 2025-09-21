@@ -519,34 +519,49 @@ async function buildExamStructure(examObj, { year, classId, sectionId } = {}) {
         const marksDoc = await firstStu.ref.collection('marks').doc(examSel.value).get();
         const marksData = marksDoc.exists ? (marksDoc.data() || {}) : {};
 
-        // If examObj.subjects existed, map against them; else derive subjects from marks keys.
-        if (subjects.length === 0) {
-          const subjNames = Object.keys(marksData);
-          subjects = subjNames.map(sn => ({ name: sn, subtopics: [], subjectMax: null }));
-        }
+       // If examObj.subjects existed, map against them; else derive subjects from marks keys (excluding __subs).
+if (subjects.length === 0) {
+  const rootKeys = Object.keys(marksData).filter(k => k !== '__subs');
+  subjects = rootKeys.map(sn => ({ name: sn, subtopics: [], subjectMax: null }));
+}
 
-        subjects = subjects.map(s => {
-          const subjKey = Object.keys(marksData).find(k => _normLabel(k) === _normLabel(s.name));
-          const subjVal = subjKey ? marksData[subjKey] : null;
+// Prefer subtopics from marksData.__subs[subject]; fallback to object-at-root heuristic
+const subsRoot = (marksData && typeof marksData.__subs === 'object') ? marksData.__subs : {};
 
-          // If the student’s subject value is an object with multiple numeric keys,
-          // treat those keys as subtopics (best-effort inference).
-          if (subjVal && typeof subjVal === 'object' && !Array.isArray(subjVal)) {
-            const entries = Object.entries(subjVal);
-            const inferred = entries
-              .filter(([k, v]) => (typeof v === 'number' || String(v).toUpperCase() === 'AB'))
-              .map(([k]) => ({ name: k, max: null })); // max unknown here
+subjects = subjects.map(s => {
+  const subjName = s.name || '';
+  // exact/normalized match at root for totals
+  const subjKey = Object.keys(marksData).find(k => _normLabel(k) === _normLabel(subjName));
+  const subjVal = subjKey ? marksData[subjKey] : null;
 
-            if (inferred.length) {
-              __examHasSubtopics = true;
-              // If exam already had declared subtopics, keep their order; otherwise use inferred.
-              if (s.subtopics.length === 0) s.subtopics = inferred;
-              if (s.subjectMax == null) s.subjectMax = null; // unknown without explicit max
-            }
-          }
+  // exact/normalized match inside __subs for breakdown
+  const subsKey = Object.keys(subsRoot).find(k => _normLabel(k) === _normLabel(subjName));
+  const subsObj = subsKey ? subsRoot[subsKey] : null;
 
-          return s;
-        });
+  // Case 1: breakdown present under __subs.<Subject>
+  if (subsObj && typeof subsObj === 'object' && !Array.isArray(subsObj)) {
+    const inferred = Object.keys(subsObj).map(k => ({ name: k, max: null }));
+    if (inferred.length) {
+      __examHasSubtopics = true;
+      if (s.subtopics.length === 0) s.subtopics = inferred;
+      if (s.subjectMax == null) s.subjectMax = null; // unknown without explicit max
+    }
+  }
+  // Case 2: fallback heuristic: object stored at root under subject key
+  else if (subjVal && typeof subjVal === 'object' && !Array.isArray(subjVal)) {
+    const entries = Object.entries(subjVal);
+    const inferred = entries
+      .filter(([k, v]) => (typeof v === 'number' || String(v).toUpperCase() === 'AB'))
+      .map(([k]) => ({ name: k, max: null }));
+    if (inferred.length) {
+      __examHasSubtopics = true;
+      if (s.subtopics.length === 0) s.subtopics = inferred;
+      if (s.subjectMax == null) s.subjectMax = null;
+    }
+  }
+
+  return s;
+});
       }
     } catch (e) {
       console.warn('Exam structure inference skipped:', e);
@@ -894,15 +909,28 @@ async function fetchStudentData(stu) {
       mark: '' // will fill below
     })) : [];
 
-    // Fill subtopic marks (only if subjVal is an object of subtopic marks)
-    if (subtopics.length && subjVal && typeof subjVal === 'object' && !Array.isArray(subjVal)) {
-      for (const st of subtopics) {
-        // exact and normalized key match
-        const foundKey = Object.keys(subjVal).find(k => norm(k) === norm(st.name));
-        const v = (foundKey ? subjVal[foundKey] : subjVal[st.name]);
-        st.mark = (v === 'AB' || v === 'ab' || v === 'Ab') ? 'AB' : (isNum(v) ? +v : '');
-      }
-    }
+   // Choose subtopic source: prefer __subs.<Subject>, fallback to object-at-root
+const subsRoot = (marks && typeof marks.__subs === 'object') ? marks.__subs : null;
+const subsKey  = subsRoot ? Object.keys(subsRoot).find(k => norm(k) === norm(subjName)) : null;
+const subsObj  = (subsKey && typeof subsRoot[subsKey] === 'object') ? subsRoot[subsKey] : null;
+
+const subSrc = subsObj || (subjVal && typeof subjVal === 'object' && !Array.isArray(subjVal) ? subjVal : null);
+
+// If no declared subtopics but we have a subtopic object, create cells from its keys
+if ((!subtopics.length) && subSrc) {
+  for (const k of Object.keys(subSrc)) {
+    subtopics.push({ name: k, max: null, mark: '' });
+  }
+}
+
+// Fill subtopic marks from the chosen source
+if (subtopics.length && subSrc) {
+  for (const st of subtopics) {
+    const k = Object.keys(subSrc).find(x => norm(x) === norm(st.name));
+    const v = (k ? subSrc[k] : subSrc[st.name]);
+    st.mark = (v === 'AB' || v === 'ab' || v === 'Ab') ? 'AB' : (isNum(v) ? +v : '');
+  }
+}
 
     // If no subtopics (or subjVal is a direct mark), support direct subject mark
     let subjectTotalMarks = 0;
@@ -1297,6 +1325,7 @@ centerText(pdf, student.overallGrade, TABLE_LAYOUT.gradeX, totalY, 60, COLOR_GRA
 </div>
 </body>
 </html>
+
 
 
 
