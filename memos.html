@@ -809,32 +809,37 @@ function _subtopicCellFont(n) {
   return 56; // default
 }
 function drawSubjectsHeader(pdf, y) {
-  // Recompute ALL columns (SUBJECT | MAX | ...subtopics... | TOTAL | GRADE)
-  const cols = computeColumns(); // fills __cols with {key,label,x}
+  // Columns spread (SUBJECT | MAX | ... | TOTAL | GRADE)
+  const cols = computeColumns();
 
-  // faint divider above the header (use margins)
-  pdf.setDrawColor(200, 220, 245);
-  pdf.setLineWidth(2);
-  pdf.line(PAGE_MARGINS.left, y - 38, PAGE_MARGINS.right, y - 38);
-
-  // header font size adaptive to number of subtopics
+  // Sizing
   const schema = getExamSubtopicSchema();
-  const hSize = _subtopicHeaderFont(schema.length);
+  const hSize   = _subtopicHeaderFont(schema.length);
+  const lineGap = Math.round(hSize * 0.95);
 
-  // helper: wrap to max 2 lines (split on first space)
+  // Bounds for a rounded box around the header
+  const firstLeft  = Math.round(cols[0].x - cols[0].width / 2) - 30; // padding
+  const lastRight  = Math.round(cols[cols.length - 1].x + cols[cols.length - 1].width / 2) + 30;
+  const boxHeight  = (hSize * 2) + Math.round(lineGap * 0.6) + 26;   // fits 1–2 lines
+  const boxTopY    = Math.round(y - (boxHeight / 2));
+
+  // Header rounded box (light fill, blue border)
+  pdf.setFillColor(250, 253, 255);
+  pdf.setDrawColor(15, 61, 107);
+  pdf.setLineWidth(4);
+  pdf.roundedRect(firstLeft, boxTopY, lastRight - firstLeft, boxHeight, 20, 20, 'FD');
+
+  // Helper: split to max 2 lines (first word | rest)
   function twoLine(label) {
-    const parts = String(label).trim().split(/\s+/);
-    if (parts.length <= 1) return [label.toUpperCase()];
-    // first word on line 1, rest on line 2
+    const parts = String(label || '').trim().split(/\s+/);
+    if (parts.length <= 1) return [String(label || '').toUpperCase()];
     return [parts[0].toUpperCase(), parts.slice(1).join(' ').toUpperCase()];
   }
 
-  // draw every header centered at its computed x
+  // Draw each header label centered
   for (const c of cols) {
     const label = c.label || '';
-    const lines = twoLine(label); // 1–2 lines
-    const lineGap = Math.round(hSize * 0.95);
-
+    const lines = twoLine(label);
     if (lines.length === 2) {
       centerText(pdf, lines[0], c.x, y - Math.round(lineGap / 2), hSize, [15,61,107], 'bold');
       centerText(pdf, lines[1], c.x, y + Math.round(lineGap / 2), hSize, [15,61,107], 'bold');
@@ -843,6 +848,7 @@ function drawSubjectsHeader(pdf, y) {
     }
   }
 }
+
 /**
  * Draw one subject row with its subtopic cells.
  * rowY is the baseline for the row text.
@@ -1336,10 +1342,10 @@ const { rowsY, totalY } = buildSubjectY(rowSubs.length);
 // Place header above first row by *double* the usual row gap
 let headerY;
 if (rowsY.length >= 2) {
-  const rowGap = rowsY[1] - rowsY[0];        // normal gap between rows
-  headerY = rowsY[0] - Math.round(rowGap * 2); // double gap above first row
+  const rowGap = rowsY[1] - rowsY[0];
+  headerY = rowsY[0] - Math.round(rowGap * 1.4); // a little lower than before
 } else {
-  headerY = (rowsY[0] ?? SUBJECT_LAYOUT.startY) - 120; // fallback
+  headerY = (rowsY[0] ?? SUBJECT_LAYOUT.startY) - 95; // fallback slightly closer
 }
 drawSubjectsHeader(pdf, headerY);
 
@@ -1453,9 +1459,9 @@ const { rowsY, totalY } = buildSubjectY(rowSubs.length);
 let headerY;
 if (rowsY.length >= 2) {
   const rowGap = rowsY[1] - rowsY[0];
-  headerY = rowsY[0] - Math.round(rowGap * 2);
+  headerY = rowsY[0] - Math.round(rowGap * 1.4);
 } else {
-  headerY = (rowsY[0] ?? SUBJECT_LAYOUT.startY) - 120;
+  headerY = (rowsY[0] ?? SUBJECT_LAYOUT.startY) - 95;
 }
 drawSubjectsHeader(pdf, headerY);
 
@@ -1545,6 +1551,7 @@ centerText(pdf, student.overallGrade, xGrade, totalY, 60, COLOR_GRADE);
 </div>
 </body>
 </html>
+
 
 
 
