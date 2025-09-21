@@ -451,8 +451,273 @@ downloadAllBtn.onclick = async () => {
     hideSpinner();
   }
 };
+// ======= EXAM STRUCTURE (subjects, subtopics, max) =======
+let __examStructure = null;           // cached per current exam selection
+let __examHasSubtopics = false;       // quick flag for layout decisions
+
+function _normLabel(s) {
+  return String(s || '').replace(/[\s._-]+/g, '').toLowerCase();
+}
+
+/**
+ * Builds the exam structure from the selected exam definition and (optionally)
+ * infers subtopics/max from Firestore if not present in the exam object.
+ *
+ * Returns:
+ * {
+ *   subjects: [
+ *     {
+ *       name: "Mathematics",
+ *       subtopics: [ { name: "Algebra", max: 10 }, { name: "Geometry", max: 15 }, ... ],
+ *       subjectMax: 25
+ *     },
+ *     ...
+ *   ],
+ *   hasSubtopics: true/false
+ * }
+ */
+async function buildExamStructure(examObj, { year, classId, sectionId } = {}) {
+  __examHasSubtopics = false;
+
+  if (!examObj) return { subjects: [], hasSubtopics: false };
+
+  // 1) Start from explicit exam definition if available
+  let subjects = [];
+  if (Array.isArray(examObj.subjects)) {
+    subjects = examObj.subjects.map(s => {
+      const name = s?.name || '';
+      let subtopics = Array.isArray(s?.subtopics) ? s.subtopics.map(t => ({
+        name: t?.name || '',
+        max: (typeof t?.max === 'number' && !isNaN(t.max)) ? t.max : null
+      })) : [];
+
+      // subjectMax: prefer explicit; else sum known subtopic max
+      let subjectMax = (typeof s?.max === 'number' && !isNaN(s.max)) ? s.max : null;
+      if (subjectMax == null && subtopics.length) {
+        const sum = subtopics.reduce((acc, t) => acc + (typeof t.max === 'number' ? t.max : 0), 0);
+        subjectMax = (sum > 0 ? sum : null);
+      }
+
+      if (subtopics.length) __examHasSubtopics = true;
+      return { name, subtopics, subjectMax };
+    });
+  }
+
+  // 2) If no subjects (or missing subtopics) and Firestore is available, try a light inference
+  //    (We only look at the first student’s marks to infer consistent subtopic keys.)
+  const needsInference = subjects.length === 0 || subjects.some(s => s.subtopics.length === 0);
+  if (needsInference && year && classId && sectionId) {
+    try {
+      const secRef = db.collection('years').doc(year)
+        .collection('classes').doc(classId)
+        .collection('sections').doc(sectionId)
+        .collection('students');
+
+      const firstStuSnap = await secRef.orderBy('roll').limit(1).get();
+      if (!firstStuSnap.empty) {
+        const firstStu = firstStuSnap.docs[0];
+        const marksDoc = await firstStu.ref.collection('marks').doc(examSel.value).get();
+        const marksData = marksDoc.exists ? (marksDoc.data() || {}) : {};
+
+        // If examObj.subjects existed, map against them; else derive subjects from marks keys.
+        if (subjects.length === 0) {
+          const subjNames = Object.keys(marksData);
+          subjects = subjNames.map(sn => ({ name: sn, subtopics: [], subjectMax: null }));
+        }
+
+        subjects = subjects.map(s => {
+          const subjKey = Object.keys(marksData).find(k => _normLabel(k) === _normLabel(s.name));
+          const subjVal = subjKey ? marksData[subjKey] : null;
+
+          // If the student’s subject value is an object with multiple numeric keys,
+          // treat those keys as subtopics (best-effort inference).
+          if (subjVal && typeof subjVal === 'object' && !Array.isArray(subjVal)) {
+            const entries = Object.entries(subjVal);
+            const inferred = entries
+              .filter(([k, v]) => (typeof v === 'number' || String(v).toUpperCase() === 'AB'))
+              .map(([k]) => ({ name: k, max: null })); // max unknown here
+
+            if (inferred.length) {
+              __examHasSubtopics = true;
+              // If exam already had declared subtopics, keep their order; otherwise use inferred.
+              if (s.subtopics.length === 0) s.subtopics = inferred;
+              if (s.subjectMax == null) s.subjectMax = null; // unknown without explicit max
+            }
+          }
+
+          return s;
+        });
+      }
+    } catch (e) {
+      console.warn('Exam structure inference skipped:', e);
+    }
+  }
+
+  // 3) Finalize: ensure stable arrays/fields
+  subjects = subjects.map(s => ({
+    name: s.name || '',
+    subtopics: Array.isArray(s.subtopics) ? s.subtopics : [],
+    subjectMax: (typeof s.subjectMax === 'number' && !isNaN(s.subjectMax)) ? s.subjectMax : null
+  }));
+
+  __examStructure = { subjects, hasSubtopics: __examHasSubtopics };
+  return __examStructure;
+}
+
+/** Get or rebuild the structure for current selects */
+async function getExamStructure() {
+  const examId = examSel.value;
+  const examObj = exams.find(e => e.id === examId);
+  if (!examObj) {
+    __examStructure = { subjects: [], hasSubtopics: false };
+    return __examStructure;
+  }
+  // Rebuild every time exam/class/section changes (simple & safe)
+  return await buildExamStructure(examObj, {
+    year: yearSel.value,
+    classId: classSel.value,
+    sectionId: sectionSel.value
+  });
+}
 
 // ======= PDF Helpers ========
+    // ======= TABLE LAYOUT HELPERS (Subject | Subtopics | Total | Grade) =======
+const TABLE_LAYOUT = {
+  subjectX: 520,          // left for "Subject"
+  subtopicsL: 900,        // left edge of subtopics region
+  totalX: 1502,           // column center for "Total (marks/max)"
+  gradeX: 1802,           // column center for "Grade"
+  rightPad: 100           // right margin from page edge
+};
+
+function _shortLabel(s, maxLen = 10) {
+  const t = String(s || '').trim();
+  return t.length > maxLen ? t.slice(0, maxLen - 1) + '…' : t;
+}
+
+function _fmtCell(mark, max) {
+  const isNum = v => (typeof v === 'number' && !isNaN(v));
+  if (mark === 'AB') return 'AB';
+  if (isNum(mark) && isNum(max)) return `${mark}/${max}`;
+  if (isNum(mark) && (max == null || max === '')) return `${mark}`;
+  if ((mark === '' || mark == null) && isNum(max)) return `—/${max}`;
+  return '—';
+}
+
+/**
+ * Draw the single header row: "Subject | Subtopics | Total (M/Max) | Grade"
+ * y: baseline Y where text will be placed (we draw a faint line above it).
+ */
+function drawSubjectsHeader(pdf, y) {
+  // faint divider above the header
+  pdf.setDrawColor(200, 220, 245);
+  pdf.setLineWidth(2);
+  pdf.line(480, y - 38, 2320, y - 38);
+
+  // Decide layout based on structure
+  const hasSubs = !!(__examStructure && __examStructure.hasSubtopics);
+
+  // "Subject"
+  leftText(pdf, 'SUBJECT', TABLE_LAYOUT.subjectX, y, 52, [15, 61, 107]);
+
+  if (hasSubs) {
+    // Subtopics layout
+    leftText(pdf, 'SUBTOPICS', TABLE_LAYOUT.subtopicsL, y, 52, [15, 61, 107]);
+    centerText(pdf, 'TOTAL (M/MAX)', TABLE_LAYOUT.totalX, y, 52, [15, 61, 107]);
+    centerText(pdf, 'GRADE', TABLE_LAYOUT.gradeX, y, 52, [15, 61, 107]);
+  } else {
+    // Classic layout
+    centerText(pdf, 'MAX',   X_MAX,   y, 52, [15, 61, 107]);
+    centerText(pdf, 'MARKS', X_MARKS, y, 52, [15, 61, 107]);
+    centerText(pdf, 'GRADE', X_GRADE, y, 52, [15, 61, 107]);
+  }
+}
+/**
+ * Draw one subject row with its subtopic cells.
+ * rowY is the baseline for the row text.
+ * Returns nothing (caller controls vertical positions).
+ */
+function drawSubjectRow(pdf, rowY, subject) {
+  const hasSubs = !!(__examStructure && __examStructure.hasSubtopics);
+  const { subtopicsL, totalX, gradeX } = TABLE_LAYOUT;
+
+  // Subject name (left)
+  leftText(pdf, String(subject.name || '').toUpperCase(), TABLE_LAYOUT.subjectX, rowY, 60, [22, 163, 74]);
+
+  if (hasSubs && Array.isArray(subject.subtopics) && subject.subtopics.length > 0 && !(subject.subtopics.length === 1 && subject.subtopics[0]?.name === '-')) {
+    // -------- Subtopics layout --------
+    const subtopics = subject.subtopics;
+
+    // Compute available width for subtopics region up to the "Total" column
+    const regionR = totalX - 120; // breathing room before Total column
+    const regionL = subtopicsL;
+    const regionW = Math.max(120, regionR - regionL);
+
+    const n = Math.max(1, subtopics.length);
+    const cellW = Math.max(120, Math.floor(regionW / n) - 8); // gap between cells
+    const startX = regionL + Math.floor((regionW - (cellW * n + 8 * (n - 1))) / 2); // center within region
+
+    // Each subtopic cell: small label + value
+    for (let i = 0; i < n; i++) {
+      const st = subtopics[i] || {};
+      const x = startX + i * (cellW + 8);
+      const yTop = rowY - 54; // top box ref (row font is 60 baseline)
+      const boxH = 78;
+
+      // cell box
+      pdf.setDrawColor(180, 200, 233);
+      pdf.setLineWidth(2);
+      pdf.roundedRect(x - 12, yTop - 12, cellW + 24, boxH + 24, 10, 10, 'S');
+
+      // label (tiny)
+      leftText(pdf, _shortLabel(st.name, 12), x, rowY - 22, 36, [20, 48, 90], 'normal');
+
+      // value (center)
+      const val = _fmtCell(st.mark, st.max);
+      centerText(pdf, val, x + cellW / 2, rowY + 4, 56, [22, 163, 74], 'bold');
+    }
+
+    // Subject Total (marks/max)
+    const tMarks = (subject.marks === 'AB' ? 'AB' : (typeof subject.marks === 'number' ? subject.marks : ''));
+    const tMax   = (typeof subject.max === 'number' ? subject.max : (subject.max === '' ? '' : subject.max));
+    const tVal   = _fmtCell(tMarks, tMax);
+    centerText(pdf, tVal, totalX, rowY, 60, [220, 38, 38]);
+
+    // Grade
+    centerText(pdf, String(subject.grade || ''), gradeX, rowY, 60, [139, 69, 19]);
+
+    // Fail ring around TOTAL cell
+    if (tMarks !== 'AB' && typeof tMarks === 'number' && typeof tMax === 'number' && tMax > 0) {
+      const pct = (tMarks / tMax) * 100;
+      if (pct < 40) {
+        pdf.setDrawColor(...COLOR_RED);
+        pdf.setLineWidth(4);
+        pdf.ellipse(totalX, rowY - 10, 55, 38, 'D');
+        pdf.setLineWidth(1);
+      }
+    }
+  } else {
+    // -------- Classic layout (no subtopics) --------
+    const maxVal   = (typeof subject.max === 'number' ? subject.max : (subject.max === '' ? '' : subject.max));
+    const marksVal = (subject.marks === 'AB' ? 'AB' : (typeof subject.marks === 'number' ? subject.marks : ''));
+
+    // Classic columns
+    centerText(pdf, String(maxVal ?? ''),   X_MAX,   rowY, 60, COLOR_RED);
+    centerText(pdf, String(marksVal ?? ''), X_MARKS, rowY, 60, COLOR_GREEN);
+    centerText(pdf, String(subject.grade || ''), X_GRADE, rowY, 60, COLOR_GRADE);
+
+    // Fail ring around MARKS cell (classic % check)
+    if (marksVal !== 'AB' && typeof marksVal === 'number' && typeof maxVal === 'number' && maxVal > 0) {
+      const pct = (marksVal / maxVal) * 100;
+      if (pct < 40) {
+        pdf.setDrawColor(...COLOR_RED);
+        pdf.setLineWidth(4);
+        pdf.ellipse(X_MARKS, rowY - 10, 55, 38, 'D');
+        pdf.setLineWidth(1);
+      }
+    }
+  }
+}
     // Create a linear gradient as a dataURL for jsPDF.addImage
 function makeGradientDataURL(w, h, stops, direction = 'diag') {
   const canvas = document.createElement('canvas');
@@ -596,91 +861,164 @@ function formatClass(val) {
 }
 // ======= PDF GENERATION =========
 async function fetchStudentData(stu) {
-  let year = yearSel.value, classId = classSel.value, sectionId = sectionSel.value, examId = examSel.value;
-  let examObj = exams.find(e => e.id === examId);
-  let marksDoc = await db.collection('years').doc(year)
+  // 0) Resolve current selections + exam structure
+  const year = yearSel.value, classId = classSel.value, sectionId = sectionSel.value, examId = examSel.value;
+  const examObj = exams.find(e => e.id === examId);
+  const structure = await getExamStructure(); // { subjects: [{name, subtopics[], subjectMax}], hasSubtopics }
+
+  // 1) Read marks doc for this student
+  const marksDoc = await db.collection('years').doc(year)
     .collection('classes').doc(classId)
     .collection('sections').doc(sectionId)
     .collection('students').doc(stu.id)
     .collection('marks').doc(examId).get();
-  let marks = marksDoc.exists ? marksDoc.data() : {};
-  let subjects = (examObj && Array.isArray(examObj.subjects)) ? examObj.subjects : [];
+  const marks = marksDoc.exists ? (marksDoc.data() || {}) : {};
+
+  // 2) Helpers
+  const norm = s => String(s || '').replace(/[\s._-]+/g, '').toLowerCase();
+  const isNum = v => (typeof v === 'number' && !isNaN(v));
+
+  // 3) Build subjects with subtopics, totals and grade
   let stuSubjects = [];
-  let totalMarks = 0, totalMax = 0, pass = true;
-  // Normalize function for robust matching
-  function norm(s) { return (s||'').replace(/[\s.]/g,'').toLowerCase(); }
-  subjects.forEach((subj, i) => {
-    let subjObj = null;
-    // Look for a matching key in marks, case/space/dot-insensitive
-    Object.keys(marks).forEach(k => {
-      if(norm(k) === norm(subj.name)) subjObj = marks[k];
-    });
-    let m = marks[subj.name] ?? subjObj ?? '';
-    let grade = '';
-    if (m !== '' && m !== null && m !== undefined && !isNaN(m)) {
-      let percent = (m / subj.max) * 100;
-      if (percent >= 95) grade = 'A+';
-      else if (percent >= 90) grade = 'A';
-      else if (percent >= 85) grade = 'B+';
-      else if (percent >= 80) grade = 'B';
-      else if (percent >= 70) grade = 'C+';
-      else if (percent >= 60) grade = 'C';
-      else if (percent >= 50) grade = 'D';
-      else if (percent >= 40) grade = 'E';
-      else grade = 'F';
-    } else if (m === "AB" || m === "ab" || m === "Ab") {
-      grade = "AB";
+  let totalMarksAll = 0, totalMaxAll = 0;
+
+  for (const subjDef of (structure.subjects || [])) {
+    const subjName = subjDef.name || '';
+    const subjKey = Object.keys(marks).find(k => norm(k) === norm(subjName));
+    const subjVal = subjKey ? marks[subjKey] : marks[subjName];
+
+    // Prepare subtopic list from structure
+    const subtopics = Array.isArray(subjDef.subtopics) ? subjDef.subtopics.map(t => ({
+      name: t?.name || '',
+      max: (typeof t?.max === 'number' && !isNaN(t.max)) ? t.max : null,
+      mark: '' // will fill below
+    })) : [];
+
+    // Fill subtopic marks (only if subjVal is an object of subtopic marks)
+    if (subtopics.length && subjVal && typeof subjVal === 'object' && !Array.isArray(subjVal)) {
+      for (const st of subtopics) {
+        // exact and normalized key match
+        const foundKey = Object.keys(subjVal).find(k => norm(k) === norm(st.name));
+        const v = (foundKey ? subjVal[foundKey] : subjVal[st.name]);
+        st.mark = (v === 'AB' || v === 'ab' || v === 'Ab') ? 'AB' : (isNum(v) ? +v : '');
+      }
     }
-    if (m !== '' && m !== null && m !== undefined && !isNaN(m)) { totalMarks += +m; }
-if (subj.max !== '' && subj.max !== undefined && !isNaN(subj.max)) { totalMax += +subj.max; }
-    stuSubjects.push({name: subj.name, max: subj.max, marks: m, grade});
-  });
-  let attSnap = { forEach: () => {} }; // default empty
+
+    // If no subtopics (or subjVal is a direct mark), support direct subject mark
+    let subjectTotalMarks = 0;
+    let subjectTotalMax = (typeof subjDef.subjectMax === 'number' && !isNaN(subjDef.subjectMax)) ? subjDef.subjectMax : null;
+
+    if (subtopics.length) {
+      // Sum numeric subtopic marks
+      for (const st of subtopics) {
+        if (isNum(st.mark)) subjectTotalMarks += st.mark;
+      }
+      // If subjectMax not explicit, sum known subtopic max values
+      if (subjectTotalMax == null) {
+        const sumMax = subtopics.reduce((acc, st) => acc + (typeof st.max === 'number' ? st.max : 0), 0);
+        subjectTotalMax = (sumMax > 0 ? sumMax : null);
+      }
+    } else {
+      // No subtopics: treat subjVal as direct mark, and look for max on subjDef.max
+      const directMark = (subjVal === 'AB' || subjVal === 'ab' || subjVal === 'Ab')
+        ? 'AB'
+        : (isNum(subjVal) ? +subjVal : '');
+      subjectTotalMarks = isNum(directMark) ? directMark : 0;
+
+      if (subjectTotalMax == null && typeof subjDef.max === 'number' && !isNaN(subjDef.max)) {
+        subjectTotalMax = subjDef.max;
+      }
+      // Represent a single pseudo-subtopic cell (optional visual)
+      if (!subtopics.length) {
+        subtopics.push({ name: '-', max: subjectTotalMax, mark: (directMark === 'AB' ? 'AB' : (isNum(directMark) ? directMark : '')) });
+      }
+    }
+
+    // Grade computation
+    let grade = '';
+    if (subtopics.length && subtopics.every(st => st.mark === 'AB' || st.mark === '' )) {
+      grade = 'AB'; // all subtopic entries absent/blank
+    } else if (subjectTotalMax && subjectTotalMax > 0) {
+      const pct = (subjectTotalMarks / subjectTotalMax) * 100;
+      grade = (pct >= 95) ? 'A+' :
+              (pct >= 90) ? 'A'  :
+              (pct >= 85) ? 'B+' :
+              (pct >= 80) ? 'B'  :
+              (pct >= 70) ? 'C+' :
+              (pct >= 60) ? 'C'  :
+              (pct >= 50) ? 'D'  :
+              (pct >= 40) ? 'E'  : 'F';
+    } else {
+      grade = ''; // unknown max → no grade
+    }
+
+    // Aggregate to overall
+    if (isNum(subjectTotalMarks)) totalMarksAll += subjectTotalMarks;
+    if (isNum(subjectTotalMax))   totalMaxAll   += subjectTotalMax;
+
+    // Keep backward-compatible fields (max/marks) for existing drawing,
+    // but also attach detailed subtopics.
+    stuSubjects.push({
+      name: subjName,
+      max: subjectTotalMax ?? '',             // subject max
+      marks: (grade === 'AB') ? 'AB' : subjectTotalMarks, // subject total marks
+      grade,
+      subtopics                                // detailed cells for rendering
+    });
+  }
+
+  // 4) Attendance (unchanged)
+  let attSnap = { forEach: () => {} };
   if (year && classId && sectionId) {
     attSnap = await db.collection('years').doc(year)
       .collection('classes').doc(classId)
       .collection('sections').doc(sectionId)
       .collection('attendance').get();
   }
-  let months = ['06','07','08','09','10','11','12','01','02','03'];
-  let attArr = months.map(mo => ({work:0, pres:0}));
+  const months = ['06','07','08','09','10','11','12','01','02','03'];
+  const attArr = months.map(() => ({work:0, pres:0}));
   attSnap.forEach(doc => {
-    let date = doc.id;
-    let mm = date.split('-')[1];
-    let idx = months.indexOf(mm);
+    const date = doc.id;
+    const mm = date.split('-')[1];
+    const idx = months.indexOf(mm);
     if (idx >= 0) {
       attArr[idx].work += 1;
-      let st = doc.data()[stu.id];
+      const st = doc.data()[stu.id];
       if (st && st.M !== 'absent') attArr[idx].pres += 0.5;
       if (st && st.A !== 'absent') attArr[idx].pres += 0.5;
     }
   });
- return {
-  id: stu.id,
-  name: stu.name,
-  father: stu.father,
-  roll: stu.roll,
-  class: classes.find(c=>c.id===classId)?.name || '',
-  section: (sections.find(s=>s.id===sectionId)?.name) || (sectionSel.options[sectionSel.selectedIndex]?.text || ''),
-  percentage: totalMax ? Math.round((totalMarks/totalMax)*100) : '',
-  rank: '',
-  subjects: stuSubjects,
-  totalMarks, totalMax,
-  overallGrade: totalMax
-    ? ((totalMarks/totalMax)*100 >= 95 ? 'A+'
-      : (totalMarks/totalMax)*100 >= 90 ? 'A'
-      : (totalMarks/totalMax)*100 >= 85 ? 'B+'
-      : (totalMarks/totalMax)*100 >= 80 ? 'B'
-      : (totalMarks/totalMax)*100 >= 70 ? 'C+'
-      : (totalMarks/totalMax)*100 >= 60 ? 'C'
-      : (totalMarks/totalMax)*100 >= 50 ? 'D'
-      : (totalMarks/totalMax)*100 >= 40 ? 'E'
-      : 'F')
-    : '',
-  photoUrl: stu.photoUrl || stu.photoURL || '',
-  photoPath: stu.photoPath || '',
-  attendance: attArr
-};
+
+  // 5) Assemble student record (keep overall grade rule same as before)
+  const percentage = (totalMaxAll ? Math.round((totalMarksAll / totalMaxAll) * 100) : '');
+
+  return {
+    id: stu.id,
+    name: stu.name,
+    father: stu.father,
+    roll: stu.roll,
+    class: classes.find(c=>c.id===classId)?.name || '',
+    section: (sections.find(s=>s.id===sectionId)?.name) || (sectionSel.options[sectionSel.selectedIndex]?.text || ''),
+    percentage,
+    rank: '',
+    subjects: stuSubjects,
+    totalMarks: totalMarksAll,
+    totalMax: totalMaxAll,
+    overallGrade: totalMaxAll
+      ? ((totalMarksAll/totalMaxAll)*100 >= 95 ? 'A+'
+        : (totalMarksAll/totalMaxAll)*100 >= 90 ? 'A'
+        : (totalMarksAll/totalMaxAll)*100 >= 85 ? 'B+'
+        : (totalMarksAll/totalMaxAll)*100 >= 80 ? 'B'
+        : (totalMarksAll/totalMaxAll)*100 >= 70 ? 'C+'
+        : (totalMarksAll/totalMaxAll)*100 >= 60 ? 'C'
+        : (totalMarksAll/totalMaxAll)*100 >= 50 ? 'D'
+        : (totalMarksAll/totalMaxAll)*100 >= 40 ? 'E'
+        : 'F')
+      : '',
+    photoUrl: stu.photoUrl || stu.photoURL || '',
+    photoPath: stu.photoPath || '',
+    attendance: attArr
+  };
 }
 async function getAllStudentFullData() {
   let dataArr = [];
@@ -761,10 +1099,10 @@ if (studentArr && studentArr.length && Array.isArray(studentArr[0].subjects)) {
 );
     pdf.setLineWidth(1);
 
- /* --- Subject rows: dynamic for this exam --- */
+ /* --- Subject rows: dynamic with SUBTOPICS + TOTAL(M/Max) + GRADE --- */
 let rowSubs = Array.isArray(student.subjects) ? student.subjects : [];
 
-// Safety net for Individual path:
+// Safety net for Individual path (compute if missing)
 if (!rowSubs.length) {
   const rawStu = students.find(s => s.id === student.id) || student;
   const rec = await fetchStudentData(rawStu);
@@ -774,31 +1112,13 @@ if (!rowSubs.length) {
   if (!student.attendance?.length && rec.attendance?.length) student.attendance = rec.attendance;
 }
 
+// Build vertical positions and draw header
 const { rowsY, totalY } = buildSubjectY(rowSubs.length);
+drawSubjectsHeader(pdf, rowsY.length ? (rowsY[0] - 70) : (SUBJECT_LAYOUT.startY - 70));
 
-// Draw rows
+// Draw each subject row
 for (let i = 0; i < Math.min(rowSubs.length, rowsY.length); i++) {
-  const s      = rowSubs[i] || {};
-  const sMax   = (s.max   ?? '') === '' ? ''   : s.max;
-  const sMarks = (s.marks ?? '') === '' ? 'AB' : s.marks;
- const sGrade = s.grade ? String(s.grade).toUpperCase() : (sMarks === 'AB' ? 'AB' : '');
-
-// NEW: subject name (left-aligned)
-const sName = (s.name ?? '').toString().toUpperCase();
-leftText(pdf, sName, X_SUBJECT, rowsY[i], 60, COLOR_GREEN);
-
-centerText(pdf, sMax, X_MAX, rowsY[i], 60, COLOR_RED);
-
-
-  // Red ring for < 40%
-  if (sMarks !== 'AB' && sMax && +sMax > 0 && !isNaN(+sMarks) && (+sMarks / +sMax) * 100 < 40) {
-    pdf.setDrawColor(...COLOR_RED);
-    pdf.setLineWidth(4);
-    pdf.ellipse(X_MARKS, rowsY[i] - 10, 55, 38, 'D');
-    pdf.setLineWidth(1);
-  }
-  centerText(pdf, String(sMarks), X_MARKS, rowsY[i], 60, COLOR_GREEN);
-  centerText(pdf, sGrade,         X_GRADE, rowsY[i], 60, COLOR_GRADE);
+  drawSubjectRow(pdf, rowsY[i], rowSubs[i] || {});
 }
 
 // Totals (ensure overallGrade fallback)
@@ -816,20 +1136,23 @@ student.overallGrade = student.overallGrade || (totalMax > 0 ? (
   ((totalMarks/totalMax)*100 >= 40) ? 'E'  : 'F'
 ) : '');
 
-// Rounded box behind totals row
-const boxHeight = 80;  // adjust if needed
-const boxY = totalY - 55;  // align box vertically with text
-pdf.setDrawColor(15, 61, 107); // dark blue border
+// Totals row box spanning Subject → Grade
+const tBoxHeight = 80;
+const tBoxY = totalY - 55;
+pdf.setDrawColor(15, 61, 107);
 pdf.setLineWidth(4);
-pdf.roundedRect(X_SUBJECT - 40, boxY, (X_GRADE + 150) - (X_SUBJECT - 40), boxHeight, 20, 20, 'S');
+pdf.roundedRect(TABLE_LAYOUT.subjectX - 40, tBoxY, (TABLE_LAYOUT.gradeX + 150) - (TABLE_LAYOUT.subjectX - 40), tBoxHeight, 20, 20, 'S');
 
-// Label "TOTAL"
-leftText(pdf, "TOTAL", X_SUBJECT, totalY, 60, COLOR_GREEN);
+// Label "TOTAL" at Subject column
+leftText(pdf, "TOTAL", TABLE_LAYOUT.subjectX, totalY, 60, COLOR_GREEN);
 
-// Totals values
-centerText(pdf, totalMax,   X_MAX,   totalY, 60, COLOR_RED);
-centerText(pdf, totalMarks, X_MARKS, totalY, 60, COLOR_GREEN);
-centerText(pdf, student.overallGrade, X_GRADE, totalY, 60, COLOR_GRADE);
+// Centered Total (M/Max) at Total column
+const totalCell = (totalMax > 0) ? `${totalMarks}/${totalMax}` : String(totalMarks);
+centerText(pdf, totalCell, TABLE_LAYOUT.totalX, totalY, 60, COLOR_RED);
+
+// Grade at Grade column
+centerText(pdf, student.overallGrade, TABLE_LAYOUT.gradeX, totalY, 60, COLOR_GRADE);
+
 
 // 6) Attendance (10 months)
 for (let i = 0; i < 10; i++) {
@@ -878,69 +1201,50 @@ async function showPreviewPDF(stuArr) {
     pdf.text((student.rank ?? "").toString(), cx, cy + 33, { align: "center" });
     pdf.setLineWidth(1);
 
-    /* --- Subject rows: dynamic for this exam (preview) --- */
-    let rowSubs = Array.isArray(student.subjects) ? student.subjects : [];
-    if (!rowSubs.length) {
-      const rec = await fetchStudentData(student);
-      rowSubs = Array.isArray(rec.subjects) ? rec.subjects : [];
-      if (typeof student.totalMarks !== "number" && typeof rec.totalMarks === "number") student.totalMarks = rec.totalMarks;
-      if (typeof student.totalMax   !== "number" && typeof rec.totalMax   === "number") student.totalMax   = rec.totalMax;
-      if (!student.attendance?.length && rec.attendance?.length) student.attendance = rec.attendance;
-    }
+    /* --- Subject rows: dynamic with SUBTOPICS + TOTAL(M/Max) + GRADE (preview) --- */
+let rowSubs = Array.isArray(student.subjects) ? student.subjects : [];
+if (!rowSubs.length) {
+  const rec = await fetchStudentData(student);
+  rowSubs = Array.isArray(rec.subjects) ? rec.subjects : [];
+  if (typeof student.totalMarks !== "number" && typeof rec.totalMarks === "number") student.totalMarks = rec.totalMarks;
+  if (typeof student.totalMax   !== "number" && typeof rec.totalMax   === "number") student.totalMax   = rec.totalMax;
+  if (!student.attendance?.length && rec.attendance?.length) student.attendance = rec.attendance;
+}
 
-    const { rowsY, totalY } = buildSubjectY(rowSubs.length);
+const { rowsY, totalY } = buildSubjectY(rowSubs.length);
+drawSubjectsHeader(pdf, rowsY.length ? (rowsY[0] - 70) : (SUBJECT_LAYOUT.startY - 70));
 
-    let totalMarks = 0, totalMax = 0;
-    for (let i = 0; i < Math.min(rowSubs.length, rowsY.length); i++) {
-      const sObj   = rowSubs[i] || {};
-      const sMax   = (sObj.max   ?? "") === "" ? ""   : sObj.max;
-      const sMarks = (sObj.marks ?? "") === "" ? "AB" : sObj.marks;
-      const sGrade = sObj.grade ? String(sObj.grade).toUpperCase() : (sMarks === "AB" ? "AB" : "");
+// Draw each subject row
+for (let i = 0; i < Math.min(rowSubs.length, rowsY.length); i++) {
+  drawSubjectRow(pdf, rowsY[i], rowSubs[i] || {});
+}
+   student.overallGrade = student.overallGrade || (totalMax > 0 ? (
+  ((totalMarks/totalMax)*100 >= 95) ? "A+" :
+  ((totalMarks/totalMax)*100 >= 90) ? "A"  :
+  ((totalMarks/totalMax)*100 >= 85) ? "B+" :
+  ((totalMarks/totalMax)*100 >= 80) ? "B"  :
+  ((totalMarks/totalMax)*100 >= 70) ? "C+" :
+  ((totalMarks/totalMax)*100 >= 60) ? "C"  :
+  ((totalMarks/totalMax)*100 >= 50) ? "D"  :
+  ((totalMarks/totalMax)*100 >= 40) ? "E"  : "F"
+) : "");
 
-      if (sMarks !== "AB" && !isNaN(+sMarks)) totalMarks += +sMarks;
-      if (sMax   !== ""   && !isNaN(+sMax))   totalMax   += +sMax;
-
-      // NEW: subject name (left-aligned)
-      const sName = (sObj.name ?? "").toString().toUpperCase();
-      leftText(pdf, sName, X_SUBJECT, rowsY[i], 60, COLOR_GREEN);
-
-      centerText(pdf, sMax, X_MAX, rowsY[i], 60, COLOR_RED);
-
-
-      if (sMarks !== "AB" && sMax && +sMax > 0 && !isNaN(+sMarks) && (+sMarks / +sMax) * 100 < 40) {
-        pdf.setDrawColor(...COLOR_RED); pdf.setLineWidth(4);
-        pdf.ellipse(X_MARKS, rowsY[i] - 10, 55, 38, "D");
-        pdf.setLineWidth(1);
-      }
-      centerText(pdf, String(sMarks), X_MARKS, rowsY[i], 60, COLOR_GREEN);
-      centerText(pdf, sGrade,         X_GRADE, rowsY[i], 60, COLOR_GRADE);
-    }
-
-    student.overallGrade = student.overallGrade || (totalMax > 0 ? (
-      ((totalMarks/totalMax)*100 >= 95) ? "A+" :
-      ((totalMarks/totalMax)*100 >= 90) ? "A"  :
-      ((totalMarks/totalMax)*100 >= 85) ? "B+" :
-      ((totalMarks/totalMax)*100 >= 80) ? "B"  :
-      ((totalMarks/totalMax)*100 >= 70) ? "C+" :
-      ((totalMarks/totalMax)*100 >= 60) ? "C"  :
-      ((totalMarks/totalMax)*100 >= 50) ? "D"  :
-      ((totalMarks/totalMax)*100 >= 40) ? "E"  : "F"
-    ) : "");
-
-   // Rounded box behind totals row
-const boxHeight = 80;  // adjust if needed
-const boxY = totalY - 55;  // align box vertically with text
-pdf.setDrawColor(15, 61, 107); // dark blue border
+// Totals row box spanning Subject → Grade
+const tBoxHeight = 80;
+const tBoxY = totalY - 55;
+pdf.setDrawColor(15, 61, 107);
 pdf.setLineWidth(4);
-pdf.roundedRect(X_SUBJECT - 40, boxY, (X_GRADE + 150) - (X_SUBJECT - 40), boxHeight, 20, 20, 'S');
+pdf.roundedRect(TABLE_LAYOUT.subjectX - 40, tBoxY, (TABLE_LAYOUT.gradeX + 150) - (TABLE_LAYOUT.subjectX - 40), tBoxHeight, 20, 20, 'S');
 
-// Label "TOTAL"
-leftText(pdf, "TOTAL", X_SUBJECT, totalY, 60, COLOR_GREEN);
+// Label "TOTAL" at Subject column
+leftText(pdf, "TOTAL", TABLE_LAYOUT.subjectX, totalY, 60, COLOR_GREEN);
 
-// Totals values
-centerText(pdf, totalMax,   X_MAX,   totalY, 60, COLOR_RED);
-centerText(pdf, totalMarks, X_MARKS, totalY, 60, COLOR_GREEN);
-centerText(pdf, student.overallGrade, X_GRADE, totalY, 60, COLOR_GRADE);
+// Centered Total (M/Max) at Total column
+const totalCell = (totalMax > 0) ? `${totalMarks}/${totalMax}` : String(totalMarks);
+centerText(pdf, totalCell, TABLE_LAYOUT.totalX, totalY, 60, COLOR_RED);
+
+// Grade at Grade column
+centerText(pdf, student.overallGrade, TABLE_LAYOUT.gradeX, totalY, 60, COLOR_GRADE);
 
     // Attendance on preview
     for (let i = 0; i < 10; i++) {
@@ -987,6 +1291,7 @@ centerText(pdf, student.overallGrade, X_GRADE, totalY, 60, COLOR_GRADE);
 </div>
 </body>
 </html>
+
 
 
 
