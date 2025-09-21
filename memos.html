@@ -636,6 +636,7 @@ let __cols = []; // [{key,label,x}] including SUBJECT, MAX MARKS, each subtopic,
  * Build the full column list and spread them evenly between margins.
  * SUBJECT and GRADE are NOT fixed — they’re just first/last in the array.
  */
+// Auto-fit columns to content (no stretch to full width)
 function computeColumns() {
   const schema = getExamSubtopicSchema(); // [{name,max}]
   const headers = [
@@ -649,26 +650,57 @@ function computeColumns() {
     { key: '__grade',   label: 'GRADE' }
   ];
 
-  const L = PAGE_MARGINS.left;
-  const R = PAGE_MARGINS.right;
-  const n = headers.length;
+  // Estimate text widths using header font size (kept in your helpers)
+  const headerSize = _subtopicHeaderFont(schema.length);
+  const avgCharPx  = headerSize * 0.60; // heuristic; works well with Helvetica bold
 
-  // Evenly spaced centers across [L, R]
-  const span = Math.max(100, R - L);
-  const step = n > 1 ? (span / (n - 1)) : 0;
+  // Tunable bounds and spacing
+  const COL_GAP    = 35;   // gap between columns
+  const MIN_COL    = 140;  // generic min width for subtopic-like columns
+  const MAX_COL    = 420;  // generic max width so it never explodes
 
-  __cols = headers.map((h, i) => ({
-    ...h,
-    x: Math.round(L + i * step)
-  }));
+  // Subject/Max/Total/Grade deserve slightly different mins
+  const MIN_SUBJECT = 260;
+  const MIN_MAX     = 180;
+  const MIN_TOTAL   = 180;
+  const MIN_GRADE   = 160;
+
+  function estWidth(label, minW = MIN_COL, maxW = MAX_COL) {
+    const L = String(label || '').toUpperCase();
+    const w = Math.round((L.length + 2) * avgCharPx);  // +2 padding characters
+    return Math.max(minW, Math.min(maxW, w));
+  }
+
+  // Compute natural width for each column
+  const widths = {};
+  for (const h of headers) {
+    if (h.key === '__subject') widths[h.key] = estWidth(h.label, MIN_SUBJECT, MAX_COL);
+    else if (h.key === '__max') widths[h.key] = estWidth(h.label, MIN_MAX, MAX_COL);
+    else if (h.key === '__total') widths[h.key] = estWidth(h.label, MIN_TOTAL, MAX_COL);
+    else if (h.key === '__grade') widths[h.key] = estWidth(h.label, MIN_GRADE, MAX_COL);
+    else widths[h.key] = estWidth(h.label, MIN_COL, MAX_COL); // subtopics
+  }
+
+  // Lay out from left margin with gaps, NOT stretched to right margin
+  let cursorX = PAGE_MARGINS.left;
+  __cols = headers.map((h, i) => {
+    const w = widths[h.key];
+    const center = cursorX + Math.round(w / 2);
+    const def = { ...h, x: center, width: w };
+    cursorX += w + COL_GAP;
+    return def;
+  });
+
+  // Note: table may end before PAGE_MARGINS.right (natural width). That’s intended.
   return __cols;
 }
+
   function getColX(key) {
-  const cols = computeColumns(); // always reflects current subtopics
+  // Recompute each time to follow current schema and ensure __cols is fresh
+  const cols = computeColumns();
   const hit = cols.find(c => c.key === key);
   return hit ? hit.x : null;
 }
-
 function _subtopicHeaderFont(n) {
   if (n >= 12) return 30;
   if (n >= 10) return 34;
@@ -753,11 +785,12 @@ function drawSubjectRow(pdf, rowY, subject) {
   // Render each column at its computed x
   for (const c of cols) {
     switch (c.key) {
-      case '__subject':
-        // subject column is centered at its slot (no fixed left X)
-        centerText(pdf, subjName, c.x, rowY, 60, COLOR_GREEN, 'bold');
-        break;
-
+      case '__subject': {
+  // right-align within the subject column box (uses computed column width)
+  const rightEdge = Math.round(c.x + (c.width ? c.width / 2 : 0)) - 12; // 12px padding
+  rightText(pdf, subjName, rightEdge, rowY, 60, COLOR_GREEN, 'bold');
+  break;
+}
       case '__max':
         centerText(pdf, String(subjMax ?? ''), c.x, rowY, 60, COLOR_RED, 'bold');
         break;
@@ -919,6 +952,14 @@ function leftText(pdf, text, x, y, size=12, color=[0,0,0], fontStyle="bold", fon
   pdf.setFontSize(size);
   pdf.setTextColor(...color);
   pdf.text(String(text), x, y, {align: 'left'});
+  pdf.setFont("helvetica", "normal");
+  pdf.setTextColor(0,0,0);
+}
+    function rightText(pdf, text, x, y, size=12, color=[0,0,0], fontStyle="bold", fontName="helvetica") {
+  pdf.setFont(fontName, fontStyle);
+  pdf.setFontSize(size);
+  pdf.setTextColor(...color);
+  pdf.text(String(text), x, y, { align: 'right' });
   pdf.setFont("helvetica", "normal");
   pdf.setTextColor(0,0,0);
 }
@@ -1391,26 +1432,3 @@ centerText(pdf, student.overallGrade, xGrade, totalY, 60, COLOR_GRADE);
 </div>
 </body>
 </html>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
