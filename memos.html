@@ -215,33 +215,40 @@ function buildSubjectY(n) {
   const { startY, endY } = SUBJECT_LAYOUT;
   const maxRows = 12;
 
-  const count = Math.min(Math.max(n, 0), maxRows);
-  if (count === 0) {
-    return { rowsY: [], totalY: Math.round(startY + 80) };
-  }
+  const count = Math.max(0, Math.min(n, maxRows));
+  if (count === 0) return { rowsY: [], totalY: Math.round(startY + 80) };
 
-  // --- even, de-congested spacing ---
-  // keep first row clearly below the header box
-  const TOP_PAD_FROM_HEADER   = 150; // tweak 140–170 if needed
-  // keep some air above the TOTAL row / attendance block
-  const BOTTOM_PAD_ABOVE_TOTAL = 10; // tweak 40–70 if needed
+  // keep first-row gap unchanged
+  const TOP_PAD_FROM_HEADER = 150;
 
+  // reserve space for TOTAL/attendance so rows never touch it
+  const SAFE_ABOVE_TOTAL = 110;      // cushion above TOTAL
   const firstRowY = Math.max(startY, SUBJECT_HEADER_Y + TOP_PAD_FROM_HEADER);
-  const lastRowY  = endY - BOTTOM_PAD_ABOVE_TOTAL;
+  const lastRowY  = endY - SAFE_ABOVE_TOTAL;
 
-  // spread rows evenly in the available band
-  const ROW_STRETCH = 1.20; // ↑ increase to 1.25 if you want even looser rows
-const rawGap = (count === 1) ? 0 : (lastRowY - firstRowY) / (count - 1);
-const gap = rawGap * ROW_STRETCH;
+  // --- small but clear gap between rows ---
+  const MIN_ROW_GAP = 36;            // ← tweak 32–42 to taste
 
-// clamp so the last rows never cross lastRowY
-let rowsY = Array.from({ length: count }, (_, i) =>
-  Math.round(Math.min(firstRowY + i * gap, lastRowY))
-);
+  // even spacing in available band
+  const rawGap = (count === 1) ? 0 : (lastRowY - firstRowY) / (count - 1);
 
-  // TOTAL row: ~double a normal row gap, but cap so it doesn’t fall too far
-  const DOUBLE_GAP_CAP = 120;           // hard cap on extra spacing
-  const totalY = Math.round(rowsY[rowsY.length - 1] + Math.min(gap * 1.8, DOUBLE_GAP_CAP));
+  // use at least MIN_ROW_GAP but never overflow the band
+  const gap = (count === 1)
+    ? 0
+    : Math.min(
+        Math.max(rawGap, MIN_ROW_GAP),
+        (lastRowY - firstRowY) / (count - 1)
+      );
+
+  const rowsY = Array.from({ length: count }, (_, i) =>
+    Math.round(firstRowY + i * gap)
+  );
+
+  // place TOTAL a little below the last row, but keep it safely inside the area
+  const totalY = Math.min(
+    endY - 40,
+    rowsY[rowsY.length - 1] + Math.max(MIN_ROW_GAP, Math.round(gap * 1.2))
+  );
 
   return { rowsY, totalY };
 }
@@ -1552,6 +1559,7 @@ centerText(pdf, student.overallGrade, xGrade, totalY, 60, COLOR_GRADE);
 </div>
 </body>
 </html>
+
 
 
 
