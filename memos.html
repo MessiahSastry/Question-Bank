@@ -681,46 +681,96 @@ function computeColumns() {
   const headerSize = _subtopicHeaderFont(schema.length);
   const avgCharPx  = headerSize * 0.60;
 
-  const COL_GAP    = 35;
-  const MIN_COL    = 140;
-  const MAX_COL    = 420;
-  const MIN_SUBJECT = 260, MIN_MAX = 180, MIN_TOTAL = 180, MIN_GRADE = 160;
+  // Base (comfortable) sizes
+  const BASE_GAP  = 28;
+  const MIN_GAP   = 12;
 
-  function estWidth(label, minW = MIN_COL, maxW = MAX_COL) {
+  const MIN_SUBJECT = 240, MIN_MAX = 150, MIN_TOTAL = 150, MIN_GRADE = 140, MIN_SUBTOPIC = 120;
+  const MAX_COL     = 420;
+
+  function estWidth(label, minW, maxW = MAX_COL) {
     const L = String(label || '').toUpperCase();
     const w = Math.round((L.length + 2) * avgCharPx);
     return Math.max(minW, Math.min(maxW, w));
   }
 
-  // widths
+  // Compute natural widths + per-column minimums
   const widths = {};
+  const mins   = {};
   for (const h of headers) {
-    if (h.key === '__subject') widths[h.key] = estWidth(h.label, MIN_SUBJECT, MAX_COL);
-    else if (h.key === '__max') widths[h.key] = estWidth(h.label, MIN_MAX, MAX_COL);
-    else if (h.key === '__total') widths[h.key] = estWidth(h.label, MIN_TOTAL, MAX_COL);
-    else if (h.key === '__grade') widths[h.key] = estWidth(h.label, MIN_GRADE, MAX_COL);
-    else widths[h.key] = estWidth(h.label, MIN_COL, MAX_COL);
+    if (h.key === '__subject') {
+      mins[h.key]   = MIN_SUBJECT;
+      widths[h.key] = estWidth(h.label, MIN_SUBJECT);
+    } else if (h.key === '__max') {
+      mins[h.key]   = MIN_MAX;
+      widths[h.key] = estWidth(h.label, MIN_MAX);
+    } else if (h.key === '__total') {
+      mins[h.key]   = MIN_TOTAL;
+      widths[h.key] = estWidth(h.label, MIN_TOTAL);
+    } else if (h.key === '__grade') {
+      mins[h.key]   = MIN_GRADE;
+      widths[h.key] = estWidth(h.label, MIN_GRADE);
+    } else {
+      mins[h.key]   = MIN_SUBTOPIC;
+      widths[h.key] = estWidth(h.label, MIN_SUBTOPIC);
+    }
   }
 
-  // compute total table width
-  const keys = headers.map(h => h.key);
-  const totalColsWidth = keys.reduce((a,k) => a + widths[k], 0);
-  const totalGaps      = COL_GAP * Math.max(0, headers.length - 1);
-  const tableWidth     = totalColsWidth + totalGaps;
-
-  // center between margins
   const L = PAGE_MARGINS.left, R = PAGE_MARGINS.right;
   const avail = Math.max(0, R - L);
-  const startX = Math.round(L + Math.max(0, (avail - tableWidth) / 2));
 
-  // lay out
+  function totalWidth(gap, ws) {
+    const keys = headers.map(h => h.key);
+    const sumW = keys.reduce((a,k) => a + ws[k], 0);
+    const gaps = gap * Math.max(0, headers.length - 1);
+    return sumW + gaps;
+  }
+
+  // 1) Try with base gap
+  let gap = BASE_GAP;
+  let ws  = { ...widths };
+
+  // 2) If overflow, shrink gap down to MIN_GAP
+  if (totalWidth(gap, ws) > avail) {
+    gap = MIN_GAP;
+  }
+
+  // 3) If still overflow, scale widths toward their minimums
+  if (totalWidth(gap, ws) > avail) {
+    // Binary search a scale 0..1 applied to (w - min) + min
+    let lo = 0, hi = 1, best = 1;
+    for (let it = 0; it < 22; it++) {
+      const mid = (lo + hi) / 2;
+      const trial = {};
+      for (const h of headers) {
+        const k = h.key;
+        trial[k] = Math.max(mins[k], Math.floor(mins[k] + (widths[k] - mins[k]) * mid));
+      }
+      if (totalWidth(gap, trial) <= avail) {
+        best = mid; lo = mid; // fits — try larger
+      } else {
+        hi = mid; // too big — shrink more
+      }
+    }
+    // Apply best scale
+    for (const h of headers) {
+      const k = h.key;
+      ws[k] = Math.max(mins[k], Math.floor(mins[k] + (widths[k] - mins[k]) * best));
+    }
+  }
+
+  // Final table width and centered startX
+  const tableW = totalWidth(gap, ws);
+  const startX = Math.round(L + Math.max(0, (avail - tableW) / 2));
+
+  // Lay out columns
   let cursorX = startX;
   __cols = headers.map(h => {
-    const w = widths[h.key];
-    const center = cursorX + Math.round(w / 2);
-    const def = { ...h, x: center, width: w };
-    cursorX += w + COL_GAP;
-    return def;
+    const k = h.key;
+    const w = ws[k];
+    const cx = cursorX + Math.round(w / 2);
+    cursorX += w + gap;
+    return { ...h, x: cx, width: w };
   });
 
   return __cols;
@@ -1464,4 +1514,5 @@ centerText(pdf, student.overallGrade, xGrade, totalY, 60, COLOR_GRADE);
 </div>
 </body>
 </html>
+
 
