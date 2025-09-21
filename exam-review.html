@@ -125,6 +125,11 @@
     .section-header[contenteditable] { background:#f3f7fe; }
     @media (max-width:700px){ .review-container{max-width:98vw; padding:12px 4vw 14px 4vw;} }
     @media (max-width:480px){ #main-header .school-title{font-size:1.35em;} .review-container h2{font-size:1.25em;} }
+  .question-text[contenteditable] {
+  border: 1px dashed #bcd6ef;
+  border-radius: 6px;
+  padding: 3px 8px;
+}
   </style>
 </head>
 <body>
@@ -273,9 +278,37 @@ function parseAIBlocks(text, expectedCount) {
         (section.questions || []).forEach((q, qIdx) => {
         html += `<div class="question-row" data-subject="${subjIdx}" data-section="${sIdx}" data-question="${qIdx}">
   <span class="question-number">${(++qCounter)}.</span>
-  <span class="question-text">
+
+  <!-- Editable question text -->
+  <span class="question-text" contenteditable="true">
     ${stripMetaTags(stripMetaLine(q.text || q.body || q.question || ''))}
-</span>
+  </span>
+
+  <!-- MCQ options (editable) + answer key (editable) -->
+  ${
+    (q.options && q.options.length === 4)
+      ? `
+        <div class="mcq-block" style="display:flex;flex-direction:column;gap:6px;margin-left:8px;flex:1 1 100%;">
+          ${['A','B','C','D'].map((L, i) => `
+            <div class="mcq-row" data-idx="${i}" style="display:flex;align-items:center;gap:8px;">
+              <span style="font-weight:700;color:#185496;min-width:18px;">${L})</span>
+              <span class="mcq-opt" contenteditable="true" style="flex:1 1 auto;border:1px dashed #bcd6ef;border-radius:6px;padding:3px 8px;">
+                ${(q.options[i] || '').toString()}
+              </span>
+            </div>
+          `).join('')}
+          <div class="mcq-ans-row" style="display:flex;align-items:center;gap:8px;margin-top:4px;">
+            <span class="marks-label" style="min-width:62px;">Answer</span>
+            <span class="answer-box" contenteditable="true" style="border:1px solid #bcd6ef;border-radius:6px;padding:3px 8px;min-width:80px;">
+              ${ (q.answer || '').toString() }
+            </span>
+            <span class="marks-label" style="opacity:.8;">(use letters like A or A,C)</span>
+          </div>
+        </div>
+      `
+      : ''
+  }
+
   <span class="marks-box" contenteditable="true">${q.marks || section.marksPerQuestion || ''}</span>
   <span class="marks-label">Marks</span>
 </div>`;
@@ -352,11 +385,34 @@ area.querySelectorAll('.num-questions, .marks-per-question').forEach(el => {
       const subjIdx = +ins.dataset.subject, secIdx = +ins.dataset.section;
       paper.subjects[subjIdx].sections[secIdx].instructions = ins.innerText.trim();
     });
- // Questions — do NOT change text; only update marks
+ // Questions — update text, options (if MCQ), answer key, and marks
 document.querySelectorAll('.question-row').forEach(qr => {
   const subjIdx = +qr.dataset.subject, secIdx = +qr.dataset.section, qIdx = +qr.dataset.question;
-  const newMarks = qr.querySelector('.marks-box').innerText.trim();
+
+  // Marks
+  const newMarks = qr.querySelector('.marks-box')?.innerText?.trim() ?? '';
   paper.subjects[subjIdx].sections[secIdx].questions[qIdx].marks = newMarks;
+
+  // Text
+  const newText = qr.querySelector('.question-text')?.innerText?.trim() ?? '';
+  if (newText) paper.subjects[subjIdx].sections[secIdx].questions[qIdx].text = newText;
+
+  // Options (if present)
+  const optNodes = qr.querySelectorAll('.mcq-opt');
+  if (optNodes && optNodes.length === 4) {
+    const updatedOpts = Array.from(optNodes).map(n => (n.innerText || '').trim());
+    paper.subjects[subjIdx].sections[secIdx].questions[qIdx].options = updatedOpts;
+  }
+
+  // Answer key (letters like A or A,C)
+  const ansNode = qr.querySelector('.answer-box');
+  if (ansNode) {
+    let raw = (ansNode.innerText || '').toUpperCase().replace(/[^A-D,]/g,'').replace(/\s+/g,'');
+    // Normalize duplicates & order: A,B,C,D unique, keep original order
+    const seen = new Set();
+    const letters = raw.split(',').filter(x => /^[A-D]$/.test(x) && !seen.has(x) && seen.add(x));
+    paper.subjects[subjIdx].sections[secIdx].questions[qIdx].answer = letters.join(letters.length > 1 ? ',' : '');
+  }
 });
 
     // Re-number questions continuously within each subject
@@ -555,6 +611,7 @@ for (let j = 1; j < lines.length; j++) {
 </script>
 </body>
 </html>
+
 
 
 
