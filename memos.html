@@ -681,9 +681,12 @@ function computeColumns() {
   const headerSize = _subtopicHeaderFont(schema.length);
   const avgCharPx  = headerSize * 0.60;
 
-  // Base sizes (smaller than before)
+    // Base sizes (smaller than before)
   const BASE_GAP  = 20;   // edge gaps
   const MIN_GAP   = 6;
+
+  // Extra breathing room only between SUBJECT -> MAX
+  const SUBJECT_TO_MAX_EXTRA_GAP = 18;
 
   // Inner gaps (between subtopic columns) will be 60% of the edge gap
   const innerGapFor = g => Math.max(6, Math.floor(g * 0.6));
@@ -714,15 +717,17 @@ function computeColumns() {
   const keys = headers.map(h => h.key);
 
   // compute total width using pair-wise gaps (inner subtopic gaps are smaller)
-  function totalWidth(edgeGap, ws) {
+     function totalWidth(edgeGap, ws) {
     const sumW = keys.reduce((a,k) => a + ws[k], 0);
     let gaps = 0;
     for (let i = 0; i < headers.length - 1; i++) {
       const left = headers[i].key, right = headers[i+1].key;
       const isInnerSubGap =
         left !== '__subject' && right !== '__grade' &&
-        left !== '__max' && right !== '__total'; // i.e., between subtopic-like columns
-      gaps += isInnerSubGap ? innerGapFor(edgeGap) : edgeGap;
+        left !== '__max' && right !== '__total'; // between subtopic-like columns
+      const isSubjectToMax = (left === '__subject' && right === '__max');
+      const base = isInnerSubGap ? innerGapFor(edgeGap) : edgeGap;
+      gaps += isSubjectToMax ? (base + SUBJECT_TO_MAX_EXTRA_GAP) : base;
     }
     return sumW + gaps;
   }
@@ -768,12 +773,14 @@ function computeColumns() {
     const cx = cursorX + Math.round(w / 2);
     const def = { ...h, x: cx, width: w };
     // choose next gap: smaller between subtopic-like columns
-    if (i < headers.length - 1) {
+       if (i < headers.length - 1) {
       const nextK = headers[i+1].key;
       const isInnerSubGap =
         k !== '__subject' && nextK !== '__grade' &&
         k !== '__max' && nextK !== '__total';
-      cursorX += w + (isInnerSubGap ? innerGapFor(gap) : gap);
+      const isSubjectToMax = (k === '__subject' && nextK === '__max');
+      const base = isInnerSubGap ? innerGapFor(gap) : gap;
+      cursorX += w + (isSubjectToMax ? (base + SUBJECT_TO_MAX_EXTRA_GAP) : base);
     }
     return def;
   });
@@ -873,7 +880,7 @@ function drawSubjectRow(pdf, rowY, subject) {
     switch (c.key) {
       case '__subject': {
   // left-align within the subject column box
-  const leftEdge = Math.round(c.x - (c.width ? c.width / 2 : 0)) + 28; // more padding
+  const leftEdge = Math.round(c.x - (c.width ? c.width / 2 : 0)) + 34; // extra padding
 leftText(pdf, subjName, leftEdge, rowY, 60, COLOR_GREEN, 'bold');
   break;
 }
@@ -1519,6 +1526,7 @@ centerText(pdf, student.overallGrade, xGrade, totalY, 60, COLOR_GRADE);
 </div>
 </body>
 </html>
+
 
 
 
