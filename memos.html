@@ -977,19 +977,30 @@ function _buildBackColumnsModel(backPlan, exams) {
 }
 
 
-/* Draw the table centered inside a fixed border area */
 // Draw back page with grouped exam headers (each exam → TOTAL | GRADE)
-function drawBackPageLandscape(pdf, backData, backPlan, exams) {
+function drawBackPageLandscape(pdf, backData, backPlan, exams, student) {
   const W = 3509, H = 2481;
   const borderX = 120, borderY = 120, borderW = W - 240, borderH = H - 240;
 
-  // Header (exam names summary)
-  pdf.setFont('helvetica','bold'); pdf.setTextColor(15,61,107); pdf.setFontSize(80);
-  const names = (backPlan.examCols || [])
-    .map(id => exams.find(e => e.id === id)?.name || id)
-    .join('   |   ');
-  const title = names || 'Selected Exams';
-  pdf.text(String(title).toUpperCase(), W/2, 120, { align:'center', baseline:'top' });
+    // ---- In-border header: School name + student details (no title above border) ----
+  const BLUE = [15,61,107], GREEN = [22,163,74];
+  pdf.setFont('helvetica','bold'); pdf.setTextColor(...BLUE);
+
+  // School name centered
+  pdf.setFontSize(64);
+  pdf.text("ST. PATRICK'S SCHOOL", W/2, borderY + 70, { align: 'center', baseline: 'alphabetic' });
+
+  // Student details row (left-aligned)
+  pdf.setFontSize(42);
+  const infoY = borderY + 130;
+  const clsSec = `${(student?.class || "").toString()}${student?.section ? " / " + (student.section || "") : ""}`;
+
+  pdf.setTextColor(...GREEN);
+  pdf.text(`NAME: ${(student?.name || "").toString().toUpperCase()}`, borderX + 40, infoY);
+  pdf.text(`CLASS: ${clsSec.toUpperCase()}`, borderX + 40, infoY + 48);
+
+  pdf.setTextColor(...BLUE);
+  pdf.text(`ROLL: ${(student?.roll ?? "").toString()}`, borderX + 820, infoY + 48);
 
   // Border
   pdf.setDrawColor(15,61,107); pdf.setLineWidth(6);
@@ -1049,9 +1060,17 @@ function drawBackPageLandscape(pdf, backData, backPlan, exams) {
     const w1 = widths.get(c1.key), w2 = widths.get(c2.key);
     const groupW = w1 + gap + w2;
 
-    // Exam name (spanning)
+        // Exam name (spanning, wrap to two lines if needed)
     pdf.setFontSize(headerSize);
-    pdf.text(String(g.name).toUpperCase(), x + groupW/2, groupHeaderY, { align:'center' });
+    const parts = String(g.name || '').trim().split(/\s+/);
+    const line1 = (parts.length > 1) ? parts[0] : (parts[0] || '');
+    const line2 = (parts.length > 1) ? parts.slice(1).join(' ') : '';
+    if (line2) {
+      pdf.text(line1.toUpperCase(), x + groupW/2, groupHeaderY - 18, { align:'center' });
+      pdf.text(line2.toUpperCase(), x + groupW/2, groupHeaderY + 18, { align:'center' });
+    } else {
+      pdf.text(line1.toUpperCase(), x + groupW/2, groupHeaderY, { align:'center' });
+    }
 
     // Child headers
     pdf.setFontSize(subHeaderSize);
@@ -1114,20 +1133,29 @@ function drawBackPageLandscape(pdf, backData, backPlan, exams) {
       pdf.text('SUBJECT', x + subjW/2, subHeaderY, { align:'center', baseline:'alphabetic' });
       x += subjW + gap;
 
-      for (const g of groups) {
-        const c1 = cols[g.startIndex], c2 = cols[g.endIndex];
-        const w1 = widths.get(c1.key), w2 = widths.get(c2.key);
-        const groupW = w1 + gap + w2;
+     for (const g of groups) {
+  const c1 = cols[g.startIndex], c2 = cols[g.endIndex];
+  const w1 = widths.get(c1.key), w2 = widths.get(c2.key);
+  const groupW = w1 + gap + w2;
 
-        pdf.text(String(g.name).toUpperCase(), x + groupW/2, groupHeaderY, { align:'center' });
-        pdf.setFontSize(subHeaderSize);
-        pdf.text('TOTAL', x + w1/2, subHeaderY, { align:'center' });
-        pdf.text('GRADE', x + w1 + gap + w2/2, subHeaderY, { align:'center' });
+  // wrap exam name to two lines if needed
+  pdf.setFontSize(headerSize);
+  const parts = String(g.name || '').trim().split(/\s+/);
+  const line1 = (parts.length > 1) ? parts[0] : (parts[0] || '');
+  const line2 = (parts.length > 1) ? parts.slice(1).join(' ') : '';
+  if (line2) {
+    pdf.text(line1.toUpperCase(), x + groupW/2, groupHeaderY - 18, { align:'center' });
+    pdf.text(line2.toUpperCase(), x + groupW/2, groupHeaderY + 18, { align:'center' });
+  } else {
+    pdf.text(line1.toUpperCase(), x + groupW/2, groupHeaderY, { align:'center' });
+  }
 
-        x += groupW + gap;
-        pdf.setFontSize(headerSize);
-      }
+  pdf.setFontSize(subHeaderSize);
+  pdf.text('TOTAL', x + w1/2, subHeaderY, { align:'center' });
+  pdf.text('GRADE', x + w1 + gap + w2/2, subHeaderY, { align:'center' });
 
+  x += groupW + gap;
+}
       pdf.setDrawColor(15,61,107); pdf.setLineWidth(2);
       pdf.line(startX, subHeaderY + 14, startX + sumW, subHeaderY + 14);
 
@@ -1846,12 +1874,22 @@ centerText(pdf, (totalMarks === '' || totalMarks == null ? 'AB' : String(totalMa
 centerText(pdf, student.overallGrade, xGrade, totalYAdj, 60, COLOR_GRADE);
 
 
-  // 6) Attendance (10 months)
-      // Attendance on preview
+           // Attendance on preview
     for (let i = 0; i < 10; i++) {
       const a = (student.attendance && student.attendance[i]) || { work: "", pres: "" };
       centerText(pdf, String(a.work || ""), attWorkCoords[i][0], attWorkCoords[i][1], 60, COLOR_GREEN);
       centerText(pdf, String(a.pres || ""), attPresCoords[i][0], attPresCoords[i][1], 60, COLOR_BROWN);
+    }
+
+    // --- Back page (landscape) in preview too ---
+    try {
+      if (backPlan.examCols && backPlan.examCols.length) {
+        const backData = await buildBackDataForStudent(student);
+        pdf.addPage([3509, 2481], "l");
+        drawBackPageLandscape(pdf, backData, backPlan, exams, student);
+      }
+    } catch (e) {
+      console.warn("Back page build failed (preview):", e);
     }
 
     // Back page (landscape) on preview, only if there is something to show
@@ -1859,7 +1897,7 @@ centerText(pdf, student.overallGrade, xGrade, totalYAdj, 60, COLOR_GRADE);
       if (backPlan.examCols && backPlan.examCols.length) {
   const backData = await buildBackDataForStudent(student);
   pdf.addPage([3509, 2481], "l");
-  drawBackPageLandscape(pdf, backData, backPlan, exams);
+  drawBackPageLandscape(pdf, backData, backPlan, exams, student);
 }
     } catch (e) {
       console.warn("Back page build failed (preview):", e);
@@ -2007,18 +2045,3 @@ centerText(pdf, student.overallGrade, xGrade, totalYAdj, 60, COLOR_GRADE);
 </div>
 </body>
 </html>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
