@@ -84,6 +84,13 @@
   0% { transform: rotate(0deg);}
   100% { transform: rotate(360deg);}
 }
+    .student-btn { background: #e5f1fb; color: #1562a7; border: 1px solid #b4c8e9; border-radius: 6px; padding: 7px 11px; font-size: 1em; font-weight:600; cursor:pointer; margin-left: auto; margin-right: 8px; transition: background 0.13s;}
+/* Left-align only the "+ Add Exam Column" button */
+#addExamColBtn.student-btn { 
+  margin-left: 0 !important; 
+  margin-right: 0 !important; 
+}
+
   </style>
   <!-- Choices.js for custom dropdown -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/choices.js/public/assets/styles/choices.min.css" />
@@ -130,13 +137,20 @@
   <div style="margin-top:12px;">
     <label style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
       <input type="checkbox" id="chkUseInternal20">
-      <span>Include <b>Internal (Average → 20)</b> for front exam</span>
+      <span>Include <b>Internal (Average → <span id="internalOutOfTag">20</span>)</b> for front exam</span>
     </label>
 
     <div id="internalConfig" style="display:none; margin-left:26px;">
-      <label for="prevExamsSel" style="margin-top:4px;">Average these previous exams</label>
-      <select id="prevExamsSel" multiple class="custom-select styled-dropdown"></select>
-    </div>
+  <div style="display:flex; align-items:center; gap:10px; margin:8px 0 10px 0;">
+    <label for="internalOutOf" style="margin:0;">Internal out of</label>
+    <input id="internalOutOf" type="number" min="1" max="100" value="20"
+           style="width:90px; padding:10px; border:1.5px solid #b4c8e9; border-radius:5px;">
+    <small style="color:#666;">(written will be out of <span id="writtenOutOfLbl">80</span>)</small>
+  </div>
+
+  <label for="prevExamsSel" style="margin-top:4px;">Average these previous exams</label>
+  <select id="prevExamsSel" multiple class="custom-select styled-dropdown"></select>
+</div>
   </div>
 </div>
 
@@ -323,29 +337,52 @@ function loadMemoImg(file) {
   }));
 }
 // UI ELEMENTS
-const yearSel = document.getElementById('yearSel');
-const classSel = document.getElementById('classSel');
+const yearSel    = document.getElementById('yearSel');
+const classSel   = document.getElementById('classSel');
 const sectionSel = document.getElementById('sectionSel');
-const examSel = document.getElementById('examSel');
-    // Initialize Choices.js for better dropdown UI (Class, Section, Exam)
+const examSel    = document.getElementById('examSel');
+
+// Initialize Choices.js for better dropdown UI (Class, Section, Exam)
 const classChoices = new Choices(classSel, {
   searchEnabled: false,
   itemSelectText: '',
   shouldSort: false
 });
+
+// ---- Internal (Average → N) wiring ----
+const internalOutOfInput = document.getElementById('internalOutOf');
+const internalOutOfTag   = document.getElementById('internalOutOfTag');
+const writtenOutOfLbl    = document.getElementById('writtenOutOfLbl');
+const chkUseInternal20   = document.getElementById('chkUseInternal20');
+
+function _syncInternalOutOfUI() {
+  const n = Math.max(1, Math.min(100, parseInt(internalOutOfInput.value || '20', 10)));
+  internalOutOfInput.value = n;
+  // guard in case backPlan isn't defined yet
+  if (typeof backPlan !== 'undefined' && backPlan) backPlan.internalOutOf = n;
+  if (internalOutOfTag) internalOutOfTag.textContent = String(n);
+  if (writtenOutOfLbl)  writtenOutOfLbl.textContent  = String(100 - n);
+}
+
+internalOutOfInput?.addEventListener('input', _syncInternalOutOfUI);
+chkUseInternal20?.addEventListener('change', _syncInternalOutOfUI);
+// initialize labels once on load (safe due to guard)
+_syncInternalOutOfUI();
+
+// Remaining dropdowns
 const sectionChoices = new Choices(sectionSel, {
   searchEnabled: false,
   itemSelectText: '',
   shouldSort: false
 });
+
 const examChoices = new Choices(examSel, {
   searchEnabled: false,
   itemSelectText: '',
   shouldSort: false
 });
 
-/* NEW: multi-select for previous exams (Internal → 20) */
-/* NEW: multi-select for previous exams (Internal → 20) */
+/* NEW: multi-select for previous exams (Internal → N) */
 const prevExamsSel = document.getElementById('prevExamsSel');
 const prevExamsChoices = new Choices(prevExamsSel, {
   removeItemButton: true,
@@ -366,69 +403,7 @@ const pdfPreview = document.getElementById('pdfPreview');
 const studentListDiv = document.getElementById('studentList');
 const toastDiv = document.getElementById('toast');
 const addExamColBtn   = document.getElementById('addExamColBtn');
-    /* Simple chooser for adding one exam column at a time */
-addExamColBtn?.addEventListener('click', () => {
-  if (!Array.isArray(exams) || exams.length === 0) {
-    alert('No exams available to add.');
-    return;
-  }
-  // Build a simple indexed list for prompt
-  const list = exams.map((e, i) => `${i+1}. ${e.name}`).join('\n');
-  const ans = prompt(`Add which exam as a column?\n\n${list}\n\nType the number (1-${exams.length})`);
-  if (!ans) return;
-  const idx = parseInt(ans, 10);
-  if (!Number.isInteger(idx) || idx < 1 || idx > exams.length) return;
-  const examId = exams[idx - 1].id;
-  if (!backPlan.examCols.includes(examId)) {
-    backPlan.examCols.push(examId);
-    renderBackCols();
-  }
-});
 
-const chosenBackCols  = document.getElementById('chosenBackCols');
-/* Render the chosen exam columns as removable chips */
-function renderBackCols() {
-  if (!Array.isArray(backPlan.examCols)) backPlan.examCols = [];
-  const byId = new Map(exams.map(e => [e.id, e]));
-  chosenBackCols.innerHTML = backPlan.examCols.map(id => {
-    const label = byId.get(id)?.name || id;
-    return `<span data-id="${id}" style="
-      display:inline-flex;align-items:center;gap:6px;
-      padding:6px 10px;border:1px solid #b4c8e9;border-radius:14px;
-      background:#eaf3ff;color:#0f3d6b;font-weight:600;font-size:.95em;">
-      ${label}
-      <button type="button" aria-label="Remove" data-remove="${id}" style="
-        border:none;background:#fff;color:#1762a7;border:1px solid #b4c8e9;
-        padding:2px 6px;border-radius:10px;cursor:pointer;">×</button>
-    </span>`;
-  }).join('');
-}
-
-/* Remove chip handler (event delegation) */
-chosenBackCols.addEventListener('click', (e) => {
-  const id = e.target?.getAttribute?.('data-remove');
-  if (!id) return;
-  backPlan.examCols = backPlan.examCols.filter(x => x !== id);
-  renderBackCols();
-});
-
-const chkUseInternal20 = document.getElementById('chkUseInternal20');
-const internalConfig  = document.getElementById('internalConfig');
-
-/* Track selection for Internal (→20) average */
-prevExamsSel.addEventListener('change', () => {
-  const opts = Array.from(prevExamsSel.options);
-  backPlan.internalExamIds = opts.filter(o => o.selected).map(o => o.value);
-});
-
-
-let years = [], classes = [], sections = [], exams = [], students = [];
-/* Back page plan: which exam columns to show, and Internal(→20) config */
-const backPlan = {
-  examCols: [],            // array of examIds to show as columns (Marks | Grade)
-  useInternal20: false,    // whether to include Internal (Average → 20) for the front exam
-  internalExamIds: []      // examIds selected to average for Internal(20)
-};
 
 // ================== UI LOADERS ====================
 async function loadYears() {
@@ -997,11 +972,14 @@ function _buildBackColumnsModel(backPlan, exams) {
   const cols = [{ key: '__subject', label: 'SUBJECT' }];
 
   if (backPlan.useInternal20) {
-    cols.push({ key: '__w80',  label: 'MARKS OBT. (80)' });
-    cols.push({ key: '__i20',  label: 'INTERNAL (20)' });
-    cols.push({ key: '__t100', label: 'TOTAL (100)' });
-    cols.push({ key: '__grade', label: 'GRADE' });
-  } else {
+  const N = Math.max(1, Math.min(100, +backPlan.internalOutOf || 20)); // internal out of
+  const W = Math.max(0, 100 - N);                                      // written out of
+  const T = N + W;                                                      // total out of
+  cols.push({ key: '__w80',  label: `MARKS OBT. (${W})` });
+  cols.push({ key: '__i20',  label: `INTERNAL (${N})` });
+  cols.push({ key: '__t100', label: `TOTAL (${T})` });
+  cols.push({ key: '__grade', label: 'GRADE' });
+} else {
     // Plain selected exam columns (each shows Marks | Grade stacked)
     for (const exId of (backPlan.examCols || [])) {
       const ex = exams.find(e => e.id === exId);
@@ -1024,8 +1002,11 @@ function drawBackPageLandscape(pdf, backData, backPlan, exams) {
    const frontEx = exams.find(e => e.id === examSel.value);
   let title;
   if (backPlan.useInternal20) {
-    title = `${(frontEx?.name || 'Selected Exam')} (100 Marks)`;
-  } else {
+  const N = Math.max(1, Math.min(100, +backPlan.internalOutOf || 20));
+  const W = Math.max(0, 100 - N);
+  const T = N + W;
+  title = `${(frontEx?.name || 'Selected Exam')} (${T} Marks)`;
+} else {
     const names = (backPlan.examCols || [])
       .map(id => exams.find(e => e.id === id)?.name || id)
       .join(' | ');
@@ -1753,50 +1734,57 @@ async function buildBackDataForStudent(stu) {
           hadAny = true;
         }
       }
-      let internal20 = 'AB';
-      let internalPct = null;
-      if (hadAny && sumMax > 0) {
-        internalPct = (sumM / sumMax) * 100;
-        internal20 = Math.round((internalPct / 100) * 20);
-      }
-      row.internal20 = internal20;
+      const N = Math.max(1, Math.min(100, +backPlan.internalOutOf || 20)); // internal out of
+const W = Math.max(0, 100 - N);                                      // written out of
+const T = N + W;
 
-            const wr = _extractWrittenForSubject(frontMarksObj, name, structure);
-      let written80 = 'AB';
-      let writtenPct = null;
-      if (wr.mark === 'AB') {
-        written80 = 'AB';
-      } else if (typeof wr.mark === 'number') {
-        if (typeof wr.max === 'number' && wr.max > 0) {
-          writtenPct = (wr.mark / wr.max) * 100;
-          written80 = Math.round((writtenPct / 100) * 80);
-        } else {
-          // no max known → treat raw as already out of 80? keep as raw
-          written80 = wr.mark;
-        }
-      }
-      row.written80 = written80;
+// Internal from selected previous exams → scale to N
+let internalScaled = 'AB';
+let internalPct = null;
+if (hadAny && sumMax > 0) {
+  internalPct = (sumM / sumMax) * 100;
+  internalScaled = Math.round((internalPct / 100) * N);
+}
+row.internal20 = internalScaled;
 
-      // Total(100) + Grade
-      if (written80 === 'AB') {
-        row.total100 = 'AB';
-        row.grade = '';
-      } else {
-        const w = (typeof written80 === 'number') ? written80 : 0;
-        const i = (typeof internal20 === 'number') ? internal20 : 0;
-        const total = w + i; // out of 100
-        row.total100 = total;
-        const pct = total; // already out of 100
-        row.grade =
-          (pct >= 95) ? 'A+' :
-          (pct >= 90) ? 'A'  :
-          (pct >= 85) ? 'B+' :
-          (pct >= 80) ? 'B'  :
-          (pct >= 70) ? 'C+' :
-          (pct >= 60) ? 'C'  :
-          (pct >= 50) ? 'D'  :
-          (pct >= 40) ? 'E'  : 'F';
-      }
+// Written from front exam → scale to W
+const wr = _extractWrittenForSubject(frontMarksObj, name, structure);
+let writtenScaled = 'AB';
+if (wr.mark === 'AB') {
+  writtenScaled = 'AB';
+} else if (typeof wr.mark === 'number') {
+  if (typeof wr.max === 'number' && wr.max > 0) {
+    const writtenPct = (wr.mark / wr.max) * 100;
+    writtenScaled = Math.round((writtenPct / 100) * W);
+  } else {
+    // unknown max: leave as raw (best effort)
+    writtenScaled = wr.mark;
+  }
+}
+row.written80 = writtenScaled;
+
+// Total and grade (percentage over T)
+if (writtenScaled === 'AB') {
+  row.total100 = 'AB';
+  row.grade = '';
+} else {
+  const wv = (typeof writtenScaled === 'number') ? writtenScaled : 0;
+  const iv = (typeof internalScaled === 'number') ? internalScaled : 0;
+  const total = wv + iv;            // out of T
+  row.total100 = total;
+
+  const pct = (T > 0) ? (total / T) * 100 : null;
+  row.grade =
+    pct == null ? '' :
+    (pct >= 95) ? 'A+' :
+    (pct >= 90) ? 'A'  :
+    (pct >= 85) ? 'B+' :
+    (pct >= 80) ? 'B'  :
+    (pct >= 70) ? 'C+' :
+    (pct >= 60) ? 'C'  :
+    (pct >= 50) ? 'D'  :
+    (pct >= 40) ? 'E'  : 'F';
+}
     }
 
     return row;
@@ -2104,6 +2092,7 @@ centerText(pdf, student.overallGrade, xGrade, totalYAdj, 60, COLOR_GRADE);
 </div>
 </body>
 </html>
+
 
 
 
