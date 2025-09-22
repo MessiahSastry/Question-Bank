@@ -650,7 +650,7 @@ async function getExamStructure() {
 /* ======= PAGE MARGINS + DYNAMIC COLUMN BUILDER (auto-spread) ======= */
 // Only margins are fixed; all column x-positions are computed to fill the width
 const PAGE_MARGINS = { left: 220, right: 2260 }; // tweak if you need more/less padding
-
+const MAX_TO_NEXT_EXTRA_GAP = 28;
 // ==== Exam-wide subtopic schema (names + header max) ====
 let __examSubtopicSchema = null;
 function getExamSubtopicSchema() {
@@ -716,7 +716,7 @@ function computeColumns() {
   const innerGapFor = g => Math.max(6, Math.floor(g * 0.6));
 
   // Minimum widths (slightly tightened except subject/max kept larger)
-  const MIN_SUBJECT = 300, MIN_MAX = 180, MIN_TOTAL = 150, MIN_GRADE = 140, MIN_SUBTOPIC = 110;
+  const MIN_SUBJECT = 300, MIN_MAX = 180, MIN_TOTAL = 150, MIN_GRADE = 140, MIN_SUBTOPIC = 100;
   const MAX_COL     = 420;
 
   function estWidth(label, minW, maxW = MAX_COL) {
@@ -744,17 +744,25 @@ function computeColumns() {
      function totalWidth(edgeGap, ws) {
     const sumW = keys.reduce((a,k) => a + ws[k], 0);
     let gaps = 0;
-    for (let i = 0; i < headers.length - 1; i++) {
-      const left = headers[i].key, right = headers[i+1].key;
-      const isInnerSubGap =
-        left !== '__subject' && right !== '__grade' &&
-        left !== '__max' && right !== '__total'; // between subtopic-like columns
-      const isSubjectToMax = (left === '__subject' && right === '__max');
-      const base = isInnerSubGap ? innerGapFor(edgeGap) : edgeGap;
-      gaps += isSubjectToMax ? (base + SUBJECT_TO_MAX_EXTRA_GAP) : base;
-    }
-    return sumW + gaps;
-  }
+   for (let i = 0; i < headers.length - 1; i++) {
+  const left  = headers[i].key, right = headers[i+1].key;
+
+  const isInnerSubGap =
+    left !== '__subject' && right !== '__grade' &&
+    left !== '__max' && right !== '__total'; // between subtopic-like columns
+
+  const isSubjectToMax = (left === '__subject' && right === '__max');
+  const isMaxToNext    = (left === '__max' && right !== '__total'); // MAX → first subtopic
+
+  const base  = isInnerSubGap ? innerGapFor(edgeGap) : edgeGap;
+  const extra = isSubjectToMax
+    ? SUBJECT_TO_MAX_EXTRA_GAP
+    : (isMaxToNext ? MAX_TO_NEXT_EXTRA_GAP : 0);
+
+  gaps += base + extra;
+}
+return sumW + gaps;
+
 
   // 1) try base gap
   let gap = BASE_GAP;
@@ -1563,41 +1571,3 @@ centerText(pdf, student.overallGrade, xGrade, totalYAdj, 60, COLOR_GRADE);
 </div>
 </body>
 </html>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
