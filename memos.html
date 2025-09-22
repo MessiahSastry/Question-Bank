@@ -1052,7 +1052,8 @@ pdf.text(`ROLL: ${(student?.roll ?? "").toString()}`, borderX + 820, infoY + 48)
   // Build column model (SUBJECT + for each exam: TOTAL, GRADE) + group metadata
   const { cols, groups } = _buildBackColumnsModel(backPlan, exams);
 
-  if (!backData || !Array.isArray(backData.rows) || backData.rows.length === 0) return;
+  const safeRows = (backData && Array.isArray(backData.rows)) ? backData.rows : [];
+// continue – draw headers regardless; if no rows, we’ll show a note
 
   // Measure widths
   const headerSize = 48, subHeaderSize = 44, cellSize = 46, padX = 18, gap = 18;
@@ -1062,13 +1063,14 @@ pdf.text(`ROLL: ${(student?.roll ?? "").toString()}`, borderX + 820, infoY + 48)
     let w = _measureTextWidth(pdf, c.label, headerSize) + padX * 2;
 
     if (c.key === '__subject') {
-      for (const r of backData.rows) {
+      for (const r of safeRows) {
+
         w = Math.max(w, _measureTextWidth(pdf, r.subject, cellSize) + padX * 2);
       }
       w = Math.max(260, Math.min(700, Math.ceil(w)));
     } else {
       // exam subcolumn width based on content of that exam for all rows
-      for (const r of backData.rows) {
+    for (const r of safeRows) {
         const ex = r.exams?.[c.examId];
         const txt = c.kind === 'tot' ? (ex?.marks ?? '') : (ex?.grade ?? '');
         w = Math.max(w, _measureTextWidth(pdf, txt, cellSize) + padX * 2);
@@ -1086,6 +1088,11 @@ const startX = borderX + Math.max(0, (borderW - sumW) / 2);
 const groupHeaderY = borderY + 300;   // Exam names (spanning label)
 const subHeaderY   = groupHeaderY + 58; // "TOTAL" / "GRADE"
 const rowStartY    = subHeaderY + 80; // first data row
+if (safeRows.length === 0) {
+  pdf.setFont('helvetica','bold'); pdf.setFontSize(46); pdf.setTextColor(120,120,120);
+  pdf.text('No data for the selected exam columns', startX + sumW/2, rowStartY + 20, { align:'center' });
+  return;
+}
 
   // Draw grouped headers
   let x = startX;
@@ -1744,7 +1751,11 @@ async function buildBackDataForStudent(stu) {
   }
 
   // Subject union (stable)
-  const subjectList = _unionSubjectsAcross(Array.from(needExamIds), perExamSubjectsMap);
+  let subjectList = _unionSubjectsAcross(Array.from(needExamIds), perExamSubjectsMap);
+// fallback to current exam structure subject names if union is empty
+if ((!subjectList || subjectList.length === 0) && structure?.subjects?.length) {
+  subjectList = structure.subjects.map(s => s.name);
+}
 
     // Compose rows
   const rows = subjectList.map(name => {
@@ -2099,6 +2110,7 @@ page.render({ canvasContext: ctx, viewport });
 </div>
 </body>
 </html>
+
 
 
 
