@@ -112,10 +112,36 @@
       <select id="examSel" class="custom-select styled-dropdown"></select>
     </div>
     <div class="actions">
-      <button id="previewBtn" class="custom-btn">Preview (First 3)</button>
-      <button id="downloadAllBtn" class="custom-btn">Download All (PDF)</button>
+  <button id="previewBtn" class="custom-btn">Preview (First 3)</button>
+  <button id="downloadAllBtn" class="custom-btn">Download All (PDF)</button>
+</div>
+
+<!-- Back-side (Landscape) Options -->
+<div id="backSideOptions" class="section" style="border-top:1px dashed #b4c8e9;padding-top:12px;">
+  <label style="margin-bottom:8px;">Back Page (Landscape)</label>
+
+  <!-- Builder: add exam columns (each shows Marks | Grade) -->
+  <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+    <button id="addExamColBtn" class="student-btn" type="button">+ Add Exam Column</button>
+    <div id="chosenBackCols" style="display:flex; gap:8px; flex-wrap:wrap;"></div>
+  </div>
+
+  <!-- Internal (Average → 20) for the front exam -->
+  <div style="margin-top:12px;">
+    <label style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
+      <input type="checkbox" id="chkUseInternal20">
+      <span>Include <b>Internal (Average → 20)</b> for front exam</span>
+    </label>
+
+    <div id="internalConfig" style="display:none; margin-left:26px;">
+      <label for="prevExamsSel" style="margin-top:4px;">Average these previous exams</label>
+      <select id="prevExamsSel" multiple class="custom-select styled-dropdown"></select>
     </div>
-    <div class="student-list" id="studentList"></div>
+  </div>
+</div>
+
+<div class="student-list" id="studentList"></div>
+
     <div class="pdf-preview" id="pdfPreview"></div>
     <div style="color:#888;font-size:.98em;margin-top:16px;">
       <b>Note:</b> Only first 3 student memos are shown as preview for speed. Download PDF for all.
@@ -317,18 +343,90 @@ const examChoices = new Choices(examSel, {
   itemSelectText: '',
   shouldSort: false
 });
+
+/* NEW: multi-select for previous exams (Internal → 20) */
+const prevExamsChoices = new Choices(prevExamsSel, {
+  removeItemButton: true,
+  searchEnabled: false,
+  itemSelectText: '',
+  shouldSort: false
+});
+
 const yearChoices = new Choices(yearSel, {
   searchEnabled: false,
   itemSelectText: '',
   shouldSort: false
 });
+
 const previewBtn = document.getElementById('previewBtn');
 const downloadAllBtn = document.getElementById('downloadAllBtn');
 const pdfPreview = document.getElementById('pdfPreview');
 const studentListDiv = document.getElementById('studentList');
 const toastDiv = document.getElementById('toast');
+const addExamColBtn   = document.getElementById('addExamColBtn');
+    /* Simple chooser for adding one exam column at a time */
+addExamColBtn?.addEventListener('click', () => {
+  if (!Array.isArray(exams) || exams.length === 0) {
+    alert('No exams available to add.');
+    return;
+  }
+  // Build a simple indexed list for prompt
+  const list = exams.map((e, i) => `${i+1}. ${e.name}`).join('\n');
+  const ans = prompt(`Add which exam as a column?\n\n${list}\n\nType the number (1-${exams.length})`);
+  if (!ans) return;
+  const idx = parseInt(ans, 10);
+  if (!Number.isInteger(idx) || idx < 1 || idx > exams.length) return;
+  const examId = exams[idx - 1].id;
+  if (!backPlan.examCols.includes(examId)) {
+    backPlan.examCols.push(examId);
+    renderBackCols();
+  }
+});
+
+const chosenBackCols  = document.getElementById('chosenBackCols');
+/* Render the chosen exam columns as removable chips */
+function renderBackCols() {
+  if (!Array.isArray(backPlan.examCols)) backPlan.examCols = [];
+  const byId = new Map(exams.map(e => [e.id, e]));
+  chosenBackCols.innerHTML = backPlan.examCols.map(id => {
+    const label = byId.get(id)?.name || id;
+    return `<span data-id="${id}" style="
+      display:inline-flex;align-items:center;gap:6px;
+      padding:6px 10px;border:1px solid #b4c8e9;border-radius:14px;
+      background:#eaf3ff;color:#0f3d6b;font-weight:600;font-size:.95em;">
+      ${label}
+      <button type="button" aria-label="Remove" data-remove="${id}" style="
+        border:none;background:#fff;color:#1762a7;border:1px solid #b4c8e9;
+        padding:2px 6px;border-radius:10px;cursor:pointer;">×</button>
+    </span>`;
+  }).join('');
+}
+
+/* Remove chip handler (event delegation) */
+chosenBackCols.addEventListener('click', (e) => {
+  const id = e.target?.getAttribute?.('data-remove');
+  if (!id) return;
+  backPlan.examCols = backPlan.examCols.filter(x => x !== id);
+  renderBackCols();
+});
+
+const chkUseInternal20 = document.getElementById('chkUseInternal20');
+const internalConfig  = document.getElementById('internalConfig');
+const prevExamsSel    = document.getElementById('prevExamsSel');
+/* Track selection for Internal (→20) average */
+prevExamsSel.addEventListener('change', () => {
+  const opts = Array.from(prevExamsSel.options);
+  backPlan.internalExamIds = opts.filter(o => o.selected).map(o => o.value);
+});
+
 
 let years = [], classes = [], sections = [], exams = [], students = [];
+/* Back page plan: which exam columns to show, and Internal(→20) config */
+const backPlan = {
+  examCols: [],            // array of examIds to show as columns (Marks | Grade)
+  useInternal20: false,    // whether to include Internal (Average → 20) for the front exam
+  internalExamIds: []      // examIds selected to average for Internal(20)
+};
 
 // ================== UI LOADERS ====================
 async function loadYears() {
@@ -402,6 +500,28 @@ if (exams.length === 0) {
   );
   examChoices.setChoiceByValue(exams[0]?.id || '');
 }
+
+/* Populate multi-select for Internal (Average → 20) */
+if (typeof prevExamsChoices !== 'undefined') {
+  prevExamsChoices.clearStore();
+  prevExamsChoices.setChoices(
+    exams.map(e => ({ value: e.id, label: e.name })),
+    'value', 'label', false
+  );
+  // Restore previously selected items, if still present
+  const keep = new Set(backPlan.internalExamIds || []);
+  const stillThere = exams.map(e => e.id).filter(id => keep.has(id));
+  backPlan.internalExamIds = stillThere;
+  stillThere.forEach(id => prevExamsChoices.setChoiceByValue(id));
+}
+
+/* Prune examCols that no longer exist (e.g., class/exam set changed) */
+{
+  const validIds = new Set(exams.map(e => e.id));
+  backPlan.examCols = (backPlan.examCols || []).filter(id => validIds.has(id));
+  renderBackCols();
+}
+
 await loadStudents();
 }
 async function loadStudents() {
@@ -454,6 +574,13 @@ console.log("📝 Individual download student data:", {
     hideSpinner();
   }
 };
+  /* Toggle and store Internal (Average → 20) */
+chkUseInternal20.addEventListener('change', () => {
+  const on = !!chkUseInternal20.checked;
+  internalConfig.style.display = on ? 'block' : 'none';
+  backPlan.useInternal20 = on;
+});
+
 previewBtn.onclick = async () => {
   showSpinner();
   try {
@@ -857,6 +984,160 @@ function _subtopicCellFont(n) {
   if (n >= 6)  return 50;
   return 56; // default
 }
+  /* ===== Landscape back-page renderer ===== */
+function _measureTextWidth(pdf, text, size=48) {
+  pdf.setFont('helvetica', 'bold'); pdf.setFontSize(size);
+  return pdf.getTextWidth(String(text || ''));
+}
+
+/* Build column model for back page */
+function _buildBackColumnsModel(backPlan, exams) {
+  const cols = [{ key: '__subject', label: 'SUBJECT' }];
+
+  if (backPlan.useInternal20) {
+    cols.push({ key: '__w80',  label: 'MARKS OBT. (80)' });
+    cols.push({ key: '__i20',  label: 'INTERNAL (20)' });
+    cols.push({ key: '__t100', label: 'TOTAL (100)' });
+    cols.push({ key: '__grade', label: 'GRADE' });
+  } else {
+    // Plain selected exam columns (each shows Marks | Grade stacked)
+    for (const exId of (backPlan.examCols || [])) {
+      const ex = exams.find(e => e.id === exId);
+      cols.push({ key: exId, label: (ex?.name || exId) });
+    }
+  }
+  return cols;
+}
+
+/* Draw the table centered inside a fixed border area */
+function drawBackPageLandscape(pdf, backData, backPlan, exams) {
+  // Landscape page size (swap width/height)
+  const W = 3509, H = 2481; // rotated
+  // Fixed border same style as front, reuse generous padding
+  const borderX = 120, borderY = 120, borderW = W - 240, borderH = H - 240;
+
+  // Header
+    // Header (dynamic)
+  pdf.setFont('helvetica','bold'); pdf.setFontSize(80); pdf.setTextColor(15,61,107);
+   const frontEx = exams.find(e => e.id === examSel.value);
+  let title;
+  if (backPlan.useInternal20) {
+    title = `${(frontEx?.name || 'Selected Exam')} (100 Marks)`;
+  } else {
+    const names = (backPlan.examCols || [])
+      .map(id => exams.find(e => e.id === id)?.name || id)
+      .join(' | ');
+    title = names ? names : 'Selected Exams (Marks | Grade)';
+  }
+  pdf.text(String(title).toUpperCase(), W/2, 120, { align:'center', baseline:'top' });
+
+
+  // Border
+  pdf.setDrawColor(15,61,107); pdf.setLineWidth(6);
+  pdf.roundedRect(borderX, borderY+40, borderW, borderH-40, 24, 24, 'S');
+
+    const cols = _buildBackColumnsModel(backPlan, exams);
+  if (!backData || !Array.isArray(backData.rows) || backData.rows.length === 0) {
+    // Nothing to render; show only the header and border
+    return;
+  }
+
+  // Measure widths (fit to content)
+  const headerSize = 52, cellSize = 48, padX = 18, gap = 20;
+  const widths = new Map();
+  for (const c of cols) {
+    let w = _measureTextWidth(pdf, c.label, headerSize) + padX*2;
+    if (c.key === '__subject') {
+      // widest subject
+      for (const r of backData.rows) {
+        w = Math.max(w, _measureTextWidth(pdf, r.subject, cellSize) + padX*2);
+      }
+    } else if (backPlan.useInternal20) {
+      // numbers + grade cells
+      for (const r of backData.rows) {
+        const cand = [
+          r.written80, r.internal20, r.total100, r.grade
+        ].map(x => _measureTextWidth(pdf, (x === null ? '' : x), cellSize) + padX*2);
+        w = Math.max(w, ...cand);
+      }
+    } else {
+      // exam column: show two stacked lines (Marks, Grade)
+      for (const r of backData.rows) {
+        const ex = r.exams[c.key];
+        if (!ex) continue;
+        const w1 = _measureTextWidth(pdf, (ex.marks === null ? '' : ex.marks), cellSize) + padX*2;
+        const w2 = _measureTextWidth(pdf, (ex.grade || ''), cellSize) + padX*2;
+        w = Math.max(w, w1, w2);
+      }
+    }
+    widths.set(c.key, Math.max(160, Math.min(680, Math.ceil(w))));
+  }
+
+  // Total table width
+  const sumW = cols.reduce((a,c)=>a+(widths.get(c.key)||0), 0) + gap*(cols.length-1);
+  const startX = borderX + Math.max(0, (borderW - sumW)/2);
+  let x = startX;
+  const headerY = borderY + 140;
+  const rowStartY = headerY + 80;
+  const rowGap = 64;
+
+  // Draw headers
+  for (const c of cols) {
+    const w = widths.get(c.key);
+    pdf.setFontSize(headerSize);
+    pdf.text(String(c.label).toUpperCase(), x + w/2, headerY, { align:'center', baseline:'alphabetic' });
+    x += w + gap;
+  }
+
+  // Rows
+  let y = rowStartY;
+  pdf.setFontSize(cellSize);
+  for (const r of backData.rows) {
+    x = startX;
+
+    for (const c of cols) {
+      const w = widths.get(c.key);
+      if (c.key === '__subject') {
+        pdf.text(String(r.subject).toUpperCase(), x + 12, y, { align:'left', baseline:'alphabetic' });
+      } else if (backPlan.useInternal20) {
+        // composite columns
+        if (c.key === '__w80')   pdf.text(String(r.written80 ?? ''), x + w/2, y, { align:'center' });
+        if (c.key === '__i20')   pdf.text(String(r.internal20 ?? ''), x + w/2, y, { align:'center' });
+        if (c.key === '__t100')  pdf.text(String(r.total100 ?? ''), x + w/2, y, { align:'center' });
+        if (c.key === '__grade') pdf.text(String(r.grade || ''), x + w/2, y, { align:'center' });
+      } else {
+        // exam column: show Marks (top) and Grade (below)
+        const ex = r.exams[c.key];
+        const t1 = (ex?.marks ?? '');
+        const t2 = (ex?.grade ?? '');
+        const mid = y - 24;
+        pdf.text(String(t1), x + w/2, mid, { align:'center' });
+        pdf.setFontSize(cellSize-6);
+        pdf.text(String(t2), x + w/2, mid + 36, { align:'center' });
+        pdf.setFontSize(cellSize);
+      }
+      x += w + gap;
+    }
+
+    y += rowGap;
+    // simple page break if needed
+    if (y > (borderY + borderH - 40)) {
+      pdf.addPage([3509,2481], 'l');
+      // redraw border + headers
+      pdf.setDrawColor(15,61,107); pdf.setLineWidth(6);
+      pdf.roundedRect(borderX, borderY+40, borderW, borderH-40, 24, 24, 'S');
+      pdf.setFont('helvetica','bold'); pdf.setFontSize(52);
+      x = startX;
+      for (const c of cols) {
+        const w = widths.get(c.key);
+        pdf.text(String(c.label).toUpperCase(), x + w/2, headerY, { align:'center', baseline:'alphabetic' });
+        x += w + gap;
+      }
+      pdf.setFontSize(cellSize);
+      y = rowStartY;
+    }
+  }
+}
 function drawSubjectsHeader(pdf, y) {
   // Columns spread (SUBJECT | MAX | ... | TOTAL | GRADE)
   const cols = computeColumns();
@@ -1120,6 +1401,115 @@ function formatClass(val) {
   const s = String(name).trim();
   return s.replace(/\bsection\b/gi, 'Section'); // "SECTION" -> "Section"
 }
+/* ===== Back-side helpers: read any exam for a student and compute subject totals ===== */
+async function _readMarksDocFor(stuId, examId) {
+  const year = yearSel.value, classId = classSel.value, sectionId = sectionSel.value;
+  const ref = db.collection('years').doc(year)
+    .collection('classes').doc(classId)
+    .collection('sections').doc(sectionId)
+    .collection('students').doc(stuId)
+    .collection('marks').doc(examId);
+  const snap = await ref.get();
+  return snap.exists ? (snap.data() || {}) : {};
+}
+
+/* Build normalized subject list across multiple exams (union, stable by name) */
+function _unionSubjectsAcross(examIds, perExamSubjectsMap) {
+  const seen = new Set();
+  const out = [];
+  for (const ex of examIds) {
+    const arr = perExamSubjectsMap.get(ex) || [];
+    for (const s of arr) {
+      const key = _normLabel(s.name || s);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      out.push(s.name || s);
+    }
+  }
+  return out;
+}
+
+/* From an exam marks object, compute subject totals using current __examStructure if present */
+function _extractSubjectTotalsFromMarks(marksObj, structure) {
+  const norm = _normLabel;
+  const subjects = [];
+  const subsRoot = (marksObj && typeof marksObj.__subs === 'object') ? marksObj.__subs : {};
+
+  const baseSubjects = (structure?.subjects?.length ? structure.subjects.map(s => s.name) : Object.keys(marksObj).filter(k => k !== '__subs'));
+
+  for (const subjName of baseSubjects) {
+    const keyRoot = Object.keys(marksObj).find(k => norm(k) === norm(subjName));
+    const subjVal = keyRoot ? marksObj[keyRoot] : marksObj[subjName];
+
+    // Prefer __subs breakdown → sum numeric
+    const keySubs = Object.keys(subsRoot || {}).find(k => norm(k) === norm(subjName));
+    const subsObj = keySubs ? subsRoot[keySubs] : null;
+
+    let total = 0, max = 0, hadAny = false;
+
+    if (subsObj && typeof subsObj === 'object') {
+      for (const [k, v] of Object.entries(subsObj)) {
+        const val = (v === 'AB' || v === 'ab' || v === 'Ab') ? 'AB' : (typeof v === 'number' ? +v : null);
+        if (val === 'AB') { hadAny = true; continue; }
+        if (typeof val === 'number') { total += val; hadAny = true; }
+        // try to infer a max from structure if available
+        const subjDef = structure?.subjects?.find(s => norm(s.name) === norm(subjName));
+        const stDef = subjDef?.subtopics?.find(t => norm(t.name) === norm(k));
+        if (typeof stDef?.max === 'number') max += stDef.max;
+      }
+      // fallback: if no subtopic max known but subjectMax exists
+      if (max === 0) {
+        const subjDef = structure?.subjects?.find(s => norm(s.name) === norm(subjName));
+        if (typeof subjDef?.subjectMax === 'number') max = subjDef.subjectMax;
+      }
+    } else if (subjVal && typeof subjVal === 'object') {
+      for (const [k, v] of Object.entries(subjVal)) {
+        const val = (v === 'AB' || v === 'ab' || v === 'Ab') ? 'AB' : (typeof v === 'number' ? +v : null);
+        if (val === 'AB') { hadAny = true; continue; }
+        if (typeof val === 'number') { total += val; hadAny = true; }
+      }
+      // no explicit max info → leave max 0 (percentage unknown)
+    } else if (typeof subjVal === 'number' || subjVal === 'AB') {
+      if (subjVal !== 'AB') { total = +subjVal; hadAny = true; }
+      // try structure.max
+      const subjDef = structure?.subjects?.find(s => norm(s.name) === norm(subjName));
+      if (typeof subjDef?.subjectMax === 'number') max = subjDef.subjectMax;
+    }
+
+    if (hadAny) {
+      subjects.push({ name: subjName, total, max });
+    }
+  }
+
+  return subjects;
+}
+
+/* Extract SA written component for a subject from a marks object */
+const _WRITTEN_ALIASES = ['written', 'written test', 'wt', 'main paper'];
+function _extractWrittenForSubject(marksObj, subjectName, structure) {
+  const norm = _normLabel, target = norm(subjectName);
+  const subsRoot = (marksObj && typeof marksObj.__subs === 'object') ? marksObj.__subs : {};
+  const keySubs = Object.keys(subsRoot || {}).find(k => norm(k) === target);
+  const subsObj = keySubs ? subsRoot[keySubs] : null;
+
+  let mark = null, max = null;
+
+  if (subsObj && typeof subsObj === 'object') {
+    for (const [k, v] of Object.entries(subsObj)) {
+      if (!_WRITTEN_ALIASES.includes(norm(k))) continue;
+      const val = (v === 'AB' || v === 'ab' || v === 'Ab') ? 'AB' : (typeof v === 'number' ? +v : null);
+      if (val === 'AB') return { mark: 'AB', max: null };
+      if (typeof val === 'number') mark = val;
+      // infer max from structure if possible
+      const subjDef = structure?.subjects?.find(s => norm(s.name) === target);
+      const stDef = subjDef?.subtopics?.find(t => norm(t.name) === norm(k));
+      if (typeof stDef?.max === 'number') max = stDef.max;
+      break;
+    }
+  }
+  return { mark, max };
+}
+
 // ======= PDF GENERATION =========
 async function fetchStudentData(stu) {
   // 0) Resolve current selections + exam structure
@@ -1294,6 +1684,124 @@ if (subtopics.length && subSrc) {
     attendance: attArr
   };
 }
+  /* Build back page data for one student based on backPlan */
+async function buildBackDataForStudent(stu) {
+  const structure = await getExamStructure(); // current class/exam structure (for max hints)
+  const frontExamId = examSel.value;
+
+  // Exams that must be read: selected back columns + internal list (if enabled) + front exam (for written)
+  const needExamIds = new Set([...(backPlan.examCols || [])]);
+  if (backPlan.useInternal20) {
+    (backPlan.internalExamIds || []).forEach(id => needExamIds.add(id));
+    needExamIds.add(frontExamId);
+  }
+
+  // Read & compute subjects for each needed exam
+  const perExamSubjectsMap = new Map(); // examId -> [{name,total,max}]
+  for (const exId of needExamIds) {
+    const marksObj = await _readMarksDocFor(stu.id, exId);
+    const subs = _extractSubjectTotalsFromMarks(marksObj, structure);
+    perExamSubjectsMap.set(exId, subs);
+  }
+
+  // Subject union (stable)
+  const subjectList = _unionSubjectsAcross(Array.from(needExamIds), perExamSubjectsMap);
+
+  // Compose rows
+    // Read front exam marks once (for Written→80 if needed)
+  const frontMarksObj = backPlan.useInternal20 ? await _readMarksDocFor(stu.id, frontExamId) : null;
+
+  // Compose rows
+  const rows = subjectList.map(name => {
+
+    const row = { subject: name, exams: {}, internal20: null, written80: null, total100: null, grade: '' };
+
+    // Fill plain exam columns (Marks | Grade per exam)
+    for (const exId of (backPlan.examCols || [])) {
+      const hit = (perExamSubjectsMap.get(exId) || []).find(s => _normLabel(s.name) === _normLabel(name));
+      if (hit) {
+        const pct = (hit.max > 0) ? (hit.total / hit.max) * 100 : null;
+        const grade =
+          pct == null ? '' :
+          (pct >= 95) ? 'A+' :
+          (pct >= 90) ? 'A'  :
+          (pct >= 85) ? 'B+' :
+          (pct >= 80) ? 'B'  :
+          (pct >= 70) ? 'C+' :
+          (pct >= 60) ? 'C'  :
+          (pct >= 50) ? 'D'  :
+          (pct >= 40) ? 'E'  : 'F';
+        row.exams[exId] = { marks: (typeof hit.total === 'number' ? hit.total : 'AB'), max: hit.max || '', grade };
+      } else {
+        row.exams[exId] = { marks: 'AB', max: '', grade: '' };
+      }
+    }
+
+    // Internal (Average → 20) + Written(→80) + Total(100)
+    if (backPlan.useInternal20) {
+      // Internal from selected previous exams
+      let sumM = 0, sumMax = 0;
+      let hadAny = false;
+      for (const exId of (backPlan.internalExamIds || [])) {
+        const hit = (perExamSubjectsMap.get(exId) || []).find(s => _normLabel(s.name) === _normLabel(name));
+        if (!hit) continue;
+        if (typeof hit.total === 'number' && typeof hit.max === 'number' && hit.max > 0) {
+          sumM += hit.total;
+          sumMax += hit.max;
+          hadAny = true;
+        }
+      }
+      let internal20 = 'AB';
+      let internalPct = null;
+      if (hadAny && sumMax > 0) {
+        internalPct = (sumM / sumMax) * 100;
+        internal20 = Math.round((internalPct / 100) * 20);
+      }
+      row.internal20 = internal20;
+
+            const wr = _extractWrittenForSubject(frontMarksObj, name, structure);
+      let written80 = 'AB';
+      let writtenPct = null;
+      if (wr.mark === 'AB') {
+        written80 = 'AB';
+      } else if (typeof wr.mark === 'number') {
+        if (typeof wr.max === 'number' && wr.max > 0) {
+          writtenPct = (wr.mark / wr.max) * 100;
+          written80 = Math.round((writtenPct / 100) * 80);
+        } else {
+          // no max known → treat raw as already out of 80? keep as raw
+          written80 = wr.mark;
+        }
+      }
+      row.written80 = written80;
+
+      // Total(100) + Grade
+      if (written80 === 'AB') {
+        row.total100 = 'AB';
+        row.grade = '';
+      } else {
+        const w = (typeof written80 === 'number') ? written80 : 0;
+        const i = (typeof internal20 === 'number') ? internal20 : 0;
+        const total = w + i; // out of 100
+        row.total100 = total;
+        const pct = total; // already out of 100
+        row.grade =
+          (pct >= 95) ? 'A+' :
+          (pct >= 90) ? 'A'  :
+          (pct >= 85) ? 'B+' :
+          (pct >= 80) ? 'B'  :
+          (pct >= 70) ? 'C+' :
+          (pct >= 60) ? 'C'  :
+          (pct >= 50) ? 'D'  :
+          (pct >= 40) ? 'E'  : 'F';
+      }
+    }
+
+    return row;
+  });
+
+  return { subjectList, rows };
+}
 async function getAllStudentFullData() {
   let dataArr = [];
   for (let stu of students) {
@@ -1433,12 +1941,38 @@ centerText(pdf, (totalMarks === '' || totalMarks == null ? 'AB' : String(totalMa
 centerText(pdf, student.overallGrade, xGrade, totalYAdj, 60, COLOR_GRADE);
 
 
-// 6) Attendance (10 months)
-for (let i = 0; i < 10; i++) {
-  const a = (student.attendance && student.attendance[i]) || { work: '', pres: '' };
-  centerText(pdf, String(a.work || ''), attWorkCoords[i][0], attWorkCoords[i][1], 60, COLOR_GREEN);
-  centerText(pdf, String(a.pres || ''), attPresCoords[i][0], attPresCoords[i][1], 60, COLOR_BROWN);
-}
+  // 6) Attendance (10 months)
+      // Attendance on preview
+    for (let i = 0; i < 10; i++) {
+      const a = (student.attendance && student.attendance[i]) || { work: "", pres: "" };
+      centerText(pdf, String(a.work || ""), attWorkCoords[i][0], attWorkCoords[i][1], 60, COLOR_GREEN);
+      centerText(pdf, String(a.pres || ""), attPresCoords[i][0], attPresCoords[i][1], 60, COLOR_BROWN);
+    }
+
+    // Back page (landscape) on preview, only if there is something to show
+    try {
+      if ((backPlan.examCols && backPlan.examCols.length) || backPlan.useInternal20) {
+        const backData = await buildBackDataForStudent(student);
+        pdf.addPage([3509, 2481], "l");
+        drawBackPageLandscape(pdf, backData, backPlan, exams);
+      }
+    } catch (e) {
+      console.warn("Back page build failed (preview):", e);
+    }
+
+  } // ← end for loop
+
+  // ===== Back page (landscape) for this student =====
+  try {
+    const backData = await buildBackDataForStudent(student);
+    // Only add a back page if something is selected (exam columns or Internal→20)
+    if ((backPlan.examCols && backPlan.examCols.length) || backPlan.useInternal20) {
+      pdf.addPage([3509,2481], 'l');
+      drawBackPageLandscape(pdf, backData, backPlan, exams);
+    }
+  } catch (e) {
+    console.warn('Back page build failed:', e);
+  }
 
   }
   pdf.save(isSingle ? `progress_card_${fullDataArr[0].roll || 'student'}.pdf`
@@ -1566,7 +2100,8 @@ centerText(pdf, student.overallGrade, xGrade, totalYAdj, 60, COLOR_GRADE);
 }
 // INIT
 (async function() {
-   await loadYears();
+  await loadYears();
+  renderBackCols();
 })();
   </script>
   <div id="spinnerOverlay" style="
@@ -1580,6 +2115,7 @@ centerText(pdf, student.overallGrade, xGrade, totalYAdj, 60, COLOR_GRADE);
 </div>
 </body>
 </html>
+
 
 
 
