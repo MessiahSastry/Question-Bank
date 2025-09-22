@@ -132,26 +132,6 @@
     <button id="addExamColBtn" class="student-btn" type="button">+ Add Exam Column</button>
     <div id="chosenBackCols" style="display:flex; gap:8px; flex-wrap:wrap;"></div>
   </div>
-
-  <!-- Internal (Average → 20) for the front exam -->
-  <div style="margin-top:12px;">
-    <label style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
-      <input type="checkbox" id="chkUseInternal20">
-      <span>Include <b>Internal (Average → <span id="internalOutOfTag">20</span>)</b> for front exam</span>
-    </label>
-
-    <div id="internalConfig" style="display:none; margin-left:26px;">
-  <div style="display:flex; align-items:center; gap:10px; margin:8px 0 10px 0;">
-    <label for="internalOutOf" style="margin:0;">Internal out of</label>
-    <input id="internalOutOf" type="number" min="1" max="100" value="20"
-           style="width:90px; padding:10px; border:1.5px solid #b4c8e9; border-radius:5px;">
-    <small style="color:#666;">(written will be out of <span id="writtenOutOfLbl">80</span>)</small>
-  </div>
-
-  <label for="prevExamsSel" style="margin-top:4px;">Average these previous exams</label>
-  <select id="prevExamsSel" multiple class="custom-select styled-dropdown"></select>
-</div>
-  </div>
 </div>
 
 <div class="student-list" id="studentList"></div>
@@ -342,13 +322,7 @@ const classSel   = document.getElementById('classSel');
 const sectionSel = document.getElementById('sectionSel');
 const examSel    = document.getElementById('examSel');
 
-// Define back-page plan EARLY so it's available to all handlers
-const backPlan = {
-  examCols: [],
-  useInternal20: false,
-  internalExamIds: [],
-  internalOutOf: 20   // user-chosen “out of” for Internal
-};
+const backPlan = { examCols: [] };
 
 // Initialize Choices.js for better dropdown UI (Class, Section, Exam)
 const classChoices = new Choices(classSel, {
@@ -356,26 +330,6 @@ const classChoices = new Choices(classSel, {
   itemSelectText: '',
   shouldSort: false
 });
-
-// ---- Internal (Average → N) wiring ----
-const internalOutOfInput = document.getElementById('internalOutOf');
-const internalOutOfTag   = document.getElementById('internalOutOfTag');
-const writtenOutOfLbl    = document.getElementById('writtenOutOfLbl');
-const chkUseInternal20   = document.getElementById('chkUseInternal20');
-const internalConfig     = document.getElementById('internalConfig');
-
-function _syncInternalOutOfUI() {
-  const n = Math.max(1, Math.min(100, parseInt(internalOutOfInput.value || '20', 10)));
-  internalOutOfInput.value = n;
-  backPlan.internalOutOf = n;                 // now safe; backPlan already defined
-  if (internalOutOfTag) internalOutOfTag.textContent = String(n);
-  if (writtenOutOfLbl)  writtenOutOfLbl.textContent  = String(100 - n);
-}
-
-internalOutOfInput?.addEventListener('input', _syncInternalOutOfUI);
-chkUseInternal20?.addEventListener('change', _syncInternalOutOfUI);
-// initialize labels once on load
-_syncInternalOutOfUI();
 
 // Remaining dropdowns
 const sectionChoices = new Choices(sectionSel, {
@@ -385,15 +339,6 @@ const sectionChoices = new Choices(sectionSel, {
 });
 
 const examChoices = new Choices(examSel, {
-  searchEnabled: false,
-  itemSelectText: '',
-  shouldSort: false
-});
-
-/* NEW: multi-select for previous exams (Internal → N) */
-const prevExamsSel = document.getElementById('prevExamsSel');
-const prevExamsChoices = new Choices(prevExamsSel, {
-  removeItemButton: true,
   searchEnabled: false,
   itemSelectText: '',
   shouldSort: false
@@ -419,7 +364,7 @@ function renderBackCols() {
 
   // Hide the “Add” button when Internal mode is on
   const addBtn = document.getElementById('addExamColBtn');
-  if (addBtn) addBtn.style.display = backPlan.useInternal20 ? 'none' : 'inline-block';
+if (addBtn) addBtn.style.display = 'inline-block';
 
   host.innerHTML = '';
   (backPlan.examCols || []).forEach((exId) => {
@@ -470,10 +415,6 @@ addExamColBtn?.addEventListener('click', () => {
   renderBackCols();
 });
 
-// Keep the UI in sync if Internal mode is toggled
-chkUseInternal20?.addEventListener('change', () => {
-  renderBackCols();
-});
 // ================== UI LOADERS ====================
 async function loadYears() {
   let snap = await db.collection('years').orderBy('name', 'desc').get();
@@ -547,19 +488,6 @@ if (exams.length === 0) {
   examChoices.setChoiceByValue(exams[0]?.id || '');
 }
 
-/* Populate multi-select for Internal (Average → 20) */
-if (typeof prevExamsChoices !== 'undefined') {
-  prevExamsChoices.clearStore();
-  prevExamsChoices.setChoices(
-    exams.map(e => ({ value: e.id, label: e.name })),
-    'value', 'label', false
-  );
-  // Restore previously selected items, if still present
-  const keep = new Set(backPlan.internalExamIds || []);
-  const stillThere = exams.map(e => e.id).filter(id => keep.has(id));
-  backPlan.internalExamIds = stillThere;
-  stillThere.forEach(id => prevExamsChoices.setChoiceByValue(id));
-}
 
 /* Prune examCols that no longer exist (e.g., class/exam set changed) */
 {
@@ -620,13 +548,7 @@ console.log("📝 Individual download student data:", {
     hideSpinner();
   }
 };
-  /* Toggle and store Internal (Average → 20) */
-chkUseInternal20.addEventListener('change', () => {
-  const on = !!chkUseInternal20.checked;
-  internalConfig.style.display = on ? 'block' : 'none';
-  backPlan.useInternal20 = on;
-});
-
+  
 previewBtn.onclick = async () => {
   showSpinner();
   try {
@@ -1039,23 +961,12 @@ function _measureTextWidth(pdf, text, size=48) {
 /* Build column model for back page */
 function _buildBackColumnsModel(backPlan, exams) {
   const cols = [{ key: '__subject', label: 'SUBJECT' }];
+for (const exId of (backPlan.examCols || [])) {
+  const ex = exams.find(e => e.id === exId);
+  cols.push({ key: exId, label: (ex?.name || exId) });
+}
+return cols;
 
-  if (backPlan.useInternal20) {
-  const N = Math.max(1, Math.min(100, +backPlan.internalOutOf || 20)); // internal out of
-  const W = Math.max(0, 100 - N);                                      // written out of
-  const T = N + W;                                                      // total out of
-  cols.push({ key: '__w80',  label: `MARKS OBT. (${W})` });
-  cols.push({ key: '__i20',  label: `INTERNAL (${N})` });
-  cols.push({ key: '__t100', label: `TOTAL (${T})` });
-  cols.push({ key: '__grade', label: 'GRADE' });
-} else {
-    // Plain selected exam columns (each shows Marks | Grade stacked)
-    for (const exId of (backPlan.examCols || [])) {
-      const ex = exams.find(e => e.id === exId);
-      cols.push({ key: exId, label: (ex?.name || exId) });
-    }
-  }
-  return cols;
 }
 
 /* Draw the table centered inside a fixed border area */
@@ -1065,22 +976,13 @@ function drawBackPageLandscape(pdf, backData, backPlan, exams) {
   // Fixed border same style as front, reuse generous padding
   const borderX = 120, borderY = 120, borderW = W - 240, borderH = H - 240;
 
-  // Header
+ 
     // Header (dynamic)
   pdf.setFont('helvetica','bold'); pdf.setFontSize(80); pdf.setTextColor(15,61,107);
-   const frontEx = exams.find(e => e.id === examSel.value);
-  let title;
-  if (backPlan.useInternal20) {
-  const N = Math.max(1, Math.min(100, +backPlan.internalOutOf || 20));
-  const W = Math.max(0, 100 - N);
-  const T = N + W;
-  title = `${(frontEx?.name || 'Selected Exam')} (${T} Marks)`;
-} else {
-    const names = (backPlan.examCols || [])
-      .map(id => exams.find(e => e.id === id)?.name || id)
-      .join(' | ');
-    title = names ? names : 'Selected Exams (Marks | Grade)';
-  }
+   const names = (backPlan.examCols || [])
+  .map(id => exams.find(e => e.id === id)?.name || id)
+  .join(' | ');
+const title = names ? names : 'Selected Exams (Marks | Grade)';
   pdf.text(String(title).toUpperCase(), W/2, 120, { align:'center', baseline:'top' });
 
 
@@ -1104,15 +1006,7 @@ function drawBackPageLandscape(pdf, backData, backPlan, exams) {
       for (const r of backData.rows) {
         w = Math.max(w, _measureTextWidth(pdf, r.subject, cellSize) + padX*2);
       }
-    } else if (backPlan.useInternal20) {
-      // numbers + grade cells
-      for (const r of backData.rows) {
-        const cand = [
-          r.written80, r.internal20, r.total100, r.grade
-        ].map(x => _measureTextWidth(pdf, (x === null ? '' : x), cellSize) + padX*2);
-        w = Math.max(w, ...cand);
-      }
-    } else {
+        } else {
       // exam column: show two stacked lines (Marks, Grade)
       for (const r of backData.rows) {
         const ex = r.exams[c.key];
@@ -1151,13 +1045,7 @@ function drawBackPageLandscape(pdf, backData, backPlan, exams) {
       const w = widths.get(c.key);
       if (c.key === '__subject') {
         pdf.text(String(r.subject).toUpperCase(), x + 12, y, { align:'left', baseline:'alphabetic' });
-      } else if (backPlan.useInternal20) {
-        // composite columns
-        if (c.key === '__w80')   pdf.text(String(r.written80 ?? ''), x + w/2, y, { align:'center' });
-        if (c.key === '__i20')   pdf.text(String(r.internal20 ?? ''), x + w/2, y, { align:'center' });
-        if (c.key === '__t100')  pdf.text(String(r.total100 ?? ''), x + w/2, y, { align:'center' });
-        if (c.key === '__grade') pdf.text(String(r.grade || ''), x + w/2, y, { align:'center' });
-      } else {
+           } else {
         // exam column: show Marks (top) and Grade (below)
         const ex = r.exams[c.key];
         const t1 = (ex?.marks ?? '');
@@ -1536,32 +1424,6 @@ function _extractSubjectTotalsFromMarks(marksObj, structure) {
   return subjects;
 }
 
-/* Extract SA written component for a subject from a marks object */
-const _WRITTEN_ALIASES = ['written', 'written test', 'wt', 'main paper'];
-function _extractWrittenForSubject(marksObj, subjectName, structure) {
-  const norm = _normLabel, target = norm(subjectName);
-  const subsRoot = (marksObj && typeof marksObj.__subs === 'object') ? marksObj.__subs : {};
-  const keySubs = Object.keys(subsRoot || {}).find(k => norm(k) === target);
-  const subsObj = keySubs ? subsRoot[keySubs] : null;
-
-  let mark = null, max = null;
-
-  if (subsObj && typeof subsObj === 'object') {
-    for (const [k, v] of Object.entries(subsObj)) {
-      if (!_WRITTEN_ALIASES.includes(norm(k))) continue;
-      const val = (v === 'AB' || v === 'ab' || v === 'Ab') ? 'AB' : (typeof v === 'number' ? +v : null);
-      if (val === 'AB') return { mark: 'AB', max: null };
-      if (typeof val === 'number') mark = val;
-      // infer max from structure if possible
-      const subjDef = structure?.subjects?.find(s => norm(s.name) === target);
-      const stDef = subjDef?.subtopics?.find(t => norm(t.name) === norm(k));
-      if (typeof stDef?.max === 'number') max = stDef.max;
-      break;
-    }
-  }
-  return { mark, max };
-}
-
 // ======= PDF GENERATION =========
 async function fetchStudentData(stu) {
   // 0) Resolve current selections + exam structure
@@ -1739,14 +1601,9 @@ if (subtopics.length && subSrc) {
   /* Build back page data for one student based on backPlan */
 async function buildBackDataForStudent(stu) {
   const structure = await getExamStructure(); // current class/exam structure (for max hints)
-  const frontExamId = examSel.value;
-
-  // Exams that must be read: selected back columns + internal list (if enabled) + front exam (for written)
+  
+    // Exams that must be read: only selected back columns
   const needExamIds = new Set([...(backPlan.examCols || [])]);
-  if (backPlan.useInternal20) {
-    (backPlan.internalExamIds || []).forEach(id => needExamIds.add(id));
-    needExamIds.add(frontExamId);
-  }
 
   // Read & compute subjects for each needed exam
   const perExamSubjectsMap = new Map(); // examId -> [{name,total,max}]
@@ -1759,14 +1616,10 @@ async function buildBackDataForStudent(stu) {
   // Subject union (stable)
   const subjectList = _unionSubjectsAcross(Array.from(needExamIds), perExamSubjectsMap);
 
-  // Compose rows
-    // Read front exam marks once (for Written→80 if needed)
-  const frontMarksObj = backPlan.useInternal20 ? await _readMarksDocFor(stu.id, frontExamId) : null;
-
-  // Compose rows
+    // Compose rows
   const rows = subjectList.map(name => {
 
-    const row = { subject: name, exams: {}, internal20: null, written80: null, total100: null, grade: '' };
+        const row = { subject: name, exams: {} };
 
     // Fill plain exam columns (Marks | Grade per exam)
     for (const exId of (backPlan.examCols || [])) {
@@ -1787,73 +1640,6 @@ async function buildBackDataForStudent(stu) {
       } else {
         row.exams[exId] = { marks: 'AB', max: '', grade: '' };
       }
-    }
-
-    // Internal (Average → 20) + Written(→80) + Total(100)
-    if (backPlan.useInternal20) {
-      // Internal from selected previous exams
-      let sumM = 0, sumMax = 0;
-      let hadAny = false;
-      for (const exId of (backPlan.internalExamIds || [])) {
-        const hit = (perExamSubjectsMap.get(exId) || []).find(s => _normLabel(s.name) === _normLabel(name));
-        if (!hit) continue;
-        if (typeof hit.total === 'number' && typeof hit.max === 'number' && hit.max > 0) {
-          sumM += hit.total;
-          sumMax += hit.max;
-          hadAny = true;
-        }
-      }
-      const N = Math.max(1, Math.min(100, +backPlan.internalOutOf || 20)); // internal out of
-const W = Math.max(0, 100 - N);                                      // written out of
-const T = N + W;
-
-// Internal from selected previous exams → scale to N
-let internalScaled = 'AB';
-let internalPct = null;
-if (hadAny && sumMax > 0) {
-  internalPct = (sumM / sumMax) * 100;
-  internalScaled = Math.round((internalPct / 100) * N);
-}
-row.internal20 = internalScaled;
-
-// Written from front exam → scale to W
-const wr = _extractWrittenForSubject(frontMarksObj, name, structure);
-let writtenScaled = 'AB';
-if (wr.mark === 'AB') {
-  writtenScaled = 'AB';
-} else if (typeof wr.mark === 'number') {
-  if (typeof wr.max === 'number' && wr.max > 0) {
-    const writtenPct = (wr.mark / wr.max) * 100;
-    writtenScaled = Math.round((writtenPct / 100) * W);
-  } else {
-    // unknown max: leave as raw (best effort)
-    writtenScaled = wr.mark;
-  }
-}
-row.written80 = writtenScaled;
-
-// Total and grade (percentage over T)
-if (writtenScaled === 'AB') {
-  row.total100 = 'AB';
-  row.grade = '';
-} else {
-  const wv = (typeof writtenScaled === 'number') ? writtenScaled : 0;
-  const iv = (typeof internalScaled === 'number') ? internalScaled : 0;
-  const total = wv + iv;            // out of T
-  row.total100 = total;
-
-  const pct = (T > 0) ? (total / T) * 100 : null;
-  row.grade =
-    pct == null ? '' :
-    (pct >= 95) ? 'A+' :
-    (pct >= 90) ? 'A'  :
-    (pct >= 85) ? 'B+' :
-    (pct >= 80) ? 'B'  :
-    (pct >= 70) ? 'C+' :
-    (pct >= 60) ? 'C'  :
-    (pct >= 50) ? 'D'  :
-    (pct >= 40) ? 'E'  : 'F';
-}
     }
 
     return row;
@@ -2010,11 +1796,11 @@ centerText(pdf, student.overallGrade, xGrade, totalYAdj, 60, COLOR_GRADE);
 
     // Back page (landscape) on preview, only if there is something to show
     try {
-      if ((backPlan.examCols && backPlan.examCols.length) || backPlan.useInternal20) {
-        const backData = await buildBackDataForStudent(student);
-        pdf.addPage([3509, 2481], "l");
-        drawBackPageLandscape(pdf, backData, backPlan, exams);
-      }
+      if (backPlan.examCols && backPlan.examCols.length) {
+  const backData = await buildBackDataForStudent(student);
+  pdf.addPage([3509, 2481], "l");
+  drawBackPageLandscape(pdf, backData, backPlan, exams);
+}
     } catch (e) {
       console.warn("Back page build failed (preview):", e);
     }
@@ -2161,6 +1947,7 @@ centerText(pdf, student.overallGrade, xGrade, totalYAdj, 60, COLOR_GRADE);
 </div>
 </body>
 </html>
+
 
 
 
