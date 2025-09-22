@@ -975,20 +975,66 @@ function _buildBackColumnsModel(backPlan, exams) {
   }
   return { cols, groups };
 }
+// Fancy multicolor school title rendered on a canvas, then added to the PDF
+function drawSchoolTitleMulticolor(pdf, text, { borderX, borderY, borderW }) {
+  const targetW = Math.min(1800, Math.floor(borderW * 0.82));  // final width on PDF
+  const pad = 40;
+  const fontPx = 110; // <-- bigger title
+  const family = "Segoe UI, Arial, Helvetica, sans-serif";
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
 
+  // temporary size to measure text
+  canvas.width = 2200;
+  canvas.height = 220;
+  ctx.font = `900 ${fontPx}px ${family}`;
+  const metrics = ctx.measureText(String(text).toUpperCase());
+  const textW = Math.ceil(metrics.width);
+
+  // set final canvas size based on measured text
+  canvas.width = textW + pad * 2;
+  canvas.height = fontPx + pad * 2;
+  ctx.font = `900 ${fontPx}px ${family}`;
+  ctx.textBaseline = "top";
+
+  // soft drop shadow for contrast
+  ctx.shadowColor = "rgba(0,0,0,0.18)";
+  ctx.shadowBlur = 16;
+  ctx.shadowOffsetY = 8;
+
+  // horizontal gradient (multicolor)
+  const grad = ctx.createLinearGradient(0, 0, canvas.width, 0);
+  grad.addColorStop(0.00, "#0EA5E9"); // sky
+  grad.addColorStop(0.35, "#7C4DFF"); // violet
+  grad.addColorStop(0.70, "#FF6EC4"); // pink
+  grad.addColorStop(1.00, "#4ADEDE"); // aqua
+  ctx.fillStyle = grad;
+
+  ctx.fillText(String(text).toUpperCase(), pad, pad);
+
+  // scale to the target width on the PDF while keeping aspect ratio
+  const ratio = targetW / canvas.width;
+  const w = targetW;
+  const h = Math.round(canvas.height * ratio);
+  const x = borderX + Math.round((borderW - w) / 2);
+  const y = borderY + 40; // inside the border
+
+  pdf.addImage(canvas.toDataURL("image/png"), "PNG", x, y, w, h, undefined, "FAST");
+}
 
 // Draw back page with grouped exam headers (each exam → TOTAL | GRADE)
 function drawBackPageLandscape(pdf, backData, backPlan, exams, student) {
   const W = 3509, H = 2481;
   const borderX = 120, borderY = 120, borderW = W - 240, borderH = H - 240;
 
-    // ---- In-border header: School name + student details (no title above border) ----
-  const BLUE = [15,61,107], GREEN = [22,163,74];
-  pdf.setFont('helvetica','bold'); pdf.setTextColor(...BLUE);
-
-  // School name centered
-  pdf.setFontSize(64);
-  pdf.text("ST. PATRICK'S SCHOOL", W/2, borderY + 70, { align: 'center', baseline: 'alphabetic' });
+   // ---- In-border header: School name (multicolor) + student details ----
+const BLUE = [15,61,107], GREEN = [22,163,74];
+drawSchoolTitleMulticolor(pdf, "St. PATRICK'S SCHOOL", { borderX, borderY, borderW });
+// Subheading under the school name
+pdf.setFont('helvetica','bold');
+pdf.setTextColor(...BLUE);
+pdf.setFontSize(50);
+pdf.text("IIT & NEET FOUNDATION", W/2, borderY + 170, { align: 'center', baseline: 'alphabetic' });
 
   // Student details row (left-aligned)
   pdf.setFontSize(42);
@@ -2045,3 +2091,4 @@ centerText(pdf, student.overallGrade, xGrade, totalYAdj, 60, COLOR_GRADE);
 </div>
 </body>
 </html>
+
