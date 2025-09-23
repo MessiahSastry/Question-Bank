@@ -1890,8 +1890,21 @@ if ((!subjectList || subjectList.length === 0) && structure?.subjects?.length) {
   subjectList = structure.subjects.map(s => s.name);
 }
 
-    // Compose rows
-  const rows = subjectList.map(name => {
+    // Compose rows (use the same subject max the front page uses)
+const norm = s => String(s||'').replace(/[\s._-]+/g,'').toLowerCase();
+// use the structure we already fetched at the top of this function
+const maxBySubject = new Map();
+for (const subj of (structure.subjects || [])) {
+  const key = norm(subj.name);
+  let m = (typeof subj.subjectMax === 'number' ? subj.subjectMax : null);
+  if (m == null && Array.isArray(subj.subtopics) && subj.subtopics.length) {
+    const sum = subj.subtopics.reduce((a,t)=>a + (typeof t.max==='number'?t.max:0), 0);
+    m = sum > 0 ? sum : null;
+  }
+  maxBySubject.set(key, m);
+}
+
+const rows = subjectList.map(name => {
 
         const row = { subject: name, exams: {} };
 
@@ -1910,12 +1923,15 @@ if ((!subjectList || subjectList.length === 0) && structure?.subjects?.length) {
           (pct >= 60) ? 'C'  :
           (pct >= 50) ? 'D'  :
           (pct >= 40) ? 'E'  : 'F';
+        // use fixed subject max (same rule as front page)
+        const subjKey  = norm(name);
+        const fixedMax = maxBySubject.get(subjKey) ?? null;
+        
         row.exams[exId] = {
-        marks: (typeof hit.total === 'number' ? hit.total : 'AB'),
-        max:   (typeof hit.max === 'number' ? hit.max : null),
-        grade  // kept, but we'll recompute at draw time
-      };
-
+          marks: (typeof hit.total === 'number' ? hit.total : 'AB'),
+          max:   fixedMax,   // <-- key change
+          grade  // kept; draw step recomputes final display anyway
+        };
       } else {
         row.exams[exId] = { marks: 'AB', max: '', grade: '' };
       }
@@ -2237,6 +2253,7 @@ page.render({ canvasContext: ctx, viewport });
 </div>
 </body>
 </html>
+
 
 
 
