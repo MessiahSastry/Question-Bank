@@ -1039,6 +1039,8 @@ function drawBackPageLandscape(pdf, backData, backPlan, exams, student) {
     [128, 64, 0],   // deep brown
     [8, 92, 104],   // deep teal
   ];
+    // show "AB" when value is blank/undefined/null
+  const showAB = v => (v === '' || v === null || v === undefined ? 'AB' : String(v));
 
   // Title + subheading
   drawSchoolTitleMulticolor(pdf, "St. PATRICK'S SCHOOL", { borderX, borderY, borderW });
@@ -1233,7 +1235,7 @@ const rowFirstY = subHeaderY + 110 + ROW_TOP_GAP;
 
   // TOTAL (with fail ring if pct < 40)
   const cxTot = x + wTot/2;
-  pdf.text(String(t), cxTot, y, { align:'center', baseline:'alphabetic' });
+   pdf.text(showAB(t), cxTot, y, { align:'center', baseline:'alphabetic' });
 
   // draw red ring like front page when we have numeric marks & max
   if (typeof ex.marks === 'number' && typeof ex.max === 'number' && ex.max > 0) {
@@ -1302,7 +1304,7 @@ y += FOOTER_GAP;
     pdf.setTextColor(...GCLR2);
 
     // TOTAL marks
-    pdf.text(String(agg.total ?? ''), x + wTot/2, y, { align:'center', baseline:'alphabetic' });
+        pdf.text(showAB(agg.total ?? ''), x + wTot/2, y, { align:'center', baseline:'alphabetic' });
     x += wTot + gapBase;
 
     // Grade from pct (use '-' when no pct, e.g., all AB)
@@ -1916,64 +1918,56 @@ async function buildBackDataForStudent(stu) {
     perExamSubjectsMap.set(exId, subs);
   }
 
-  // Subject union (stable)
-  let subjectList = _unionSubjectsAcross(Array.from(needExamIds), perExamSubjectsMap);
-// fallback to current exam structure subject names if union is empty
-if ((!subjectList || subjectList.length === 0) && structure?.subjects?.length) {
-  subjectList = structure.subjects.map(s => s.name);
-}
-
-    // Compose rows (use the same subject max the front page uses)
+ // SUBJECT LIST & MAX: force same as front page (exam structure)
 const norm = s => String(s||'').replace(/[\s._-]+/g,'').toLowerCase();
-// use the structure we already fetched at the top of this function
+
+const subjectList = (structure?.subjects || []).map(s => s.name);
+
+// fixed max-per-subject exactly like front (subjectMax or sum of subtopic max)
 const maxBySubject = new Map();
-for (const subj of (structure.subjects || [])) {
+for (const subj of (structure?.subjects || [])) {
   const key = norm(subj.name);
   let m = (typeof subj.subjectMax === 'number' ? subj.subjectMax : null);
   if (m == null && Array.isArray(subj.subtopics) && subj.subtopics.length) {
-    const sum = subj.subtopics.reduce((a,t)=>a + (typeof t.max==='number'?t.max:0), 0);
+    const sum = subj.subtopics.reduce((a,t)=>a + (typeof t.max==='number' ? t.max : 0), 0);
     m = sum > 0 ? sum : null;
   }
   maxBySubject.set(key, m);
 }
 
+// Build rows strictly in structure order; only TOTAL (marks) & GRADE per selected exam
 const rows = subjectList.map(name => {
+  const row = { subject: name, exams: {} };
 
-        const row = { subject: name, exams: {} };
+  for (const exId of (backPlan.examCols || [])) {
+    // use totals extracted earlier, but match by the STRUCTURE name
+    const hit = (perExamSubjectsMap.get(exId) || []).find(s => _normLabel(s.name) === _normLabel(name));
 
-    // Fill plain exam columns (Marks | Grade per exam)
-    for (const exId of (backPlan.examCols || [])) {
-      const hit = (perExamSubjectsMap.get(exId) || []).find(s => _normLabel(s.name) === _normLabel(name));
-      if (hit) {
-        const pct = (hit.max > 0) ? (hit.total / hit.max) * 100 : null;
-        const grade =
-          pct == null ? '' :
-          (pct >= 95) ? 'A+' :
-          (pct >= 90) ? 'A'  :
-          (pct >= 85) ? 'B+' :
-          (pct >= 80) ? 'B'  :
-          (pct >= 70) ? 'C+' :
-          (pct >= 60) ? 'C'  :
-          (pct >= 50) ? 'D'  :
-          (pct >= 40) ? 'E'  : 'F';
-        // use fixed subject max (same rule as front page)
-        const subjKey  = norm(name);
-        const fixedMax = maxBySubject.get(subjKey) ?? null;
-        
-        row.exams[exId] = {
-          marks: (typeof hit.total === 'number' ? hit.total : 'AB'),
-          max:   fixedMax,   // <-- key change
-          grade  // kept; draw step recomputes final display anyway
-        };
-      } else {
-        row.exams[exId] = { marks: 'AB', max: '', grade: '' };
-      }
+    const fixedMax = maxBySubject.get(norm(name)) ?? null;
+    const marksVal = (hit && typeof hit.total === 'number') ? hit.total : 'AB';
+
+    // compute grade from fixedMax (same bands as front); if no max → '-'
+    let gradeTxt = '-';
+    if (marksVal !== 'AB' && typeof fixedMax === 'number' && fixedMax > 0) {
+      const pct = (marksVal / fixedMax) * 100;
+      gradeTxt =
+        (pct >= 95) ? 'A+' :
+        (pct >= 90) ? 'A'  :
+        (pct >= 85) ? 'B+' :
+        (pct >= 80) ? 'B'  :
+        (pct >= 70) ? 'C+' :
+        (pct >= 60) ? 'C'  :
+        (pct >= 50) ? 'D'  :
+        (pct >= 40) ? 'E'  : 'F';
     }
 
-    return row;
-  });
+    row.exams[exId] = { marks: marksVal, max: fixedMax, grade: gradeTxt };
+  }
 
-  return { subjectList, rows };
+  return row;
+});
+
+return { subjectList, rows };
 }
 async function getAllStudentFullData() {
   let dataArr = [];
@@ -2286,6 +2280,7 @@ page.render({ canvasContext: ctx, viewport });
 </div>
 </body>
 </html>
+
 
 
 
