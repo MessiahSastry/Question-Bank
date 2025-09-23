@@ -1031,7 +1031,18 @@ function drawBackPageLandscape(pdf, backData, backPlan, exams, student) {
   const borderX = 120, borderY = 120, borderW = W - 240, borderH = H - 240;
 
   // ---- In-border header: School name (multicolor) + student details ----
-  const BLUE = [15,61,107], GREEN = [22,163,74];
+  // ---- In-border header: School name (multicolor) + student details ----
+const BLUE = [15,61,107], GREEN = [22,163,74];
+
+// Distinct dark colors per exam group (cycle if more groups)
+const EXAM_COLORS = [
+  [20, 46, 112],  // deep blue
+  [12, 88, 38],   // deep green
+  [110, 28, 28],  // deep maroon
+  [94, 56, 142],  // deep violet
+  [128, 64, 0],   // deep brown
+  [8, 92, 104],   // deep teal
+];
 
   drawSchoolTitleMulticolor(pdf, "St. PATRICK'S SCHOOL", { borderX, borderY, borderW });
 
@@ -1050,9 +1061,31 @@ pdf.text(`CLASS: ${clsSec.toUpperCase()}`, borderX + 40, infoY + 48);
 pdf.text(`ROLL: ${(student?.roll ?? "").toString()}`, borderX + 820, infoY + 48);
 
   // Border
+  // Rounded header box around SUBJECT + exam headers
+{
+  const boxPadX = 18;                   // horizontal padding
+  const boxPadTop = 22;                 // space above the first line of the exam name
+  const boxPadBottom = 26;              // space below "TOTAL/GRADE" line
+
+  // Top is a bit above the exam name; bottom a bit below the subheaders
+  const headerBoxTop = groupHeaderY - (headerSize + 6) - boxPadTop;
+  const headerBoxBottom = subHeaderY + 18 + boxPadBottom;
+  const headerBoxHeight = headerBoxBottom - headerBoxTop;
+
   pdf.setDrawColor(15,61,107);
-  pdf.setLineWidth(6);
-  pdf.roundedRect(borderX, borderY+40, borderW, borderH-40, 24, 24, 'S');
+  pdf.setLineWidth(3);
+  pdf.roundedRect(
+    startX - boxPadX,
+    headerBoxTop,
+    sumW + boxPadX * 2,
+    headerBoxHeight,
+    16, 16, 'S'
+  );
+
+  // Thin line under headers (keep)
+  pdf.setLineWidth(2);
+  pdf.line(startX, subHeaderY + 14, startX + sumW, subHeaderY + 14);
+}
 
   // Build column model (SUBJECT + for each exam: TOTAL, GRADE) + group metadata
   const { cols, groups } = _buildBackColumnsModel(backPlan, exams);
@@ -1099,10 +1132,12 @@ pdf.text(`ROLL: ${(student?.roll ?? "").toString()}`, borderX + 820, infoY + 48)
   pdf.setFontSize(headerSize);
   pdf.setTextColor(15,61,107);
 
-  // SUBJECT column header occupies only the subheader row
-  const subjW = widths.get('__subject');
-  pdf.text('SUBJECT', x + subjW/2, subHeaderY, { align:'center', baseline:'alphabetic' });
-  x += subjW + gap;
+ // SUBJECT column header occupies only the subheader row
+const subjW = widths.get('__subject');
+pdf.setTextColor(...GREEN); // make SUBJECT green
+pdf.text('SUBJECT', x + subjW/2, subHeaderY, { align:'center', baseline:'alphabetic' });
+pdf.setTextColor(15,61,107); // restore blue for the rest of the headers
+x += subjW + gap;
 
   // For each exam, draw the group label across its two child columns, then two child headers
   for (const g of groups) {
@@ -1111,30 +1146,60 @@ pdf.text(`ROLL: ${(student?.roll ?? "").toString()}`, borderX + 820, infoY + 48)
     const groupW = w1 + gap + w2;
 
     // Exam name (spanning, wrap to two lines if needed)
-    pdf.setFontSize(headerSize);
-    const parts = String(g.name || '').trim().split(/\s+/);
-    const line1 = (parts.length > 1) ? parts[0] : (parts[0] || '');
-    const line2 = (parts.length > 1) ? parts.slice(1).join(' ') : '';
-   const GROUP_NAME_SPLIT_GAP = 26; // was 18; increase for more space
+   // Pick a distinct color for this exam group
+const gIdx = groups.indexOf(g);
+const GCLR = EXAM_COLORS[gIdx % EXAM_COLORS.length];
+
+// Exam name (spanning, wrap to two lines if needed)
+pdf.setFontSize(headerSize);
+pdf.setTextColor(...GCLR);
+const parts = String(g.name || '').trim().split(/\s+/);
+const line1 = (parts.length > 1) ? parts[0] : (parts[0] || '');
+const line2 = (parts.length > 1) ? parts.slice(1).join(' ') : '';
 if (line2) {
-  pdf.text(line1.toUpperCase(), x + groupW/2, groupHeaderY - GROUP_NAME_SPLIT_GAP, { align:'center' });
-  pdf.text(line2.toUpperCase(), x + groupW/2, groupHeaderY + GROUP_NAME_SPLIT_GAP, { align:'center' });
+  pdf.text(line1.toUpperCase(), x + groupW/2, groupHeaderY - 26, { align:'center' });
+  pdf.text(line2.toUpperCase(), x + groupW/2, groupHeaderY + 26, { align:'center' });
 } else {
   pdf.text(line1.toUpperCase(), x + groupW/2, groupHeaderY, { align:'center' });
 }
 
-    // Child headers
-    pdf.setFontSize(subHeaderSize);
-    pdf.text('TOTAL', x + w1/2, subHeaderY, { align:'center' });
-    pdf.text('GRADE', x + w1 + gap + w2/2, subHeaderY, { align:'center' });
+// Child headers (“TOTAL”, “GRADE”) in the same color
+pdf.setFontSize(subHeaderSize);
+pdf.text('TOTAL', x + w1/2, subHeaderY, { align:'center' });
+pdf.text('GRADE', x + w1 + gap + w2/2, subHeaderY, { align:'center' });
+
+// restore default header color for anything else after this group
+pdf.setTextColor(15,61,107);
 
     x += groupW + gap;
   }
 
   // Thin line under headers
+  // Rounded header box around SUBJECT + exam headers
+{
+  const boxPadX = 18;                   // horizontal padding
+  const boxPadTop = 22;                 // space above the first line of the exam name
+  const boxPadBottom = 26;              // space below "TOTAL/GRADE" line
+
+  // Top is a bit above the exam name; bottom a bit below the subheaders
+  const headerBoxTop = groupHeaderY - (headerSize + 6) - boxPadTop;
+  const headerBoxBottom = subHeaderY + 18 + boxPadBottom;
+  const headerBoxHeight = headerBoxBottom - headerBoxTop;
+
   pdf.setDrawColor(15,61,107);
   pdf.setLineWidth(3);
-pdf.line(startX, subHeaderY + 18, startX + sumW, subHeaderY + 18);
+  pdf.roundedRect(
+    startX - boxPadX,
+    headerBoxTop,
+    sumW + boxPadX * 2,
+    headerBoxHeight,
+    16, 16, 'S'
+  );
+
+  // Thin line under headers (keep)
+  pdf.setLineWidth(2);
+  pdf.line(startX, subHeaderY + 14, startX + sumW, subHeaderY + 14);
+}
 
   // Rows
   let y = rowStartY;
@@ -1145,10 +1210,12 @@ pdf.line(startX, subHeaderY + 18, startX + sumW, subHeaderY + 18);
   for (const r of backData.rows) {
     x = startX;
 
-    // SUBJECT cell (left aligned)
-    const wSub = widths.get('__subject');
-    pdf.text(String(r.subject).toUpperCase(), x + 12, y, { align:'left', baseline:'alphabetic' });
-    x += wSub + gap;
+   // SUBJECT cell (left aligned) — green text
+const wSub = widths.get('__subject');
+pdf.setTextColor(...GREEN);
+pdf.text(String(r.subject).toUpperCase(), x + 12, y, { align:'left', baseline:'alphabetic' });
+pdf.setTextColor(0,0,0); // restore default for other columns
+x += wSub + gap;
 
     // For each exam → two subcolumns
     for (const g of groups) {
@@ -1161,12 +1228,21 @@ pdf.line(startX, subHeaderY + 18, startX + sumW, subHeaderY + 18);
       const grd = ex.grade ?? '';
 
       // TOTAL
-      pdf.text(String(t), x + wTot/2, y, { align:'center', baseline:'alphabetic' });
-      x += wTot + gap;
+      // Use the same color as the group header for data cells
+const gIdx2 = groups.indexOf(g);
+const GCLR2 = EXAM_COLORS[gIdx2 % EXAM_COLORS.length];
+pdf.setTextColor(...GCLR2);
 
-      // GRADE
-      pdf.text(String(grd), x + wGr/2, y, { align:'center', baseline:'alphabetic' });
-      x += wGr + gap;
+// TOTAL
+pdf.text(String(t), x + wTot/2, y, { align:'center', baseline:'alphabetic' });
+x += wTot + gap;
+
+// GRADE
+pdf.text(String(grd), x + wGr/2, y, { align:'center', baseline:'alphabetic' });
+x += wGr + gap;
+
+// restore black for next columns/rows
+pdf.setTextColor(0,0,0);
     }
 
     y += rowGap;
@@ -1195,21 +1271,30 @@ pdf.line(startX, subHeaderY + 18, startX + sumW, subHeaderY + 18);
         const groupW = w1 + gap + w2;
 
         // wrap exam name to two lines if needed
-        pdf.setFontSize(headerSize);
-        const parts = String(g.name || '').trim().split(/\s+/);
-        const line1 = (parts.length > 1) ? parts[0] : (parts[0] || '');
-        const line2 = (parts.length > 1) ? parts.slice(1).join(' ') : '';
-        const GROUP_NAME_SPLIT_GAP = 26; // was 18; increase for more space
-        if (line2) {
-          pdf.text(line1.toUpperCase(), x + groupW/2, groupHeaderY - GROUP_NAME_SPLIT_GAP, { align:'center' });
-          pdf.text(line2.toUpperCase(), x + groupW/2, groupHeaderY + GROUP_NAME_SPLIT_GAP, { align:'center' });
-        } else {
-          pdf.text(line1.toUpperCase(), x + groupW/2, groupHeaderY, { align:'center' });
-        }
-        pdf.setFontSize(subHeaderSize);
-        pdf.text('TOTAL', x + w1/2, subHeaderY, { align:'center' });
-        pdf.text('GRADE', x + w1 + gap + w2/2, subHeaderY, { align:'center' });
+        // Pick a distinct color for this exam group
+const gIdx = groups.indexOf(g);
+const GCLR = EXAM_COLORS[gIdx % EXAM_COLORS.length];
 
+// Exam name (spanning, wrap to two lines if needed)
+pdf.setFontSize(headerSize);
+pdf.setTextColor(...GCLR);
+const parts = String(g.name || '').trim().split(/\s+/);
+const line1 = (parts.length > 1) ? parts[0] : (parts[0] || '');
+const line2 = (parts.length > 1) ? parts.slice(1).join(' ') : '';
+if (line2) {
+  pdf.text(line1.toUpperCase(), x + groupW/2, groupHeaderY - 26, { align:'center' });
+  pdf.text(line2.toUpperCase(), x + groupW/2, groupHeaderY + 26, { align:'center' });
+} else {
+  pdf.text(line1.toUpperCase(), x + groupW/2, groupHeaderY, { align:'center' });
+}
+
+// Child headers (“TOTAL”, “GRADE”) in the same color
+pdf.setFontSize(subHeaderSize);
+pdf.text('TOTAL', x + w1/2, subHeaderY, { align:'center' });
+pdf.text('GRADE', x + w1 + gap + w2/2, subHeaderY, { align:'center' });
+
+// restore default header color for anything else after this group
+pdf.setTextColor(15,61,107);
         x += groupW + gap;
       }
 
@@ -2121,6 +2206,7 @@ page.render({ canvasContext: ctx, viewport });
 </div>
 </body>
 </html>
+
 
 
 
