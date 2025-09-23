@@ -1206,12 +1206,17 @@ groups.forEach((g, idx) => {
   const groupW = w1 + gapBase + w2;
 
   // compute this exam's TOTAL MAX = sum of per-subject max (already on rows)
-  const examMaxSum = backData.rows.reduce((acc, r) => {
-    const ex = r.exams?.[g.examId];
-    const m  = (ex && typeof ex.max === 'number') ? ex.max : 0;
-    return acc + m;
-  }, 0);
-  const marksLine = examMaxSum > 0 ? `(${examMaxSum} MARKS)` : '';
+  // compute PER-SUBJECT max for this exam (must be the same for all subjects)
+const maxSet = new Set(
+  backData.rows
+    .map(r => {
+      const m = r.exams?.[g.examId]?.max;
+      return (typeof m === 'number' && m > 0) ? m : null;
+    })
+    .filter(v => v != null)
+);
+const perSubjectMax = (maxSet.size === 1) ? [...maxSet][0] : null;
+const marksLine = perSubjectMax ? `(${perSubjectMax} MARKS)` : '';
 
   const GCLR = EXAM_COLORS[idx % EXAM_COLORS.length];
   pdf.setTextColor(...GCLR);
@@ -2025,27 +2030,19 @@ async function buildBackDataForStudent(stu) {
   // Read & compute subjects for each needed exam
   const perExamSubjectsMap = new Map(); // examId -> [{name,total,max}]
   for (const exId of needExamIds) {
-    const marksObj = await _readMarksDocFor(stu.id, exId);
-    const subs = _extractSubjectTotalsFromMarks(marksObj, structure);
-    perExamSubjectsMap.set(exId, subs);
-  }
+  const marksObj = await _readMarksDocFor(stu.id, exId);
+  const exDef    = exams.find(e => e.id === exId) || null;
+  const exStruct = await buildExamStructure(exDef, {
+    year: yearSel.value, classId: classSel.value, sectionId: sectionSel.value
+  });
+  const subs = _extractSubjectTotalsFromMarks(marksObj, exStruct); // per-exam subject list + max
+  perExamSubjectsMap.set(exId, subs);
+}
 
  // SUBJECT LIST & MAX: force same as front page (exam structure)
+// SUBJECT LIST: union across the chosen back-page exams (per Firestore)
 const norm = s => String(s||'').replace(/[\s._-]+/g,'').toLowerCase();
-
-const subjectList = (structure?.subjects || []).map(s => s.name);
-
-// fixed max-per-subject exactly like front (subjectMax or sum of subtopic max)
-const maxBySubject = new Map();
-for (const subj of (structure?.subjects || [])) {
-  const key = norm(subj.name);
-  let m = (typeof subj.subjectMax === 'number' ? subj.subjectMax : null);
-  if (m == null && Array.isArray(subj.subtopics) && subj.subtopics.length) {
-    const sum = subj.subtopics.reduce((a,t)=>a + (typeof t.max==='number' ? t.max : 0), 0);
-    m = sum > 0 ? sum : null;
-  }
-  maxBySubject.set(key, m);
-}
+const subjectList = _unionSubjectsAcross([...needExamIds], perExamSubjectsMap);
 
 // Build rows strictly in structure order; only TOTAL (marks) & GRADE per selected exam
 const rows = subjectList.map(name => {
@@ -2055,8 +2052,8 @@ const rows = subjectList.map(name => {
     // use totals extracted earlier, but match by the STRUCTURE name
     const hit = (perExamSubjectsMap.get(exId) || []).find(s => _normLabel(s.name) === _normLabel(name));
 
-    const fixedMax = maxBySubject.get(norm(name)) ?? null;
-    const marksVal = (hit && typeof hit.total === 'number') ? hit.total : 'AB';
+const fixedMax = (hit && typeof hit.max === 'number') ? hit.max : null; // per-exam per-subject max
+const marksVal = (hit && typeof hit.total === 'number') ? hit.total : 'AB';
 
     // compute grade from fixedMax (same bands as front); if no max → '-'
     let gradeTxt = '-';
@@ -2462,6 +2459,7 @@ page.render({ canvasContext: ctx, viewport });
 </div>
 </body>
 </html>
+
 
 
 
