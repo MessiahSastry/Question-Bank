@@ -976,53 +976,71 @@ cols.push({ key: `${exId}__gr`,  label: 'GRADE', kind: 'gr',  examId: exId });
   return { cols, groups };
 }
 
-// Fancy multicolor school title rendered on a canvas, then added to the PDF
-function drawSchoolTitleMulticolor(pdf, text, { borderX, borderY, borderW }) {
-  const targetW = Math.min(1800, Math.floor(borderW * 0.82)); // final width on PDF
+// Two-tone school title (solid fill + border/outline) like front page
+function drawSchoolTitleTwoTone(
+  pdf,
+  text,
+  { borderX, borderY, borderW },
+  opts = {}
+) {
+  const {
+    fill = '#ff7a00',       // inside color (front-page orange)
+    stroke = '#0f3d6b',     // border color (front-page navy)
+    strokeWidth = 12,       // outline thickness
+    shadow = 'rgba(0,0,0,0.18)',
+    fontPx = 110,           // title size
+    yOffset = 40,           // distance from top border
+    family = "Segoe UI, Arial, Helvetica, sans-serif"
+  } = opts;
+
+  const targetW = Math.min(1800, Math.floor(borderW * 0.82));
   const pad = 40;
-  const fontPx = 110; // <-- bigger title
-  const family = "Segoe UI, Arial, Helvetica, sans-serif";
 
-  const canvas = document.createElement("canvas");
-  const ctx = canvas.getContext("2d");
+  // measure
+  const mCanvas = document.createElement('canvas');
+  const mCtx = mCanvas.getContext('2d');
+  mCanvas.width = 2200; mCanvas.height = 220;
+  mCtx.font = `900 ${fontPx}px ${family}`;
+  const textStr = String(text || '').toUpperCase();
+  const textW = Math.ceil(mCtx.measureText(textStr).width);
 
-  // temporary size to measure text
-  canvas.width = 2200;
-  canvas.height = 220;
+  // paint
+  const W = textW + pad * 2;
+  const H = fontPx + pad * 2;
+  const canvas = document.createElement('canvas');
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext('2d');
+
   ctx.font = `900 ${fontPx}px ${family}`;
-  const metrics = ctx.measureText(String(text).toUpperCase());
-  const textW = Math.ceil(metrics.width);
+  ctx.textBaseline = 'top';
 
-  // set final canvas size based on measured text
-  canvas.width = textW + pad * 2;
-  canvas.height = fontPx + pad * 2;
+  // soft shadow (optional)
+  if (shadow) {
+    ctx.shadowColor = shadow;
+    ctx.shadowBlur = 16;
+    ctx.shadowOffsetY = 8;
+  }
 
-  ctx.font = `900 ${fontPx}px ${family}`;
-  ctx.textBaseline = "top";
+  // outline
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = strokeWidth;
+  ctx.strokeText(textStr, pad, pad);
 
-  // soft drop shadow for contrast
-  ctx.shadowColor = "rgba(0,0,0,0.18)";
-  ctx.shadowBlur = 16;
-  ctx.shadowOffsetY = 8;
+  // fill
+  ctx.shadowColor = 'transparent';
+  ctx.fillStyle = fill;
+  ctx.fillText(textStr, pad, pad);
 
-  // horizontal gradient (multicolor)
-  const grad = ctx.createLinearGradient(0, 0, canvas.width, 0);
-  grad.addColorStop(0.00, "#0EA5E9"); // sky
-  grad.addColorStop(0.35, "#7C4DFF"); // violet
-  grad.addColorStop(0.70, "#FF6EC4"); // pink
-  grad.addColorStop(1.00, "#4ADEDE"); // aqua
-  ctx.fillStyle = grad;
-
-  ctx.fillText(String(text).toUpperCase(), pad, pad);
-
-  // scale to the target width on the PDF while keeping aspect ratio
+  // place on PDF (scaled)
   const ratio = targetW / canvas.width;
   const w = targetW;
   const h = Math.round(canvas.height * ratio);
   const x = borderX + Math.round((borderW - w) / 2);
-  const y = borderY + 40; // inside the border
+  const y = borderY + yOffset;
 
-  pdf.addImage(canvas.toDataURL("image/png"), "PNG", x, y, w, h, undefined, "FAST");
+  pdf.addImage(canvas.toDataURL('image/png'), 'PNG', x, y, w, h, undefined, 'FAST');
 }
 
 function drawBackPageLandscape(pdf, backData, backPlan, exams, student) {
@@ -1043,7 +1061,12 @@ function drawBackPageLandscape(pdf, backData, backPlan, exams, student) {
   const showAB = v => (v === '' || v === null || v === undefined ? 'AB' : String(v));
 
   // Title + subheading
-  drawSchoolTitleMulticolor(pdf, "St. PATRICK'S SCHOOL", { borderX, borderY, borderW });
+  drawSchoolTitleTwoTone(
+  pdf,
+  "St. Patrick's School",
+  { borderX, borderY, borderW },
+  { fill: '#ff7a00', stroke: '#0f3d6b', strokeWidth: 12, yOffset: 40 }
+);
   pdf.setFont('helvetica','bold');
   pdf.setTextColor(...BLUE);
   pdf.setFontSize(90);
@@ -2280,6 +2303,7 @@ page.render({ canvasContext: ctx, viewport });
 </div>
 </body>
 </html>
+
 
 
 
