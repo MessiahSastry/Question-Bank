@@ -2027,19 +2027,24 @@ if (subtopics.length && subSrc) {
     attendance: attArr
   };
 }
-  /* Build back page data for one student based on backPlan — Firestore-only per exam */
+  // Build back page rows from the exam schema (subjects + max);
+// apply AB / '-' rule:
+// - Subject present in schema but student's marks are blank → 'AB'
+// - Subject not present in that exam at all → '-'
 async function buildBackDataForStudent(stu) {
   const needExamIds = new Set([...(backPlan.examCols || [])]);
   const norm = s => String(s || '').replace(/[\s._-]+/g, '').toLowerCase();
 
-  // For each back-page exam: read its schema (subjects + per-subject max) and this student's marks
+  // 1) Read schema (subjects + per-subject max) for each chosen exam
   const schemaByExam = new Map();   // exId -> { subjects: string[], maxBySubject: Map(norm->max), headerMax: number|null }
-  const marksByExam  = new Map();   // exId -> marks object
+  const marksByExam  = new Map();   // exId -> raw marks doc for this student
 
   for (const exId of needExamIds) {
     const exDef = exams.find(e => e.id === exId) || {};
-    // Build schema for THIS exam only
-    const subjects = Array.isArray(exDef.subjects) ? exDef.subjects.map(s => s?.name || '') : [];
+    const subjects = Array.isArray(exDef.subjects)
+      ? exDef.subjects.map(s => s?.name || '')
+      : [];
+
     const maxBySubject = new Map();
     for (const s of (exDef.subjects || [])) {
       const key = norm(s?.name || '');
@@ -2050,66 +2055,64 @@ async function buildBackDataForStudent(stu) {
       }
       if (key) maxBySubject.set(key, m);
     }
-    // header line uses the first non-null per-subject max
+
+    // header "(NN MARKS)" uses first non-null max from schema
     let headerMax = null;
     for (const v of maxBySubject.values()) { if (typeof v === 'number' && v > 0) { headerMax = v; break; } }
 
     schemaByExam.set(exId, { subjects, maxBySubject, headerMax });
 
-    const marksObj = await _readMarksDocFor(stu.id, exId);
-    marksByExam.set(exId, marksObj);
+    // student marks for that exam
+    const mobj = await _readMarksDocFor(stu.id, exId);
+    marksByExam.set(exId, mobj || {});
   }
 
-  // SUBJECT LIST = follow the FRONT-PAGE exam doc order (schema-driven).
-// Fallback to old union if front-page schema is empty.
-let subjectList = [];
-try {
-  const frontStruct = await getExamStructure(); // uses the selected (front) exam
-  if (frontStruct && Array.isArray(frontStruct.subjects) && frontStruct.subjects.length) {
-    subjectList = frontStruct.subjects.map(s => s?.name).filter(Boolean);
-  }
-} catch(_) { /* ignore and fall back below */ }
-
-if (!subjectList.length) {
-  // Fallback: union across chosen back-page exams (previous behavior)
+  // 2) Subject list = union of subject names from the chosen exam schemas
+  //    (guarantees FA2 subjects appear even if student marks are empty)
   const subjectSet = new Set();
   for (const exId of needExamIds) {
     (schemaByExam.get(exId)?.subjects || []).forEach(n => n && subjectSet.add(n));
   }
-  subjectList = Array.from(subjectSet);
-}
-  // Build rows
+  const subjectList = Array.from(subjectSet);
+
+  // 3) Build rows with AB / '-' rule
   const rows = subjectList.map(name => {
-    const row = { subject: name, exams: {} };
     const keyName = norm(name);
+    const row = { subject: name, exams: {} };
 
     for (const exId of (backPlan.examCols || [])) {
-      const { maxBySubject } = schemaByExam.get(exId) || {};
-      const fixedMax = maxBySubject ? maxBySubject.get(keyName) ?? null : null;
-
       const mobj = marksByExam.get(exId) || {};
+      const { maxBySubject } = schemaByExam.get(exId) || {};
+      const fixedMax = maxBySubject ? (maxBySubject.get(keyName) ?? null) : null;
+
+      // Look for marks in either __subs.<Subject> or direct scalar/object at <Subject>
       const subsRoot = (mobj && typeof mobj.__subs === 'object') ? mobj.__subs : null;
-      const keyRoot = Object.keys(mobj).find(k => norm(k) === keyName);
-      const keySubs = subsRoot ? Object.keys(subsRoot).find(k => norm(k) === keyName) : null;
+      const subsKey  = subsRoot ? Object.keys(subsRoot).find(k => norm(k) === keyName) : null;
+      const subjKey  = Object.keys(mobj).find(k => norm(k) === keyName);
 
-      // Marks rule:
-      // - Subject not present in this exam → '-'
-      // - Present but no numeric value anywhere → 'AB'
-      // - Any numeric → sum or value
-      let marksVal = '-';
-      if (keySubs && subsRoot[keySubs] && typeof subsRoot[keySubs] === 'object') {
-        let sum = 0, saw = false;
-        for (const v of Object.values(subsRoot[keySubs])) {
-          if (typeof v === 'number' && !isNaN(v)) { sum += v; saw = true; }
+      let marksVal = '-'; // default = subject not present in this exam
+      if (subsKey && typeof subsRoot[subsKey] === 'object') {
+        let sum = 0, sawNum = false;
+        for (const v of Object.values(subsRoot[subsKey])) {
+          if (typeof v === 'number' && !isNaN(v)) { sum += v; sawNum = true; }
         }
-        marksVal = saw ? sum : 'AB';
-      } else if (keyRoot) {
-        const v = mobj[keyRoot];
-        if (typeof v === 'number' && !isNaN(v)) marksVal = v;
-        else if (String(v).toUpperCase() === 'AB') marksVal = 'AB';
-        else marksVal = 'AB';
+        marksVal = sawNum ? sum : 'AB';         // present but blank → AB
+      } else if (subjKey !== undefined) {
+        const v = mobj[subjKey];
+        if (typeof v === 'number' && !isNaN(v))      marksVal = v;     // number or 0
+        else if (String(v).toUpperCase() === 'AB')   marksVal = 'AB';  // explicit AB
+        else if (v && typeof v === 'object') {
+          // object at root: sum numbers; if none, AB
+          let sum = 0, saw = false;
+          for (const x of Object.values(v)) {
+            if (typeof x === 'number' && !isNaN(x)) { sum += x; saw = true; }
+          }
+          marksVal = saw ? sum : 'AB';
+        } else {
+          marksVal = 'AB'; // present in exam but blank → AB
+        }
       }
-
+      // Grade (only when we know both marks and max)
       let gradeTxt = '-';
       if (typeof marksVal === 'number' && typeof fixedMax === 'number' && fixedMax > 0) {
         const pct = (marksVal / fixedMax) * 100;
@@ -2126,10 +2129,11 @@ if (!subjectList.length) {
 
       row.exams[exId] = { marks: marksVal, max: fixedMax, grade: gradeTxt };
     }
+
     return row;
   });
 
-  // Provide header max per exam for the banner "(NN MARKS)"
+  // 4) Header max per exam for the "(NN MARKS)" line above group
   const headerMaxByExam = new Map();
   for (const exId of needExamIds) {
     headerMaxByExam.set(exId, schemaByExam.get(exId)?.headerMax ?? null);
@@ -2518,3 +2522,4 @@ page.render({ canvasContext: ctx, viewport });
 </div>
 </body>
 </html>
+
