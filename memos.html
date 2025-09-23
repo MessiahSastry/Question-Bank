@@ -1025,29 +1025,23 @@ function drawSchoolTitleMulticolor(pdf, text, { borderX, borderY, borderW }) {
   pdf.addImage(canvas.toDataURL("image/png"), "PNG", x, y, w, h, undefined, "FAST");
 }
 
-// Draw back page with grouped exam headers (each exam → TOTAL | GRADE)
 function drawBackPageLandscape(pdf, backData, backPlan, exams, student) {
   const W = 3509, H = 2481;
   const borderX = 120, borderY = 120, borderW = W - 240, borderH = H - 240;
 
-    // ---- In-border header: School name (multicolor) + student details ----
-// ---- In-border header: School name (multicolor) + student details ----
-const BLUE = [15,61,107], GREEN = [22,163,74];
+  // Colors
+  const BLUE = [15,61,107], GREEN = [22,163,74];
+  const EXAM_COLORS = [
+    [20, 46, 112],  // deep blue
+    [12, 88, 38],   // deep green
+    [110, 28, 28],  // deep maroon
+    [94, 56, 142],  // deep violet
+    [128, 64, 0],   // deep brown
+    [8, 92, 104],   // deep teal
+  ];
 
-// Distinct dark colors per exam group (cycle if more groups)
-const EXAM_COLORS = [
-  [20, 46, 112],  // deep blue
-  [12, 88, 38],   // deep green
-  [110, 28, 28],  // deep maroon
-  [94, 56, 142],  // deep violet
-  [128, 64, 0],   // deep brown
-  [8, 92, 104],   // deep teal
-];
-
-
+  // Title + subheading
   drawSchoolTitleMulticolor(pdf, "St. PATRICK'S SCHOOL", { borderX, borderY, borderW });
-
-  // Subheading under the school name
   pdf.setFont('helvetica','bold');
   pdf.setTextColor(...BLUE);
   pdf.setFontSize(90);
@@ -1057,234 +1051,232 @@ const EXAM_COLORS = [
   pdf.setFontSize(42);
   const infoY = borderY + 230;
   const clsSec = `${(student?.class || "").toString()}${student?.section ? " / " + (student.section || "") : ""}`;
-pdf.text(`NAME: ${(student?.name || "").toString().toUpperCase()}`, borderX + 40, infoY);
-pdf.text(`CLASS: ${clsSec.toUpperCase()}`, borderX + 40, infoY + 48);
-pdf.text(`ROLL: ${(student?.roll ?? "").toString()}`, borderX + 820, infoY + 48);
+  pdf.text(`NAME: ${(student?.name || "").toString().toUpperCase()}`, borderX + 40, infoY);
+  pdf.text(`CLASS: ${clsSec.toUpperCase()}`, borderX + 40, infoY + 48);
+  pdf.text(`ROLL: ${(student?.roll ?? "").toString()}`, borderX + 820, infoY + 48);
 
   // Border
-pdf.setDrawColor(15, 61, 107);
-pdf.setLineWidth(6);
-pdf.roundedRect(borderX, borderY + 40, borderW, borderH - 40, 24, 24, 'S');
+  pdf.setDrawColor(15, 61, 107);
+  pdf.setLineWidth(6);
+  pdf.roundedRect(borderX, borderY + 40, borderW, borderH - 40, 24, 24, 'S');
 
-
-  // Build column model (SUBJECT + for each exam: TOTAL, GRADE) + group metadata
+  // Model
   const { cols, groups } = _buildBackColumnsModel(backPlan, exams);
-if (!backData || !Array.isArray(backData.rows) || backData.rows.length === 0) return;
+  if (!backData || !Array.isArray(backData.rows) || backData.rows.length === 0) return;
 
-  // Measure widths
-  const headerSize = 60, subHeaderSize = 56, cellSize = 46, padX = 18, gap = 18;
+  // Measure per-column widths from content
+  const headerSizeBase = 60, subHeaderSizeBase = 56, cellSizeBase = 46, padX = 18, gapBase = 18;
   const widths = new Map();
-
   for (const c of cols) {
-    let w = _measureTextWidth(pdf, c.label, headerSize) + padX * 2;
-
+    let w = _measureTextWidth(pdf, c.label, headerSizeBase) + padX * 2;
     if (c.key === '__subject') {
       for (const r of backData.rows) {
-        w = Math.max(w, _measureTextWidth(pdf, r.subject, cellSize) + padX * 2);
+        w = Math.max(w, _measureTextWidth(pdf, r.subject, cellSizeBase) + padX * 2);
       }
       w = Math.max(260, Math.min(700, Math.ceil(w)));
     } else {
-      // exam subcolumn width based on content of that exam for all rows
       for (const r of backData.rows) {
         const ex = r.exams?.[c.examId];
         const txt = c.kind === 'tot' ? (ex?.marks ?? '') : (ex?.grade ?? '');
-        w = Math.max(w, _measureTextWidth(pdf, txt, cellSize) + padX * 2);
+        w = Math.max(w, _measureTextWidth(pdf, txt, cellSizeBase) + padX * 2);
       }
       w = Math.max(160, Math.min(360, Math.ceil(w)));
     }
-
     widths.set(c.key, w);
   }
 
-  // Layout
-  const sumW = cols.reduce((a, c) => a + (widths.get(c.key) || 0), 0) + gap * (cols.length - 1);
+  // Horizontal layout
+  const sumW = cols.reduce((a, c) => a + (widths.get(c.key) || 0), 0) + gapBase * (cols.length - 1);
   const startX = borderX + Math.max(0, (borderW - sumW) / 2);
 
-  // Header rows Y
-  const groupHeaderY = borderY + 600; // Exam names (spanning label)
-  const subHeaderY = groupHeaderY + 80; // "TOTAL" / "GRADE"
-  const rowStartY = subHeaderY + 110; // first data row
-  const rowGap = 72;
+  // Vertical layout — SINGLE PAGE FIT
+  const groupHeaderY = borderY + 600;     // exam names (spanning)
+  const subHeaderY   = groupHeaderY + 80; // "TOTAL" / "GRADE"
+  const rowFirstY    = subHeaderY + 110;  // first data row baseline
 
- // Redraw grouped headers on new page
-x = startX;
-pdf.setFont('helvetica', 'bold');
-pdf.setTextColor(15, 61, 107);
-pdf.setFontSize(headerSize);
+  // We must fit: all subject rows + 2 summary rows in remaining height
+  const rowsCount = backData.rows.length + 2; // +2 for summary rows
+  const bottomLimit = borderY + borderH - 60; // safe bottom padding inside the border
+  const availableH = Math.max(200, bottomLimit - rowFirstY);
 
-// SUBJECT header — left aligned like row names
-const subjW = widths.get('__subject');
-const subjLeftInset = 12; // same inset as rows
-pdf.setTextColor(...GREEN);
-pdf.setFontSize(typeof cellSizeSubject !== 'undefined' ? cellSizeSubject : cellSize);
-pdf.text('SUBJECT', x + subjLeftInset, subHeaderY, { align: 'left', baseline: 'alphabetic' });
-pdf.setTextColor(15, 61, 107); // restore for the rest
-x += subjW + gap;
+  // Compute row gap and cell font to fit everything on one page
+  let rowGap = Math.floor(availableH / rowsCount);
+  rowGap = Math.max(54, Math.min(90, rowGap)); // clamp
+  const headerSize    = headerSizeBase;
+  const subHeaderSize = Math.max(40, Math.min(56, Math.round(rowGap * 0.62)));
+  const cellSize      = Math.max(36, Math.min(54, Math.round(rowGap * 0.64)));
 
-// (re)set size for the exam group titles that follow
-pdf.setFontSize(headerSize);
+  // Draw headers (group + subheaders)
+  let x = startX;
+  pdf.setFont('helvetica', 'bold');
+  pdf.setTextColor(15, 61, 107);
+  pdf.setFontSize(headerSize);
 
-  // For each exam, draw the group label across its two child columns, then two child headers
-  for (const g of groups) {
+  // SUBJECT header — left aligned
+  const subjW = widths.get('__subject');
+  const subjLeftInset = 12;
+  pdf.setTextColor(...GREEN);
+  pdf.setFontSize(subHeaderSize);
+  pdf.text('SUBJECT', x + subjLeftInset, subHeaderY, { align: 'left', baseline: 'alphabetic' });
+  pdf.setTextColor(15, 61, 107);
+  x += subjW + gapBase;
+
+  // Exam group headers
+  pdf.setFontSize(headerSize);
+  groups.forEach((g, idx) => {
     const c1 = cols[g.startIndex], c2 = cols[g.endIndex];
     const w1 = widths.get(c1.key), w2 = widths.get(c2.key);
-    const groupW = w1 + gap + w2;
+    const groupW = w1 + gapBase + w2;
 
-    // Exam name (spanning, wrap to two lines if needed)
-   // Pick a distinct color for this exam group
-// Pick a distinct color for this exam group
-const gIdx = groups.indexOf(g);
-const GCLR = EXAM_COLORS[gIdx % EXAM_COLORS.length];
+    const GCLR = EXAM_COLORS[idx % EXAM_COLORS.length];
+    pdf.setTextColor(...GCLR);
+    const parts = String(g.name || '').trim().split(/\s+/);
+    const line1 = (parts.length > 1) ? parts[0] : (parts[0] || '');
+    const line2 = (parts.length > 1) ? parts.slice(1).join(' ') : '';
+    if (line2) {
+      pdf.text(line1.toUpperCase(), x + groupW/2, groupHeaderY - 26, { align:'center' });
+      pdf.text(line2.toUpperCase(), x + groupW/2, groupHeaderY + 26, { align:'center' });
+    } else {
+      pdf.text(line1.toUpperCase(), x + groupW/2, groupHeaderY, { align:'center' });
+    }
+    pdf.setFontSize(subHeaderSize);
+    pdf.text('TOTAL', x + w1/2, subHeaderY, { align:'center' });
+    pdf.text('GRADE', x + w1 + gapBase + w2/2, subHeaderY, { align:'center' });
+    pdf.setTextColor(15,61,107);
+    x += groupW + gapBase;
+  });
 
-// Exam name (spanning, wrap to two lines if needed)
-pdf.setFontSize(headerSize);
-pdf.setTextColor(...GCLR);
-const parts = String(g.name || '').trim().split(/\s+/);
-const line1 = (parts.length > 1) ? parts[0] : (parts[0] || '');
-const line2 = (parts.length > 1) ? parts.slice(1).join(' ') : '';
-if (line2) {
-  pdf.text(line1.toUpperCase(), x + groupW/2, groupHeaderY - 26, { align:'center' });
-  pdf.text(line2.toUpperCase(), x + groupW/2, groupHeaderY + 26, { align:'center' });
-} else {
-  pdf.text(line1.toUpperCase(), x + groupW/2, groupHeaderY, { align:'center' });
-}
-
-// Child headers (“TOTAL”, “GRADE”) in the same color
-pdf.setFontSize(subHeaderSize);
-pdf.text('TOTAL', x + w1/2, subHeaderY, { align:'center' });
-pdf.text('GRADE', x + w1 + gap + w2/2, subHeaderY, { align:'center' });
-
-// restore default header color for anything else after this group
-pdf.setTextColor(15,61,107);
-
-    x += groupW + gap;
+  // Precompute per-exam TOTALS and PERCENTAGE for summary rows
+  const perExam = new Map(); // exId -> { total, max, grade, pct }
+  const gradeFromPct = (pct) => (
+    pct == null ? '' :
+    (pct >= 95) ? 'A+' :
+    (pct >= 90) ? 'A'  :
+    (pct >= 85) ? 'B+' :
+    (pct >= 80) ? 'B'  :
+    (pct >= 70) ? 'C+' :
+    (pct >= 60) ? 'C'  :
+    (pct >= 50) ? 'D'  :
+    (pct >= 40) ? 'E'  : 'F'
+  );
+  for (const g of groups) {
+    let sum = 0, max = 0;
+    for (const r of backData.rows) {
+      const ex = r.exams?.[g.examId];
+      const marks = (ex && typeof ex.marks === 'number') ? ex.marks : null;
+      const mmax  = (ex && typeof ex.max   === 'number') ? ex.max   : null;
+      if (marks != null) sum += marks;
+      if (mmax  != null) max += mmax;
+    }
+    const pct = (max > 0) ? Math.round((sum / max) * 100) : null;
+    perExam.set(g.examId, { total: sum, max, pct, grade: gradeFromPct(pct) });
   }
 
-  
-  // Border
-pdf.setDrawColor(15, 61, 107);
-pdf.setLineWidth(6);
-pdf.roundedRect(borderX, borderY + 40, borderW, borderH - 40, 24, 24, 'S');
+  // Rows (NO PAGINATION)
+  let y = rowFirstY;
+  pdf.setFont('helvetica','bold');
+  pdf.setFontSize(cellSize);
+  pdf.setTextColor(0,0,0);
 
-
-  // Rows
-let y = rowStartY;
-pdf.setFont('helvetica','bold');
-pdf.setFontSize(cellSize);
-pdf.setTextColor(0,0,0);
-
-for (const r of backData.rows) {
+  for (const r of backData.rows) {
     x = startX;
 
-   // SUBJECT cell (left aligned) — green text
-const wSub = widths.get('__subject');
-pdf.setTextColor(...GREEN);
-pdf.text(String(r.subject).toUpperCase(), x + 12, y, { align:'left', baseline:'alphabetic' });
-pdf.setTextColor(0,0,0); // restore default for other columns
-x += wSub + gap;
+    // SUBJECT (left aligned, green)
+    const wSub = widths.get('__subject');
+    pdf.setTextColor(...GREEN);
+    pdf.text(String(r.subject).toUpperCase(), x + 12, y, { align:'left', baseline:'alphabetic' });
+    pdf.setTextColor(0,0,0);
+    x += wSub + gapBase;
 
     // For each exam → two subcolumns
     for (const g of groups) {
       const cTotKey = cols[g.startIndex].key;
-      const cGrKey = cols[g.endIndex].key;
+      const cGrKey  = cols[g.endIndex].key;
       const wTot = widths.get(cTotKey);
-      const wGr = widths.get(cGrKey);
-      const ex = r.exams?.[g.examId] || {};
-      const t = ex.marks ?? '';
-      const grd = ex.grade ?? '';
+      const wGr  = widths.get(cGrKey);
+      const ex   = r.exams?.[g.examId] || {};
+      const t    = ex.marks ?? '';
+      const grd  = ex.grade ?? '';
 
-         // TOTAL
-// Use the same color as the group header for data cells
-const gIdx2 = groups.indexOf(g);
-const GCLR2 = EXAM_COLORS[gIdx2 % EXAM_COLORS.length];
-pdf.setTextColor(...GCLR2);
+      const gIdx2 = groups.indexOf(g);
+      const GCLR2 = EXAM_COLORS[gIdx2 % EXAM_COLORS.length];
+      pdf.setTextColor(...GCLR2);
 
-// TOTAL
-pdf.text(String(t), x + wTot/2, y, { align:'center', baseline:'alphabetic' });
-x += wTot + gap;
+      // TOTAL
+      pdf.text(String(t), x + wTot/2, y, { align:'center', baseline:'alphabetic' });
+      x += wTot + gapBase;
 
-// GRADE
-pdf.text(String(grd), x + wGr/2, y, { align:'center', baseline:'alphabetic' });
-x += wGr + gap;
+      // GRADE
+      pdf.text(String(grd), x + wGr/2, y, { align:'center', baseline:'alphabetic' });
+      x += wGr + gapBase;
 
-// restore black for next columns/rows
-pdf.setTextColor(0,0,0);
+      pdf.setTextColor(0,0,0);
     }
 
     y += rowGap;
+  }
 
-    // Page break
-    if (y > (borderY + borderH - 40)) {
-      pdf.addPage([3509, 2481], 'l');
+  // ---- Summary row 1: TOTAL ----
+  x = startX;
+  const wSub = widths.get('__subject');
+  pdf.setTextColor(...GREEN);
+  pdf.text('TOTAL', x + 12, y, { align:'left', baseline:'alphabetic' });
+  pdf.setTextColor(0,0,0);
+  x += wSub + gapBase;
 
-      // Border
-      pdf.setDrawColor(15,61,107);
-      pdf.setLineWidth(6);
-      pdf.roundedRect(borderX, borderY+40, borderW, borderH-40, 24, 24, 'S');
+  for (const g of groups) {
+    const cTotKey = cols[g.startIndex].key;
+    const cGrKey  = cols[g.endIndex].key;
+    const wTot = widths.get(cTotKey);
+    const wGr  = widths.get(cGrKey);
+    const agg  = perExam.get(g.examId) || { total: '', grade: '' };
 
-     // Redraw grouped headers on new page
-x = startX;
-pdf.setFont('helvetica', 'bold');
-pdf.setTextColor(15, 61, 107);
-pdf.setFontSize(headerSize);
+    const gIdx2 = groups.indexOf(g);
+    const GCLR2 = EXAM_COLORS[gIdx2 % EXAM_COLORS.length];
+    pdf.setTextColor(...GCLR2);
 
-// SUBJECT header — left aligned like row names
-const subjW = widths.get('__subject');
-const subjLeftInset = 12; // same inset as rows
-pdf.setTextColor(...GREEN);
-pdf.setFontSize(typeof cellSizeSubject !== 'undefined' ? cellSizeSubject : cellSize);
-pdf.text('SUBJECT', x + subjLeftInset, subHeaderY, { align: 'left', baseline: 'alphabetic' });
-pdf.setTextColor(15, 61, 107); // restore for the rest
-x += subjW + gap;
+    // TOTAL marks
+    pdf.text(String(agg.total ?? ''), x + wTot/2, y, { align:'center', baseline:'alphabetic' });
+    x += wTot + gapBase;
 
-// (re)set size for the exam group titles that follow
-pdf.setFontSize(headerSize);
+    // Grade from pct
+    pdf.text(String(agg.grade ?? ''), x + wGr/2, y, { align:'center', baseline:'alphabetic' });
+    x += wGr + gapBase;
 
-      for (const g of groups) {
-        const c1 = cols[g.startIndex], c2 = cols[g.endIndex];
-        const w1 = widths.get(c1.key), w2 = widths.get(c2.key);
-        const groupW = w1 + gap + w2;
+    pdf.setTextColor(0,0,0);
+  }
 
-        // wrap exam name to two lines if needed
-        // Exam name (spanning, wrap to two lines if needed)
-// Pick a distinct color for this exam group
-const gIdx = groups.indexOf(g);
-const GCLR = EXAM_COLORS[gIdx % EXAM_COLORS.length];
+  y += rowGap;
 
-// Exam name (spanning, wrap to two lines if needed)
-pdf.setFontSize(headerSize);
-pdf.setTextColor(...GCLR);
-const parts = String(g.name || '').trim().split(/\s+/);
-const line1 = (parts.length > 1) ? parts[0] : (parts[0] || '');
-const line2 = (parts.length > 1) ? parts.slice(1).join(' ') : '';
-const GROUP_NAME_SPLIT_GAP = 26; // was 18; increase for more space
-if (line2) {
-  pdf.text(line1.toUpperCase(), x + groupW/2, groupHeaderY - GROUP_NAME_SPLIT_GAP, { align:'center' });
-  pdf.text(line2.toUpperCase(), x + groupW/2, groupHeaderY + GROUP_NAME_SPLIT_GAP, { align:'center' });
-} else {
-  pdf.text(line1.toUpperCase(), x + groupW/2, groupHeaderY, { align:'center' });
-}
+  // ---- Summary row 2: RANK / PERCENTAGE ----
+  x = startX;
+  pdf.setTextColor(...GREEN);
+  pdf.text('RANK / PERCENTAGE', x + 12, y, { align:'left', baseline:'alphabetic' });
+  pdf.setTextColor(0,0,0);
+  x += wSub + gapBase;
 
-// Child headers (“TOTAL”, “GRADE”) in the same color
-pdf.setFontSize(subHeaderSize);
-pdf.text('TOTAL', x + w1/2, subHeaderY, { align:'center' });
-pdf.text('GRADE', x + w1 + gap + w2/2, subHeaderY, { align:'center' });
+  for (const g of groups) {
+    const cTotKey = cols[g.startIndex].key;
+    const cGrKey  = cols[g.endIndex].key;
+    const wTot = widths.get(cTotKey);
+    const wGr  = widths.get(cGrKey);
+    const agg  = perExam.get(g.examId) || { pct: null };
 
-// restore default header color for anything else after this group
-pdf.setTextColor(15,61,107);
-        x += groupW + gap;
-      }
+    const gIdx2 = groups.indexOf(g);
+    const GCLR2 = EXAM_COLORS[gIdx2 % EXAM_COLORS.length];
+    pdf.setTextColor(...GCLR2);
 
-      pdf.setDrawColor(15,61,107);
-      pdf.setLineWidth(2);
-      pdf.line(startX, subHeaderY + 14, startX + sumW, subHeaderY + 14);
+    // TOTAL column: Rank
+    const rankTxt = (student && (student.rank || student.rank === 0)) ? String(student.rank) : '';
+    pdf.text(rankTxt, x + wTot/2, y, { align:'center', baseline:'alphabetic' });
+    x += wTot + gapBase;
 
-      // resume rows
-      pdf.setFont('helvetica','bold');
-      pdf.setTextColor(0,0,0);
-      pdf.setFontSize(cellSize);
-      y = rowStartY;
-    }
+    // GRADE column: Percentage
+    const pctTxt = (agg.pct == null) ? '' : `${agg.pct}%`;
+    pdf.text(pctTxt, x + wGr/2, y, { align:'center', baseline:'alphabetic' });
+    x += wGr + gapBase;
+
+    pdf.setTextColor(0,0,0);
   }
 }
 
@@ -2183,6 +2175,7 @@ page.render({ canvasContext: ctx, viewport });
 </div>
 </body>
 </html>
+
 
 
 
