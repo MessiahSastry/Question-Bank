@@ -1151,17 +1151,25 @@ function drawBackPageLandscape(pdf, backData, backPlan, exams, student) {
     x += groupW + gapBase;
   });
     // Rounded box around the header row (SUBJECT | ... | TOTAL | GRADE)
-  {
-    const padX = 12, padY = 16, r = 16;
-    // full table width from the first to last column
-    const boxX = startX - padX;
-    const boxW = sumW + padX * 2;
-    const boxY = subHeaderY - (subHeaderSize + padY);
-    const boxH = subHeaderSize + padY * 2;
-    pdf.setDrawColor(15, 61, 107);
-    pdf.setLineWidth(2);
-    pdf.roundedRect(boxX, boxY, boxW, boxH, r, r, 'S');
-  }
+ // Rounded box around FULL header (group titles + header line)
+{
+  const padX = 14, padTop = 26, padBottom = 24, r = 18;
+
+  // span the whole table width
+  const boxX = startX - padX;
+  const boxW = sumW + padX * 2;
+
+  // cover from above the group title line down past the header line
+  const headerTop    = groupHeaderY - (headerSize + 28);                 // a bit above the first line of group titles
+  const headerBottom = subHeaderY + Math.ceil(subHeaderSize * 0.95);     // just below SUBJECT/TOTAL/GRADE line
+
+  const boxY = headerTop - padTop;
+  const boxH = (headerBottom - headerTop) + padTop + padBottom;
+
+  pdf.setDrawColor(15, 61, 107);
+  pdf.setLineWidth(2);
+  pdf.roundedRect(boxX, boxY, boxW, boxH, r, r, 'S');
+}
 
   // Precompute per-exam TOTALS and PERCENTAGE for summary rows
   const perExam = new Map(); // exId -> { total, max, grade, pct }
@@ -1207,29 +1215,44 @@ function drawBackPageLandscape(pdf, backData, backPlan, exams, student) {
 
     // For each exam → two subcolumns
     for (const g of groups) {
-      const cTotKey = cols[g.startIndex].key;
-      const cGrKey  = cols[g.endIndex].key;
-      const wTot = widths.get(cTotKey);
-      const wGr  = widths.get(cGrKey);
-      const ex   = r.exams?.[g.examId] || {};
-      const t    = ex.marks ?? '';
-      const grd  = ex.grade ?? '';
+  const cTotKey = cols[g.startIndex].key;
+  const cGrKey  = cols[g.endIndex].key;
+  const wTot = widths.get(cTotKey);
+  const wGr  = widths.get(cGrKey);
+  const ex   = r.exams?.[g.examId] || {};
+  const t    = ex.marks ?? '';
+  const grd  = ex.grade ?? '';
 
-      const gIdx2 = groups.indexOf(g);
-      const GCLR2 = EXAM_COLORS[gIdx2 % EXAM_COLORS.length];
-      pdf.setTextColor(...GCLR2);
+  const gIdx2 = groups.indexOf(g);
+  const GCLR2 = EXAM_COLORS[gIdx2 % EXAM_COLORS.length];
+  pdf.setTextColor(...GCLR2);
 
-      // TOTAL
-      pdf.text(String(t), x + wTot/2, y, { align:'center', baseline:'alphabetic' });
-      x += wTot + gapBase;
+  // TOTAL (with fail ring if pct < 40)
+  const cxTot = x + wTot/2;
+  pdf.text(String(t), cxTot, y, { align:'center', baseline:'alphabetic' });
 
-      // GRADE
-      pdf.text(String(grd), x + wGr/2, y, { align:'center', baseline:'alphabetic' });
-      x += wGr + gapBase;
-
-      pdf.setTextColor(0,0,0);
+  // draw red ring like front page when we have numeric marks & max
+  if (typeof ex.marks === 'number' && typeof ex.max === 'number' && ex.max > 0) {
+    const pct = (ex.marks / ex.max) * 100;
+    if (pct < 40) {
+      pdf.setDrawColor(...COLOR_RED);
+      pdf.setLineWidth(2.5);
+      // ellipse sized to cell; tweak factors if you want a bigger ring
+      const rx = Math.max(28, wTot * 0.18);
+      const ry = Math.max(20, cellSize * 0.42);
+      pdf.ellipse(cxTot, y - Math.round(cellSize * 0.25), rx, ry, 'D');
+      pdf.setLineWidth(1);
+      pdf.setDrawColor(0,0,0);
     }
+  }
+  x += wTot + gapBase;
 
+  // GRADE
+  pdf.text(String(grd), x + wGr/2, y, { align:'center', baseline:'alphabetic' });
+  x += wGr + gapBase;
+
+  pdf.setTextColor(0,0,0);
+}
     y += rowGap;
   }
 
@@ -2207,6 +2230,7 @@ page.render({ canvasContext: ctx, viewport });
 </div>
 </body>
 </html>
+
 
 
 
