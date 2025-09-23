@@ -1199,29 +1199,46 @@ const rowFirstY = subHeaderY + 110 + ROW_TOP_GAP;
   x += subjW + gapBase;
 
   // Exam group headers
-  pdf.setFontSize(headerSize);
-  groups.forEach((g, idx) => {
-    const c1 = cols[g.startIndex], c2 = cols[g.endIndex];
-    const w1 = widths.get(c1.key), w2 = widths.get(c2.key);
-    const groupW = w1 + gapBase + w2;
+ pdf.setFontSize(headerSize);
+groups.forEach((g, idx) => {
+  const c1 = cols[g.startIndex], c2 = cols[g.endIndex];
+  const w1 = widths.get(c1.key), w2 = widths.get(c2.key);
+  const groupW = w1 + gapBase + w2;
 
-    const GCLR = EXAM_COLORS[idx % EXAM_COLORS.length];
-    pdf.setTextColor(...GCLR);
-    const parts = String(g.name || '').trim().split(/\s+/);
-    const line1 = (parts.length > 1) ? parts[0] : (parts[0] || '');
-    const line2 = (parts.length > 1) ? parts.slice(1).join(' ') : '';
-    if (line2) {
-      pdf.text(line1.toUpperCase(), x + groupW/2, groupHeaderY - 26, { align:'center' });
-      pdf.text(line2.toUpperCase(), x + groupW/2, groupHeaderY + 26, { align:'center' });
-    } else {
-      pdf.text(line1.toUpperCase(), x + groupW/2, groupHeaderY, { align:'center' });
-    }
-    pdf.setFontSize(subHeaderSize);
-    pdf.text('TOTAL', x + w1/2, subHeaderY, { align:'center' });
-    pdf.text('GRADE', x + w1 + gapBase + w2/2, subHeaderY, { align:'center' });
-    pdf.setTextColor(15,61,107);
-    x += groupW + gapBase;
-  });
+  // compute this exam's TOTAL MAX = sum of per-subject max (already on rows)
+  const examMaxSum = backData.rows.reduce((acc, r) => {
+    const ex = r.exams?.[g.examId];
+    const m  = (ex && typeof ex.max === 'number') ? ex.max : 0;
+    return acc + m;
+  }, 0);
+  const marksLine = examMaxSum > 0 ? `(${examMaxSum} MARKS)` : '';
+
+  const GCLR = EXAM_COLORS[idx % EXAM_COLORS.length];
+  pdf.setTextColor(...GCLR);
+
+  const parts = String(g.name || '').trim().split(/\s+/);
+  const line1 = (parts.length > 1) ? parts[0] : (parts[0] || '');
+  const line2 = (parts.length > 1) ? parts.slice(1).join(' ') : '';
+
+  // three-line stack: LINE1, LINE2 (if any), then "(NN MARKS)"
+  const baseY = groupHeaderY;
+  if (line2) {
+    pdf.text(line1.toUpperCase(), x + groupW/2, baseY - 40, { align:'center' });
+    pdf.text(line2.toUpperCase(), x + groupW/2, baseY,       { align:'center' });
+    if (marksLine) pdf.text(marksLine, x + groupW/2, baseY + 40, { align:'center' });
+  } else {
+    pdf.text(line1.toUpperCase(), x + groupW/2, baseY - 20, { align:'center' });
+    if (marksLine) pdf.text(marksLine, x + groupW/2, baseY + 20, { align:'center' });
+  }
+
+  // subheaders
+  pdf.setFontSize(subHeaderSize);
+  pdf.text('TOTAL', x + w1/2,               subHeaderY, { align:'center' });
+  pdf.text('GRADE', x + w1 + gapBase + w2/2, subHeaderY, { align:'center' });
+
+  pdf.setTextColor(15,61,107);
+  x += groupW + gapBase;
+});
     // Rounded box around the header row (SUBJECT | ... | TOTAL | GRADE)
  // Rounded box around FULL header (group titles + header line)
 // Rounded box around FULL header (group titles + header line) — tighter
@@ -2417,6 +2434,7 @@ page.render({ canvasContext: ctx, viewport });
 </div>
 </body>
 </html>
+
 
 
 
