@@ -741,6 +741,17 @@ async function getExamStructure() {
     sectionId: sectionSel.value
   });
 }
+// Get the exam structure for a specific examId (used by back page)
+// Uses the same builder and class/year/section context as the front page.
+async function getExamStructureForExamId(examId) {
+  const examObj = exams.find(e => e.id === examId);
+  if (!examObj) return { subjects: [], hasSubtopics: false };
+  return await buildExamStructure(examObj, {
+    year: yearSel.value,
+    classId: classSel.value,
+    sectionId: sectionSel.value
+  });
+}
 
 // ======= PDF Helpers ========
 /* ======= PAGE MARGINS + DYNAMIC COLUMN BUILDER (auto-spread) ======= */
@@ -2049,13 +2060,24 @@ async function buildBackDataForStudent(stu) {
     marksByExam.set(exId, marksObj);
   }
 
-  // SUBJECT LIST = union across the chosen exam schemas (names as in Firestore)
+  // SUBJECT LIST = follow the FRONT-PAGE exam doc order (schema-driven).
+// Fallback to old union if front-page schema is empty.
+let subjectList = [];
+try {
+  const frontStruct = await getExamStructure(); // uses the selected (front) exam
+  if (frontStruct && Array.isArray(frontStruct.subjects) && frontStruct.subjects.length) {
+    subjectList = frontStruct.subjects.map(s => s?.name).filter(Boolean);
+  }
+} catch(_) { /* ignore and fall back below */ }
+
+if (!subjectList.length) {
+  // Fallback: union across chosen back-page exams (previous behavior)
   const subjectSet = new Set();
   for (const exId of needExamIds) {
     (schemaByExam.get(exId)?.subjects || []).forEach(n => n && subjectSet.add(n));
   }
-  const subjectList = Array.from(subjectSet);
-
+  subjectList = Array.from(subjectSet);
+}
   // Build rows
   const rows = subjectList.map(name => {
     const row = { subject: name, exams: {} };
@@ -2496,62 +2518,3 @@ page.render({ canvasContext: ctx, viewport });
 </div>
 </body>
 </html>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
