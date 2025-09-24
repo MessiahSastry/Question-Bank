@@ -129,9 +129,12 @@
 
   <!-- Builder: add exam columns (each shows Marks | Grade) -->
   <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
-    <button id="addExamColBtn" class="student-btn" type="button">+ Add Exam Column</button>
-    <div id="chosenBackCols" style="display:flex; gap:8px; flex-wrap:wrap;"></div>
-  </div>
+  <select id="backExamSelect" class="custom-select styled-dropdown" style="width:280px; max-width:50vw; margin:0;">
+    <option value="">Select exam…</option>
+  </select>
+  <button id="addExamColBtn" class="student-btn" type="button">+ Add Exam Column</button>
+  <div id="chosenBackCols" style="display:flex; gap:8px; flex-wrap:wrap;"></div>
+</div>
 </div>
 
 <div class="student-list" id="studentList"></div>
@@ -369,6 +372,8 @@ const pdfPreview = document.getElementById('pdfPreview');
 const studentListDiv = document.getElementById('studentList');
 const toastDiv = document.getElementById('toast');
 const addExamColBtn   = document.getElementById('addExamColBtn');
+const backExamSelect  = document.getElementById('backExamSelect');
+
 // --- Back-page: add/prune columns UI ---
 
 function renderBackCols() {
@@ -411,21 +416,22 @@ addExamColBtn?.addEventListener('click', () => {
     showToast?.('No exams available for this class group.');
     return;
   }
-  // Build a simple prompt picker (keeps code tiny). Replace with a modal if you prefer.
-  const menu = exams
-    .map((e, i) => `${String(i + 1).padStart(2, ' ')}. ${e.name}`)
-    .join('\n');
-  const ans = prompt(`Select an exam to add:\n\n${menu}\n\nEnter the number:`);
-  const idx = parseInt(ans, 10) - 1;
-  if (Number.isNaN(idx) || idx < 0 || idx >= exams.length) return;
+  if (!backExamSelect) return;
 
-  const exId = exams[idx].id;
+  const exId = backExamSelect.value;
+  if (!exId) {
+    showToast?.('Please select an exam first.');
+    return;
+  }
   if ((backPlan.examCols || []).includes(exId)) {
     showToast?.('That exam is already added.');
     return;
   }
   backPlan.examCols.push(exId);
   renderBackCols();
+
+  // reset to placeholder
+  backExamSelect.value = '';
 });
 
 // ================== UI LOADERS ====================
@@ -485,7 +491,17 @@ let examsSnap = await db.collection('years').doc(year)
 
 if (examsSnap.empty) {
   examChoices.clearStore();
-  examChoices.setChoices([{ value: '', label: 'No choices to choose from', selected: true }], 'value', 'label', false);
+  examChoices.setChoices(
+    [{ value: '', label: 'No choices to choose from', selected: true }],
+    'value', 'label', false
+  );
+
+  // ⬇️ Clear & disable back-page exam dropdown
+  if (backExamSelect) {
+    backExamSelect.innerHTML = '<option value="">No exams</option>';
+    backExamSelect.disabled = true;
+  }
+
   await loadStudents();
   return;
 }
@@ -499,6 +515,12 @@ if (exams.length === 0) {
     'value', 'label', false
   );
   examChoices.setChoiceByValue(exams[0]?.id || '');
+  // ⬇️ Populate the back-page exam dropdown
+if (backExamSelect) {
+  backExamSelect.disabled = false;
+  backExamSelect.innerHTML = '<option value="">Select exam…</option>' +
+    exams.map(e => `<option value="${e.id}">${e.name}</option>`).join('');
+}
 }
 
 
@@ -507,6 +529,14 @@ if (exams.length === 0) {
   const validIds = new Set(exams.map(e => e.id));
   backPlan.examCols = (backPlan.examCols || []).filter(id => validIds.has(id));
   renderBackCols();
+
+  // refresh dropdown (keep placeholder)
+  if (backExamSelect) {
+    const cur = backExamSelect.value;
+    backExamSelect.innerHTML = '<option value="">Select exam…</option>' +
+      exams.map(e => `<option value="${e.id}">${e.name}</option>`).join('');
+    if ([...validIds].includes(cur)) backExamSelect.value = cur;
+  }
 }
 
 await loadStudents();
@@ -2678,3 +2708,4 @@ page.render({ canvasContext: ctx, viewport });
 </div>
 </body>
 </html>
+
