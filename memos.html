@@ -766,6 +766,7 @@ const MAX_TO_NEXT_EXTRA_GAP = 28;
     
 // ==== Exam-wide subtopic schema (names + header max) ====
 let __examSubtopicSchema = null;
+let __ranksByExam = null; 
 function getExamSubtopicSchema() {
   if (!__examStructure || !Array.isArray(__examStructure.subjects)) {
     __examSubtopicSchema = [];
@@ -1540,8 +1541,12 @@ const dividerY = footerStartY + Math.round(rowGap * 0.55) - DIVIDER_UP;
     pdf.setTextColor(...GCLR2);
 
     // TOTAL column: Rank
-    const rankTxt = (student && (student.rank || student.rank === 0)) ? String(student.rank) : '';
-    pdf.text(rankTxt, x + wTot/2, y, { align:'center', baseline:'alphabetic' });
+    let rankTxt = '';
+if (__ranksByExam && __ranksByExam.get(g.examId)) {
+  const r = __ranksByExam.get(g.examId).get(student.id);
+  rankTxt = (r == null ? '' : String(r));
+}
+pdf.text(rankTxt, x + wTot/2, y, { align:'center', baseline:'alphabetic' });
     x += wTot + gapBase;
 
     // GRADE column: Percentage
@@ -1825,15 +1830,26 @@ function formatClass(val) {
 }
 
 /* ===== Back-side helpers: read any exam for a student and compute subject totals ===== */
-async function _readMarksDocFor(stuId, examId) {
-  const year = yearSel.value, classId = classSel.value, sectionId = sectionSel.value;
-  const ref = db.collection('years').doc(year)
-    .collection('classes').doc(classId)
-    .collection('sections').doc(sectionId)
-    .collection('students').doc(stuId)
-    .collection('marks').doc(examId);
-  const snap = await ref.get();
-  return snap.exists ? (snap.data() || {}) : {};
+async function computeRanksByExam(examIds) {
+  const out = new Map(); // examId -> Map(studentId -> rank)
+  for (const exId of (examIds || [])) {
+    const struct = await getExamStructureForExamId(exId);
+    const totals = [];
+    for (const stu of students) {
+      const marksObj = await _readMarksDocFor(stu.id, exId);
+      const subs = _extractSubjectTotalsFromMarks(marksObj, struct); // [{total,max}]
+      const sum = subs.reduce((a,s)=> a + (typeof s.total === 'number' ? s.total : 0), 0);
+      totals.push({ id: stu.id, total: sum });
+    }
+    totals.sort((a,b)=> b.total - a.total);
+    let last = null, rank = 1, lastRank = 1;
+    totals.forEach((t,i) => {
+      if (t.total !== last) { rank = i+1; last = t.total; lastRank = rank; }
+      t.rank = lastRank;
+    });
+    out.set(exId, new Map(totals.map(t => [t.id, t.rank])));
+  }
+  return out;
 }
 
 /* Build normalized subject list across multiple exams (union, stable by name) */
@@ -2270,6 +2286,9 @@ async function generatePDF(studentArr, isSingle) {
   let examObj = exams.find(e => e.id === examId);
   let fullDataArr = [];
 var pdf = new window.jspdf.jsPDF({orientation: "portrait", unit: "px", format: [2481, 3509]});
+if (backPlan.examCols && backPlan.examCols.length) {
+  __ranksByExam = await computeRanksByExam(backPlan.examCols);
+}
 
 // Build the dataset (prefer precomputed objects if provided)
 if (studentArr && studentArr.length && Array.isArray(studentArr[0].subjects)) {
@@ -2440,7 +2459,9 @@ centerText(pdf, student.overallGrade, xGrade, totalYAdj, 60, COLOR_GRADE);
 // ========== PREVIEW RENDER ===============
 async function showPreviewPDF(stuArr) {
   let pdf;
-
+  if (backPlan.examCols && backPlan.examCols.length) {
+  __ranksByExam = await computeRanksByExam(backPlan.examCols);
+}
   for (let idx = 0; idx < stuArr.length; idx++) {
     const student = stuArr[idx];
     const memoImgData = await getMemo();
@@ -2626,6 +2647,7 @@ page.render({ canvasContext: ctx, viewport });
 </div>
 </body>
 </html>
+
 
 
 
