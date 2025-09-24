@@ -1830,6 +1830,35 @@ function formatClass(val) {
 }
 
 /* ===== Back-side helpers: read any exam for a student and compute subject totals ===== */
+  // simple in-memory cache so we don't refetch the same marks repeatedly
+const __marksCache = new Map();
+
+/**
+ * Read a student's marks document for a given exam.
+ * Falls back to {} if missing. Results are cached per year/class/section/student/exam.
+ */
+async function _readMarksDocFor(stuId, examId) {
+  const year = yearSel.value;
+  const classId = classSel.value;
+  const sectionId = sectionSel.value;
+
+  if (!year || !classId || !sectionId || !stuId || !examId) return {};
+
+  const cacheKey = `${year}/${classId}/${sectionId}/${stuId}/${examId}`;
+  if (__marksCache.has(cacheKey)) return __marksCache.get(cacheKey);
+
+  const ref = db.collection('years').doc(year)
+    .collection('classes').doc(classId)
+    .collection('sections').doc(sectionId)
+    .collection('students').doc(stuId)
+    .collection('marks').doc(examId);
+
+  const snap = await ref.get();
+  const data = snap.exists ? (snap.data() || {}) : {};
+  __marksCache.set(cacheKey, data);
+  return data;
+}
+
 async function computeRanksByExam(examIds) {
   const out = new Map(); // examId -> Map(studentId -> rank)
   for (const exId of (examIds || [])) {
@@ -2647,6 +2676,7 @@ page.render({ canvasContext: ctx, viewport });
 </div>
 </body>
 </html>
+
 
 
 
