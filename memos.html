@@ -195,6 +195,14 @@ function getClassGroupName(className) {
 }
 
 // Custom Y coordinates (exact order as your template for each memo)
+// === Canonical subject-key normalizer (use everywhere) ===
+function nkey(s) {
+  return String(s || '')
+    .normalize('NFKC')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
 
 // X coordinates for (max/marks/grade)
 const X_SUBJECT = 520;    // Subject name column (left-aligned; adjust if needed)
@@ -578,9 +586,6 @@ downloadAllBtn.onclick = async () => {
 let __examStructure = null;           // cached per current exam selection
 let __examHasSubtopics = false;       // quick flag for layout decisions
 
-function _normLabel(s) {
-  return String(s || '').replace(/[\s._-]+/g, '').toLowerCase();
-}
 
 /**
  * Builds the exam structure from the selected exam definition and (optionally)
@@ -677,11 +682,11 @@ const subsRoot = (marksData && typeof marksData.__subs === 'object') ? marksData
 subjects = subjects.map(s => {
   const subjName = s.name || '';
   // exact/normalized match at root for totals
-  const subjKey = Object.keys(marksData).find(k => _normLabel(k) === _normLabel(subjName));
+  const subjKey = Object.keys(marksData).find(k => nkey(k) === nkey(subjName));
   const subjVal = subjKey ? marksData[subjKey] : null;
 
   // exact/normalized match inside __subs for breakdown
-  const subsKey = Object.keys(subsRoot).find(k => _normLabel(k) === _normLabel(subjName));
+  const subsKey = Object.keys(subsRoot).find(k => nkey(k) === nkey(subjName));
   const subsObj = subsKey ? subsRoot[subsKey] : null;
 
   // Case 1: breakdown present under __subs.<Subject>
@@ -772,7 +777,7 @@ function getExamSubtopicSchema() {
     __examSubtopicSchema = [];
     return __examSubtopicSchema;
   }
-  const norm = s => String(s || '').replace(/[\s._-]+/g, '').toLowerCase();
+  // use global nkey()
   const order = [];
   const seen  = new Set();
   const maxBy = {};
@@ -780,7 +785,7 @@ function getExamSubtopicSchema() {
     const subs = Array.isArray(subj.subtopics) ? subj.subtopics : [];
     for (const st of subs) {
       const name = st?.name || '';
-      const key  = norm(name);
+      const key  = nkey(name);
       if (!key) continue;
       if (!seen.has(key)) { seen.add(key); order.push(name); }
       const m = (typeof st?.max === 'number' && !isNaN(st.max)) ? st.max : null;
@@ -788,7 +793,7 @@ function getExamSubtopicSchema() {
     }
   }
   __examSubtopicSchema = order.map(n => {
-    const key = norm(n);
+    const key = nkey(n);
     const m   = maxBy[key];
     return { name: n, max: (m != null ? m : null) };
   });
@@ -1607,13 +1612,12 @@ function drawSubjectsHeader(pdf, y) {
  */
 function drawSubjectRow(pdf, rowY, subject) {
   const cols = computeColumns(); // [{key,label,x}] spread between PAGE_MARGINS
-  const norm = s => String(s || '').replace(/[\s._-]+/g, '').toLowerCase();
-
+  
   // Build lookup for subtopic marks (marks only, AB respected)
   const subArr = Array.isArray(subject.subtopics) ? subject.subtopics : [];
   const byKey = {};
   for (const st of subArr) {
-    const k = norm(st?.name);
+    const k = nkey(st?.name);
     if (!k) continue;
     const v = (st?.mark === 'AB' ? 'AB' : (typeof st?.mark === 'number' ? st.mark : ''));
     byKey[k] = v;
@@ -1665,7 +1669,7 @@ leftText(pdf, subjName, leftEdge, rowY, 60, COLOR_GREEN, 'bold');
         break;
 
       default: {
-      const key = norm(c.key);
+      const key = nkey(c.key);
       const val = (key in byKey) ? byKey[key] : '';
       centerText(pdf, showAB(val), c.x, rowY, subCellSize, COLOR_BLUE, 'bold');
       break;
@@ -1888,7 +1892,7 @@ function _unionSubjectsAcross(examIds, perExamSubjectsMap) {
   for (const ex of examIds) {
     const arr = perExamSubjectsMap.get(ex) || [];
     for (const s of arr) {
-      const key = _normLabel(s.name || s);
+      const key = nkey(s.name || s);
       if (!key || seen.has(key)) continue;
       seen.add(key);
       out.push(s.name || s);
@@ -1901,8 +1905,7 @@ function _unionSubjectsAcross(examIds, perExamSubjectsMap) {
    RULE: if no numeric entries at all → total === 'AB'.
          If a number exists (including 0) → sum the numbers. */
 function _extractSubjectTotalsFromMarks(marksObj, structure) {
-  const norm = s => String(s || '').replace(/[\s._-]+/g, '').toLowerCase();
-  const subjects = [];
+    const subjects = [];
   const subsRoot = (marksObj && typeof marksObj.__subs === 'object') ? marksObj.__subs : {};
 
   const baseSubjects = (structure?.subjects?.length
@@ -1912,10 +1915,10 @@ function _extractSubjectTotalsFromMarks(marksObj, structure) {
 
   for (const subjName of baseSubjects) {
     // locate values for this subject
-    const keyRoot = Object.keys(marksObj).find(k => norm(k) === norm(subjName));
+    const keyRoot = Object.keys(marksObj).find(k => nkey(k) === nkey(subjName));
     const subjVal = keyRoot ? marksObj[keyRoot] : marksObj[subjName];
 
-    const keySubs = Object.keys(subsRoot || {}).find(k => norm(k) === norm(subjName));
+    const keySubs = Object.keys(subsRoot || {}).find(k => nkey(k) === nkey(subjName));
     const subsObj = keySubs ? subsRoot[keySubs] : null;
 
     let total = 0;
@@ -1930,13 +1933,13 @@ function _extractSubjectTotalsFromMarks(marksObj, structure) {
           sawNumeric = true;
         }
         // infer max from exam structure if known
-        const subjDef = structure?.subjects?.find(s => norm(s.name) === norm(subjName));
-        const stDef   = subjDef?.subtopics?.find(t => norm(t.name) === norm(k));
+        const subjDef = structure?.subjects?.find(s => nkey(s.name) === nkey(subjName));
+        const stDef   = subjDef?.subtopics?.find(t => nkey(t.name) === nkey(k));
         if (typeof stDef?.max === 'number') max += stDef.max;
       }
       // fallback subjectMax when we couldn't sum subtopic maxes
       if (max === 0) {
-        const subjDef = structure?.subjects?.find(s => norm(s.name) === norm(subjName));
+        const subjDef = structure?.subjects?.find(s => nkey(s.name) === nkey(subjName));
         if (typeof subjDef?.subjectMax === 'number') max = subjDef.subjectMax;
       }
     }
@@ -1993,12 +1996,11 @@ async function fetchStudentData(stu) {
   // Use the same subject-total extractor the back page uses
 const reconciledTotals = _extractSubjectTotalsFromMarks(marks, structure); // [{name,total,max}]
 const recByName = new Map(
-  reconciledTotals.map(r => [String(r.name).replace(/[\s._-]+/g,'').toLowerCase(), r])
+  reconciledTotals.map(r => [nkey(r.name), r])
 );
 
   // 2) Helpers
-  const norm = s => String(s || '').replace(/[\s._-]+/g, '').toLowerCase();
-  const isNum = v => (typeof v === 'number' && !isNaN(v));
+    const isNum = v => (typeof v === 'number' && !isNaN(v));
 const toNum  = v => (v === '' || v == null ? null : (Number.isFinite(+v) ? +v : null));
 
 
@@ -2008,9 +2010,9 @@ const toNum  = v => (v === '' || v == null ? null : (Number.isFinite(+v) ? +v : 
 
   for (const subjDef of (structure.subjects || [])) {
     const subjName = subjDef.name || '';
-    const keyNorm = subjName.replace(/[\s._-]+/g,'').toLowerCase();
-    const recHit  = recByName.get(keyNorm); // {total,max} if extractor found it
-    const subjKey = Object.keys(marks).find(k => norm(k) === norm(subjName));
+    const keyNorm = nkey(subjName);
+    const recHit  = recByName.get(keyNorm);
+    const subjKey = Object.keys(marks).find(k => nkey(k) === nkey(subjName));
     const subjVal = subjKey ? marks[subjKey] : marks[subjName];
 
     // Prepare subtopic list from structure
@@ -2022,7 +2024,7 @@ const toNum  = v => (v === '' || v == null ? null : (Number.isFinite(+v) ? +v : 
 
    // Choose subtopic source: prefer __subs.<Subject>, fallback to object-at-root
 const subsRoot = (marks && typeof marks.__subs === 'object') ? marks.__subs : null;
-const subsKey  = subsRoot ? Object.keys(subsRoot).find(k => norm(k) === norm(subjName)) : null;
+const subsKey  = subsRoot ? Object.keys(subsRoot).find(k => nkey(k) === nkey(subjName)) : null;
 const subsObj  = (subsKey && typeof subsRoot[subsKey] === 'object') ? subsRoot[subsKey] : null;
 
 const subSrc = subsObj || (subjVal && typeof subjVal === 'object' && !Array.isArray(subjVal) ? subjVal : null);
@@ -2037,7 +2039,7 @@ if ((!subtopics.length) && subSrc) {
 // Fill subtopic marks from the chosen source
 if (subtopics.length && subSrc) {
   for (const st of subtopics) {
-    const k = Object.keys(subSrc).find(x => norm(x) === norm(st.name));
+    const k = Object.keys(subSrc).find(x => nkey(x) === nkey(st.name));
     const v = (k ? subSrc[k] : subSrc[st.name]);
     st.mark = (v === 'AB' || v === 'ab' || v === 'Ab') ? 'AB' : (isNum(v) ? +v : '');
   }
@@ -2165,7 +2167,7 @@ if (subtopics.length && subSrc) {
 //  - Subject not in that exam schema at all → '-'
 async function buildBackDataForStudent(stu) {
   const needExamIds = Array.from(new Set(backPlan.examCols || []));
-  const norm = s => String(s || '').replace(/[\s._-]+/g, '').toLowerCase();
+  // use global nkey()
 
   // 1) Read schema (via the same builder as the front page) + student's marks
   const schemaByExam = new Map(); // exId -> { subjects:[{name,subjectMax,subtopics[]}] , maxBySubject:Map, headerMax }
@@ -2178,7 +2180,7 @@ async function buildBackDataForStudent(stu) {
     const subjNames = [];
 
     for (const s of (struct?.subjects || [])) {
-      const key = norm(s?.name || '');
+      const key = nkey(s?.name || '');
       if (!key) continue;
       subjNames.push(s.name);
 
@@ -2211,7 +2213,7 @@ async function buildBackDataForStudent(stu) {
 
   // 3) Build rows with AB / '-' logic
   const rows = subjectList.map(name => {
-    const keyName = norm(name);
+    const keyName = nkey(name);
     const row = { subject: name, exams: {} };
 
     for (const exId of needExamIds) {
@@ -2225,8 +2227,8 @@ async function buildBackDataForStudent(stu) {
       if (fixedMax != null) {
         // subject exists in schema → look for student's values
         const subsRoot = (mobj && typeof mobj.__subs === 'object') ? mobj.__subs : null;
-        const subsKey  = subsRoot ? Object.keys(subsRoot).find(k => norm(k) === keyName) : null;
-        const subjKey  = Object.keys(mobj).find(k => k !== '__subs' && norm(k) === keyName);
+        const subsKey  = subsRoot ? Object.keys(subsRoot).find(k => nkey(k) === keyName) : null;
+        const subjKey  = Object.keys(mobj).find(k => k !== '__subs' && nkey(k) === keyName);
 
         if (subsKey && typeof subsRoot[subsKey] === 'object') {
           // sum numeric parts; if none, AB
@@ -2676,6 +2678,7 @@ page.render({ canvasContext: ctx, viewport });
 </div>
 </body>
 </html>
+
 
 
 
