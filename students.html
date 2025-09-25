@@ -1465,12 +1465,44 @@ function showExamSettingsPopup() {
         <input name="examName" maxlength="30" required placeholder="e.g., FA1">
         
         <label>Subtopics <span style="color:#888;font-weight:500;">(optional)</span></label>
-        <div id="subtopicsContainer"></div>
-        <button type="button" id="addSubtopicBtn"
-          style="margin:6px 0 14px 0; background:#1762a7;color:#fff;
-                 padding:7px 13px;border:none;border-radius:7px;font-weight:600;">
-          + Add Subtopic
-        </button>
+
+<!-- Internal (computed) controller -->
+<div id="internalControls" style="border:1px solid #e2ecf7; background:#f7fafd; border-radius:8px; padding:10px; margin-bottom:10px;">
+  <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
+    <input type="checkbox" id="useInternalToggle" />
+    <label for="useInternalToggle" style="font-weight:600;">Use Internal (computed from other exams)</label>
+  </div>
+
+  <div id="internalConfig" style="display:none; margin-left:4px;">
+    <div style="margin-bottom:8px;">
+      <div style="font-size:0.95em; color:#1762a7; font-weight:600; margin-bottom:6px;">Source Exams</div>
+      <select id="internalSourceExams" multiple
+              class="custom-select"
+              style="width:100%; padding:8px; border-radius:6px; border:1px solid #c7d7ea; background:#fff;">
+        ${exams.map(ex => `<option value="${ex.id}">${ex.name}</option>`).join('')}
+      </select>
+      <div style="font-size:0.85em; color:#666; margin-top:4px;">Pick one or more exams (e.g., FA1, FA2, SA1...).</div>
+    </div>
+
+    <div style="display:flex; align-items:center; gap:10px;">
+      <label for="internalMax" style="min-width:140px;">Internal Max (marks)</label>
+      <input id="internalMax" type="number" min="1" max="200" step="1" placeholder="e.g., 20"
+             style="width:120px; padding:8px; border-radius:6px; border:1px solid #c7d7ea; background:#fff;" />
+    </div>
+    <div style="font-size:0.85em; color:#666; margin-top:6px;">
+      Student’s internal = average( score/max ) × Internal Max. (Written/External is added separately by you.)
+    </div>
+  </div>
+</div>
+
+<!-- Manual subtopics -->
+<div id="subtopicsContainer"></div>
+<div style="display:flex; gap:10px; margin-top:6px; margin-bottom:14px;">
+  <button type="button" id="addSubtopicBtn"
+          style="background:#1762a7;color:#fff; padding:7px 13px;border:none;border-radius:7px;font-weight:600;">
+    + Add Subtopic
+  </button>
+</div>
         
         <label>Subjects</label>
         <div id="subjectsContainer"></div>
@@ -1513,26 +1545,66 @@ function showExamSettingsPopup() {
           alert("Please enter exam name and at least one subject!");
           return;
         }
-        // --- Subtopics (collect + dedupe) ---
-          let subtopics = [];
-          {
-            const subC = popupContent.querySelector('#subtopicsContainer');
-            if (subC) {
-              subC.querySelectorAll('div[data-subtopic-row]').forEach(div => {
-                const n = div.querySelector('input[data-subtopic-name]')?.value.trim();
-                const m = parseFloat(div.querySelector('input[data-subtopic-max]')?.value);
-                if (n && !isNaN(m)) subtopics.push({ name: n, max: m });
-              });
-              // quiet dedupe by name (case-insensitive)
-              const seen = new Set();
-              subtopics = subtopics.filter(st => {
-                const k = st.name.trim().toLowerCase();
-                if (seen.has(k)) return false;
-                seen.add(k);
-                return true;
-              });
-            }
-          }
+        // --- Subtopics (collect manual) + optional Internal (computed) + dedupe ---
+let subtopics = [];
+{
+  const subC = popupContent.querySelector('#subtopicsContainer');
+  if (subC) {
+    // manual rows
+    subC.querySelectorAll('div[data-subtopic-row]').forEach(div => {
+      const n = div.querySelector('input[data-subtopic-name]')?.value.trim();
+      const m = parseFloat(div.querySelector('input[data-subtopic-max]')?.value);
+      if (n && !isNaN(m)) subtopics.push({ name: n, max: m });
+    });
+  }
+
+  // Internal (computed)
+  const useInt = popupContent.querySelector('#useInternalToggle')?.checked;
+  if (useInt) {
+    const intMaxRaw = popupContent.querySelector('#internalMax')?.value;
+    const intMax = parseFloat(intMaxRaw);
+    // read selected exam ids (works for native select or Choices)
+    let srcIds = [];
+    const sel = popupContent.querySelector('#internalSourceExams');
+    if (sel) {
+      if (sel.selectedOptions && sel.selectedOptions.length) {
+        srcIds = Array.from(sel.selectedOptions).map(o => o.value);
+      } else if (sel.value) {
+        // Choices.js stores selections in the underlying select
+        srcIds = Array.from(sel.querySelectorAll('option:checked')).map(o => o.value);
+      }
+    }
+
+    // Validate
+    if (!srcIds.length) {
+      alert('Please select at least one source exam for Internal.');
+      return;
+    }
+    if (!intMax || isNaN(intMax) || intMax <= 0) {
+      alert('Please enter a valid Internal Max (marks).');
+      return;
+    }
+
+    // push computed Internal subtopic
+    subtopics.push({
+      name: 'Internal',
+      max: intMax,
+      computed: true,
+      computeRule: 'avg_normalized_x_max',  // average(score/max) * internalMax
+      sources: srcIds
+    });
+  }
+
+  // quiet dedupe by name (case-insensitive)
+  const seen = new Set();
+  subtopics = subtopics.filter(st => {
+    const k = String(st.name || '').trim().toLowerCase();
+    if (!k) return false;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}
         // Check for duplicates before adding
         db.collection('years').doc(academicYear)
           .collection('exams').doc('classGroups')
@@ -1553,26 +1625,47 @@ function showExamSettingsPopup() {
           });
       });
 
-     // --- Subtopic Fields Logic (name + max, decimals allowed) ---
-      const subtopicsContainer = popupContent.querySelector('#subtopicsContainer');
-      const addSubtopicBtn = popupContent.querySelector('#addSubtopicBtn');
-      function addSubtopicField(name = '', max = '') {
-        const idx = subtopicsContainer.children.length;
-        const div = document.createElement('div');
-        div.setAttribute('data-subtopic-row', '');
-        div.style = 'display:flex;align-items:center;gap:8px;margin-bottom:7px;';
-        div.innerHTML = `
-          <input type="text" data-subtopic-name placeholder="Subtopic Name" value="${name}"
-                 required style="width:80%; padding: 8px; border-radius: 6px; border: 1px solid #c7d7ea; background: #f7fafd; margin-right:7px;" />
-          <input type="number" data-subtopic-max placeholder="Max Marks" step="0.01"
-                 value="${max}" required style="width:25%; padding: 8px; border-radius: 6px; border: 1px solid #c7d7ea; background: #f7fafd;" />
-          ${isAdmin ? `<button type="button" class="option-btn" style="width: 70px; padding: 5px;" onclick="this.parentNode.remove()">Remove</button>` : ''}
-        `;
-        subtopicsContainer.appendChild(div);
-      }
-         if (addSubtopicBtn) {
-      addSubtopicBtn.onclick = () => addSubtopicField();
-    }
+    // --- Subtopic Fields Logic (manual rows) + Internal controls ---
+const subtopicsContainer  = popupContent.querySelector('#subtopicsContainer');
+const addSubtopicBtn      = popupContent.querySelector('#addSubtopicBtn');
+
+// Internal UI
+const useInternalToggle   = popupContent.querySelector('#useInternalToggle');
+const internalConfigBox   = popupContent.querySelector('#internalConfig');
+const internalSelect      = popupContent.querySelector('#internalSourceExams');
+const internalMaxInput    = popupContent.querySelector('#internalMax');
+
+// Initialize dropdown to match your other dropdowns (Choices.js if present)
+if (internalSelect && window.Choices) {
+  try {
+    new Choices(internalSelect, { removeItemButton: true, shouldSort: false, placeholder: true });
+  } catch(e) { /* fail silently */ }
+}
+
+if (useInternalToggle) {
+  useInternalToggle.onchange = () => {
+    internalConfigBox.style.display = useInternalToggle.checked ? 'block' : 'none';
+  };
+}
+
+function addSubtopicField(name = '', max = '') {
+  const idx = subtopicsContainer.children.length;
+  const div = document.createElement('div');
+  div.setAttribute('data-subtopic-row', '');
+  div.style = 'display:flex;align-items:center;gap:8px;margin-bottom:7px;';
+  div.innerHTML = `
+    <input type="text" data-subtopic-name placeholder="Subtopic Name" value="${name}"
+           required style="width:80%; padding: 8px; border-radius: 6px; border: 1px solid #c7d7ea; background: #f7fafd; margin-right:7px;" />
+    <input type="number" data-subtopic-max placeholder="Max Marks" step="0.01"
+           value="${max}" required style="width:25%; padding: 8px; border-radius: 6px; border: 1px solid #c7d7ea; background: #f7fafd;" />
+    ${isAdmin ? `<button type="button" class="option-btn" style="width: 70px; padding: 5px;" onclick="this.parentNode.remove()">Remove</button>` : ''}
+  `;
+  subtopicsContainer.appendChild(div);
+}
+
+if (addSubtopicBtn) {
+  addSubtopicBtn.onclick = () => addSubtopicField();
+}
 
             // --- Subject Fields Logic (name + integer max) ---
       const subjectsContainer = popupContent.querySelector('#subjectsContainer');
@@ -1628,12 +1721,44 @@ function showEditExamPopup(examId) {
           <input name="examName" maxlength="30" required value="${exam.name}">
           
           <label>Subtopics <span style="color:#888;font-weight:500;">(optional)</span></label>
-          <div id="editSubtopicsContainer"></div>
-          <button type="button" id="editAddSubtopicBtn"
-            style="margin:6px 0 14px 0; background:#1762a7;color:#fff;
-                   padding:7px 13px;border:none;border-radius:7px;font-weight:600;">
-            + Add Subtopic
-          </button>
+
+<!-- Internal (computed) controller -->
+<div id="editInternalControls" style="border:1px solid #e2ecf7; background:#f7fafd; border-radius:8px; padding:10px; margin-bottom:10px;">
+  <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
+    <input type="checkbox" id="editUseInternalToggle" />
+    <label for="editUseInternalToggle" style="font-weight:600;">Use Internal (computed from other exams)</label>
+  </div>
+
+  <div id="editInternalConfig" style="display:none; margin-left:4px;">
+    <div style="margin-bottom:8px;">
+      <div style="font-size:0.95em; color:#1762a7; font-weight:600; margin-bottom:6px;">Source Exams</div>
+      <select id="editInternalSourceExams" multiple
+              class="custom-select"
+              style="width:100%; padding:8px; border-radius:6px; border:1px solid #c7d7ea; background:#fff;">
+        <!-- options will be loaded after render -->
+      </select>
+      <div style="font-size:0.85em; color:#666; margin-top:4px;">Pick one or more exams (e.g., FA1, FA2, SA1...).</div>
+    </div>
+
+    <div style="display:flex; align-items:center; gap:10px;">
+      <label for="editInternalMax" style="min-width:140px;">Internal Max (marks)</label>
+      <input id="editInternalMax" type="number" min="1" max="200" step="1" placeholder="e.g., 20"
+             style="width:120px; padding:8px; border-radius:6px; border:1px solid #c7d7ea; background:#fff;" />
+    </div>
+    <div style="font-size:0.85em; color:#666; margin-top:6px;">
+      Student’s internal = average( score/max ) × Internal Max. (Written/External is added separately by you.)
+    </div>
+  </div>
+</div>
+
+<!-- Manual subtopics -->
+<div id="editSubtopicsContainer"></div>
+<div style="display:flex; gap:10px; margin-top:6px; margin-bottom:14px;">
+  <button type="button" id="editAddSubtopicBtn"
+          style="background:#1762a7;color:#fff; padding:7px 13px;border:none;border-radius:7px;font-weight:600;">
+    + Add Subtopic
+  </button>
+</div>
           
           <label>Subjects</label>
           <div id="editSubjectsContainer"></div>
@@ -1669,8 +1794,10 @@ function showEditExamPopup(examId) {
           alert("Please enter exam name and at least one subject!");
           return;
         }
-        // --- Subtopics (name + max, decimals allowed, quietly deduped) ---
+       // --- Subtopics (manual) + optional Internal (computed) + dedupe ---
 let subtopics = [];
+
+// 1) Manual rows
 {
   const subC = popupContent.querySelector('#editSubtopicsContainer');
   if (subC) {
@@ -1686,10 +1813,49 @@ let subtopics = [];
       subtopics.push({ name: rawName, max: parsed });
     });
   }
-  // quiet dedupe by name (case-insensitive, trimmed); keep first
+}
+
+// 2) Internal (computed)
+{
+  const useInt = popupContent.querySelector('#editUseInternalToggle')?.checked;
+  if (useInt) {
+    const intMaxRaw = popupContent.querySelector('#editInternalMax')?.value;
+    const intMax = parseFloat(intMaxRaw);
+    // read selected exam ids
+    let srcIds = [];
+    const sel = popupContent.querySelector('#editInternalSourceExams');
+    if (sel) {
+      if (sel.selectedOptions && sel.selectedOptions.length) {
+        srcIds = Array.from(sel.selectedOptions).map(o => o.value);
+      } else {
+        srcIds = Array.from(sel.querySelectorAll('option:checked')).map(o => o.value);
+      }
+    }
+
+    if (!srcIds.length) {
+      alert('Please select at least one source exam for Internal.');
+      return;
+    }
+    if (!intMax || isNaN(intMax) || intMax <= 0) {
+      alert('Please enter a valid Internal Max (marks).');
+      return;
+    }
+
+    subtopics.push({
+      name: 'Internal',
+      max: intMax,
+      computed: true,
+      computeRule: 'avg_normalized_x_max',  // average(score/max) * internalMax
+      sources: srcIds
+    });
+  }
+}
+
+// 3) quiet dedupe by name (case-insensitive, trimmed); keep first
+{
   const seen = new Set();
   subtopics = subtopics.filter(st => {
-    const k = st.name.trim().toLowerCase();
+    const k = String(st.name || '').trim().toLowerCase();
     if (!k || seen.has(k)) return false;
     seen.add(k);
     return true;
@@ -1743,10 +1909,17 @@ let subtopics = [];
         exam.subjects.forEach(subj => addSubjectField(subj.name, subj.max));
       }
       addSubjectBtn.onclick = () => addSubjectField();
-      // --- Subtopic Fields Logic for Edit ---
+     // --- Subtopic Fields Logic for Edit (manual) + Internal controls ---
 const editSubtopicsContainer = popupContent.querySelector('#editSubtopicsContainer');
-const editAddSubtopicBtn = popupContent.querySelector('#editAddSubtopicBtn');
+const editAddSubtopicBtn     = popupContent.querySelector('#editAddSubtopicBtn');
 
+// Internal UI (Edit)
+const editUseInternalToggle  = popupContent.querySelector('#editUseInternalToggle');
+const editInternalConfigBox  = popupContent.querySelector('#editInternalConfig');
+const editInternalSelect     = popupContent.querySelector('#editInternalSourceExams');
+const editInternalMaxInput   = popupContent.querySelector('#editInternalMax');
+
+// helper: add one manual subtopic row
 function editAddSubtopicField(name = '', max = '') {
   const div = document.createElement('div');
   div.setAttribute('data-subtopic-row', '');
@@ -1761,12 +1934,69 @@ function editAddSubtopicField(name = '', max = '') {
   editSubtopicsContainer.appendChild(div);
 }
 
+// Load available exams into the dropdown (so it mirrors Add flow)
+(function loadExamOptionsForEdit(){
+  db.collection('years').doc(academicYear)
+    .collection('exams').doc('classGroups')
+    .collection(getClassGroupName(currentClassName))
+    .get()
+    .then(snap2 => {
+      const items = [];
+      snap2.forEach(d => items.push({id: d.id, ...(d.data()||{})}));
+      if (editInternalSelect) {
+        editInternalSelect.innerHTML = items.map(ex => `<option value="${ex.id}">${ex.name}</option>`).join('');
+        // Initialize Choices.js to match other dropdowns (if available)
+        if (window.Choices) {
+          try {
+            new Choices(editInternalSelect, { removeItemButton: true, shouldSort: false, placeholder: true });
+          } catch(e) { /* noop */ }
+        }
+        // Prefill internal (computed) if present on exam
+        const existingInternal = Array.isArray(exam.subtopics)
+          ? exam.subtopics.find(st => st && st.computed === true && (st.name || '').toLowerCase() === 'internal')
+          : null;
+
+        if (existingInternal) {
+          if (editUseInternalToggle) {
+            editUseInternalToggle.checked = true;
+            editInternalConfigBox.style.display = 'block';
+          }
+          if (editInternalMaxInput && typeof existingInternal.max !== 'undefined') {
+            editInternalMaxInput.value = existingInternal.max;
+          }
+          if (existingInternal.sources && Array.isArray(existingInternal.sources) && existingInternal.sources.length) {
+            // mark selected options
+            existingInternal.sources.forEach(id => {
+              const opt = editInternalSelect.querySelector(`option[value="${id}"]`);
+              if (opt) opt.selected = true;
+            });
+            // If Choices is used, trigger update
+            if (editInternalSelect.choices) {
+              try { editInternalSelect.choices.setChoiceByValue(existingInternal.sources); } catch(e) {}
+            }
+          }
+        }
+      }
+    });
+})();
+
+// Toggle show/hide
+if (editUseInternalToggle) {
+  editUseInternalToggle.onchange = () => {
+    editInternalConfigBox.style.display = editUseInternalToggle.checked ? 'block' : 'none';
+  };
+}
+
+// Prefill manual subtopics ONLY (skip computed internal)
+if (exam.subtopics && Array.isArray(exam.subtopics) && exam.subtopics.length) {
+  exam.subtopics
+    .filter(st => !(st && st.computed === true && (st.name || '').toLowerCase() === 'internal'))
+    .forEach(st => editAddSubtopicField(st.name || '', (st.max ?? '').toString()));
+}
+
+// Add manual subtopic button
 if (editAddSubtopicBtn) {
   editAddSubtopicBtn.onclick = () => editAddSubtopicField();
-  // Prefill existing subtopics if any
-  if (exam.subtopics && Array.isArray(exam.subtopics) && exam.subtopics.length) {
-  exam.subtopics.forEach(st => editAddSubtopicField(st.name || '', (st.max ?? '').toString()));
-}
 }
     });
 }
@@ -1849,13 +2079,29 @@ function _normKey(s) {
     .toLowerCase();
 }
             function _resolveSubKeyExact(obj, wantName) {
-            if (!obj) return null;
-            const want = _normKey(wantName);
-            const keys = Object.keys(obj);
-            // exact normalized match only (no single-key fallback!)
-            const k = keys.find(x => _normKey(x) === want);
-            return k || null;
-          }
+  if (!obj) return null;
+  const want = _normKey(wantName);
+  const keys = Object.keys(obj);
+  // exact normalized match only (no single-key fallback!)
+  const k = keys.find(x => _normKey(x) === want);
+  return k || null;
+}
+
+// ---- Internal calculator (ABSENT/MISSING = 0; skip if max<=0) ----
+function _computeInternalFromArray(sourceItems, internalMax) {
+  if (!Array.isArray(sourceItems) || !sourceItems.length || !internalMax || internalMax <= 0) return 0;
+  let sumPct = 0, n = 0;
+  for (const it of sourceItems) {
+    const rawMax = Number(it?.max ?? 0);
+    if (!rawMax || rawMax <= 0) continue;               // skip invalid max
+    const rawObt = Number(it?.obtained ?? 0);           // AB/missing => 0
+    const pct = Math.max(0, Math.min(1, rawObt / rawMax));
+    sumPct += pct;
+    n += 1;                                             // include in average if max valid
+  }
+  if (!n) return 0;
+  return Math.round((sumPct / n) * internalMax);        // integer only (e.g., 15), NOT "15/20"
+}
 
              let marksPromises = students.map(stu =>
               db.collection('years').doc(academicYear)
@@ -1894,7 +2140,62 @@ function _normKey(s) {
               }
                 })
             );
-            Promise.all(marksPromises).then(() => {
+            Promise.all(marksPromises).then(async () => {
+
+  // ---- Build Internal prefill map (studentId -> integer) if Internal is configured ----
+  // Detect "Internal" subtopic (computed:true) on this subject/exam
+  const internalSt = Array.isArray(subtopics)
+    ? subtopics.find(st => st && st.computed === true && (String(st.name || '').toLowerCase() === 'internal'))
+    : null;
+
+  // helper: for a given source exam id, get the subject max for this subject (from loaded exams list)
+  function _getSourceSubjectMax(examId, subjectName) {
+    const ex = exams.find(e => e.id === examId);
+    if (!ex || !Array.isArray(ex.subjects)) return null;
+    const s = ex.subjects.find(x => x && x.name === subjectName);
+    return s ? Number(s.max) : null;
+  }
+
+  // Map: studentId -> integer internal marks
+  const internalPrefill = {};
+
+  if (internalSt && Array.isArray(internalSt.sources) && internalSt.sources.length && Number(internalSt.max) > 0) {
+    const srcIds = internalSt.sources.slice();
+
+    // Only keep sources that actually have a valid max for this subject
+    const validSources = srcIds
+      .map(id => ({ id, sMax: _getSourceSubjectMax(id, subjectName) }))
+      .filter(x => x.sMax && x.sMax > 0);
+
+    // For each student, fetch obtained marks from each valid source exam
+    await Promise.all(students.map(async (stu) => {
+      const items = [];
+      for (const src of validSources) {
+        try {
+          const doc = await db.collection('years').doc(academicYear)
+            .collection('classes').doc(currentClassId)
+            .collection('sections').doc(currentSectionId)
+            .collection('students').doc(stu.id)
+            .collection('marks').doc(src.id)
+            .get();
+
+          let obtained = 0;
+          if (doc.exists) {
+            const d = doc.data() || {};
+            // read obtained for this subject (exact name match)
+            const totKey = Object.keys(d).find(k => k !== '__subs' && _normKey(k) === _normKey(subjectName));
+            if (totKey && d[totKey] != null) obtained = Number(d[totKey]) || 0;  // AB/missing => 0
+          }
+          items.push({ obtained, max: src.sMax });
+        } catch (e) {
+          // on read error, treat as absent (0)
+          items.push({ obtained: 0, max: src.sMax });
+        }
+      }
+      internalPrefill[stu.id] = _computeInternalFromArray(items, Number(internalSt.max));
+    }));
+  }
+
              let html2 = `
                 <form id="marksEntryForm" style="max-height:77vh;overflow-y:auto;">
                   <div class="popup-title">Marks: ${exam.name} – ${subjectName} (Max: ${max})</div>
@@ -1922,29 +2223,58 @@ function _normKey(s) {
                               
                                     ${
                                       (subtopics || []).map(st => {
-                                       const bd = breakdownData[stu.id] || {};
-                                      let pre = '';
-                                      if (Object.prototype.hasOwnProperty.call(bd, st.name) && bd[st.name] != null) {
-                                        pre = bd[st.name];
-                                      } else {
-                                      const k = _resolveSubKeyExact(bd, st.name);
-                                      if (k && bd[k] != null) pre = bd[k];
-                                    }
-                                        return `
-                                          <div style="grid-column:1;">&nbsp;</div>
-                                          <div class="sub-label"
-                                               style="grid-column:2; color:#2e7d32; font-weight:600;">
-                                            ${st.name}
-                                          </div>
-                                          <input type="number"
-                                                 class="marks-input sub-input"
-                                                 data-stu="${stu.id}"
-                                                 data-subname="${encodeURIComponent(st.name)}"
-                                                 step="0.01" min="0"
-                                                 value="${pre}"
-                                                 style="grid-column:3; width:96px; text-align:right;" />
-                                        `;
-                                      }).join('')
+  const isInternal = (st && st.computed === true && String(st.name || '').toLowerCase() === 'internal');
+
+  // Prefill value:
+  // - Internal: from internalPrefill map (integer; only the number)
+  // - Manual: from saved breakdown (if any)
+  let pre = '';
+  if (isInternal) {
+    pre = internalPrefill[stu.id] != null ? internalPrefill[stu.id] : '';
+  } else {
+    const bd = breakdownData[stu.id] || {};
+    if (Object.prototype.hasOwnProperty.call(bd, st.name) && bd[st.name] != null) {
+      pre = bd[st.name];
+    } else {
+      const k = _resolveSubKeyExact(bd, st.name);
+      if (k && bd[k] != null) pre = bd[k];
+    }
+  }
+
+  // Render: Internal is read-only; manual is editable
+  const common = `
+    <div style="grid-column:1;">&nbsp;</div>
+    <div class="sub-label"
+         style="grid-column:2; color:#2e7d32; font-weight:600;">
+      ${st.name}
+    </div>
+  `;
+
+  if (isInternal) {
+    return `
+      ${common}
+      <input type="number"
+             class="marks-input sub-input"
+             data-stu="${stu.id}"
+             data-subname="${encodeURIComponent(st.name)}"
+             step="1" min="0"
+             value="${pre}"
+             readonly tabindex="-1"
+             style="grid-column:3; width:96px; text-align:right; background:#f5f5f5; color:#333;" />
+    `;
+  } else {
+    return `
+      ${common}
+      <input type="number"
+             class="marks-input sub-input"
+             data-stu="${stu.id}"
+             data-subname="${encodeURIComponent(st.name)}"
+             step="0.01" min="0"
+             value="${pre}"
+             style="grid-column:3; width:96px; text-align:right;" />
+    `;
+  }
+}).join('')
                                     }
                               
                                     <div style="grid-column:1;">&nbsp;</div>
@@ -3452,6 +3782,7 @@ if (marksFileInput) {
 </script>
 </body>
 </html>
+
 
 
 
