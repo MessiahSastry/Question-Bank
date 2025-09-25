@@ -1468,20 +1468,26 @@ function showExamSettingsPopup() {
 
 <!-- Internal (computed) controller -->
 <div id="internalControls" style="border:1px solid #e2ecf7; background:#f7fafd; border-radius:8px; padding:10px; margin-bottom:10px;">
-  <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
-    <input type="checkbox" id="useInternalToggle" />
-    <label for="useInternalToggle" style="font-weight:600;">Use Internal (computed from other exams)</label>
-  </div>
+  <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px; justify-content:flex-start;">
+  <input type="checkbox" id="useInternalToggle" style="margin:0;" />
+  <label for="useInternalToggle" style="font-weight:600; margin:0;">Use Internal</label>
+</div>
 
   <div id="internalConfig" style="display:none; margin-left:4px;">
     <div style="margin-bottom:8px;">
       <div style="font-size:0.95em; color:#1762a7; font-weight:600; margin-bottom:6px;">Source Exams</div>
-      <select id="internalSourceExams" multiple
-              class="custom-select"
-              style="width:100%; padding:8px; border-radius:6px; border:1px solid #c7d7ea; background:#fff;">
-        ${exams.map(ex => `<option value="${ex.id}">${ex.name}</option>`).join('')}
-      </select>
-      <div style="font-size:0.85em; color:#666; margin-top:4px;">Pick one or more exams (e.g., FA1, FA2, SA1...).</div>
+      <div class="custom-dropdown" id="internalExamsDropdown" tabindex="0">
+  <div class="dropdown-selected" id="internalExamsSelected" data-values="">--Select--</div>
+  <div class="dropdown-list" id="internalExamsList" style="display:none; max-height:220px; overflow-y:auto;">
+    ${exams.map(ex => `
+      <label class="dropdown-option" style="display:flex; align-items:center; gap:10px; padding:10px 12px; cursor:pointer;">
+        <input type="checkbox" value="${ex.id}" data-name="${ex.name}" style="transform:scale(1.1);" />
+        <span>${ex.name}</span>
+      </label>
+    `).join('')}
+  </div>
+</div>
+<div style="font-size:0.85em; color:#666; margin-top:4px;">Pick one or more exams.</div>
     </div>
 
     <div style="display:flex; align-items:center; gap:10px;">
@@ -1563,17 +1569,13 @@ let subtopics = [];
   if (useInt) {
     const intMaxRaw = popupContent.querySelector('#internalMax')?.value;
     const intMax = parseFloat(intMaxRaw);
-    // read selected exam ids (works for native select or Choices)
-    let srcIds = [];
-    const sel = popupContent.querySelector('#internalSourceExams');
-    if (sel) {
-      if (sel.selectedOptions && sel.selectedOptions.length) {
-        srcIds = Array.from(sel.selectedOptions).map(o => o.value);
-      } else if (sel.value) {
-        // Choices.js stores selections in the underlying select
-        srcIds = Array.from(sel.querySelectorAll('option:checked')).map(o => o.value);
-      }
-    }
+    // read selected exam ids from the custom dropdown
+let srcIds = [];
+{
+  const sel = popupContent.querySelector('#internalExamsSelected');
+  const csv = sel ? (sel.dataset.values || '') : '';
+  srcIds = csv ? csv.split(',').filter(Boolean) : [];
+}
 
     // Validate
     if (!srcIds.length) {
@@ -1635,11 +1637,29 @@ const internalConfigBox   = popupContent.querySelector('#internalConfig');
 const internalSelect      = popupContent.querySelector('#internalSourceExams');
 const internalMaxInput    = popupContent.querySelector('#internalMax');
 
-// Initialize dropdown to match your other dropdowns (Choices.js if present)
-if (internalSelect && window.Choices) {
-  try {
-    new Choices(internalSelect, { removeItemButton: true, shouldSort: false, placeholder: true });
-  } catch(e) { /* fail silently */ }
+// Internal custom dropdown (checkbox list) — same behavior as your other dropdowns
+const internalDD     = popupContent.querySelector('#internalExamsDropdown');
+const internalDDSel  = popupContent.querySelector('#internalExamsSelected');
+const internalDDList = popupContent.querySelector('#internalExamsList');
+
+function _updateInternalSelectedText() {
+  const checked = internalDDList ? Array.from(internalDDList.querySelectorAll('input[type="checkbox"]:checked')) : [];
+  const names = checked.map(c => c.getAttribute('data-name'));
+  internalDDSel.textContent = names.length ? names.join(', ') : '--Select--';
+  internalDDSel.dataset.values = checked.map(c => c.value).join(',');
+}
+
+if (internalDD && internalDDSel && internalDDList) {
+  internalDDSel.onclick = function () {
+    internalDDList.style.display = (internalDDList.style.display === 'none' || internalDDList.style.display === '') ? 'block' : 'none';
+  };
+  document.addEventListener('click', function handler(e) {
+    if (!internalDD.contains(e.target)) {
+      internalDDList.style.display = 'none';
+      document.removeEventListener('click', handler);
+    }
+  });
+  internalDDList.addEventListener('change', _updateInternalSelectedText);
 }
 
 if (useInternalToggle) {
@@ -1724,20 +1744,21 @@ function showEditExamPopup(examId) {
 
 <!-- Internal (computed) controller -->
 <div id="editInternalControls" style="border:1px solid #e2ecf7; background:#f7fafd; border-radius:8px; padding:10px; margin-bottom:10px;">
-  <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
-    <input type="checkbox" id="editUseInternalToggle" />
-    <label for="editUseInternalToggle" style="font-weight:600;">Use Internal (computed from other exams)</label>
-  </div>
+  <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px; justify-content:flex-start;">
+  <input type="checkbox" id="editUseInternalToggle" style="margin:0;" />
+  <label for="editUseInternalToggle" style="font-weight:600; margin:0;">Use Internal</label>
+</div>
 
   <div id="editInternalConfig" style="display:none; margin-left:4px;">
     <div style="margin-bottom:8px;">
       <div style="font-size:0.95em; color:#1762a7; font-weight:600; margin-bottom:6px;">Source Exams</div>
-      <select id="editInternalSourceExams" multiple
-              class="custom-select"
-              style="width:100%; padding:8px; border-radius:6px; border:1px solid #c7d7ea; background:#fff;">
-        <!-- options will be loaded after render -->
-      </select>
-      <div style="font-size:0.85em; color:#666; margin-top:4px;">Pick one or more exams (e.g., FA1, FA2, SA1...).</div>
+      <div class="custom-dropdown" id="editInternalExamsDropdown" tabindex="0">
+  <div class="dropdown-selected" id="editInternalExamsSelected" data-values="">--Select--</div>
+  <div class="dropdown-list" id="editInternalExamsList" style="display:none; max-height:220px; overflow-y:auto;">
+    <!-- items will be injected -->
+  </div>
+</div>
+<div style="font-size:0.85em; color:#666; margin-top:4px;">Pick one or more exams.</div>
     </div>
 
     <div style="display:flex; align-items:center; gap:10px;">
@@ -1821,16 +1842,13 @@ let subtopics = [];
   if (useInt) {
     const intMaxRaw = popupContent.querySelector('#editInternalMax')?.value;
     const intMax = parseFloat(intMaxRaw);
-    // read selected exam ids
-    let srcIds = [];
-    const sel = popupContent.querySelector('#editInternalSourceExams');
-    if (sel) {
-      if (sel.selectedOptions && sel.selectedOptions.length) {
-        srcIds = Array.from(sel.selectedOptions).map(o => o.value);
-      } else {
-        srcIds = Array.from(sel.querySelectorAll('option:checked')).map(o => o.value);
-      }
-    }
+    // read selected exam ids from custom dropdown
+let srcIds = [];
+{
+  const sel = popupContent.querySelector('#editInternalExamsSelected');
+  const csv = sel ? (sel.dataset.values || '') : '';
+  srcIds = csv ? csv.split(',').filter(Boolean) : [];
+}
 
     if (!srcIds.length) {
       alert('Please select at least one source exam for Internal.');
@@ -1943,40 +1961,64 @@ function editAddSubtopicField(name = '', max = '') {
     .then(snap2 => {
       const items = [];
       snap2.forEach(d => items.push({id: d.id, ...(d.data()||{})}));
-      if (editInternalSelect) {
-        editInternalSelect.innerHTML = items.map(ex => `<option value="${ex.id}">${ex.name}</option>`).join('');
-        // Initialize Choices.js to match other dropdowns (if available)
-        if (window.Choices) {
-          try {
-            new Choices(editInternalSelect, { removeItemButton: true, shouldSort: false, placeholder: true });
-          } catch(e) { /* noop */ }
-        }
-        // Prefill internal (computed) if present on exam
-        const existingInternal = Array.isArray(exam.subtopics)
-          ? exam.subtopics.find(st => st && st.computed === true && (st.name || '').toLowerCase() === 'internal')
-          : null;
+      // Build custom checkbox list into our dropdown and prefill existing selections
+const editDD      = popupContent.querySelector('#editInternalExamsDropdown');
+const editDDSel   = popupContent.querySelector('#editInternalExamsSelected');
+const editDDList  = popupContent.querySelector('#editInternalExamsList');
 
-        if (existingInternal) {
-          if (editUseInternalToggle) {
-            editUseInternalToggle.checked = true;
-            editInternalConfigBox.style.display = 'block';
-          }
-          if (editInternalMaxInput && typeof existingInternal.max !== 'undefined') {
-            editInternalMaxInput.value = existingInternal.max;
-          }
-          if (existingInternal.sources && Array.isArray(existingInternal.sources) && existingInternal.sources.length) {
-            // mark selected options
-            existingInternal.sources.forEach(id => {
-              const opt = editInternalSelect.querySelector(`option[value="${id}"]`);
-              if (opt) opt.selected = true;
-            });
-            // If Choices is used, trigger update
-            if (editInternalSelect.choices) {
-              try { editInternalSelect.choices.setChoiceByValue(existingInternal.sources); } catch(e) {}
-            }
-          }
-        }
-      }
+function _editUpdateInternalSelectedText() {
+  const checked = editDDList ? Array.from(editDDList.querySelectorAll('input[type="checkbox"]:checked')) : [];
+  const names = checked.map(c => c.getAttribute('data-name'));
+  editDDSel.textContent = names.length ? names.join(', ') : '--Select--';
+  editDDSel.dataset.values = checked.map(c => c.value).join(',');
+}
+
+if (editDD && editDDSel && editDDList) {
+  // inject items
+  editDDList.innerHTML = items.map(ex => `
+    <label class="dropdown-option" style="display:flex; align-items:center; gap:10px; padding:10px 12px; cursor:pointer;">
+      <input type="checkbox" value="${ex.id}" data-name="${ex.name}" style="transform:scale(1.1);" />
+      <span>${ex.name}</span>
+    </label>
+  `).join('');
+
+  // open/close logic
+  editDDSel.onclick = function () {
+    editDDList.style.display = (editDDList.style.display === 'none' || editDDList.style.display === '') ? 'block' : 'none';
+  };
+  document.addEventListener('click', function handler(e) {
+    if (!editDD.contains(e.target)) {
+      editDDList.style.display = 'none';
+      document.removeEventListener('click', handler);
+    }
+  });
+  editDDList.addEventListener('change', _editUpdateInternalSelectedText);
+
+  // Prefill internal (computed) if present on exam
+  const existingInternal = Array.isArray(exam.subtopics)
+    ? exam.subtopics.find(st => st && st.computed === true && (st.name || '').toLowerCase() === 'internal')
+    : null;
+
+  if (existingInternal) {
+    if (editUseInternalToggle) {
+      editUseInternalToggle.checked = true;
+      editInternalConfigBox.style.display = 'block';
+    }
+    if (editInternalMaxInput && typeof existingInternal.max !== 'undefined') {
+      editInternalMaxInput.value = existingInternal.max;
+    }
+    if (existingInternal.sources && Array.isArray(existingInternal.sources) && existingInternal.sources.length) {
+      // tick the matching checkboxes
+      existingInternal.sources.forEach(id => {
+        const cb = editDDList.querySelector(`input[type="checkbox"][value="${id}"]`);
+        if (cb) cb.checked = true;
+      });
+    }
+    _editUpdateInternalSelectedText();
+  } else {
+    _editUpdateInternalSelectedText();
+  }
+}
     });
 })();
 
@@ -3782,6 +3824,7 @@ if (marksFileInput) {
 </script>
 </body>
 </html>
+
 
 
 
