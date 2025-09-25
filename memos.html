@@ -374,6 +374,13 @@ const toastDiv = document.getElementById('toast');
 const addExamColBtn   = document.getElementById('addExamColBtn');
 const backExamSelect  = document.getElementById('backExamSelect');
 
+// Make it look like the other dropdowns
+const backExamChoices = new Choices(backExamSelect, {
+  searchEnabled: false,
+  itemSelectText: '',
+  shouldSort: false
+});
+
 // --- Back-page: add/prune columns UI ---
 
 function renderBackCols() {
@@ -416,9 +423,8 @@ addExamColBtn?.addEventListener('click', () => {
     showToast?.('No exams available for this class group.');
     return;
   }
-  if (!backExamSelect) return;
 
-  const exId = backExamSelect.value;
+  const exId = backExamChoices.getValue(true); // Choices.js value
   if (!exId) {
     showToast?.('Please select an exam first.');
     return;
@@ -427,11 +433,12 @@ addExamColBtn?.addEventListener('click', () => {
     showToast?.('That exam is already added.');
     return;
   }
+
   backPlan.examCols.push(exId);
   renderBackCols();
 
   // reset to placeholder
-  backExamSelect.value = '';
+  backExamChoices.setChoiceByValue('');
 });
 
 // ================== UI LOADERS ====================
@@ -496,15 +503,18 @@ if (examsSnap.empty) {
     'value', 'label', false
   );
 
-  // ⬇️ Clear & disable back-page exam dropdown
-  if (backExamSelect) {
-    backExamSelect.innerHTML = '<option value="">No exams</option>';
-    backExamSelect.disabled = true;
-  }
+  // Choices.js version of disable + placeholder
+  backExamChoices.clearStore();
+  backExamChoices.setChoices(
+    [{ value: '', label: 'No exams', selected: true }],
+    'value', 'label', false
+  );
+  backExamChoices.disable();
 
   await loadStudents();
   return;
 }
+
 exams = examsSnap.docs.map(doc => ({id: doc.id, ...doc.data()}));
 examChoices.clearStore();
 if (exams.length === 0) {
@@ -515,6 +525,16 @@ if (exams.length === 0) {
     'value', 'label', false
   );
   examChoices.setChoiceByValue(exams[0]?.id || '');
+  // Mirror into the back-page dropdown, with a placeholder
+backExamChoices.enable();
+backExamChoices.clearStore();
+backExamChoices.setChoices(
+  [{ value: '', label: 'Select exam…', selected: true }].concat(
+    exams.map(e => ({ value: e.id, label: e.name }))
+  ),
+  'value', 'label', false
+);
+
   // ⬇️ Populate the back-page exam dropdown
 if (backExamSelect) {
   backExamSelect.disabled = false;
@@ -530,12 +550,17 @@ if (backExamSelect) {
   backPlan.examCols = (backPlan.examCols || []).filter(id => validIds.has(id));
   renderBackCols();
 
-  // refresh dropdown (keep placeholder)
-  if (backExamSelect) {
-    const cur = backExamSelect.value;
-    backExamSelect.innerHTML = '<option value="">Select exam…</option>' +
-      exams.map(e => `<option value="${e.id}">${e.name}</option>`).join('');
-    if ([...validIds].includes(cur)) backExamSelect.value = cur;
+  // Refresh Choices list, preserve selection if still valid
+  const currentVal = backExamChoices.getValue(true);
+  backExamChoices.clearStore();
+  backExamChoices.setChoices(
+    [{ value: '', label: 'Select exam…', selected: true }].concat(
+      exams.map(e => ({ value: e.id, label: e.name }))
+    ),
+    'value', 'label', false
+  );
+  if (currentVal && validIds.has(currentVal)) {
+    backExamChoices.setChoiceByValue(currentVal);
   }
 }
 
@@ -2709,5 +2734,6 @@ page.render({ canvasContext: ctx, viewport });
 </div>
 </body>
 </html>
+
 
 
