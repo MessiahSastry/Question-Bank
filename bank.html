@@ -987,8 +987,8 @@ await __waitForImages(printable);
               <div class="question-actions">
                 <button class="q-action-btn" title="Options"><i class="fas fa-ellipsis-v"></i></button>
               </div>
-              <input type="file" accept="image/*" style="display:none;" class="question-image-input">
-              <button type="button" class="question-img-btn">📷 Add/Edit Image</button>
+              <!-- Ask AI button replaces the old image button -->
+            <button type="button" class="ask-ai-btn" style="margin-top:6px;">💡 Explain It</button>
             </div>`;
         });
 
@@ -1003,6 +1003,157 @@ await __waitForImages(printable);
 
           if (typeof setupQuestionActionMenus === "function") setupQuestionActionMenus();
 
+/* ==== Explain It (AI) — open modal with selected question ==== */
+document.addEventListener('click', async (e) => {
+  const btn = e.target.closest('.ask-ai-btn');
+  if (!btn) return;
+
+  const card = btn.closest('.question-item');
+  const docId = card?.getAttribute('data-id');
+  if (!docId) return;
+
+  const modal   = document.getElementById('ai-chat-modal');
+  const content = document.getElementById('ai-chat-content');
+  const input   = document.getElementById('ai-chat-input');
+  const closeBtn= document.getElementById('ai-chat-close');
+
+  // loading state
+  content.innerHTML = `<div style="color:#185496;">Loading question…</div>`;
+  modal.style.display = 'flex';
+
+  // fetch full question doc
+  try {
+    const snap = await db.collection('questions').doc(docId).get();
+    const data = snap.data() || {};
+
+    const meta = {
+      className: data.class || document.getElementById('class-value').value || '',
+      subject:   data.subject || document.getElementById('subject-value').value || '',
+      chapter:   data.chapter || document.getElementById('chapter-value').value || '',
+      level:     data.difficulty || data.level || '',
+      type:      data.mcqType || (Array.isArray(data.options) && data.options.length===4 ? 'MCQ (Single)' : 'Descriptive'),
+      marks:     data.marks ?? ''
+    };
+
+    const qText   = (data.question || data.body || data.text || '').trim();
+    const options = Array.isArray(data.options) ? data.options : null;
+
+    // build question preview HTML
+    const metaLine = [
+      meta.subject || 'Subject?',
+      meta.className || 'Class?',
+      meta.level || 'Level?',
+      meta.type || 'Type?'
+    ].filter(Boolean).join(' • ');
+
+    let optsHtml = '';
+    if (options && options.length) {
+      optsHtml = `
+        <div style="margin-top:8px; padding-left:4px;">
+          ${options.map((o,i)=>`<div>${String.fromCharCode(65+i)}) ${o}</div>`).join('')}
+        </div>`;
+    }
+
+    content.innerHTML = `
+      <div style="margin-bottom:10px; color:#0f3d6b; font-weight:600;">${metaLine}</div>
+      <div class="ai-qtext" style="color:#185496; line-height:1.55;">${qText}</div>
+      ${optsHtml}
+      <div id="ai-chat-thread" style="margin-top:14px;"></div>
+    `;
+
+    // MathJax render if needed
+    if (window.MathJax?.typesetPromise) {
+      await window.MathJax.typesetPromise([content]);
+    }
+
+       // focus input
+    input.value = '';
+    input.focus();
+
+    // keep context for this chat
+    window.__aiCtx = {
+      docId,
+      meta,
+      question: qText,
+      options
+    };
+
+    // close button
+    closeBtn.onclick = () => { modal.style.display = 'none'; };
+
+  } catch (err) {
+    content.innerHTML = `<div style="color:#c82333;">Failed to load question: ${String(err)}</div>`;
+  }
+});
+
+// Send button: post to your backend and render reply
+document.getElementById('ai-chat-send').onclick = async () => {
+  const modal   = document.getElementById('ai-chat-modal');
+  if (modal.style.display === 'none') return;
+
+  const thread  = document.getElementById('ai-chat-thread');
+  const input   = document.getElementById('ai-chat-input');
+
+  const msg = (input.value || '').trim();
+  const userMessage = msg || 'Give the correct option (A–D) or final answer, and explain clearly.';
+
+  // show user bubble (only if they typed)
+  if (msg) {
+    thread.insertAdjacentHTML('beforeend',
+      `<div style="margin:6px 0; text-align:right;">
+         <span style="display:inline-block; background:#e8f1ff; padding:8px 10px; border-radius:10px; max-width:96%;">${msg}</span>
+       </div>`);
+  }
+  // show thinking
+  thread.insertAdjacentHTML('beforeend',
+    `<div id="ai-typing" style="margin:6px 0; text-align:left; color:#185496;">Thinking…</div>`);
+  input.value = '';
+
+  try {
+    const payload = {
+      meta: window.__aiCtx?.meta || {},
+      question: window.__aiCtx?.question || '',
+      options: window.__aiCtx?.options || null,
+      userMessage
+    };
+
+    const resp = await fetch('/answerQuestion', {
+      method: 'POST',
+      headers: { 'Content-Type':'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await resp.json();
+
+    document.getElementById('ai-typing')?.remove();
+
+    if (data.error) throw new Error(data.error);
+
+    const parts = [];
+    if (data.final_option) parts.push(`<b>Answer:</b> ${data.final_option}`);
+    if (data.final_answer && !data.final_option) parts.push(`<b>Answer:</b> ${data.final_answer}`);
+    if (data.explanation) parts.push(`<b>Explanation:</b> ${data.explanation}`);
+
+    const html = parts.length
+      ? parts.join('<br>')
+      : 'No answer received.';
+
+    thread.insertAdjacentHTML('beforeend',
+      `<div style="margin:6px 0; text-align:left;">
+         <span style="display:inline-block; background:#f6fbff; border:1px solid #dcecff; padding:8px 10px; border-radius:10px; max-width:96%;">${html}</span>
+       </div>`);
+
+    // Render any LaTeX
+    if (window.MathJax?.typesetPromise) {
+      await window.MathJax.typesetPromise([thread]);
+    }
+    thread.parentElement.scrollTop = thread.parentElement.scrollHeight;
+
+  } catch (err) {
+    document.getElementById('ai-typing')?.remove();
+    thread.insertAdjacentHTML('beforeend',
+      `<div style="margin:6px 0; text-align:left; color:#c82333;">${String(err)}</div>`);
+  }
+};
           document.querySelectorAll('.question-img-btn').forEach(btn => {
             btn.onclick = function() {
               const container = btn.closest('.question-item');
@@ -1428,8 +1579,25 @@ All the Best`;
       <span style="color:#1762a7;font-weight:bold;font-size:1.13em;">Creating Quiz... Please wait</span>
     </div>
   </div>
+<!-- AI Chat Modal -->
+<div id="ai-chat-modal" style="display:none; position:fixed; inset:0; z-index:99999; background:rgba(0,0,0,0.18); align-items:center; justify-content:center;">
+  <div style="background:#fff; width:min(680px,94vw); max-height:85vh; border-radius:14px; box-shadow:0 10px 30px rgba(0,0,0,0.2); display:flex; flex-direction:column;">
+    <div style="padding:12px 16px; border-bottom:1px solid #eef2f8; font-weight:700; color:#0f3d6b;">Explain It</div>
+    <div id="ai-chat-content" style="padding:14px 16px; overflow:auto; flex:1;">
+      <!-- question + answers will be injected here -->
+    </div>
+    <div style="display:flex; gap:8px; padding:12px 12px; border-top:1px solid #eef2f8;">
+      <input id="ai-chat-input" placeholder="Ask for hints, steps, or more detail…" style="flex:1; padding:10px; border:1px solid #bcd6ef; border-radius:8px;">
+      <button id="ai-chat-send" class="main-btn" style="width:auto; padding:10px 16px;">Send</button>
+      <button id="ai-chat-close" style="padding:10px 12px; border:1px solid #ddd; border-radius:8px; background:#fafafa;">Close</button>
+    </div>
+  </div>
+</div>
+
 </body>
 </html>
+
+
 
 
 
