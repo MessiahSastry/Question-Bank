@@ -256,7 +256,15 @@
 
 
       // Wrapper for PDF content
-      const printable = document.createElement('div');
+     const printable = document.createElement('div');
+
+// inject minimal CSS so headings stick with first question and blocks don't split
+const avoidCSS = document.createElement('style');
+avoidCSS.textContent = `
+  .keep-with-next { page-break-inside: avoid; break-inside: avoid; page-break-after: avoid; break-after: avoid; }
+  .no-split, .no-split * img { page-break-inside: avoid; break-inside: avoid; }
+`;
+printable.prepend(avoidCSS);
       printable.id = 'printable-export';
       printable.style.background = "#fff";
       printable.style.color = "#000";
@@ -498,8 +506,11 @@
         if (/\$|\\\(|\\\)/.test(questionLine)) mathElements.push(qCounter - 1);
 
         const wrap = document.createElement('div');
+        wrap.className = 'no-split';
+        wrap.style.cssText = 'page-break-inside:avoid; break-inside:avoid; display:block;';
         wrap.innerHTML = questionHtml;
         printable.appendChild(wrap);
+
 
         qCounter++;
         return wrap;
@@ -526,21 +537,32 @@ levelsOrder.concat(['']).forEach(levelName => {
     printable.appendChild(keepBlock);
 
     // Type headings inside each level
-    typesOrder.forEach(typeName => {
-      const list = levelBucket[typeName] || [];
-      if (!list.length) return;
+   typesOrder.forEach(typeName => {
+  const list = levelBucket[typeName] || [];
+  if (!list.length) return;
 
-      const typeHdr = document.createElement('div');
-      typeHdr.style.cssText = 'font-size:1.05em;font-weight:800;letter-spacing:0.01em;text-align:left;margin:8px 0 6px 0;';
-      typeHdr.textContent = typeName;
-      printable.appendChild(typeHdr);
+  // wrapper to keep heading + first question together
+  const headBlock = document.createElement('div');
+  headBlock.className = 'keep-with-next';
+  headBlock.style.cssText = 'page-break-inside:avoid; break-inside:avoid;';
 
-      list.forEach(item => {
-        const node = buildQuestionHTML(item);
-        printable.appendChild(node);
-      });
-    });
+  const typeHdr = document.createElement('div');
+  typeHdr.style.cssText = 'font-size:1.05em;font-weight:800;letter-spacing:0.01em;text-align:left;margin:8px 0 6px 0;';
+  typeHdr.textContent = typeName;
 
+  // first question with the heading
+  const firstNode = buildQuestionHTML(list[0]);
+
+  headBlock.appendChild(typeHdr);
+  headBlock.appendChild(firstNode);
+  printable.appendChild(headBlock);
+
+  // remaining questions
+  for (let i = 1; i < list.length; i++) {
+    const node = buildQuestionHTML(list[i]);
+    printable.appendChild(node);
+  }
+});
   } else {
     // If a specific Question Type is selected: keep your original (flat) per-level rendering
     const flatList = []
@@ -565,17 +587,23 @@ levelsOrder.concat(['']).forEach(levelName => {
   }
 });
 
-      if (window.MathJax && typeof window.MathJax.typesetPromise === 'function') {
-        await window.MathJax.typesetPromise([printable]);
-        await new Promise(res => setTimeout(res, 100));
-      }
+     if (window.MathJax && typeof window.MathJax.typesetPromise === 'function') {
+  await window.MathJax.typesetPromise([printable]);
+  await new Promise(res => setTimeout(res, 150));
+}
+// wait for all images inside the printable node before pagination
+async function __waitForImages(root){
+  const imgs = Array.from(root.querySelectorAll('img'));
+  await Promise.all(imgs.map(img => img.complete ? Promise.resolve() : new Promise(r => { img.onload = img.onerror = r; })));
+}
+await __waitForImages(printable);
 
       html2pdf().set({
         margin: [1.5, 1.5, 1.5, 1.5],
         filename: `Question_Bank_${(classVal || '').replace(/ /g, "_")}_${(subjectVal || '').replace(/ /g, "_")}_${(chapterVal || '').replace(/ /g, "_")}.pdf`,
         html2canvas: { scale: 2, useCORS: true },
         jsPDF: { unit: 'cm', format: 'a4', orientation: 'portrait' },
-        pagebreak: { mode: ['css', 'legacy'] }
+        pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
       }).from(printable)
         .toPdf()
         .get('pdf')
@@ -1402,6 +1430,7 @@ All the Best`;
   </div>
 </body>
 </html>
+
 
 
 
