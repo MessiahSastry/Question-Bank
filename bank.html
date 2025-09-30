@@ -1071,15 +1071,27 @@ document.addEventListener('click', async (e) => {
     input.focus();
 
     // keep context for this chat
-    window.__aiCtx = {
-      docId,
-      meta,
-      question: qText,
-      options
-    };
+   // keep context for this chat
+window.__aiCtx = {
+  docId,
+  meta,
+  question: qText,
+  options
+};
+// start fresh history for each question card
+window.__aiHistory = [];
 
     // close button
     closeBtn.onclick = () => { modal.style.display = 'none'; };
+
+// Enter to send (Shift+Enter for new line)
+const sendBtn = document.getElementById('ai-chat-send');
+input.onkeydown = (ev) => {
+  if (ev.key === 'Enter' && !ev.shiftKey) {
+    ev.preventDefault();
+    sendBtn.click();
+  }
+};
 
   } catch (err) {
     content.innerHTML = `<div style="color:#c82333;">Failed to load question: ${String(err)}</div>`;
@@ -1093,6 +1105,9 @@ document.getElementById('ai-chat-send').onclick = async () => {
 
   const thread  = document.getElementById('ai-chat-thread');
   const input   = document.getElementById('ai-chat-input');
+
+  // init history store (persists during this modal session)
+  window.__aiHistory = Array.isArray(window.__aiHistory) ? window.__aiHistory : [];
 
   const msg = (input.value || '').trim();
   const userMessage = msg || 'Give the correct option (A–D) or final answer, and explain clearly.';
@@ -1114,10 +1129,12 @@ document.getElementById('ai-chat-send').onclick = async () => {
       meta: window.__aiCtx?.meta || {},
       question: window.__aiCtx?.question || '',
       options: window.__aiCtx?.options || null,
-      userMessage
+      userMessage,
+      // send prior turns to the server
+      history: window.__aiHistory
     };
 
-    const resp = await fetch('/answerQuestion', {
+    const resp = await fetch('/api/v1/answer', {
       method: 'POST',
       headers: { 'Content-Type':'application/json' },
       body: JSON.stringify(payload)
@@ -1133,16 +1150,21 @@ document.getElementById('ai-chat-send').onclick = async () => {
     if (data.final_answer && !data.final_option) parts.push(`<b>Answer:</b> ${data.final_answer}`);
     if (data.explanation) parts.push(`<b>Explanation:</b> ${data.explanation}`);
 
-    const html = parts.length
-      ? parts.join('<br>')
-      : 'No answer received.';
-
+    const html = parts.length ? parts.join('<br>') : 'No answer received.';
     thread.insertAdjacentHTML('beforeend',
       `<div style="margin:6px 0; text-align:left;">
          <span style="display:inline-block; background:#f6fbff; border:1px solid #dcecff; padding:8px 10px; border-radius:10px; max-width:96%;">${html}</span>
        </div>`);
 
-    // Render any LaTeX
+    // Update in-memory chat history
+    if (msg) window.__aiHistory.push({ role: 'user', content: msg });
+    const assistantText = [
+      (data.final_option ? `Answer: ${data.final_option}` : (data.final_answer ? `Answer: ${data.final_answer}` : '')),
+      (data.explanation ? `Explanation: ${data.explanation}` : '')
+    ].filter(Boolean).join('\n');
+    window.__aiHistory.push({ role: 'assistant', content: assistantText });
+
+    // Render LaTeX if any
     if (window.MathJax?.typesetPromise) {
       await window.MathJax.typesetPromise([thread]);
     }
@@ -1154,6 +1176,7 @@ document.getElementById('ai-chat-send').onclick = async () => {
       `<div style="margin:6px 0; text-align:left; color:#c82333;">${String(err)}</div>`);
   }
 };
+
           document.querySelectorAll('.question-img-btn').forEach(btn => {
             btn.onclick = function() {
               const container = btn.closest('.question-item');
@@ -1596,6 +1619,7 @@ All the Best`;
 
 </body>
 </html>
+
 
 
 
