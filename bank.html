@@ -360,19 +360,31 @@
       // For MathJax rendering
       let mathElements = [];
 
-      // Group questions by level for section headings
-      const levelsOrder = ['Level 1', 'Level 2', 'Level 3'];
-      const buckets = { 'Level 1': [], 'Level 2': [], 'Level 3': [], '': [] };
-
-      nodes.forEach(node => {
-        const lvl = (node.getAttribute('data-level') || '').trim();
-        (buckets[lvl] ? buckets[lvl] : buckets['']).push(node);
-      });
-
-      let qCounter = 1;
-
-      // helper to build one question's HTML (same as before, but uses qCounter)
-      function buildQuestionHTML(item) {
+     // Group questions by level → type when Question Type = All
+        const qtypeFilterVal = (document.getElementById('qtype-value')?.value || '').trim();
+        const levelsOrder = ['Level 1', 'Level 2', 'Level 3'];
+        const typesOrder  = ['MCQ (Single)', 'MCQ (Multiple)', 'Descriptive'];
+        
+        // buckets[level][type] = array of nodes
+        const buckets = {
+          'Level 1': { 'MCQ (Single)': [], 'MCQ (Multiple)': [], 'Descriptive': [] },
+          'Level 2': { 'MCQ (Single)': [], 'MCQ (Multiple)': [], 'Descriptive': [] },
+          'Level 3': { 'MCQ (Single)': [], 'MCQ (Multiple)': [], 'Descriptive': [] },
+          '':        { 'MCQ (Single)': [], 'MCQ (Multiple)': [], 'Descriptive': [] },
+        };
+        
+        nodes.forEach(node => {
+          const lvl  = (node.getAttribute('data-level') || '').trim();
+          const type = (node.getAttribute('data-type')  || 'Descriptive').trim();
+          const safeLvl  = buckets[lvl] ? lvl : '';
+          const safeType = typesOrder.includes(type) ? type : 'Descriptive';
+          buckets[safeLvl][safeType].push(node);
+        });
+        
+        let qCounter = 1;
+        
+        // helper to build one question's HTML (same as before, but uses qCounter)
+        function buildQuestionHTML(item) {
         const clone = item.cloneNode(true);
         clone.querySelectorAll('.question-img-btn, .delete-img-btn, .question-image-input').forEach(btn => btn.remove());
 
@@ -492,28 +504,65 @@
         return wrap;
       }
 
-      // Render sections
-      levelsOrder.forEach(levelName => {
-        const list = buckets[levelName];
-        if (!list || list.length === 0) return;
+     // Render sections
+levelsOrder.concat(['']).forEach(levelName => {
+  const levelBucket = buckets[levelName];
+  if (!levelBucket) return;
 
-        const keepBlock = document.createElement('div');
-        keepBlock.style.cssText = 'page-break-inside: avoid; break-inside: avoid;';
-        keepBlock.innerHTML = `
-          <div style="font-size:1.15em;font-weight:800;letter-spacing:0.02em;text-align:left;margin:16px 0 8px 0;page-break-after: avoid;">
-            ${levelName.toUpperCase()}
-          </div>`;
-        printable.appendChild(keepBlock);
+  // When Question Type filter is "All": Level → Type subsections
+  if (qtypeFilterVal === '' || qtypeFilterVal === 'All') {
+    // Skip empty levels entirely
+    const hasAny = typesOrder.some(t => (levelBucket[t] && levelBucket[t].length));
+    if (!hasAny) return;
 
-        list.forEach((item, idx) => {
-          const node = buildQuestionHTML(item);
-          if (idx === 0) keepBlock.appendChild(node); else printable.appendChild(node);
-        });
+    // Level heading
+    const keepBlock = document.createElement('div');
+    keepBlock.style.cssText = 'page-break-inside: avoid; break-inside: avoid;';
+    keepBlock.innerHTML = `
+      <div style="font-size:1.15em;font-weight:800;letter-spacing:0.02em;text-align:left;margin:16px 0 8px 0;page-break-after: avoid;">
+        ${(levelName || 'UNSPECIFIED LEVEL').toUpperCase()}
+      </div>`;
+    printable.appendChild(keepBlock);
+
+    // Type headings inside each level
+    typesOrder.forEach(typeName => {
+      const list = levelBucket[typeName] || [];
+      if (!list.length) return;
+
+      const typeHdr = document.createElement('div');
+      typeHdr.style.cssText = 'font-size:1.05em;font-weight:800;letter-spacing:0.01em;text-align:left;margin:8px 0 6px 0;';
+      typeHdr.textContent = typeName;
+      printable.appendChild(typeHdr);
+
+      list.forEach(item => {
+        const node = buildQuestionHTML(item);
+        printable.appendChild(node);
       });
+    });
 
-      if (buckets[''] && buckets[''].length) {
-        buckets[''].forEach(item => printable.appendChild(buildQuestionHTML(item)));
-      }
+  } else {
+    // If a specific Question Type is selected: keep your original (flat) per-level rendering
+    const flatList = []
+      .concat(levelBucket['MCQ (Single)'])
+      .concat(levelBucket['MCQ (Multiple)'])
+      .concat(levelBucket['Descriptive']);
+
+    if (!flatList.length) return;
+
+    const keepBlock = document.createElement('div');
+    keepBlock.style.cssText = 'page-break-inside: avoid; break-inside: avoid;';
+    keepBlock.innerHTML = `
+      <div style="font-size:1.15em;font-weight:800;letter-spacing:0.02em;text-align:left;margin:16px 0 8px 0;page-break-after: avoid;">
+        ${(levelName || 'UNSPECIFIED LEVEL').toUpperCase()}
+      </div>`;
+    printable.appendChild(keepBlock);
+
+    flatList.forEach(item => {
+      const node = buildQuestionHTML(item);
+      printable.appendChild(node);
+    });
+  }
+});
 
       if (window.MathJax && typeof window.MathJax.typesetPromise === 'function') {
         await window.MathJax.typesetPromise([printable]);
@@ -877,7 +926,11 @@
 
           questionCount++;
           questionsHTML += `
-            <div class="question-item" data-id="${doc.id}" data-level="${data.difficulty || data.level || ''}" style="position:relative;">
+           <div class="question-item"
+     data-id="${doc.id}"
+     data-level="${data.difficulty || data.level || ''}"
+     data-type="${(data.mcqType ? data.mcqType : (Array.isArray(data.options) && data.options.length === 4 ? 'MCQ (Single)' : 'Descriptive'))}"
+     style="position:relative;">
               <div class="question-meta">
                 Q${questionCount}: ${(data.difficulty || data.level || 'N/A')}, ${(data.marks ?? 'N/A')} Mark(s)${data.mcqType ? ` [${data.mcqType}]` : ''}
               </div>
@@ -1348,3 +1401,4 @@ All the Best`;
   </div>
 </body>
 </html>
+
