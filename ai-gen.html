@@ -1619,6 +1619,78 @@ function splitMcqOptions(body) {
   return body;
 }
 
+/* ========= NEW: Shuffle utilities for MCQs ========= */
+/** Strip leading "A)"/"B)"/"C)"/"D)" labels and trim */
+function __normalizeOptionText(s) {
+  return String(s || '').replace(/^[A-D][).]\s*/, '').trim();
+}
+
+/** Fisher–Yates shuffle; returns a new shuffled copy */
+function __shuffleArray(arr) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+/**
+ * Randomize options A–D and remap the Ans: letters.
+ * Works for Single (one letter) and Multiple (several letters).
+ * Mutates qData: { options, parsedBody, parsedAnswer, fullText }
+ */
+function shuffleOptionsForQuestion(qData) {
+  if (!qData || !Array.isArray(qData.options) || qData.options.length !== 4) return;
+
+  // Normalize existing options (remove labels like "A) ")
+  const old = qData.options.map(__normalizeOptionText);
+
+  // Build permutation mapping: perm[newIndex] = oldIndex
+  const oldIndices = [0, 1, 2, 3];
+  const shuffledOldIndices = __shuffleArray(oldIndices);
+
+  // Reorder options by shuffled indices
+  const newOptions = shuffledOldIndices.map(idx => old[idx]);
+
+  // Remap answers (if present)
+  let newAnsLine = qData.parsedAnswer || null;
+  const foundLetters = newAnsLine
+    ? [...newAnsLine.matchAll(/\b([A-D])\)/g)].map(m => m[1])
+    : [];
+
+  if (foundLetters.length > 0) {
+    const remappedLetters = foundLetters.map(letter => {
+      const oi = letter.charCodeAt(0) - 65; // original index 0..3
+      // find newIndex such that perm[newIndex] === oi
+      const ni = shuffledOldIndices.findIndex(orig => orig === oi);
+      return String.fromCharCode(65 + ni);
+    });
+
+    if (remappedLetters.length === 1) {
+      newAnsLine = `Ans: ${remappedLetters[0]})`;
+    } else {
+      newAnsLine = `Ans: ${remappedLetters.map(L => `${L})`).join(', ')}`;
+    }
+  }
+
+  // Rebuild parsedBody with new A)/B)/C)/D) order
+  const rebuilt = [
+    (qData.question || '').trim(),
+    `A) ${newOptions[0]}`,
+    `B) ${newOptions[1]}`,
+    `C) ${newOptions[2]}`,
+    `D) ${newOptions[3]}`
+  ].join('\n');
+
+  // Mutate qData consistently
+  qData.options = newOptions.slice();      // store de-labeled texts
+  qData.parsedBody = rebuilt;
+  if (newAnsLine) qData.parsedAnswer = newAnsLine;
+  qData.fullText = `${qData.parsedMeta}\n${qData.parsedBody}${qData.parsedAnswer ? `\n${qData.parsedAnswer}` : ''}`;
+}
+/* ======== END NEW shuffle utilities ======== */
+
     function parseAndDisplayAiQuestions(responseText, messagesArea, sessionParams) {
 
        // The original logic (leave as-is for MCQ/Descriptive):
@@ -1682,6 +1754,10 @@ questionData.parsedMeta = `Q${currentSessionQuestions.length + 1}: ${level}, ${m
     questionData.parsedAnswer = null;
     questionData.parsedBody = rawBody;
   }
+
+  // NEW: Randomize A/B/C/D and remap the Ans: letters accordingly
+  shuffleOptionsForQuestion(questionData);
+
 } else {
   // DESCRIPTIVE: no options, no "Ans:"
   questionData.question = rawBody.trim().split('\n')[0] || '';
@@ -1991,3 +2067,4 @@ questionData.parsedMeta = `Q${currentSessionQuestions.length + 1}: ${level}, ${m
     </script>
 </body>
 </html>
+
