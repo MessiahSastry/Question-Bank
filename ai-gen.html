@@ -1490,24 +1490,135 @@ function showLeaveChatConfirm(onProceed, onCancel) {
             return messageElement;
         }
     }
-    // <-- Paste here
-function splitMcqOptions(body) {
-    if ((body.match(/^[A-D]\)/gm) || []).length >= 3) return body;
-    if (/A\).+B\).+C\).+D\)/.test(body)) {
-        const m = body.match(/A\)([^B]+)B\)([^C]+)C\)([^D]+)D\)(.+)/);
-        if (m) {
-            return [
-                "A)" + m[1].trim(),
-                "B)" + m[2].trim(),
-                "C)" + m[3].trim(),
-                "D)" + m[4].trim()
-            ].join('\n');
-        } else {
-            return body.replace(/([A-D]\))/g, '\n$1').replace(/^\n/, '');
-        }
-    }
-    return body;
+    /* === ChatGPT handoff helpers (AI Generator) === */
+function __qb_toast(msg) {
+  const t = document.createElement('div');
+  t.textContent = msg;
+  t.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);bottom:24px;background:#0f3d6b;color:#fff;padding:10px 14px;border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,.2);z-index:100000;font-weight:600;letter-spacing:.2px;font-size:14px;opacity:0.98';
+  document.body.appendChild(t);
+  setTimeout(() => { t.style.transition='opacity .35s'; t.style.opacity='0'; }, 1200);
+  setTimeout(() => t.remove(), 1600);
 }
+
+function buildChatGptPromptFromQuestion(qData, sessionParams) {
+  // Meta line like: "Q1: Level 2, 1 Mark [MCQ (Single)]"
+  const meta = qData.parsedMeta || '';
+  const headerBits = [
+    sessionParams?.subject && `Subject: ${sessionParams.subject}`,
+    sessionParams?.class && `Class: ${sessionParams.class}`,
+    sessionParams?.chapter && `Chapter: ${sessionParams.chapter}`
+  ].filter(Boolean).join(' · ');
+
+  let prompt = `Please solve and explain clearly.\n`;
+  if (headerBits) prompt += headerBits + `\n\n`;
+
+  // Question text + options if present
+  const qText = (qData.question || '').trim();
+  const body = (qData.parsedBody || '').trim();
+  const hasOptions = Array.isArray(qData.options) && qData.options.length === 4;
+
+  // Prefer the clean split: first line question, then options
+  if (qText) {
+    prompt += `Question:\n${qText}\n`;
+    if (hasOptions) {
+      prompt += `\nOptions:\n` +
+        qData.options.map((o, i) => `${String.fromCharCode(65 + i)}) ${String(o || '').replace(/^[A-D][).]\s*/, '')}`).join('\n');
+    }
+  } else {
+    // Fallback: dump body (already contains lines)
+    prompt += `Question:\n${body}\n`;
+  }
+
+  if (hasOptions) {
+    prompt += `\n\nRespond with the correct option (A–D) and a step-by-step explanation.`;
+  } else {
+    prompt += `\n\nRespond with the final answer and a step-by-step explanation.`;
+  }
+
+  // Append original meta at the end (context only)
+  if (meta) prompt += `\n\nMeta: ${meta}`;
+  return prompt;
+}
+
+async function openInChatGptWithPrefill(prompt) {
+  let copied = false;
+  try {
+    await navigator.clipboard.writeText(prompt);
+    copied = true;
+  } catch (_) { /* clipboard may be blocked; continue */ }
+
+  __qb_toast(copied ? 'Copied prompt. Opening ChatGPT…' : 'Opening ChatGPT… (paste prompt manually)');
+  const url = new URL('https://chatgpt.com/');
+  url.searchParams.set('q', prompt);   // pre-fill message
+  window.open(url.toString(), '_blank', 'noopener');
+}
+/* === end helpers === */
+
+// (kept marker) 
+// <-- Paste here
+function __qb_toast(msg) {
+  const t = document.createElement('div');
+  t.textContent = msg;
+  t.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);bottom:24px;background:#0f3d6b;color:#fff;padding:10px 14px;border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,.2);z-index:100000;font-weight:600;letter-spacing:.2px;font-size:14px;opacity:0.98';
+  document.body.appendChild(t);
+  setTimeout(() => { t.style.transition = 'opacity .35s'; t.style.opacity = '0'; }, 1200);
+  setTimeout(() => t.remove(), 1600);
+}
+
+function buildChatGptPromptFromQuestion(q, session) {
+  const metaBits = [];
+  if (session && session.subject) metaBits.push(`Subject: ${session.subject}`);
+  if (session && session.class)   metaBits.push(`Class: ${session.class}`);
+  if (session && session.chapter) metaBits.push(`Chapter: ${session.chapter}`);
+  const meta = metaBits.join(' · ');
+
+  const qText = String(q.question || q.parsedBody || '').trim();
+  let prompt = 'Please solve and explain clearly.\n';
+  if (meta) prompt += meta + '\n\n';
+  prompt += `Question:\n${qText}\n`;
+
+  if (Array.isArray(q.options) && q.options.length === 4) {
+    const opts = q.options
+      .map((o, i) => `${String.fromCharCode(65 + i)}) ${String(o).replace(/^[A-D][).]\s*/, '')}`)
+      .join('\n');
+    prompt += `\nOptions:\n${opts}\n\nRespond with the correct option (A–D) and a step-by-step explanation.`;
+  } else {
+    prompt += `\n\nRespond with the final answer and a step-by-step explanation.`;
+  }
+  return prompt;
+}
+
+async function openInChatGptWithPrefill(prompt) {
+  let copied = false;
+  try {
+    await navigator.clipboard.writeText(prompt);
+    copied = true;
+  } catch (_) {}
+  __qb_toast(copied ? 'Copied prompt. Opening ChatGPT…' : 'Opening ChatGPT… (paste prompt manually)');
+
+  const handoffUrl = new URL('https://chatgpt.com/');
+  handoffUrl.searchParams.set('q', prompt);
+  window.open(handoffUrl.toString(), '_blank', 'noopener');
+}
+
+function splitMcqOptions(body) {
+  if ((body.match(/^[A-D]\)/gm) || []).length >= 3) return body;
+  if (/A\).+B\).+C\).+D\)/.test(body)) {
+    const m = body.match(/A\)([^B]+)B\)([^C]+)C\)([^D]+)D\)(.+)/);
+    if (m) {
+      return [
+        "A)" + m[1].trim(),
+        "B)" + m[2].trim(),
+        "C)" + m[3].trim(),
+        "D)" + m[4].trim()
+      ].join('\n');
+    } else {
+      return body.replace(/([A-D]\))/g, '\n$1').replace(/^\n/, '');
+    }
+  }
+  return body;
+}
+
     function parseAndDisplayAiQuestions(responseText, messagesArea, sessionParams) {
 
        // The original logic (leave as-is for MCQ/Descriptive):
@@ -1622,46 +1733,18 @@ questionData.parsedMeta = `Q${currentSessionQuestions.length + 1}: ${level}, ${m
 
             questionEl.appendChild(menu);
 
-            menu.querySelector('.menu-show-answer-btn').onclick = async (event) => {
-                event.stopPropagation();
-                const currentQuestionEl = event.target.closest('.ai-question-item');
-                const existingAnswerEl = currentQuestionEl.querySelector('.temp-answer');
-                const showAnswerBtn = event.target;
-
-                if (existingAnswerEl) {
-                    existingAnswerEl.remove();
-                    showAnswerBtn.textContent = 'Show Answer';
-                } else {
-                    const questionData = currentSessionQuestions[index];
-                    const answerEl = document.createElement('div');
-                    answerEl.className = 'temp-answer';
-                    answerEl.textContent = 'Generating answer...';
-                    currentQuestionEl.appendChild(answerEl);
-                    showAnswerBtn.textContent = 'Hide Answer';
-
-                    if (questionData.parsedAnswer) {
-                        answerEl.textContent = questionData.parsedAnswer;
-                    } else {
-                        const answerPrompt = `Based on the following question, please provide a model answer or the key points for a correct response. Keep the answer concise and clear.\n\nQuestion: "${questionData.parsedBody}"`;
-                        try {
-                            const response = await fetch(`${API_BASE_URL}/api/v1/generate`, {
-                                method: "POST",
-                                headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify({ prompt: answerPrompt })
-                            });
-                            const result = await response.json();
-                            if (!response.ok) throw new Error(result.error || "API error");
-                            answerEl.textContent = result.result;
-                        } catch (err) {
-                            answerEl.textContent = `Error: Could not generate answer. ${err.message}`;
-                        }
-                    }
-                    if (window.MathJax) {
-                        MathJax.typesetPromise([answerEl]);
-                    }
-                }
-                menu.remove();
-            };
+           menu.querySelector('.menu-show-answer-btn').onclick = async (event) => {
+  event.stopPropagation();
+  try {
+    const q = currentSessionQuestions[index];
+    const prompt = buildChatGptPromptFromQuestion(q, lastSessionParams || {});
+    await openInChatGptWithPrefill(prompt);
+  } catch (err) {
+    __qb_toast('Could not open ChatGPT.');
+    console.error(err);
+  }
+  menu.remove();
+};
 
             menu.querySelector('.menu-edit-btn').onclick = () => {
                 showEditPopupForQuestion(index);
@@ -1729,11 +1812,39 @@ questionData.parsedMeta = `Q${currentSessionQuestions.length + 1}: ${level}, ${m
                 blockEl.appendChild(menu);
 
                 menu.querySelector('.menu-show-answer-btn').onclick = () => {
-                    const answers = blockEl.querySelectorAll('.temp-answer');
-                    const show = answers[0].style.display === 'none';
-                    answers.forEach(ans => ans.style.display = show ? 'block' : 'none');
-                    menu.querySelector('.menu-show-answer-btn').textContent = show ? 'Hide Answer' : 'Show Answer';
-                    menu.remove();
+                  const q = currentSessionQuestions[i]; // comprehensive data
+                  const meta = q.parsedMeta || '';
+                  const cls = q.class || (lastSessionParams && lastSessionParams.class) || '';
+                  const subj = q.subject || (lastSessionParams && lastSessionParams.subject) || '';
+                  const chap = q.chapter || (lastSessionParams && lastSessionParams.chapter) || '';
+                
+                  let prompt = `Please solve and explain clearly.\n`;
+                  const metaLineParts = [
+                    cls && `Class: ${cls}`,
+                    subj && `Subject: ${subj}`,
+                    chap && `Chapter: ${chap}`,
+                    meta && meta.replace(/^Q\d+:\s*/, '').trim()
+                  ].filter(Boolean).join(' · ');
+                  if (metaLineParts) prompt += metaLineParts + `\n\n`;
+                
+                  prompt += `Passage:\n${q.passage}\n\n`;
+                
+                  if (Array.isArray(q.mcqs) && q.mcqs.length) {
+                    prompt += `Questions:\n`;
+                    q.mcqs.forEach((mcq, idx) => {
+                      const cleanBody = (mcq.body || '').replace(/^Q\d+:\s*/i, '').trim();
+                      prompt += `\nQ${idx + 1}.\n${cleanBody}\n`;
+                      if (mcq.answer) {
+                        prompt += `(If you know, the key says: ${mcq.answer})\n`;
+                      }
+                    });
+                    prompt += `\nRespond with answers for each MCQ (e.g., A–D) and brief step-by-step explanations.`;
+                  } else {
+                    prompt += `Respond with the final answers and brief explanations.`;
+                  }
+                
+                  openInChatGptWithPrefill(prompt);
+                  menu.remove();
                 };
                 menu.querySelector('.menu-edit-btn').onclick = () => {
                     showEditPopupForComprehensive(i);
@@ -1880,17 +1991,3 @@ questionData.parsedMeta = `Q${currentSessionQuestions.length + 1}: ${level}, ${m
     </script>
 </body>
 </html>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
