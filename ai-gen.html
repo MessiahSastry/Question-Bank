@@ -1507,6 +1507,36 @@ function __decodeEntities(s='') {
   d.innerHTML = s;
   return d.value;
 }
+    // Convert LaTeX-y input to plain math for ChatGPT prefill
+function __toPlainMath(s='') {
+  let t = String(s);
+
+  // remove $ / $$ and \( \) \[ \]
+  t = t.replace(/\$\$?/g, '');
+  t = t.replace(/\\\(|\\\)|\\\[|\\\]/g, '');
+
+  // \frac{a}{b} -> (a)/(b)
+  t = t.replace(/\\frac\s*\{([^}]*)\}\s*\{([^}]*)\}/g, '($1)/($2)');
+
+  // exponents ^{...} -> ^...
+  t = t.replace(/\^\{([^}]+)\}/g, '^$1');
+
+  // common symbols
+  t = t
+    .replace(/\\times/g, '×')
+    .replace(/\\cdot/g, '·')
+    .replace(/\\leq/g, '≤')
+    .replace(/\\geq/g, '≥')
+    .replace(/\\neq/g, '≠')
+    .replace(/\\pm/g, '±')
+    .replace(/\\sqrt\{([^}]+)\}/g, '√($1)');
+
+  // drop \left \right
+  t = t.replace(/\\left/g, '').replace(/\\right/g, '');
+
+  return t.replace(/[ \t]+\n/g, '\n').trim();
+}
+
     /* === ChatGPT handoff helpers (AI Generator) === */
 function __qb_toast(msg) {
   const t = document.createElement('div');
@@ -1528,8 +1558,8 @@ function buildChatGptPromptFromQuestion(qData, sessionParams) {
   // decode & normalize math
   const rawQ = __decodeEntities((qData.question || '').trim());
   const rawBody = __decodeEntities((qData.parsedBody || '').trim());
-  const qText = __normalizeLatexDelimiters(rawQ);
-  const body  = __normalizeLatexDelimiters(rawBody);
+  const qText = __toPlainMath(rawQ);
+const body  = __toPlainMath(rawBody);
 
   const hasOptions = Array.isArray(qData.options) && qData.options.length === 4;
 
@@ -1540,7 +1570,7 @@ function buildChatGptPromptFromQuestion(qData, sessionParams) {
     prompt += `Question:\n${qText}\n`;
     if (hasOptions) {
       const opts = qData.options.map((o, i) => {
-        const clean = __normalizeLatexDelimiters(__decodeEntities(String(o || '').replace(/^[A-D][).]\s*/, '')));
+        const clean = __toPlainMath(__decodeEntities(String(o || '').replace(/^[A-D][).]\s*/, '')));
         return `${String.fromCharCode(65 + i)}) ${clean}`;
       }).join('\n');
       prompt += `\nOptions:\n${opts}`;
@@ -1570,55 +1600,6 @@ async function openInChatGptWithPrefill(prompt) {
   window.open(url.toString(), '_blank', 'noopener');
 }
 /* === end helpers === */
-
-// (kept marker) 
-// <-- Paste here
-function __qb_toast(msg) {
-  const t = document.createElement('div');
-  t.textContent = msg;
-  t.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);bottom:24px;background:#0f3d6b;color:#fff;padding:10px 14px;border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,.2);z-index:100000;font-weight:600;letter-spacing:.2px;font-size:14px;opacity:0.98';
-  document.body.appendChild(t);
-  setTimeout(() => { t.style.transition = 'opacity .35s'; t.style.opacity = '0'; }, 1200);
-  setTimeout(() => t.remove(), 1600);
-}
-
-function buildChatGptPromptFromQuestion(q, session) {
-  const metaBits = [];
-  if (session && session.subject) metaBits.push(`Subject: ${session.subject}`);
-  if (session && session.class)   metaBits.push(`Class: ${session.class}`);
-  if (session && session.chapter) metaBits.push(`Chapter: ${session.chapter}`);
-  const meta = metaBits.join(' · ');
-
-  const raw = __decodeEntities(String(q.question || q.parsedBody || '').trim());
-  const qText = __normalizeLatexDelimiters(raw);
-
-  let prompt = 'Please solve and explain clearly.\n';
-  if (meta) prompt += meta + '\n\n';
-  prompt += `Question:\n${qText}\n`;
-
-  if (Array.isArray(q.options) && q.options.length === 4) {
-    const opts = q.options.map((o, i) => {
-      const clean = __normalizeLatexDelimiters(__decodeEntities(String(o).replace(/^[A-D][).]\s*/, '')));
-      return `${String.fromCharCode(65 + i)}) ${clean}`;
-    }).join('\n');
-    prompt += `\nOptions:\n${opts}\n\nRespond with the correct option (A–D) and a step-by-step explanation.`;
-  } else {
-    prompt += `\n\nRespond with the final answer and a step-by-step explanation.`;
-  }
-  return prompt;
-}
-async function openInChatGptWithPrefill(prompt) {
-  let copied = false;
-  try {
-    await navigator.clipboard.writeText(prompt);
-    copied = true;
-  } catch (_) {}
-  __qb_toast(copied ? 'Copied prompt. Opening ChatGPT…' : 'Opening ChatGPT… (paste prompt manually)');
-
-  const handoffUrl = new URL('https://chatgpt.com/');
-  handoffUrl.searchParams.set('q', prompt);
-  window.open(handoffUrl.toString(), '_blank', 'noopener');
-}
 
 function splitMcqOptions(body) {
   if ((body.match(/^[A-D]\)/gm) || []).length >= 3) return body;
@@ -2086,4 +2067,5 @@ questionData.parsedMeta = `Q${currentSessionQuestions.length + 1}: ${level}, ${m
     </script>
 </body>
 </html>
+
 
