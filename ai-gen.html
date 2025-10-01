@@ -589,23 +589,9 @@ const aiGeneratorConfig = {
     "9th Class": ["Telugu", "Hindi", "English 1", "English 2", "Math 1", "Math 1 IIT", "Math 2", "Math 2 IIT", "Physics", "Physics IIT & NEET", "Chemistry", "Chemistry IIT & NEET", "Biology", "Biology NEET", "Social"],
     "10th Class": ["Telugu", "Hindi", "English 1", "English 2", "Math 1", "Math 1 IIT", "Math 2", "Math 2 IIT", "Physics", "Physics IIT & NEET", "Chemistry", "Chemistry IIT & NEET", "Biology", "Biology NEET", "Social"]
   },
-    questionTypes: ["MCQ (Single)", "MCQ (Multiple)", "Descriptive"],
+  questionTypes: ["MCQ (Single)", "MCQ (Multiple)", "Descriptive"],
   getSubjectsForClass: function(className) { return this.subjectMappings[className] || []; }
 };
-
-const AUTO_VERIFY_RULES = `
-—you must follow this automatic self-check before finalizing each MCQ—
-1) Solve first, then write options (1 correct + 3 distractors for Single; 1–4 correct for Multiple). Do not change the stem to fit options.
-2) Add a teacher-only footer for each MCQ:
-   KEY_TEXT: <exact text of the correct option (Single) OR all correct option texts separated by " | " (Multiple)>
-   KEY_LETTER: <A/B/C/D (Single) OR letters comma-separated like A,C (Multiple)>
-   VERIFY: PASS  (only if KEY_TEXT matches exactly the option(s) indicated by KEY_LETTER and the remaining options are incorrect)
-3) If VERIFY is not PASS, repair ONLY the options (keep the stem exactly the same) and re-check until VERIFY is PASS.
-4) Distractors must come from realistic mistakes (wrong formula, sign/units/rounding, common misconception) and match the style/units of the stem.
-5) For numeric answers: include correct units and ensure internal computation is consistent (tolerance if needed).
-6) For algebra: confirm by substitution that the correct option(s) satisfy the stem.
-Output the MCQ followed by the footer. Do not include any extra commentary.
-`;
   
     document.addEventListener('DOMContentLoaded', () => {
       auth.onAuthStateChanged(user => {
@@ -1130,21 +1116,7 @@ function showLeaveChatConfirm(onProceed, onCancel) {
                 2. On the next line, write the question text.
                 3. On the following lines, provide four options, each starting with "A)", "B)", "C)", and "D)".
                 4. On the final line for that question, specify the correct answer using the format "Ans: C)" (only ONE letter).
-                Provide ONLY the questions in this exact format. Do not add any other text, explanation, or introduction.
-
-                — Additional requirements (do not omit) —
-                • Exactly ONE option must be correct for each MCQ.
-                • Keep the question stem unchanged when constructing or repairing options.
-                • Distractors must be plausible (common mistakes: wrong formula, sign/unit/rounding slips, typical misconceptions) and mutually exclusive with the correct answer.
-                • Ensure unit consistency and correct computations; for algebra, confirm by substitution.
-                
-                — Teacher-only self-check footer after EACH MCQ (not for students) —
-                KEY_TEXT: <verbatim text of the correct option>
-                KEY_LETTER: <A/B/C/D>
-                VERIFY: PASS
-                
-                ${AUTO_VERIFY_RULES}
-                If VERIFY is not PASS, repair ONLY the options (do not change the stem), re-check, and repeat until VERIFY is PASS.`;
+                Provide ONLY the questions in this exact format. Do not add any other text, explanation, or introduction.`;
                 } else if (sessionParams.questionType === "MCQ (Multiple)") {
                     fullPromptForAI = `${baseInfo}
                 Strictly follow these level definitions for every question:
@@ -1184,11 +1156,11 @@ function showLeaveChatConfirm(onProceed, onCancel) {
                 - Math equations must be written in LaTeX.
                
                 ***STRICT RULES FOR ANSWERS:***
-                - You MUST create exactly 10 questions per batch, following this distribution:
-                  - 4 questions MUST have exactly 2 correct options,
-                  - 4 questions MUST have exactly 3 correct options,
-                  - 2 questions MUST have only 1 correct option.
-                - Do NOT deviate from these rules. Do not include any question with all 4 options correct.
+                • Answer-count distribution per batch of 10 MCQs:
+                  - Exactly 2 questions must have 1 correct option.
+                  - Exactly 3 questions must have 2 correct options.
+                  - Exactly 3 questions must have 3 correct options.
+                  - Exactly 2 questions must have 4 correct options.
                 - The combination of correct options MUST vary across questions. Do not use the same answer pattern more than once.
                 - The correct answers (A, B, C, D) MUST be distributed as evenly as possible.
                 - Before finishing, DOUBLE CHECK that your output follows the above distribution.
@@ -1197,25 +1169,7 @@ function showLeaveChatConfirm(onProceed, onCancel) {
                 2. On the next line, write the question text.
                 3. On the following lines, provide four options, each starting with "A)", "B)", "C)", and "D)".
                 4. On the final line for that question, specify ALL correct answers using the format "Ans: A), C), D)" (list all correct answers, separated by comma).
-                Provide ONLY the questions in this exact format. Do not add any other text, explanation, or introduction.
-                
-                — Additional requirements (do not omit) —
-                • Answer-count distribution per batch of 10 MCQs:
-                  - Exactly 2 questions must have 1 correct option.
-                  - Exactly 3 questions must have 2 correct options.
-                  - Exactly 3 questions must have 3 correct options.
-                  - Exactly 2 questions must have 4 correct options.
-                • The “Ans:” line must list ALL correct letters in alphabetical order (e.g., Ans: A), C), D)).
-                • Keep the question stem unchanged when constructing or repairing options.
-                • Balance the use of letters A/B/C/D across questions.
-                
-                — Teacher-only self-check footer after EACH MCQ (not for students) —
-                KEY_TEXT: <verbatim texts of all correct options, separated by " | ">
-                KEY_LETTER: <letters of all correct options, comma-separated, e.g., A,C>
-                VERIFY: PASS
-                
-                ${AUTO_VERIFY_RULES}
-                If VERIFY is not PASS, repair ONLY the options (do not change the stem), re-check, and repeat until VERIFY is PASS.`;
+                Provide ONLY the questions in this exact format. Do not add any other text, explanation, or introduction.`;
                 } else {
                 // Descriptive
                 fullPromptForAI = `${baseInfo}
@@ -1320,9 +1274,7 @@ function showLeaveChatConfirm(onProceed, onCancel) {
             result = await response.json();
             if (!response.ok) throw new Error(result.error || "API error");
         }
-        const verifiedText = await autoVerifyAndRepair(result.result, sessionParams);
-        const cleanedText  = stripTeacherFooter(verifiedText);
-        parseAndDisplayAiQuestions(cleanedText, messagesArea, sessionParams);
+        parseAndDisplayAiQuestions(result.result, messagesArea, sessionParams);
     } catch (err) {
         appendChatMessage(`Error: ${err.message}`, 'system-message', messagesArea);
     } finally {
@@ -1604,102 +1556,6 @@ async function openInChatGptWithPrefill(prompt) {
 
 // (kept marker) 
 // <-- Paste here
-
-/* ========= NEW: Auto-verify & repair (silent) ========= */
-function __splitQuestionBlocksWithQ(text) {
-  return String(text || '')
-    .split(/\n(?=Q\s*\d+:)/g)
-    .map(s => s.trim())
-    .filter(s => /^Q\s*\d+:/i.test(s));
-}
-
-function __hasPassFooter(block) {
-  return /(?:^|\n)VERIFY:\s*PASS\s*$/i.test(block);
-}
-
-function __isMcqSingle(block) {
-  return /\[MCQ\s*\(Single\)\]/i.test(block);
-}
-
-function __isMcqMultiple(block) {
-  return /\[MCQ\s*\(Multiple\)\]/i.test(block);
-}
-
-function __buildRepairPrompt(block, sessionParams) {
-  const base = `
-You are repairing ONLY the options for an MCQ so that verification passes.
-Rules:
-- KEEP THE STEM EXACTLY THE SAME.
-- For MCQ (Single): exactly ONE option must be correct.
-- For MCQ (Multiple): keep the original intended correctness count if indicated by the "Ans:" line; fix options so the listed letters are truly correct. If unclear, ensure at least one and at most four are correct, consistent with the question.
-- Distractors must be plausible, mutually exclusive with the correct set, and match units/style.
-- For numeric answers: correct units and consistent computation. For algebra: confirm by substitution.
-- Output the MCQ in the SAME FORMAT you received (Q..., A) ... D) ..., Ans: ...), followed by the teacher-only footer:
-  KEY_TEXT: ...
-  KEY_LETTER: ...
-  VERIFY: PASS
-
-If VERIFY cannot be PASS on first attempt, fix the options and try again until it is PASS in this single reply.
-`.trim();
-
-  const ctx = `Class: ${sessionParams.class} · Subject: ${sessionParams.subject} · Chapter: ${sessionParams.chapter}`;
-  return `${ctx}\n\nOriginal MCQ (repair options only, keep the stem unchanged):\n${block}\n\n${base}`;
-}
-
-async function autoVerifyAndRepair(fullText, sessionParams) {
-  const blocks = __splitQuestionBlocksWithQ(fullText);
-  if (blocks.length === 0) return fullText;
-
-  const repaired = [];
-  for (const b of blocks) {
-    if (__hasPassFooter(b)) {
-      repaired.push(b);
-      continue;
-    }
-    // Only try to repair MCQs; pass through other types unchanged
-    if (!(__isMcqSingle(b) || __isMcqMultiple(b))) {
-      repaired.push(b);
-      continue;
-    }
-
-    // Attempt repair (one shot)
-    try {
-      const repairPrompt = __buildRepairPrompt(b, sessionParams);
-      const resp = await fetch(`${API_BASE_URL}/api/v1/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: repairPrompt })
-      });
-      const json = await resp.json();
-      if (resp.ok && typeof json.result === 'string' && __hasPassFooter(json.result)) {
-        repaired.push(json.result.trim());
-      } else {
-        // If repair failed, fall back to original block
-        repaired.push(b);
-      }
-    } catch (_) {
-      repaired.push(b);
-    }
-  }
-  return repaired.join('\n');
-}
-/* ======== END NEW: Auto-verify & repair ======== */
-
-/* ========= NEW: Remove teacher-only footer before display/save ========= */
-function stripTeacherFooter(fullText) {
-  const blocks = __splitQuestionBlocksWithQ(fullText);
-  if (blocks.length === 0) return fullText;
-
-  const cleaned = blocks.map(b => {
-    // Remove lines starting with KEY_TEXT:, KEY_LETTER:, VERIFY:
-    return b.replace(/(?:\r?\n)(KEY_TEXT|KEY_LETTER|VERIFY)\s*:[^\n]*?/gi, '')
-            .replace(/\n{2,}/g, '\n') // tidy extra blank lines
-            .trim();
-  });
-  return cleaned.join('\n');
-}
-/* ======== END NEW: Remove teacher-only footer ======== */
-
 function __qb_toast(msg) {
   const t = document.createElement('div');
   t.textContent = msg;
@@ -2211,5 +2067,3 @@ questionData.parsedMeta = `Q${currentSessionQuestions.length + 1}: ${level}, ${m
     </script>
 </body>
 </html>
-
-
