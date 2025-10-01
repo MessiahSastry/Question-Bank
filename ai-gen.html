@@ -1490,6 +1490,23 @@ function showLeaveChatConfirm(onProceed, onCancel) {
             return messageElement;
         }
     }
+       // Convert LaTeX delimiters to Markdown math that ChatGPT renders well
+function __normalizeLatexDelimiters(s='') {
+  return String(s)
+    // block: \[...\] -> $$...$$
+    .replace(/\\\[/g, '$$').replace(/\\\]/g, '$$')
+    // inline: \(...\) -> $...$
+    .replace(/\\\(/g, '$').replace(/\\\)/g, '$')
+    // collapse accidental $$$ or extra spaces
+    .replace(/\${3,}/g, '$$').replace(/[ \t]+\n/g, '\n');
+}
+
+// Decode any HTML entities that might have slipped in from your UI rendering
+function __decodeEntities(s='') {
+  const d = document.createElement('textarea');
+  d.innerHTML = s;
+  return d.value;
+}
     /* === ChatGPT handoff helpers (AI Generator) === */
 function __qb_toast(msg) {
   const t = document.createElement('div');
@@ -1501,7 +1518,6 @@ function __qb_toast(msg) {
 }
 
 function buildChatGptPromptFromQuestion(qData, sessionParams) {
-  // Meta line like: "Q1: Level 2, 1 Mark [MCQ (Single)]"
   const meta = qData.parsedMeta || '';
   const headerBits = [
     sessionParams?.subject && `Subject: ${sessionParams.subject}`,
@@ -1509,33 +1525,34 @@ function buildChatGptPromptFromQuestion(qData, sessionParams) {
     sessionParams?.chapter && `Chapter: ${sessionParams.chapter}`
   ].filter(Boolean).join(' · ');
 
-  let prompt = `Please solve and explain clearly.\n`;
-  if (headerBits) prompt += headerBits + `\n\n`;
+  // decode & normalize math
+  const rawQ = __decodeEntities((qData.question || '').trim());
+  const rawBody = __decodeEntities((qData.parsedBody || '').trim());
+  const qText = __normalizeLatexDelimiters(rawQ);
+  const body  = __normalizeLatexDelimiters(rawBody);
 
-  // Question text + options if present
-  const qText = (qData.question || '').trim();
-  const body = (qData.parsedBody || '').trim();
   const hasOptions = Array.isArray(qData.options) && qData.options.length === 4;
 
-  // Prefer the clean split: first line question, then options
+  let prompt = 'Please solve and explain clearly.\n';
+  if (headerBits) prompt += headerBits + '\n\n';
+
   if (qText) {
     prompt += `Question:\n${qText}\n`;
     if (hasOptions) {
-      prompt += `\nOptions:\n` +
-        qData.options.map((o, i) => `${String.fromCharCode(65 + i)}) ${String(o || '').replace(/^[A-D][).]\s*/, '')}`).join('\n');
+      const opts = qData.options.map((o, i) => {
+        const clean = __normalizeLatexDelimiters(__decodeEntities(String(o || '').replace(/^[A-D][).]\s*/, '')));
+        return `${String.fromCharCode(65 + i)}) ${clean}`;
+      }).join('\n');
+      prompt += `\nOptions:\n${opts}`;
     }
   } else {
-    // Fallback: dump body (already contains lines)
     prompt += `Question:\n${body}\n`;
   }
 
-  if (hasOptions) {
-    prompt += `\n\nRespond with the correct option (A–D) and a step-by-step explanation.`;
-  } else {
-    prompt += `\n\nRespond with the final answer and a step-by-step explanation.`;
-  }
+  prompt += hasOptions
+    ? `\n\nRespond with the correct option (A–D) and a step-by-step explanation.`
+    : `\n\nRespond with the final answer and a step-by-step explanation.`;
 
-  // Append original meta at the end (context only)
   if (meta) prompt += `\n\nMeta: ${meta}`;
   return prompt;
 }
@@ -1572,22 +1589,24 @@ function buildChatGptPromptFromQuestion(q, session) {
   if (session && session.chapter) metaBits.push(`Chapter: ${session.chapter}`);
   const meta = metaBits.join(' · ');
 
-  const qText = String(q.question || q.parsedBody || '').trim();
+  const raw = __decodeEntities(String(q.question || q.parsedBody || '').trim());
+  const qText = __normalizeLatexDelimiters(raw);
+
   let prompt = 'Please solve and explain clearly.\n';
   if (meta) prompt += meta + '\n\n';
   prompt += `Question:\n${qText}\n`;
 
   if (Array.isArray(q.options) && q.options.length === 4) {
-    const opts = q.options
-      .map((o, i) => `${String.fromCharCode(65 + i)}) ${String(o).replace(/^[A-D][).]\s*/, '')}`)
-      .join('\n');
+    const opts = q.options.map((o, i) => {
+      const clean = __normalizeLatexDelimiters(__decodeEntities(String(o).replace(/^[A-D][).]\s*/, '')));
+      return `${String.fromCharCode(65 + i)}) ${clean}`;
+    }).join('\n');
     prompt += `\nOptions:\n${opts}\n\nRespond with the correct option (A–D) and a step-by-step explanation.`;
   } else {
     prompt += `\n\nRespond with the final answer and a step-by-step explanation.`;
   }
   return prompt;
 }
-
 async function openInChatGptWithPrefill(prompt) {
   let copied = false;
   try {
@@ -2067,3 +2086,4 @@ questionData.parsedMeta = `Q${currentSessionQuestions.length + 1}: ${level}, ${m
     </script>
 </body>
 </html>
+
