@@ -656,7 +656,7 @@ window.addEventListener('beforeunload', (e) => {
       const subjectsHTML = initialSubjects.map(s => `<div data-value="${s}">${s}</div>`).join('');
       const qTypesHTML = aiGeneratorConfig.questionTypes.map(qt => `<div data-value="${qt}">${qt}</div>`).join('');
       
-      formContainer.innerHTML = `
+            formContainer.innerHTML = `
       <h2>AI Question Generator</h2>
         <form id="ai-setup-form">
             <div class="form-group"><label>Class:</label><div id="class-dropdown-ai" class="custom-dropdown"><input type="hidden" id="class-value-ai" value="${aiGeneratorConfig.classes[0]}"><div class="selected-option">${aiGeneratorConfig.classes[0]}</div><div class="dropdown-options">${classesHTML}</div></div></div>
@@ -670,6 +670,16 @@ window.addEventListener('beforeunload', (e) => {
                 <div class="dropdown-options"></div>
               </div>
             </div>
+
+            <!-- NEW: Single input for Questions & Levels -->
+            <div class="form-group">
+              <label>Questions & Levels:</label>
+              <input type="text" id="qlevel-plan-ai" placeholder="e.g., 20 Level 2   |   20 Mixed (L1–L3)   |   15 (L1:5, L2:5, L3:5)" />
+              <div style="font-size:12px;color:#5b6b7a;margin-top:6px;">
+                Examples: <em>20 Level 2</em> · <em>20 Mixed (L1–L3)</em> · <em>15 (L1:5, L2:5, L3:5)</em>
+              </div>
+            </div>
+
             <button type="submit">Start Generating</button>
        </form>`;
         const initialChapters =
@@ -685,14 +695,22 @@ window.addEventListener('beforeunload', (e) => {
         chapterInput.value = initialChapters[0] || '';
       
       setupCustomDropdownsForForm();
-      document.getElementById("ai-setup-form").onsubmit = (e) => {
+           document.getElementById("ai-setup-form").onsubmit = (e) => {
         e.preventDefault();
+
+        const planRaw = (document.getElementById('qlevel-plan-ai').value || '').trim();
+        const numMatch = planRaw.match(/\d+/); // first integer in the plan
+        const derivedCount = numMatch ? parseInt(numMatch[0], 10) : 20; // fallback 20
+
         const sessionParams = {
           class: document.getElementById('class-value-ai').value,
           subject: document.getElementById('subject-value-ai').value,
           questionType: document.getElementById('qtype-value-ai').value,
           chapter: document.getElementById('chapter-value-ai').value,
+          levelPlan: planRaw || '20 Level 2',     // NEW: free-form plan text the user typed
+          numQuestions: derivedCount               // NEW: numeric count derived from plan
         };
+
         if (!sessionParams.chapter || !sessionParams.subject) return;
         history.pushState({ page: 'chat', sessionParams: sessionParams }, 'Chat', '#chat');
         loadAiChatInterface(sessionParams);
@@ -716,12 +734,39 @@ window.addEventListener('beforeunload', (e) => {
                 <div class="chat-header-line">
                     <p><b>Chapter:</b> ${sessionParams.chapter}</p>
                 </div>
+                 <div class="chat-header-line">
+                    <p><b>Plan:</b> ${sessionParams.levelPlan || ''}</p>
+                </div>
+
                 <div class="chat-header-line buttons">
                     <div class="header-actions">
                         <button id="ai-change-setup-btn" class="btn-small">Change Setup</button>
                         <button id="ai-save-all-btn" class="btn-small">Save All</button>
                     </div>
                 </div>
+                    <div class="chat-header-line buttons">
+                    <div class="header-actions">
+                        <button id="ai-open-chatgpt-btn" class="btn-small">Open in ChatGPT</button>
+                    </div>
+                </div>
+            </div>
+                        <!-- Paste Zone (FINAL SET from ChatGPT) -->
+            <div id="paste-zone" class="paste-zone" style="background:#ffffff;border:1px solid #bcd6ef;border-radius:10px;margin:10px 15px 0 15px;">
+              <div class="pz-head" style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid #e6eff8;">
+                <span style="font-weight:700;color:#0f3d6b;">Paste FINAL SET from ChatGPT</span>
+                <div class="pz-actions" style="display:flex;gap:8px;align-items:center;">
+                  <label class="pz-replace" style="display:flex;gap:6px;align-items:center;font-size:12px;color:#234a72;">
+                    <input type="checkbox" id="paste-replace-chk" checked>
+                    Replace current session questions
+                  </label>
+                  <button id="paste-parse-btn" class="btn-small" style="background:#0f3d6b;color:#fff;border:none;border-radius:6px;padding:6px 10px;font-weight:600;cursor:pointer;">Parse & Preview</button>
+                  <button id="paste-clear-btn" class="btn-small" style="background:#e9ecef;color:#333;border:none;border-radius:6px;padding:6px 10px;font-weight:600;cursor:pointer;">Clear</button>
+                </div>
+              </div>
+              <textarea id="paste-zone-text" rows="6" placeholder="Paste the FINAL SET block here (Q1 … QN). The parser ignores extra chat text automatically." style="width:100%;box-sizing:border-box;border:none;outline:none;padding:12px 12px 16px 12px;font-size:14px;resize:vertical;background:#fff;border-radius:0 0 10px 10px;"></textarea>
+              <div class="pz-note" style="font-size:12px;color:#5b6b7a;padding:0 12px 12px 12px;">
+                Tip: Ask ChatGPT for one corrected block (Q1–Q<span id="pz-expected-n"></span>) with no extra text. Then paste it here.
+              </div>
             </div>
             <div id="chat-messages-area" class="chat-messages-area"></div>
             <div id="file-preview-box" style="display: none; padding: 6px 16px; background: white; color: #333; font-size: 0.9em; font-family: 'Segoe UI', sans-serif; border-bottom: 1px solid #ddd;">
@@ -745,6 +790,130 @@ window.addEventListener('beforeunload', (e) => {
 };
         document.getElementById('ai-save-all-btn').onclick = () => saveSessionQuestions(sessionParams);
         const chatPromptInput = document.getElementById('chat-prompt-input');
+                // Open ChatGPT with a pre-filled generation prompt
+        const openCgBtn = document.getElementById('ai-open-chatgpt-btn');
+        if (openCgBtn) {
+          openCgBtn.onclick = () => {
+            const genPrompt = buildChatGptGenerationPrompt(sessionParams);
+            openInChatGptWithPrefill(genPrompt);
+          };
+        }
+                /* ===== Paste Zone wiring ===== */
+        // show expected N based on the plan/session
+        const pzExpected = document.getElementById('pz-expected-n');
+        if (pzExpected) pzExpected.textContent = String(sessionParams.numQuestions || 20);
+
+        const pzText   = document.getElementById('paste-zone-text');
+        const pzParse  = document.getElementById('paste-parse-btn');
+        const pzClear  = document.getElementById('paste-clear-btn');
+        const pzReplaceChk = document.getElementById('paste-replace-chk');
+
+        if (pzClear) {
+          pzClear.onclick = () => {
+            pzText.value = '';
+            pzText.focus();
+          };
+        }
+
+        if (pzParse) {
+          pzParse.onclick = () => {
+            const raw = (pzText.value || '').trim();
+            if (!raw) { __qb_toast('Nothing to parse. Paste the FINAL SET first.'); return; }
+
+            try {
+              const parsed = parseFinalSetIntoQuestions(raw, sessionParams);
+              if (!parsed.length) { __qb_toast('Could not find any Q1… blocks.'); return; }
+
+              if (pzReplaceChk && pzReplaceChk.checked) {
+                currentSessionQuestions = parsed;
+              } else {
+                currentSessionQuestions.push(...parsed);
+              }
+
+              rerenderAllQuestions();
+              __qb_toast(`Parsed ${parsed.length} question(s).`);
+              pzText.value = '';
+            } catch (err) {
+              console.error(err);
+              __qb_toast('Parser error. Check the pasted format (Q1:, options A)–D), Ans: …).');
+            }
+          };
+        }
+        /* === End Paste Zone wiring === */
+                /* ===== Paste Zone UX niceties (auto-grow, shortcuts, copy FINAL) ===== */
+        (function(){
+          const pzText   = document.getElementById('paste-zone-text');
+          const pzParse  = document.getElementById('paste-parse-btn');
+          const pzClear  = document.getElementById('paste-clear-btn');
+
+          if (!pzText) return;
+
+          // --- Auto-grow textarea (like chat input), max ~220px
+          const pzMaxH = 220;
+          const autoGrow = () => {
+            pzText.style.height = 'auto';
+            const h = Math.min(pzText.scrollHeight, pzMaxH);
+            pzText.style.height = h + 'px';
+            pzText.style.overflowY = (pzText.scrollHeight > pzMaxH) ? 'auto' : 'hidden';
+          };
+          pzText.addEventListener('input', autoGrow);
+          // run once if something is already in the box
+          autoGrow();
+
+          // --- Keyboard shortcuts on the Paste Zone
+          // Ctrl/Cmd + Enter  -> Parse
+          // Esc               -> Clear
+          // Ctrl/Cmd + Shift + C -> Copy FINAL request helper
+          pzText.addEventListener('keydown', (e) => {
+            const ctrl = e.ctrlKey || e.metaKey;
+            if (ctrl && e.key === 'Enter') {
+              e.preventDefault();
+              if (pzParse) pzParse.click();
+              return;
+            }
+            if (e.key === 'Escape') {
+              e.preventDefault();
+              if (pzClear) pzClear.click();
+              return;
+            }
+            if (ctrl && e.shiftKey && (e.key.toLowerCase() === 'c')) {
+              e.preventDefault();
+              __copyFinalRequestHelper(sessionParams);
+            }
+          });
+
+          // --- Small inline button next to Parse: “Copy FINAL request”
+          // (No HTML change: we create and insert it here)
+          if (pzParse && !document.getElementById('paste-copy-final-btn')) {
+            const btn = document.createElement('button');
+            btn.id = 'paste-copy-final-btn';
+            btn.textContent = 'Copy FINAL request';
+            btn.title = 'Copies the exact message to ask ChatGPT for the FINAL SET';
+            btn.style.cssText = 'margin-left:8px;padding:6px 10px;border:none;border-radius:6px;background:#e9ecef;color:#333;font-weight:600;cursor:pointer;';
+            btn.onclick = () => __copyFinalRequestHelper(sessionParams);
+            // place it right after the Parse button
+            pzParse.parentElement?.insertBefore(btn, pzParse.nextSibling);
+          }
+        })();
+
+        // One-time helper to build + copy the “FINAL SET” request for users
+        function __copyFinalRequestHelper(sessionParams){
+          const n = Number(sessionParams.numQuestions || 20);
+          const msg =
+`Now produce the FINAL SET of all ${n} questions (Q1–Q${n}) in order, with all corrections applied. Use the same strict format, one continuous block, no explanations or extra text.
+
+Ensure numbering is continuous Q1–Q${n}, options A)–D) are present, and each question has an 'Ans: …' line.`;
+
+          (async () => {
+            try {
+              await navigator.clipboard.writeText(msg);
+              __qb_toast('Copied FINAL request to clipboard.');
+            } catch {
+              __qb_toast('Could not copy. You can paste manually in ChatGPT.');
+            }
+          })();
+        }
+        /* ===== End Paste Zone UX niceties ===== */
         const fileUploadInput = document.getElementById('file-upload-input');
         const sendBtn = document.getElementById('chat-send-btn');
         document.getElementById('chat-upload-btn').onclick = () => fileUploadInput.click();
@@ -1600,6 +1769,129 @@ async function openInChatGptWithPrefill(prompt) {
   window.open(url.toString(), '_blank', 'noopener');
 }
 /* === end helpers === */
+/* === Prompt builder for initial generation in ChatGPT (FOUNDATION + CBSE modes, strict rules) === */
+function buildChatGptGenerationPrompt(sessionParams) {
+  const cls = sessionParams.class || '';
+  const subj = sessionParams.subject || '';
+  const chap = sessionParams.chapter || '';
+  const qtype = sessionParams.questionType || 'MCQ (Single)';
+  const plan  = (sessionParams.levelPlan || '').trim();
+  const count = sessionParams.numQuestions || 20;
+
+  const isCBSE = /cbse/i.test(plan) || /cbse/i.test(subj);
+
+  // ---- COMMON headings ----
+  const header =
+`Class: ${cls}
+Subject: ${subj}
+Chapter: ${chap}
+Request: ${plan || (count + ' questions')}
+`;
+
+  // ---- LEVEL DEFINITIONS ----
+  const foundationLevels =
+`Use these Level definitions STRICTLY (Foundation/IIT-NEET mode):
+- Level 1: Foundation Easy & Medium
+  • Basic conceptual/recall/direct application aligned to Foundation style (not board textbook drill).
+  • Single concept, avoid multi-step reasoning; competitive-exam style but simple/focused.
+- Level 2: Foundation Difficult & Very Difficult
+  • Moderate application; 1–2 steps or combine 2 related ideas.
+  • 'Tricky' Foundation practice style; higher challenge than L1; not full Olympiad.
+- Level 3: Challenging & Olympiad/NTSE/IIT Foundation Advanced
+  • Multi-step logical reasoning, combining ≥2 concepts, non-standard twists/novel approaches.
+  • Do NOT output direct single-step/formula/memory questions.
+  • Inspired by Olympiad/NTSE/IIT-Foundation papers but adapted to this class & syllabus (change numbers/contexts).
+  • Keep within the class syllabus; no higher-class methods required.`;
+
+  const cbseLevels =
+`Use these Level definitions STRICTLY (CBSE mode):
+- Level 1: Knowledge/Recall (direct textbook/comprehension)
+- Level 2: Application/Interpretation (within CBSE chapter)
+- Level 3: HOTS (analysis/evaluation/synthesis as per CBSE)`;
+
+  // ---- STRICT ACCURACY ----
+  const strictAccuracy =
+`STRICT ACCURACY (applies to all):
+• Ensure every question is clear, unambiguous, and correct.
+• Double-check all facts/calculations/options/answers.
+• If any issue is found, fix it before output.
+• Math must use LaTeX where needed (e.g., \\frac{}, \\sqrt{}, exponents).`;
+
+  // ---- FORMAT RULES (base) ----
+  const numberingNote = `• Numbering must be continuous: Q1 to Q${count}.`;
+
+  // MCQ format
+  const mcqFormat =
+`Output EXACTLY ${count} questions.
+
+Format each question EXACTLY as:
+Q<num>: Level <1/2/3>, 1 Mark [${qtype}]
+<Question text>
+A) <Option A>
+B) <Option B>
+C) <Option C>
+D) <Option D>
+Ans: <A) or B) or C) or D)>
+
+Rules:
+${numberingNote}
+• Include A)–D) for every MCQ and an "Ans: …" line.
+• Use ONLY content from the selected class/subject/chapter (and any subtopic names present in "Request").
+• No headings, introductions, comments, or explanations—questions only.
+• I will ask for a FINAL SET later after corrections. This is the DRAFT output.
+${strictAccuracy}`;
+
+  // MCQ Multiple additional distribution rule (per 10)
+  const multiBlockRule =
+`Additional rules for MCQ (Multiple):
+• Some questions have multiple correct options (e.g., A), C)).
+• Spread correct letters across A–D; avoid patterns.
+• If total > 10, apply this distribution to EACH block of 10:
+  - Exactly 2 questions with 1 correct option
+  - Exactly 3 questions with 2 correct options
+  - Exactly 3 questions with 3 correct options
+  - Exactly 2 questions with 4 correct options
+• Before finishing, self-check that each 10-question block satisfies the distribution.`;
+
+  // DESCRIPTIVE format
+  const descFormat =
+`Generate EXACTLY ${count} Descriptive questions.
+
+Format each question EXACTLY as:
+Q<num>: Level <1/2/3>, <Marks> [Descriptive]
+<Question text>
+
+Rules:
+${numberingNote}
+• No options and no "Ans:" lines.
+• Use ONLY the selected chapter (and any subtopic names present in "Request").
+• No extra text—questions only.
+• I will ask for a FINAL SET later after corrections. This is the DRAFT output.
+${strictAccuracy}`;
+
+  // ----- Assemble prompt by type/mode -----
+  if (/Descriptive/i.test(qtype)) {
+    const levelBlock = isCBSE ? cbseLevels : foundationLevels;
+    return (
+`${header}
+${levelBlock}
+
+${descFormat}`
+    );
+  }
+
+  // MCQ (Single or Multiple)
+  const levelBlock = isCBSE ? cbseLevels : foundationLevels;
+  const multiNote  = /Multiple/i.test(qtype) ? `\n${multiBlockRule}` : '';
+
+  return (
+`${header}
+${levelBlock}
+
+${mcqFormat}
+${multiNote}`.trim()
+  );
+}
 
 function splitMcqOptions(body) {
   if ((body.match(/^[A-D]\)/gm) || []).length >= 3) return body;
@@ -1690,6 +1982,142 @@ function shuffleOptionsForQuestion(qData) {
   qData.fullText = `${qData.parsedMeta}\n${qData.parsedBody}${qData.parsedAnswer ? `\n${qData.parsedAnswer}` : ''}`;
 }
 /* ======== END NEW shuffle utilities ======== */
+/* ========== FINAL SET parser (for Paste Zone) ========== */
+/**
+ * Normalize “Ans:” letters into a clean array of A-D, keeping order.
+ * Accepts: "Ans: C)", "Ans: A), C)", "Ans: B),D)"
+ */
+function __extractAnswerLetters(ansLine='') {
+  const m = String(ansLine).match(/Ans\s*:\s*([A-D\)\s,]+)/i);
+  if (!m) return [];
+  const letters = [];
+  (m[1].match(/[A-D]\)/gi) || []).forEach(tok => {
+    const L = tok[0].toUpperCase();
+    if (!letters.includes(L)) letters.push(L);
+  });
+  return letters;
+}
+
+/** Remove “Qn:” header line and return {meta, body} */
+function __splitMetaAndBody(block) {
+  const lines = String(block).split('\n');
+  const first = lines.shift() || '';
+  return {
+    meta: first.trim(),
+    body: lines.join('\n').trim()
+  };
+}
+
+/** Ensure options are split into 4 lines starting with A) B) C) D) */
+function __forceOptionLines(body) {
+  // already line-broken?
+  if ((body.match(/^[A-D]\)/gm) || []).length >= 3) return body;
+  // try to split inline A)…B)…C)…D)…
+  if (/A\).+B\).+C\).+D\)/.test(body)) {
+    const m = body.match(/A\)([^B]+)B\)([^C]+)C\)([^D]+)D\)(.+)/s);
+    if (m) {
+      return [
+        `A) ${m[1].trim()}`,
+        `B) ${m[2].trim()}`,
+        `C) ${m[3].trim()}`,
+        `D) ${m[4].trim()}`
+      ].join('\n');
+    }
+    return body.replace(/([A-D]\))/g, '\n$1').replace(/^\n/, '');
+  }
+  return body;
+}
+
+/**
+ * Parse a pasted FINAL SET block into our session question objects.
+ * Respects the current sessionParams.questionType (MCQ Single/Multiple/Descriptive)
+ */
+function parseFinalSetIntoQuestions(text, sessionParams) {
+  // keep only from first Qn onward (ignore any chatty intro)
+  const startIdx = text.search(/\bQ\s*1\s*:/i);
+  const cleaned = startIdx >= 0 ? text.slice(startIdx) : text;
+
+  const blocks = cleaned
+    .split(/\n(?=Q\s*\d+\s*:)/g)
+    .map(s => s.trim())
+    .filter(s => /^Q\s*\d+\s*:/i.test(s));
+
+  const out = [];
+  for (const b of blocks) {
+    const { meta, body } = __splitMetaAndBody(b);
+
+    // Build base qData
+    const qData = {
+      fullText: b,
+      class: sessionParams.class,
+      subject: sessionParams.subject,
+      chapter: sessionParams.chapter,
+      parsedMeta: meta,            // temporary; will be renumbered on render
+      question: '',
+      options: [],
+      parsedAnswer: null,
+      parsedBody: ''
+    };
+
+    if (sessionParams.questionType.startsWith('MCQ')) {
+      // split body into Q text, options, and Ans
+      const ansMatch = body.match(/Ans\s*:\s*.*$/im);
+      const ansLine  = ansMatch ? ansMatch[0].trim() : null;
+      const withoutAns = ansMatch ? body.replace(ansMatch[0], '').trim() : body.trim();
+
+      // first line is the question text, the rest are options (may be inline)
+      const lines = withoutAns.split('\n').map(l => l.trim()).filter(Boolean);
+      const qText = lines.length ? lines[0] : '';
+      let optBlock = lines.slice(1).join('\n');
+      optBlock = __forceOptionLines(optBlock);
+      const optLines = optBlock.split('\n').map(x => x.trim()).filter(Boolean);
+
+      // Ensure we have exactly 4 options
+      const A = optLines.find(l => /^A\)/i.test(l)) || 'A) ';
+      const B = optLines.find(l => /^B\)/i.test(l)) || 'B) ';
+      const C = optLines.find(l => /^C\)/i.test(l)) || 'C) ';
+      const D = optLines.find(l => /^D\)/i.test(l)) || 'D) ';
+
+      qData.question = qText;
+      qData.options  = [A, B, C, D].map(s => s.replace(/^[A-D]\)\s*/,'').trim());
+      qData.parsedAnswer = ansLine ? `Ans: ${__extractAnswerLetters(ansLine).map(L => `${L})`).join(', ')}` : null;
+      qData.parsedBody = [qText, `A) ${qData.options[0]}`, `B) ${qData.options[1]}`, `C) ${qData.options[2]}`, `D) ${qData.options[3]}`].join('\n');
+
+      // Store consistent fullText
+      qData.fullText = `${qData.parsedMeta}\n${qData.parsedBody}${qData.parsedAnswer ? `\n${qData.parsedAnswer}` : ''}`;
+
+    } else {
+      // Descriptive: meta + body (no options/Ans)
+      qData.question = body.split('\n')[0] || '';
+      qData.options = [];
+      qData.parsedAnswer = null;
+      qData.parsedBody = body;
+      qData.fullText = `${qData.parsedMeta}\n${qData.parsedBody}`;
+    }
+
+    out.push(qData);
+  }
+
+  // Normalize meta to our UI style (Level, Marks, Type); renumber later in rerender
+  const TYPE = sessionParams.questionType;
+  for (let i = 0; i < out.length; i++) {
+    const m = out[i].parsedMeta;
+
+    // Level
+    const lvl = (m.match(/Level\s*([1-3])/i) || [,'?'])[1];
+    // Marks
+    const mkMatch = m.match(/(\d+)\s*Mark/i);
+    const marks = mkMatch ? `${mkMatch[1]} Mark${mkMatch[1] === '1' ? '' : 's'}` :
+                 (TYPE.startsWith('MCQ') ? '1 Mark' : '');
+
+    out[i].parsedMeta = `Q${i+1}: Level ${lvl}, ${marks} [${TYPE}]`;
+    // Rebuild fullText using normalized meta
+    out[i].fullText = `${out[i].parsedMeta}\n${out[i].parsedBody}${out[i].parsedAnswer ? `\n${out[i].parsedAnswer}` : ''}`;
+  }
+
+  return out;
+}
+/* ========== END FINAL SET parser ========== */
 
     function parseAndDisplayAiQuestions(responseText, messagesArea, sessionParams) {
 
@@ -2067,5 +2495,6 @@ questionData.parsedMeta = `Q${currentSessionQuestions.length + 1}: ${level}, ${m
     </script>
 </body>
 </html>
+
 
 
