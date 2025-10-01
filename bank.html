@@ -133,7 +133,55 @@
       background-color: #fff8e1; border-top: 2px solid #ffecb3; padding: 10px 14px; margin-top: 10px; border-radius: 0 0 12px 12px;
       font-style: italic; color: #5d4037; white-space: pre-wrap;
     }
+     /* ===== Explain It button styling ===== */
+.ask-ai-btn{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  gap:8px;
+  padding:8px 14px;
+  margin-top:6px;
+  font-size:0.95em;
+  font-weight:700;
+  letter-spacing:0.2px;
+  color:#fff;
+  background: linear-gradient(90deg, #1762a7, #0f3d6b);
+  border:none;
+  border-radius:999px; /* pill */
+  box-shadow:0 2px 10px rgba(15,61,107,0.18);
+  cursor:pointer;
+  transition: transform .06s ease, box-shadow .15s ease, filter .15s ease;
+  will-change: transform, filter;
+  -webkit-tap-highlight-color: transparent; /* mobile tap highlight off */
+  min-height: 40px; /* desktop comfortable */
+}
+.ask-ai-btn:hover{
+  filter:brightness(1.03);
+  box-shadow:0 4px 16px rgba(15,61,107,0.25);
+  transform: translateY(-1px);
+}
+.ask-ai-btn:active{
+  transform: translateY(0);
+  box-shadow:0 2px 10px rgba(15,61,107,0.18);
+  filter:brightness(0.98);
+}
+.ask-ai-btn:focus{
+  outline:none;
+  box-shadow:0 0 0 3px rgba(23,98,167,0.18), 0 2px 10px rgba(15,61,107,0.18);
+}
+
+/* Mobile tweaks */
+@media (max-width: 560px){
+  .ask-ai-btn{
+    width: 100%;                /* full-width on small screens */
+    padding: 12px 16px;         /* bigger tap target */
+    font-size: 1rem;            /* slightly larger text */
+    min-height: 44px;           /* meets iOS/Material touch target */
+    box-shadow:0 3px 12px rgba(15,61,107,0.2);
+  }
+}
   </style>
+
 </head>
 <body>
   <div class="page-wrapper">
@@ -987,8 +1035,8 @@ await __waitForImages(printable);
               <div class="question-actions">
                 <button class="q-action-btn" title="Options"><i class="fas fa-ellipsis-v"></i></button>
               </div>
-              <!-- Ask AI button replaces the old image button -->
-            <button type="button" class="ask-ai-btn" style="margin-top:6px;">💡 Explain It</button>
+             <!-- Ask AI button replaces the old image button -->
+            <button type="button" class="ask-ai-btn">💡 Explain It</button>
             </div>`;
         });
 
@@ -1003,7 +1051,7 @@ await __waitForImages(printable);
 
           if (typeof setupQuestionActionMenus === "function") setupQuestionActionMenus();
 
-/* ==== Explain It (AI) — open modal with selected question ==== */
+/* ==== Explain It (AI) — open directly in ChatGPT (copy prompt + toast + open tab) ==== */
 document.addEventListener('click', async (e) => {
   const btn = e.target.closest('.ask-ai-btn');
   if (!btn) return;
@@ -1012,196 +1060,64 @@ document.addEventListener('click', async (e) => {
   const docId = card?.getAttribute('data-id');
   if (!docId) return;
 
-  const modal   = document.getElementById('ai-chat-modal');
-  const content = document.getElementById('ai-chat-content');
-  const input   = document.getElementById('ai-chat-input');
-  const closeBtn= document.getElementById('ai-chat-close');
+  // tiny inline toast helper
+  function __qb_toast(msg) {
+    const t = document.createElement('div');
+    t.textContent = msg;
+    t.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);bottom:24px;background:#0f3d6b;color:#fff;padding:10px 14px;border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,.2);z-index:100000;font-weight:600;letter-spacing:.2px;font-size:14px;opacity:0.98';
+    document.body.appendChild(t);
+    setTimeout(() => { t.style.transition='opacity .35s'; t.style.opacity='0'; }, 1200);
+    setTimeout(() => t.remove(), 1600);
+  }
 
-  // loading state
-  content.innerHTML = `<div style="color:#185496;">Loading question…</div>`;
-  modal.style.display = 'flex';
-
-  // fetch full question doc
   try {
+    // Pull freshest data for this question
     const snap = await db.collection('questions').doc(docId).get();
     const data = snap.data() || {};
 
-    const meta = {
-      className: data.class || document.getElementById('class-value').value || '',
-      subject:   data.subject || document.getElementById('subject-value').value || '',
-      chapter:   data.chapter || document.getElementById('chapter-value').value || '',
-      level:     data.difficulty || data.level || '',
-      type:      data.mcqType || (Array.isArray(data.options) && data.options.length===4 ? 'MCQ (Single)' : 'Descriptive'),
-      marks:     data.marks ?? ''
-    };
+    // Build a clean prompt
+    const cls     = data.class || document.getElementById('class-value')?.value || '';
+    const subject = data.subject || document.getElementById('subject-value')?.value || '';
+    const chapter = data.chapter || document.getElementById('chapter-value')?.value || '';
+    const level   = data.difficulty || data.level || '';
+    const type    = data.mcqType || (Array.isArray(data.options) && data.options.length === 4 ? 'MCQ (Single)' : 'Descriptive');
+    const marks   = (data.marks ?? '');
 
     const qText   = (data.question || data.body || data.text || '').trim();
-    const options = Array.isArray(data.options) ? data.options : null;
+    const options = Array.isArray(data.options) ? data.options.filter(Boolean) : [];
 
-    // build question preview HTML
-    const metaLine = [
-      meta.subject || 'Subject?',
-      meta.className || 'Class?',
-      meta.level || 'Level?',
-      meta.type || 'Type?'
-    ].filter(Boolean).join(' • ');
-
-    let optsHtml = '';
-    if (options && options.length) {
-      optsHtml = `
-        <div style="margin-top:8px; padding-left:4px;">
-          ${options.map((o,i)=>`<div>${String.fromCharCode(65+i)}) ${o}</div>`).join('')}
-        </div>`;
+    let prompt = `Please solve and explain clearly.\n`;
+    const meta = [subject && `Subject: ${subject}`, cls && `Class: ${cls}`, chapter && `Chapter: ${chapter}`, level && `Level: ${level}`, type && `Type: ${type}`, marks!=='' && `Marks: ${marks}`]
+      .filter(Boolean).join(' · ');
+    if (meta) prompt += meta + `\n\n`;
+    prompt += `Question:\n${qText}\n`;
+    if (options.length) {
+      prompt += `\nOptions:\n` + options.map((o,i)=>`${String.fromCharCode(65+i)}) ${o.replace(/^[A-D][).]\s*/, '')}`).join('\n');
+      prompt += `\n\nRespond with the correct option (A–D) and a step-by-step explanation.`;
+    } else {
+      prompt += `\n\nRespond with the final answer and a step-by-step explanation.`;
     }
 
-    const previewHTML = `
-  <div id="ai-chat-preview" style="margin-bottom:10px;">
-    <div style="margin-bottom:6px; color:#0f3d6b; font-weight:600;">${metaLine}</div>
-    <div class="ai-qtext" style="color:#185496; line-height:1.55;">${qText}</div>
-    ${optsHtml}
-  </div>`;
-document.getElementById('ai-chat-content').innerHTML = previewHTML + 
-  '<div id="ai-chat-thread" style="display:flex; flex-direction:column; gap:8px;"></div>';
+    // Copy to clipboard for quick paste
+    let copied = false;
+    try {
+      await navigator.clipboard.writeText(prompt);
+      copied = true;
+    } catch (_) {
+      copied = false;
+    }
 
-    // MathJax render if needed
-if (window.MathJax?.typesetPromise) {
-  await window.MathJax.typesetPromise([content]);
-}
+    __qb_toast(copied ? 'Copied prompt. Opening ChatGPT…' : 'Opening ChatGPT… (paste prompt manually)');
 
-// focus + autogrow
-input.value = '';
-setAutoGrowTextarea(input);
-input.focus();
-
-    // keep context for this chat
-   // keep context for this chat
-window.__aiCtx = {
-  docId,
-  meta,
-  question: qText,
-  options
-};
-// start fresh history for each question card
-window.__aiHistory = [];
-
-    // close button
-    closeBtn.onclick = () => { modal.style.display = 'none'; };
-
-// Enter to send (Shift+Enter for new line)
-const sendBtn = document.getElementById('ai-chat-send');
-input.onkeydown = (ev) => {
-  if (ev.key === 'Enter' && !ev.shiftKey) {
-    ev.preventDefault();
-    sendBtn.click();
-  }
-};
+    // Open ChatGPT (model selector in URL if supported)
+    const url = 'https://chatgpt.com/?model=gpt-4o';
+    window.open(url, '_blank', 'noopener');
 
   } catch (err) {
-    content.innerHTML = `<div style="color:#c82333;">Failed to load question: ${String(err)}</div>`;
+    console.error('Explain It handoff failed:', err);
+    alert('Could not open in ChatGPT. Please try again.');
   }
 });
-function appendChatBubble(role, html) {
-  const thread = document.getElementById('ai-chat-thread');
-  const wrap = document.createElement('div');
-  const common = 'display:inline-block; border-radius:12px; padding:8px 12px; max-width:85%; word-break:break-word; line-height:1.5;';
-  if (role === 'user') {
-    wrap.style.cssText = 'text-align:right;';
-    wrap.innerHTML = `<span style="${common} background:#d1eaff; color:#003865;">${html}</span>`;
-  } else {
-    wrap.style.cssText = 'text-align:left;';
-    wrap.innerHTML = `<span style="${common} background:#f6fbff; border:1px solid #dcecff; color:#333;">${html}</span>`;
-  }
-  thread.appendChild(wrap);
-  thread.parentElement.scrollTop = thread.parentElement.scrollHeight;
-}
-
-function setAutoGrowTextarea(el) {
-  const max = 120;
-  const resize = () => {
-    el.style.height = 'auto';
-    el.style.overflowY = 'hidden';
-    const h = Math.min(max, el.scrollHeight);
-    el.style.height = h + 'px';
-    if (el.scrollHeight > max) el.style.overflowY = 'auto';
-  };
-  el.addEventListener('input', resize);
-  resize();
-}
-
-// Send button: post to your backend and render reply
-document.getElementById('ai-chat-send').onclick = async () => {
-  const modal  = document.getElementById('ai-chat-modal');
-  if (modal.style.display === 'none') return;
-
-  const thread = document.getElementById('ai-chat-thread');
-  const input  = document.getElementById('ai-chat-input');
-
-  // keep history for this modal session
-  window.__aiHistory = Array.isArray(window.__aiHistory) ? window.__aiHistory : [];
-
-  const msg = (input.value || '').trim();
-  const userMessage = msg || 'Give the correct option (A–D) or final answer, and explain clearly.';
-
-  // show user bubble (only if they typed)
-if (msg) {
-  appendChatBubble('user', msg);
-}
-
-  // show thinking
-  thread.insertAdjacentHTML('beforeend',
-    `<div id="ai-typing" style="margin:6px 0; text-align:left; color:#185496;">Thinking…</div>`);
-  input.value = '';
-
-  let respHtml = '';   // <-- prepare a safe variable for the assistant reply
-
-  try {
-    const payload = {
-      meta: window.__aiCtx?.meta || {},
-      question: window.__aiCtx?.question || '',
-      options: window.__aiCtx?.options || null,
-      userMessage,
-      history: window.__aiHistory
-    };
-
-    const API_BASE = 'https://question-bank-lqsu.onrender.com/api/v1';
-    const resp = await fetch(`${API_BASE}/answer`, {
-      method: 'POST',
-      headers: { 'Content-Type':'application/json' },
-      body: JSON.stringify(payload)
-    });
-    const data = await resp.json();
-
-    if (data.error) throw new Error(data.error);
-
-    const parts = [];
-    if (data.final_option) parts.push(`<b>Answer:</b> ${data.final_option}`);
-    if (data.final_answer && !data.final_option) parts.push(`<b>Answer:</b> ${data.final_answer}`);
-    if (data.explanation) parts.push(`<b>Explanation:</b>\n${data.explanation}`);
-
-    respHtml = parts.length ? parts.join('\n') : 'No answer received.';
-
-    // update chat history so follow-ups feel like a chat
-    if (msg) window.__aiHistory.push({ role: 'user', content: msg });
-    const assistantText = [
-      (data.final_option ? `Answer: ${data.final_option}` : (data.final_answer ? `Answer: ${data.final_answer}` : '')),
-      (data.explanation ? `Explanation: ${data.explanation}` : '')
-    ].filter(Boolean).join('\n');
-    window.__aiHistory.push({ role: 'assistant', content: assistantText });
-
-  } catch (err) {
-    respHtml = `<span style="color:#c82333;">${String(err)}</span>`;
-  } finally {
-    document.getElementById('ai-typing')?.remove();
-
-    // assistant bubble (use respHtml)
-appendChatBubble('assistant', respHtml);
-
-    if (window.MathJax?.typesetPromise) {
-      await window.MathJax.typesetPromise([thread]);
-    }
-    thread.parentElement.scrollTop = thread.parentElement.scrollHeight;
-  }
-};
 
           document.querySelectorAll('.question-img-btn').forEach(btn => {
             btn.onclick = function() {
@@ -1628,35 +1544,7 @@ All the Best`;
       <span style="color:#1762a7;font-weight:bold;font-size:1.13em;">Creating Quiz... Please wait</span>
     </div>
   </div>
-<!-- AI Chat Modal -->
-<div id="ai-chat-modal" style="display:none; position:fixed; inset:0; z-index:99999; background:rgba(0,0,0,0.18); align-items:center; justify-content:center;">
-  <div style="background:#fff; width:min(680px,94vw); max-height:85vh; border-radius:14px; box-shadow:0 10px 30px rgba(0,0,0,0.2); display:flex; flex-direction:column; overflow:hidden;">
-    
-    <!-- Header bar (generator style) -->
-    <div style="background:linear-gradient(90deg,#1762a7,#0f3d6b); color:#fff; padding:12px 16px; font-weight:700; display:flex; align-items:center; justify-content:space-between;">
-      <span>Explain It</span>
-      <button id="ai-chat-close" aria-label="Close"
-        style="background:transparent; border:none; color:#fff; font-size:18px; line-height:1; cursor:pointer;">✕</button>
-    </div>
 
-    <!-- Messages area -->
-    <div id="ai-chat-content" style="padding:14px 16px; overflow:auto; flex:1;">
-      <!-- question preview + chat thread will be injected here -->
-      <div id="ai-chat-thread" style="display:flex; flex-direction:column; gap:8px;"></div>
-    </div>
-
-    <!-- Sticky input bar (generator style) -->
-    <div style="padding:10px 12px; border-top:1px solid #eef2f8; background:#fff; position:sticky; bottom:0;">
-      <div style="display:flex; align-items:center; gap:8px; background:#fff; border:1px solid #bcd6ef; border-radius:22px; padding:6px 10px;">
-        <textarea id="ai-chat-input" rows="1" placeholder="Ask for hints, steps, or more detail…"
-          style="flex:1; border:none; outline:none; resize:none; max-height:120px; font-size:14px;"></textarea>
-        <button id="ai-chat-send" title="Send" style="background:none; border:none; color:#1762a7; font-size:18px; padding:6px 8px; cursor:pointer;">
-          <i class="fas fa-paper-plane"></i>
-        </button>
-      </div>
-    </div>
-
-  </div>
-</div>
 </body>
 </html>
+
