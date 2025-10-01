@@ -284,11 +284,13 @@
       });
     });
 
-    function initializeApp() {
-      setupDropdowns();
-      fetchAndDisplayQuestions();
-      document.getElementById('download-pdf-btn').addEventListener('click', exportPDF);
-    }
+   function initializeApp() {
+  setupDropdowns();
+  // Do NOT fetch on load; wait until Class + Subject are chosen
+  document.getElementById('questions-display-area').innerHTML =
+    '<p class="no-questions-message">Select Class and Subject to view questions.</p>';
+  document.getElementById('download-pdf-btn').addEventListener('click', exportPDF);
+}
 
     // PDF EXPORT USING html2pdf.js
     async function exportPDF(e) {
@@ -852,13 +854,19 @@ await __waitForImages(printable);
 
       const levelDropdown = document.getElementById('level-dropdown');
       levelDropdown.innerHTML = createDropdownHTML('level', filterConfig.levels, 'Select Level');
-      addDropdownListener('level-dropdown', fetchAndDisplayQuestions);
+      const __debouncedFetch = () => {
+  clearTimeout(window.__qbFetchT);
+  window.__qbFetchT = setTimeout(fetchAndDisplayQuestions, 250);
+};
 
-      addDropdownListener('class-dropdown', onClassChange);
-      addDropdownListener('subject-dropdown', onSubjectChange);
-      addDropdownListener('qtype-dropdown', fetchAndDisplayQuestions);
-      addDropdownListener('chapter-dropdown', fetchAndDisplayQuestions);
-      addDropdownListener('marks-dropdown', fetchAndDisplayQuestions);
+addDropdownListener('level-dropdown', __debouncedFetch);
+
+addDropdownListener('class-dropdown', onClassChange);
+addDropdownListener('subject-dropdown', onSubjectChange);
+addDropdownListener('qtype-dropdown', __debouncedFetch);
+addDropdownListener('chapter-dropdown', __debouncedFetch);
+addDropdownListener('marks-dropdown', __debouncedFetch);
+
     }
 
     function addDropdownListener(dropdownId, callback) {
@@ -940,11 +948,19 @@ await __waitForImages(printable);
       if (!currentUser) return;
 
       const displayArea = document.getElementById('questions-display-area');
-      displayArea.innerHTML = '<p class="no-questions-message">Loading questions...</p>';
 
+      const classVal   = document.getElementById('class-value').value;
+      const subjectVal = document.getElementById('subject-value').value;
+      
+      // Require Class + Subject before querying
+      if (!classVal || !subjectVal || classVal === 'All' || subjectVal === 'All') {
+        displayArea.innerHTML = '<p class="no-questions-message">Select Class and Subject to view questions.</p>';
+        return;
+      }
+      
+      displayArea.innerHTML = '<p class="no-questions-message">Loading questions...</p>';
+      
       try {
-        const classVal = document.getElementById('class-value').value;
-        const subjectVal = document.getElementById('subject-value').value;
         const qtypeVal = document.getElementById('qtype-value').value;
         const chapterVal = document.getElementById('chapter-value').value;
         const marksVal = document.getElementById('marks-value').value;
@@ -964,7 +980,7 @@ await __waitForImages(printable);
         if (levelVal && levelVal !== 'Select Level' && levelVal !== 'All' && levelVal !== 'Mixed') {
           query = query.where('difficulty', '==', levelVal);
         }
-        query = query.orderBy("questionNumber");
+       query = query.orderBy("questionNumber");
 
         const snapshot = await query.get();
 
@@ -1043,11 +1059,13 @@ await __waitForImages(printable);
         if (questionCount > 0) {
           displayArea.innerHTML = questionsHTML;
 
-          if (window.MathJax && typeof window.MathJax.typesetPromise === 'function') {
-            window.MathJax.typesetPromise([displayArea]).catch(function (err) {
-              console.error('MathJax rendering error:', err);
-            });
-          }
+         if (window.MathJax && typeof window.MathJax.typesetPromise === 'function') {
+  // yield one frame so the DOM paints before heavy typesetting
+  await new Promise(r => requestAnimationFrame(() => r()));
+  window.MathJax.typesetPromise([displayArea]).catch(function (err) {
+    console.error('MathJax rendering error:', err);
+  });
+}
 
           if (typeof setupQuestionActionMenus === "function") setupQuestionActionMenus();
 
@@ -1550,6 +1568,7 @@ All the Best`;
 
 </body>
 </html>
+
 
 
 
