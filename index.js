@@ -58,72 +58,6 @@ const openai = new OpenAI({
 });
 
 // ========== 1. AI Text-Based Question Generation ==========
-
-// NEW: AI answer/explain endpoint for Question Bank chat
-app.post(`${API_VERSION}/answer`, async (req, res) => {
-  try {
-    const {
-      meta = {},
-      question = '',
-      options = null,
-      userMessage = '',
-      history = []
-    } = req.body || {};
-
-    const system = [
-  "You are a helpful school subject teacher.",
-  "If the question is MCQ, return JSON with keys: final_option (A/B/C/D), explanation.",
-  "If the question is NOT MCQ, return JSON with keys: final_answer (short text), explanation.",
-  // --- style rules:
-  "Write the explanation as 3–6 SHORT numbered steps, one idea per step.",
-  "Keep each step under ~20 words. Prefer equations in LaTeX like $243\\times1001+657$.",
-  "No fluff, no preface. Finish with a one-line conclusion.",
-  "Do NOT include chain-of-thought; just the steps and conclusion needed to verify the answer."
-].join(' ');
-
-    const baseContent = [
-      `Class: ${meta.className || ''}`,
-      `Subject: ${meta.subject || ''}`,
-      `Chapter: ${meta.chapter || ''}`,
-      `Level: ${meta.level || ''}`,
-      `Type: ${meta.type || ''}`,
-      `Marks: ${meta.marks ?? ''}`,
-      ``,
-      `Question: ${question}`,
-      (Array.isArray(options) && options.length)
-        ? `Options:\n${options.map((o,i)=>`${String.fromCharCode(65+i)}) ${o}`).join('\n')}`
-        : ''
-    ].filter(Boolean).join('\n');
-
-    // Sanitize history coming from the client
-    const safeHistory = Array.isArray(history)
-      ? history
-          .filter(m => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
-          .map(m => ({ role: m.role, content: m.content.trim() }))
-      : [];
-
-    // Build the messages list: context → previous turns → latest user message
-    const messages = [
-      { role: 'system', content: system },
-      { role: 'user', content: baseContent },
-      ...safeHistory,
-      { role: 'user', content: userMessage || 'Give the correct option (A–D) or final answer, and explain clearly.' }
-    ];
-
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o",
-      temperature: 0.2,
-      response_format: { type: "json_object" },
-      messages
-    });
-
-    const text = response.choices?.[0]?.message?.content || "{}";
-    return res.status(200).json(JSON.parse(text));
-  } catch (error) {
-    console.error(`Error in /answer:`, error);
-    return res.status(500).json({ error: "Failed to fetch AI answer." });
-  }
-});
 app.post(`${API_VERSION}/generate`, async (req, res) => {
     try {
         const { prompt } = req.body;
@@ -363,5 +297,6 @@ app.use((err, req, res, next) => {
 // ========== START SERVER ==========
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
 
 
