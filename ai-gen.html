@@ -1689,6 +1689,35 @@ function __toPlainMath(s='') {
 
   return t.replace(/[ \t]+\n/g, '\n').trim();
 }
+// Auto-wrap LaTeX-y text so MathJax will render it (find/replace only)
+function __autoWrapInlineMath(str='') {
+  let s = String(str);
+
+  // 1) Normalize existing delimiters
+  //    \[...\]  -> $$...$$
+  s = s.replace(/\\\[/g, '$$').replace(/\\\]/g, '$$');
+  //    \(...\)  -> $...$
+  s = s.replace(/\\\(/g, '$').replace(/\\\)/g, '$');
+
+  // 2) Wrap bare LaTeX-ish lines that have no $...$ or $$...$$
+  //    We only touch lines that seem mathy (frac/sqrt/^{}/_/etc.) but lack delimiters.
+  s = s.split('\n').map(line => {
+    const hasMathDelims = /\$(?:[^$]|\$\$)*\$/m.test(line);  // any $...$ present
+    const looksLikeTex = /(\\frac|\\tfrac|\\dfrac|\\sqrt|\\cdot|\\times|\\leq|\\geq|\\neq|\\pm|\\sin|\\cos|\\tan|\\log|\\ln|\^|_)/.test(line);
+    if (!hasMathDelims && looksLikeTex) {
+      // keep leading option labels like "A) " … "D) "
+      const opt = line.match(/^([A-D]\)\s*)(.*)$/);
+      if (opt) return `${opt[1]}\\(${opt[2]}\\)`;
+      return `\\(${line}\\)`;
+    }
+    return line;
+  }).join('\n');
+
+  // 3) Tidy $$$ -> $$ (accidentally doubled)
+  s = s.replace(/\${3,}/g, '$$');
+
+  return s;
+}
 
     /* === ChatGPT handoff helpers (AI Generator) === */
 function __qb_toast(msg) {
@@ -2194,7 +2223,7 @@ questionData.parsedMeta = `Q${currentSessionQuestions.length + 1}: ${level}, ${m
 
         questionEl.innerHTML = `
             <div class="question-meta-ai">${qData.parsedMeta}</div>
-            <div class="question-text-ai">${qData.parsedBody}</div>
+            <div class="question-text-ai">${__autoWrapInlineMath(qData.parsedBody)}</div>
             <div class="question-actions">
                 <button class="q-action-btn" title="Options"><i class="fas fa-ellipsis-v"></i></button>
             </div>`;
@@ -2274,14 +2303,14 @@ questionData.parsedMeta = `Q${currentSessionQuestions.length + 1}: ${level}, ${m
                 let cleanBody = mcq.body.replace(/^Q\d+:\s*/i, '').replace(/Ans:.*/,'').trim();
                 return `
                     <div class="question-text-ai" style="margin-top:8px; text-align:left;">
-                        <b>Q${k+1}.</b> ${cleanBody.replace(/</g,"&lt;").replace(/>/g,"&gt;")}
+                        <b>Q${k+1}.</b> ${__autoWrapInlineMath(cleanBody.replace(/</g,"&lt;").replace(/>/g,"&gt;"))}
                         <div class="temp-answer" style="display:none; margin-top:3px; color:#5d4037;">${mcq.answer ? mcq.answer : ''}</div>
                     </div>
                 `;
             }).join('');
             blockEl.innerHTML = `
                 <div class="question-meta-ai">${q.parsedMeta}</div>
-                <div class="question-text-ai" style="white-space:pre-line; margin-bottom:8px;"><b>Passage:</b> ${q.passage}</div>
+                <div class="question-text-ai" style="white-space:pre-line; margin-bottom:8px;"><b>Passage:</b> ${__autoWrapInlineMath(q.passage || '')}</div>
                 ${mcqHtml}
                 <div class="question-actions">
                     <button class="q-action-btn" title="Options"><i class="fas fa-ellipsis-v"></i></button>
@@ -2479,6 +2508,7 @@ questionData.parsedMeta = `Q${currentSessionQuestions.length + 1}: ${level}, ${m
     </script>
 </body>
 </html>
+
 
 
 
