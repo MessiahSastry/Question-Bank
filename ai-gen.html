@@ -1729,34 +1729,47 @@ function __toPlainMath(s='') {
 
   return t.replace(/[ \t]+\n/g, '\n').trim();
 }
-   function __autoWrapInlineMath(s = '') {
-  const PROTECT_START = '\uE000', PROTECT_END = '\uE001';
+   function __autoWrapInlineMath(s='') {
+  const PS = '\uE000', PE = '\uE001';
 
   // protect existing math so we never re-wrap it
   const protect = t =>
-    t.replace(/\\\(([\s\S]*?)\\\)|\$\$([\s\S]*?)\$\$|\\\[([\s\S]*?)\\\]/g,
-      (m, a, b, c) => PROTECT_START + (a || b || c) + PROTECT_END);
-
+    t.replace(/\\\(([\s\S]*?)\\\)|\\\[([\s\S]*?)\\\]|\$\$([\s\S]*?)\$\$/g,
+      (_,a,b,c) => PS + (a || b || c) + PE);
   const unprotect = t =>
-    t.replace(new RegExp(PROTECT_START + '([\\s\\S]*?)' + PROTECT_END, 'g'), '\\($1\\)');
+    t.replace(new RegExp(PS + '([\\s\\S]*?)' + PE, 'g'), '\\($1\\)');
 
-  // TeX tokens that imply “this is math”
-  const tokenRE =
-    /\\(?:frac|dfrac|tfrac|sqrt|pm|cdot|times|div|leq|geq|neq|overline|bar)\b|[A-Za-z0-9]\s*\^\s*\{[^}]+\}|[A-Za-z0-9]\s*\^\s*\d+(?:\/\d+)?/g;
+  // whole TeX constructs
+  const fracRE = /\\(?:tfrac|dfrac|frac)\s*\{[^}]+\}\s*\{\s*[^}]+\s*\}/g;
+  const sqrtRE = /\\sqrt\s*\{[^}]+\}/g;
+  const powRE  = /[A-Za-z0-9]\s*\^\s*(?:\{[^}]+\}|\d+(?:\s*\/\s*\d+)?)/g;
+  const subRE  = /[A-Za-z]\s*_\s*(?:\{[^}]+\}|\d+)/g;
 
   return String(s).split('\n').map(line => {
-    // keep option label (A) ... D)) outside math
+    // keep "A) " etc. outside math
     const m = line.match(/^([A-D]\)\s*)(.*)$/);
     let head = '', tail = line;
     if (m) { head = m[1]; tail = m[2]; }
 
     tail = protect(tail);
 
-    // wrap ( ... ) only when there’s a TeX token inside (never touches [ or ])
-    tail = tail.replace(/\(([^()]*)\)/g, (all, inner) => tokenRE.test(inner) ? `\\(${inner}\\)` : all);
+    // wrap full TeX constructs
+    tail = tail.replace(fracRE, m => `\\(${m}\\)`)
+               .replace(sqrtRE, m => `\\(${m}\\)`);
 
-    // also wrap bare TeX tokens not already in math
-    tail = tail.replace(tokenRE, mm => `\\(${mm}\\)`);
+    // wrap parenthetical chunks that look like math
+    tail = tail.replace(/\(([^()]*)\)/g, (all, inner) => {
+      if (fracRE.test(inner) || sqrtRE.test(inner) || powRE.test(inner) || subRE.test(inner)) {
+        return `\\(${inner}\\)`;
+      }
+      return all;
+    });
+
+    // wrap standalone exponent/subscript expressions not already in ()/math
+    tail = tail.replace(
+      /(^|[^\w\\])((?:[A-Za-z0-9]\s*\^\s*(?:\{[^}]+\}|\d+(?:\s*\/\s*\d+)?))|(?:[A-Za-z]\s*_\s*(?:\{[^}]+\}|\d+)))/g,
+      (all, pre, expr) => `${pre}\\(${expr}\\)`
+    );
 
     tail = unprotect(tail);
     return head + tail;
@@ -2275,6 +2288,9 @@ questionData.parsedMeta = `Q${currentSessionQuestions.length + 1}: ${level}, ${m
         // ⬇️ Render as HTML so MathJax can typeset \( ... \) and keep line breaks
         const qt = questionEl.querySelector('.question-text-ai');
         qt.innerHTML = __autoWrapInlineMath(qData.parsedBody || '').replace(/\n/g, '<br>');
+        if (window.MathJax && MathJax.typesetPromise) {
+          MathJax.typesetPromise([qt]);
+        }
 
         const actionButton = questionEl.querySelector('.q-action-btn');
 
@@ -2557,6 +2573,7 @@ questionData.parsedMeta = `Q${currentSessionQuestions.length + 1}: ${level}, ${m
     </script>
 </body>
 </html>
+
 
 
 
