@@ -1710,35 +1710,37 @@ function __toPlainMath(s='') {
   const hasDelims = s => /\\\(|\\\[|\$\$|\\begin\{/.test(s);
 
   const sanitize = s => s
-    // fix cube roots and plain roots
+    // roots
     .replace(/√\s*\(([^()]+)\)/g, '\\\\sqrt{$1}')
     .replace(/√\s*([A-Za-z0-9]+)/g, '\\\\sqrt{$1}')
-    .replace(/³\s*\\\\sqrt\{/g, '\\\\sqrt[3]{')             // ³√ → \sqrt[3]{…}
-    // remove size modifiers that need paired delimiters
+    .replace(/³\s*\\\\sqrt\{/g, '\\\\sqrt[3]{')
+    // size modifiers (need paired delimiters → remove)
     .replace(/\\left|\\right|\\bigg?|\\Bigg?/g, '')
-    // remove inline delimiters that leaked inside braces
+    // delimiters that leaked inside braces
     .replace(/\{\\\(/g, '{').replace(/\\\)\}/g, '}')
     // collapse duplicates
-    .replace(/\\\(\s*\\\(/g, '\\(').replace(/\\\)\s*\\\)/g, '\\)')
-    // extra safety: kill lonely \) right before a non-math char
-    .replace(/\\\)(?=[^$\\\)\}\]]))/g, '');
+    .replace(/\\\(\s*\\\(/g, '\\(')
+    .replace(/\\\)\s*\\\)/g, '\\)')
+    .replace(/\${3,}/g, '$$')
+    // remove lonely \) before a non-math char (corrected regex)
+    .replace(/\\\)(?=[^$\\\)\}\]])/g, '');
 
   return String(str).split('\n').map(raw => {
     let line = sanitize(raw);
 
-    if (hasDelims(line)) return sanitize(line); // already mathy; just clean
+    if (hasDelims(line)) return sanitize(line);
 
     // Option lines: keep label, process tail
     const m = line.match(/^([A-D]\)\s*)(.*)$/);
     let head = '', tail = line;
     if (m) { head = m[1]; tail = m[2]; }
 
-    // Wrap mathy chunks that are in parentheses
-    tail = tail.replace(/\(([^()]*?(?:\\frac|\\sqrt|\^|_).+?)\)/g, (_, g1) => {
-      return (/^\s*\d+(\.\d+)?\s*$/.test(g1)) ? `(${g1})` : wrap(g1);
-    });
+    // Wrap math-y chunks in parentheses
+    tail = tail.replace(/\(([^()]*?(?:\\frac|\\sqrt|\^|_).+?)\)/g, (_, g1) =>
+      (/^\s*\d+(\.\d+)?\s*$/.test(g1)) ? `(${g1})` : wrap(g1)
+    );
 
-    // Standalone TeX pieces to wrap
+    // Standalone TeX pieces
     tail = tail
       .replace(/\\frac\{[^}]+\}\{[^}]+\}/g, s => wrap(s))
       .replace(/\\sqrt(?:\[[^\]]+\])?\{[^}]+\}/g, s => wrap(s))
@@ -1747,6 +1749,7 @@ function __toPlainMath(s='') {
     return sanitize(head + tail);
   }).join('\n');
 }
+
 
   
     /* === ChatGPT handoff helpers (AI Generator) === */
@@ -2538,6 +2541,7 @@ questionData.parsedMeta = `Q${currentSessionQuestions.length + 1}: ${level}, ${m
     </script>
 </body>
 </html>
+
 
 
 
