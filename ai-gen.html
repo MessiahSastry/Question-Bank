@@ -1669,17 +1669,6 @@ if (qData.parsedMeta && qData.parsedMeta.includes("[Comprehensive]")) {
         }
     }
     
-   // Convert LaTeX delimiters to Markdown math that ChatGPT renders well
-function __normalizeLatexDelimiters(s='') {
-  return String(s)
-    // block: \[...\] -> $$...$$
-    .replace(/\\\[/g, '$$').replace(/\\\]/g, '$$')
-    // inline: \(...\) -> $...$
-    .replace(/\\\(/g, '$').replace(/\\\)/g, '$')
-    // collapse accidental $$$ or extra spaces
-    .replace(/\${3,}/g, '$$').replace(/[ \t]+\n/g, '\n');
-}
-
 // Decode any HTML entities that might have slipped in from your UI rendering
 function __decodeEntities(s='') {
   const d = document.createElement('textarea');
@@ -1740,7 +1729,40 @@ function __toPlainMath(s='') {
 
   return t.replace(/[ \t]+\n/g, '\n').trim();
 }
-   
+   function __autoWrapInlineMath(s = '') {
+  const PROTECT_START = '\uE000', PROTECT_END = '\uE001';
+
+  // protect existing math so we never re-wrap it
+  const protect = t =>
+    t.replace(/\\\(([\s\S]*?)\\\)|\$\$([\s\S]*?)\$\$|\\\[([\s\S]*?)\\\]/g,
+      (m, a, b, c) => PROTECT_START + (a || b || c) + PROTECT_END);
+
+  const unprotect = t =>
+    t.replace(new RegExp(PROTECT_START + '([\\s\\S]*?)' + PROTECT_END, 'g'), '\\($1\\)');
+
+  // TeX tokens that imply “this is math”
+  const tokenRE =
+    /\\(?:frac|dfrac|tfrac|sqrt|pm|cdot|times|div|leq|geq|neq|overline|bar)\b|[A-Za-z0-9]\s*\^\s*\{[^}]+\}|[A-Za-z0-9]\s*\^\s*\d+(?:\/\d+)?/g;
+
+  return String(s).split('\n').map(line => {
+    // keep option label (A) ... D)) outside math
+    const m = line.match(/^([A-D]\)\s*)(.*)$/);
+    let head = '', tail = line;
+    if (m) { head = m[1]; tail = m[2]; }
+
+    tail = protect(tail);
+
+    // wrap ( ... ) only when there’s a TeX token inside (never touches [ or ])
+    tail = tail.replace(/\(([^()]*)\)/g, (all, inner) => tokenRE.test(inner) ? `\\(${inner}\\)` : all);
+
+    // also wrap bare TeX tokens not already in math
+    tail = tail.replace(tokenRE, mm => `\\(${mm}\\)`);
+
+    tail = unprotect(tail);
+    return head + tail;
+  }).join('\n');
+}
+
     /* === ChatGPT handoff helpers (AI Generator) === */
 function __qb_toast(msg) {
   const t = document.createElement('div');
@@ -2244,11 +2266,17 @@ questionData.parsedMeta = `Q${currentSessionQuestions.length + 1}: ${level}, ${m
         questionEl.dataset.sessionQuestionIndex = index;
 
         questionEl.innerHTML = `
+            questionEl.innerHTML = `
             <div class="question-meta-ai">${qData.parsedMeta}</div>
-           <div class="question-text-ai">${__wrapParenMath(qData.parsedBody)}</div>
+            <div class="question-text-ai"></div>
             <div class="question-actions">
                 <button class="q-action-btn" title="Options"><i class="fas fa-ellipsis-v"></i></button>
             </div>`;
+        
+        // ⬇️ NEW: set plain text + wrap inline math safely
+        const qt = questionEl.querySelector('.question-text-ai');
+        qt.textContent = __autoWrapInlineMath(qData.parsedBody || '');
+
         const actionButton = questionEl.querySelector('.q-action-btn');
 
         actionButton.addEventListener('click', (e) => {
@@ -2530,6 +2558,7 @@ questionData.parsedMeta = `Q${currentSessionQuestions.length + 1}: ${level}, ${m
     </script>
 </body>
 </html>
+
 
 
 
