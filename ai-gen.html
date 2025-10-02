@@ -600,483 +600,484 @@ body.chat-lock { overflow: hidden; height: 100vh; }
 </style>
 </head>
 <body>
-    <script src="chapters.js"></script>
-    <div class="page-wrapper">
-        <header id="main-header">
-          <h1 class="school-title">St. Patrick's School</h1>
-          <div class="subtitle">IIT & NEET FOUNDATION</div>
-        </header>
-        <main>
-          <div id="ai-container" class="review-container">
-            <div class="setup-form-container">
-                <h2>AI Question Generator</h2>
-                <p>Loading...</p>
-            </div>
-          </div>
-        </main>
-    </div>
+  <script src="chapters.js"></script>
+  <div class="page-wrapper">
+    <header id="main-header">
+      <h1 class="school-title">St. Patrick's School</h1>
+      <div class="subtitle">IIT & NEET FOUNDATION</div>
+    </header>
+    <main>
+      <div id="ai-container" class="review-container">
+        <div class="setup-form-container">
+          <h2>AI Question Generator</h2>
+          <p>Loading...</p>
+        </div>
+      </div>
+    </main>
+  </div>
 
-    <input type="file" id="file-upload-input" accept="image/*,application/pdf,.doc,.docx" capture="environment" style="display:none;">
+  <input
+    type="file"
+    id="file-upload-input"
+    accept="image/*,application/pdf,.doc,.docx"
+    capture="environment"
+    style="display:none;"
+  >
 
-    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js"></script>
 
-   <script>
-// --- FULL JAVASCRIPT ---
-const API_BASE_URL = 'https://question-bank-lqsu.onrender.com';
+  <script>
+    // --- FULL JAVASCRIPT ---
+    const API_BASE_URL = 'https://question-bank-lqsu.onrender.com';
 
-const firebaseConfig = {
-  apiKey: "AIzaSyAszVhWXUUOYLQ7VimKmPKf1yEu_CI9RCE",
-  authDomain: "stpatricks-questionbank.firebaseapp.com",
-  projectId: "stpatricks-questionbank",
-  storageBucket: "stpatricks-questionbank.appspot.com",
-  messagingSenderId: "917615322861",
-  appId: "1:917615322861:web:c6c890aa2184dd395b8ee4"
-};
-firebase.initializeApp(firebaseConfig);
-const auth = firebase.auth();
-const db = firebase.firestore();
+    const firebaseConfig = {
+      apiKey: "AIzaSyAszVhWXUUOYLQ7VimKmPKf1yEu_CI9RCE",
+      authDomain: "stpatricks-questionbank.firebaseapp.com",
+      projectId: "stpatricks-questionbank",
+      storageBucket: "stpatricks-questionbank.appspot.com",
+      messagingSenderId: "917615322861",
+      appId: "1:917615322861:web:c6c890aa2184dd395b8ee4"
+    };
 
-let stagedFile = null;
-let currentUserProfile = null;
-let currentSessionQuestions = []; // NEW: navigation guards
-let currentPage = 'form';
-let lastSessionParams = null;
+    firebase.initializeApp(firebaseConfig);
+    const auth = firebase.auth();
+    const db = firebase.firestore();
 
-const aiGeneratorConfig = {
-  classes: ["3rd Class", "4th Class", "5th Class", "6th Class", "7th Class", "8th Class", "9th Class", "10th Class"],
-  subjectMappings: {
-    "3rd Class": ["Telugu", "Hindi", "English", "Math", "Science", "Social"],
-    "4th Class": ["Telugu", "Hindi", "English", "Math", "Science", "Social"],
-    "5th Class": ["Telugu", "Hindi", "English", "Math", "Science", "Social"],
-    "6th Class": ["Telugu", "Hindi", "English 1", "English 2", "Math 1", "Math 1 IIT", "Math 2", "Math 2 IIT", "Physics", "Physics IIT & NEET", "Chemistry", "Chemistry IIT & NEET", "Biology", "Biology NEET", "Social"],
-    "7th Class": ["Telugu", "Hindi", "English 1", "English 2", "Math 1", "Math 1 IIT", "Math 2", "Math 2 IIT", "Physics", "Physics IIT & NEET", "Chemistry", "Chemistry IIT & NEET", "Biology", "Biology NEET", "Social"],
-    "8th Class": ["Telugu", "Hindi", "English 1", "English 2", "Math 1", "Math 1 IIT", "Math 2", "Math 2 IIT", "Physics", "Physics IIT & NEET", "Chemistry", "Chemistry IIT & NEET", "Biology", "Biology NEET", "Social"],
-    "9th Class": ["Telugu", "Hindi", "English 1", "English 2", "Math 1", "Math 1 IIT", "Math 2", "Math 2 IIT", "Physics", "Physics IIT & NEET", "Chemistry", "Chemistry IIT & NEET", "Biology", "Biology NEET", "Social"],
-    "10th Class": ["Telugu", "Hindi", "English 1", "English 2", "Math 1", "Math 1 IIT", "Math 2", "Math 2 IIT", "Physics", "Physics IIT & NEET", "Chemistry", "Chemistry IIT & NEET", "Biology", "Biology NEET", "Social"]
-  },
-  questionTypes: ["MCQ (Single)", "MCQ (Multiple)", "Descriptive"],
-  getSubjectsForClass: function(className) { return this.subjectMappings[className] || []; }
-};
+    let stagedFile = null;
+    let currentUserProfile = null;
+    let currentSessionQuestions = []; // NEW: navigation guards
+    let currentPage = 'form';
+    let lastSessionParams = null;
 
-document.addEventListener('DOMContentLoaded', () => {
-  auth.onAuthStateChanged(user => {
-    if (user) {
-      currentUserProfile = { uid: user.uid, email: user.email, displayName: user.displayName };
-      const state = history.state || {};
-      if (state.page === 'chat') {
-        loadAiChatInterface(state.sessionParams);
-      } else {
-        loadAiQuestionGeneratorForm();
+    const aiGeneratorConfig = {
+      classes: [
+        "3rd Class", "4th Class", "5th Class", "6th Class",
+        "7th Class", "8th Class", "9th Class", "10th Class"
+      ],
+      subjectMappings: {
+        "3rd Class": ["Telugu", "Hindi", "English", "Math", "Science", "Social"],
+        "4th Class": ["Telugu", "Hindi", "English", "Math", "Science", "Social"],
+        "5th Class": ["Telugu", "Hindi", "English", "Math", "Science", "Social"],
+        "6th Class": [
+          "Telugu", "Hindi", "English 1", "English 2",
+          "Math 1", "Math 1 IIT", "Math 2", "Math 2 IIT",
+          "Physics", "Physics IIT & NEET",
+          "Chemistry", "Chemistry IIT & NEET",
+          "Biology", "Biology NEET", "Social"
+        ],
+        "7th Class": [
+          "Telugu", "Hindi", "English 1", "English 2",
+          "Math 1", "Math 1 IIT", "Math 2", "Math 2 IIT",
+          "Physics", "Physics IIT & NEET",
+          "Chemistry", "Chemistry IIT & NEET",
+          "Biology", "Biology NEET", "Social"
+        ],
+        "8th Class": [
+          "Telugu", "Hindi", "English 1", "English 2",
+          "Math 1", "Math 1 IIT", "Math 2", "Math 2 IIT",
+          "Physics", "Physics IIT & NEET",
+          "Chemistry", "Chemistry IIT & NEET",
+          "Biology", "Biology NEET", "Social"
+        ],
+        "9th Class": [
+          "Telugu", "Hindi", "English 1", "English 2",
+          "Math 1", "Math 1 IIT", "Math 2", "Math 2 IIT",
+          "Physics", "Physics IIT & NEET",
+          "Chemistry", "Chemistry IIT & NEET",
+          "Biology", "Biology NEET", "Social"
+        ],
+        "10th Class": [
+          "Telugu", "Hindi", "English 1", "English 2",
+          "Math 1", "Math 1 IIT", "Math 2", "Math 2 IIT",
+          "Physics", "Physics IIT & NEET",
+          "Chemistry", "Chemistry IIT & NEET",
+          "Biology", "Biology NEET", "Social"
+        ]
+      },
+      questionTypes: ["MCQ (Single)", "MCQ (Multiple)", "Descriptive"],
+      getSubjectsForClass: function (className) {
+        return this.subjectMappings[className] || [];
       }
-    } else {
-      window.location.href = 'login.html';
-    }
-  });
+    };
 
-  window.addEventListener('popstate', (event) => {
-    const state = event.state || {};
-    // If we are leaving chat, confirm first
-    if (currentPage === 'chat' && state.page !== 'chat') {
-      showLeaveChatConfirm(
-        () => { // proceed
-          currentPage = state.page === 'chat' ? 'chat' : 'form';
+    document.addEventListener('DOMContentLoaded', () => {
+      auth.onAuthStateChanged(user => {
+        if (user) {
+          currentUserProfile = { uid: user.uid, email: user.email, displayName: user.displayName };
+          const state = history.state || {};
           if (state.page === 'chat') {
-            loadAiChatInterface(state.sessionParams || lastSessionParams || {});
+            loadAiChatInterface(state.sessionParams);
           } else {
             loadAiQuestionGeneratorForm();
           }
-        },
-        () => { // cancel -> restore chat state
-          history.pushState({ page: 'chat', sessionParams: lastSessionParams }, 'Chat', '#chat');
+        } else {
+          window.location.href = 'login.html';
         }
-      );
-      return; // stop default handling until user decides
+      });
+
+      window.addEventListener('popstate', (event) => {
+        const state = event.state || {};
+        // If we are leaving chat, confirm first
+        if (currentPage === 'chat' && state.page !== 'chat') {
+          showLeaveChatConfirm(
+            () => {
+              // proceed
+              currentPage = state.page === 'chat' ? 'chat' : 'form';
+              if (state.page === 'chat') {
+                loadAiChatInterface(state.sessionParams || lastSessionParams || {});
+              } else {
+                loadAiQuestionGeneratorForm();
+              }
+            },
+            () => {
+              // cancel -> restore chat state
+              history.pushState({ page: 'chat', sessionParams: lastSessionParams }, 'Chat', '#chat');
+            }
+          );
+          return; // stop default handling until user decides
+        }
+
+        // Normal navigation
+        if (state.page === 'chat') {
+          loadAiChatInterface(state.sessionParams || lastSessionParams || {});
+        } else {
+          loadAiQuestionGeneratorForm();
+        }
+      });
+
+      // Warn if user tries to close/refresh while in chat with unsaved questions
+      window.addEventListener('beforeunload', (e) => {
+        if (currentPage === 'chat' && Array.isArray(currentSessionQuestions) && currentSessionQuestions.length > 0) {
+          e.preventDefault();
+          e.returnValue = ''; // required for Chrome/Edge
+        }
+      });
+    });
+
+    function loadAiQuestionGeneratorForm() {
+      currentPage = 'form';
+      document.body.classList.remove('chat-lock');
+      document.getElementById('main-header').style.display = 'flex';
+
+      const container = document.getElementById('ai-container');
+      container.innerHTML = '<div class="setup-form-container"></div>';
+      const formContainer = container.querySelector('.setup-form-container');
+
+      const classesHTML = aiGeneratorConfig.classes
+        .map(c => `<div data-value="${c}">${c}</div>`)
+        .join('');
+
+      const initialSubjects = aiGeneratorConfig.getSubjectsForClass(aiGeneratorConfig.classes[0]);
+      const subjectsHTML = initialSubjects
+        .map(s => `<div data-value="${s}">${s}</div>`)
+        .join('');
+
+      const qTypesHTML = aiGeneratorConfig.questionTypes
+        .map(qt => `<div data-value="${qt}">${qt}</div>`)
+        .join('');
+
+      formContainer.innerHTML = `
+        <h2>AI Question Generator</h2>
+        <form id="ai-setup-form">
+          <div class="form-group">
+            <label>Class:</label>
+            <div id="class-dropdown-ai" class="custom-dropdown">
+              <input type="hidden" id="class-value-ai" value="${aiGeneratorConfig.classes[0]}">
+              <div class="selected-option">${aiGeneratorConfig.classes[0]}</div>
+              <div class="dropdown-options">${classesHTML}</div>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label>Subject:</label>
+            <div id="subject-dropdown-ai" class="custom-dropdown">
+              <input type="hidden" id="subject-value-ai" value="${initialSubjects[0] || ''}">
+              <div class="selected-option">${initialSubjects[0] || 'Select Subject'}</div>
+              <div class="dropdown-options">${subjectsHTML}</div>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label>Question Type:</label>
+            <div id="qtype-dropdown-ai" class="custom-dropdown">
+              <input type="hidden" id="qtype-value-ai" value="${aiGeneratorConfig.questionTypes[0]}">
+              <div class="selected-option">${aiGeneratorConfig.questionTypes[0]}</div>
+              <div class="dropdown-options">${qTypesHTML}</div>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label>Chapter:</label>
+            <div id="chapter-dropdown-ai" class="custom-dropdown">
+              <input type="hidden" id="chapter-value-ai" value="">
+              <div class="selected-option">Select Chapter</div>
+              <div class="dropdown-options"></div>
+            </div>
+          </div>
+
+          <!-- NEW: Single input for Questions & Levels -->
+          <div class="form-group">
+            <label>Questions & Levels:</label>
+            <input
+              type="text"
+              id="qlevel-plan-ai"
+              placeholder="e.g., 20 Level 2 | 20 Mixed (L1–L3) | 15 (L1:5, L2:5, L3:5)"
+            />
+            <div style="font-size:12px;color:#5b6b7a;margin-top:6px;">
+              Examples: <em>20 Level 2</em> · <em>20 Mixed (L1–L3)</em> ·
+              <em>15 (L1:5, L2:5, L3:5)</em>
+            </div>
+          </div>
+
+          <button type="submit">Start Generating</button>
+        </form>
+      `;
+
+      const initialChapters =
+        textbooks[aiGeneratorConfig.classes[0]] &&
+        textbooks[aiGeneratorConfig.classes[0]][initialSubjects[0]]
+          ? textbooks[aiGeneratorConfig.classes[0]][initialSubjects[0]]
+          : [];
+
+      const chaptersHTML = initialChapters
+        .map(ch => `<div data-value="${ch}">${ch}</div>`)
+        .join('');
+
+      const chapterDropdown = formContainer.querySelector('#chapter-dropdown-ai .dropdown-options');
+      const chapterSelected = formContainer.querySelector('#chapter-dropdown-ai .selected-option');
+      const chapterInput = formContainer.querySelector('#chapter-value-ai');
+
+      chapterDropdown.innerHTML = chaptersHTML;
+      chapterSelected.textContent = initialChapters[0] || 'Select Chapter';
+      chapterInput.value = initialChapters[0] || '';
+
+      setupCustomDropdownsForForm();
+
+      document.getElementById("ai-setup-form").onsubmit = (e) => {
+        e.preventDefault();
+
+        const planRaw = (document.getElementById('qlevel-plan-ai').value || '').trim();
+        const numMatch = planRaw.match(/\d+/); // first integer in the plan
+        const derivedCount = numMatch ? parseInt(numMatch[0], 10) : 20; // fallback 20
+
+        const sessionParams = {
+          class: document.getElementById('class-value-ai').value,
+          subject: document.getElementById('subject-value-ai').value,
+          questionType: document.getElementById('qtype-value-ai').value,
+          chapter: document.getElementById('chapter-value-ai').value,
+          levelPlan: planRaw || '20 Level 2', // NEW: free-form plan text the user typed
+          numQuestions: derivedCount // NEW: numeric count derived from plan
+        };
+
+        if (!sessionParams.chapter || !sessionParams.subject) return;
+
+        history.pushState({ page: 'chat', sessionParams: sessionParams }, 'Chat', '#chat');
+        loadAiChatInterface(sessionParams);
+      };
     }
-    // Normal navigation
-    if (state.page === 'chat') {
-      loadAiChatInterface(state.sessionParams || lastSessionParams || {});
-    } else {
-      loadAiQuestionGeneratorForm();
+
+    function loadAiChatInterface(sessionParams) {
+      currentPage = 'chat';
+      lastSessionParams = sessionParams;
+      document.body.classList.add('chat-lock');
+      document.getElementById('main-header').style.display = 'none';
+
+      const container = document.getElementById('ai-container');
+      currentSessionQuestions = [];
+
+      container.innerHTML = `
+        <div class="ai-chat-container">
+          <div class="ai-chat-header chat-ui-bar">
+            <div class="chat-header-line">
+              <p><b>Class:</b> ${sessionParams.class} / <b>Subject:</b> ${sessionParams.subject}</p>
+            </div>
+            <div class="chat-header-line">
+              <p><b>Chapter:</b> ${sessionParams.chapter}</p>
+            </div>
+            <div class="chat-header-line">
+              <p><b>Plan:</b> ${sessionParams.levelPlan || ''}</p>
+            </div>
+            <div class="chat-header-line buttons actions-row">
+              <button id="ai-change-setup-btn" class="btn action-saffron">Change Setup</button>
+              <button id="ai-parse-preview-btn" class="btn action-outline">Preview</button>
+              <button id="ai-save-all-btn" class="btn action-green">Save All</button>
+            </div>
+          </div>
+          <!-- end .ai-chat-header -->
+
+          <button id="ai-toggle-paste-btn" class="strip-cta">
+            Show Paste Panel
+          </button>
+
+          <!-- Paste Zone (FINAL SET from ChatGPT) -->
+          <div
+            id="paste-zone"
+            class="paste-zone"
+            style="display:none;background:#ffffff;border:1px solid #bcd6ef;border-radius:10px;margin:10px 15px 0 15px;"
+          >
+            <div
+              class="pz-head"
+              style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid #e6eff8;"
+            >
+              <span style="font-weight:700;color:#0f3d6b;">Paste FINAL QUESTIONS</span>
+            </div>
+
+            <!-- BIGGER textarea (~half screen) -->
+            <textarea
+              id="paste-zone-text"
+              placeholder="Paste the FINAL SET block here (Q1 … QN). The parser ignores extra chat text automatically."
+              style="width:100%;box-sizing:border-box;border:none;outline:none;padding:12px 12px 16px 12px;
+                     font-size:15px;line-height:1.4;resize:vertical;background:#fff;border-radius:0 0 10px 10px;
+                     min-height:45vh;height:45vh;"
+            ></textarea>
+
+            <div class="pz-note" style="font-size:12px;color:#5b6b7a;padding:0 12px 12px 12px;">
+              Tip: Ask AI for one corrected block (Q1–Q<span id="pz-expected-n"></span>) with no extra text. Then paste it here.
+            </div>
+          </div>
+
+          <div id="chat-messages-area" class="chat-messages-area"></div>
+
+          <div
+            id="file-preview-box"
+            style="display: none; padding: 6px 16px; background: white; color: #333; font-size: 0.9em;
+                   font-family: 'Segoe UI', sans-serif; border-bottom: 1px solid #ddd;"
+          >
+            <span style="color: #1762a7;">📄</span>
+            <span id="file-preview-name" style="font-weight: 600; color: #333;"></span>
+            <button
+              id="remove-file-btn"
+              style="background: none; border: none; color: #c82333; font-size: 1.1em; cursor: pointer; margin-left: 10px;"
+              title="Remove File"
+            >
+              ❌
+            </button>
+          </div>
+
+          <div id="chat-input-bar" class="chat-ui-bar chat-input-bar" style="padding:0">
+            <button id="open-chatgpt-bottom" class="fullwidth-open-btn" aria-label="Open in ChatGPT">
+              Get Questions
+            </button>
+          </div>
+
+          <button id="scroll-to-bottom" title="Scroll to Bottom">⬇️</button>
+        </div>
+      `;
+
+      document.getElementById('ai-change-setup-btn').onclick = () => {
+        showLeaveChatConfirm(() => history.back(), () => {});
+      };
+      document.getElementById('ai-save-all-btn').onclick = () => saveSessionQuestions(sessionParams);
+
+      // Toggle the paste panel thin strip
+      const pasteToggleBtn = document.getElementById('ai-toggle-paste-btn');
+      const pasteZone = document.getElementById('paste-zone');
+      if (pasteToggleBtn && pasteZone) {
+        pasteToggleBtn.onclick = () => {
+          const isOpen = pasteZone.style.display !== 'none';
+          pasteZone.style.display = isOpen ? 'none' : 'block';
+          pasteToggleBtn.textContent = isOpen ? 'Show Paste Panel' : 'Hide Paste Panel';
+          pasteToggleBtn.setAttribute('aria-expanded', String(!isOpen));
+          if (!isOpen) document.getElementById('paste-zone-text')?.focus();
+        };
+      }
     }
-  });
-
-  // Warn if user tries to close/refresh while in chat with unsaved questions
-  window.addEventListener('beforeunload', (e) => {
-    if (currentPage === 'chat' && Array.isArray(currentSessionQuestions) && currentSessionQuestions.length > 0) {
-      e.preventDefault();
-      e.returnValue = ''; // required for Chrome/Edge
-    }
-  });
-});
-
-function loadAiQuestionGeneratorForm() {
-  currentPage = 'form';
-  document.body.classList.remove('chat-lock');
-  document.getElementById('main-header').style.display = 'flex';
-
-  const container = document.getElementById('ai-container');
-  container.innerHTML = '<div class="setup-form-container"></div>';
-  const formContainer = container.querySelector('.setup-form-container');
-
-  const classesHTML = aiGeneratorConfig.classes.map(c => `<div data-value="${c}">${c}</div>`).join('');
-  const initialSubjects = aiGeneratorConfig.getSubjectsForClass(aiGeneratorConfig.classes[0]);
-  const subjectsHTML = initialSubjects.map(s => `<div data-value="${s}">${s}</div>`).join('');
-  const qTypesHTML = aiGeneratorConfig.questionTypes.map(qt => `<div data-value="${qt}">${qt}</div>`).join('');
-
-  formContainer.innerHTML = `
-    <h2>AI Question Generator</h2>
-    <form id="ai-setup-form">
-      <div class="form-group">
-        <label>Class:</label>
-        <div id="class-dropdown-ai" class="custom-dropdown">
-          <input type="hidden" id="class-value-ai" value="${aiGeneratorConfig.classes[0]}">
-          <div class="selected-option">${aiGeneratorConfig.classes[0]}</div>
-          <div class="dropdown-options">${classesHTML}</div>
-        </div>
-      </div>
-
-      <div class="form-group">
-        <label>Subject:</label>
-        <div id="subject-dropdown-ai" class="custom-dropdown">
-          <input type="hidden" id="subject-value-ai" value="${initialSubjects[0] || ''}">
-          <div class="selected-option">${initialSubjects[0] || 'Select Subject'}</div>
-          <div class="dropdown-options">${subjectsHTML}</div>
-        </div>
-      </div>
-
-      <div class="form-group">
-        <label>Question Type:</label>
-        <div id="qtype-dropdown-ai" class="custom-dropdown">
-          <input type="hidden" id="qtype-value-ai" value="${aiGeneratorConfig.questionTypes[0]}">
-          <div class="selected-option">${aiGeneratorConfig.questionTypes[0]}</div>
-          <div class="dropdown-options">${qTypesHTML}</div>
-        </div>
-      </div>
-
-      <div class="form-group">
-        <label>Chapter:</label>
-        <div id="chapter-dropdown-ai" class="custom-dropdown">
-          <input type="hidden" id="chapter-value-ai" value="">
-          <div class="selected-option">Select Chapter</div>
-          <div class="dropdown-options"></div>
-        </div>
-      </div>
-
-      <!-- NEW: Single input for Questions & Levels -->
-      <div class="form-group">
-        <label>Questions & Levels:</label>
-        <input type="text" id="qlevel-plan-ai" placeholder="e.g., 20 Level 2 | 20 Mixed (L1–L3) | 15 (L1:5, L2:5, L3:5)" />
-        <div style="font-size:12px;color:#5b6b7a;margin-top:6px;">
-          Examples: <em>20 Level 2</em> · <em>20 Mixed (L1–L3)</em> · <em>15 (L1:5, L2:5, L3:5)</em>
-        </div>
-      </div>
-
-      <button type="submit">Start Generating</button>
-    </form>
-  `;
-
-  const initialChapters = (textbooks[aiGeneratorConfig.classes[0]] && textbooks[aiGeneratorConfig.classes[0]][initialSubjects[0]])
-    ? textbooks[aiGeneratorConfig.classes[0]][initialSubjects[0]] : [];
-  const chaptersHTML = initialChapters.map(ch => `<div data-value="${ch}">${ch}</div>`).join('');
-  const chapterDropdown = formContainer.querySelector('#chapter-dropdown-ai .dropdown-options');
-  const chapterSelected = formContainer.querySelector('#chapter-dropdown-ai .selected-option');
-  const chapterInput = formContainer.querySelector('#chapter-value-ai');
-  chapterDropdown.innerHTML = chaptersHTML;
-  chapterSelected.textContent = initialChapters[0] || 'Select Chapter';
-  chapterInput.value = initialChapters[0] || '';
-
-  setupCustomDropdownsForForm();
-
-  document.getElementById("ai-setup-form").onsubmit = (e) => {
-    e.preventDefault();
-    const planRaw = (document.getElementById('qlevel-plan-ai').value || '').trim();
-    const numMatch = planRaw.match(/\d+/); // first integer in the plan
-    const derivedCount = numMatch ? parseInt(numMatch[0], 10) : 20; // fallback 20
-
-    const sessionParams = {
-      class: document.getElementById('class-value-ai').value,
-      subject: document.getElementById('subject-value-ai').value,
-      questionType: document.getElementById('qtype-value-ai').value,
-      chapter: document.getElementById('chapter-value-ai').value,
-      levelPlan: planRaw || '20 Level 2', // NEW: free-form plan text the user typed
-      numQuestions: derivedCount // NEW: numeric count derived from plan
-    };
-    if (!sessionParams.chapter || !sessionParams.subject) return;
-
-    history.pushState({ page: 'chat', sessionParams: sessionParams }, 'Chat', '#chat');
-    loadAiChatInterface(sessionParams);
-  };
-}
-
-function loadAiChatInterface(sessionParams) {
-  currentPage = 'chat';
-  lastSessionParams = sessionParams;
-  document.body.classList.add('chat-lock');
-  document.getElementById('main-header').style.display = 'none';
-
-  const container = document.getElementById('ai-container');
-  currentSessionQuestions = [];
-  container.innerHTML = `
-    <div class="ai-chat-container">
-      <div class="ai-chat-header chat-ui-bar">
-        <div class="chat-header-line">
-          <p><b>Class:</b> ${sessionParams.class} / <b>Subject:</b> ${sessionParams.subject}</p>
-        </div>
-        <div class="chat-header-line">
-          <p><b>Chapter:</b> ${sessionParams.chapter}</p>
-        </div>
-        <div class="chat-header-line">
-          <p><b>Plan:</b> ${sessionParams.levelPlan || ''}</p>
-        </div>
-        <div class="chat-header-line buttons actions-row">
-          <button id="ai-change-setup-btn" class="btn action-saffron">Change Setup</button>
-          <button id="ai-parse-preview-btn" class="btn action-outline">Preview</button>
-          <button id="ai-save-all-btn" class="btn action-green">Save All</button>
-        </div>
-      </div>
-      <!-- end .ai-chat-header -->
-
-      <button id="ai-toggle-paste-btn" class="strip-cta"> Show Paste Panel </button>
-
-      <!-- Paste Zone (FINAL SET from ChatGPT) -->
-      <div id="paste-zone" class="paste-zone" style="display:none;background:#ffffff;border:1px solid #bcd6ef;border-radius:10px;margin:10px 15px 0 15px;">
-        <div class="pz-head" style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid #e6eff8;">
-          <span style="font-weight:700;color:#0f3d6b;">Paste FINAL QUESTIONS</span>
-        </div>
-
-        <!-- BIGGER textarea (~half screen) -->
-        <textarea
-          id="paste-zone-text"
-          placeholder="Paste the FINAL SET block here (Q1 … QN). The parser ignores extra chat text automatically."
-          style="width:100%;box-sizing:border-box;border:none;outline:none;padding:12px 12px 16px 12px; font-size:15px;line-height:1.4;resize:vertical;background:#fff;border-radius:0 0 10px 10px; min-height:45vh;height:45vh;"></textarea>
-
-        <div class="pz-note" style="font-size:12px;color:#5b6b7a;padding:0 12px 12px 12px;">
-          Tip: Ask AI for one corrected block (Q1–Q<span id="pz-expected-n"></span>) with no extra text. Then paste it here.
-        </div>
-      </div>
-
-      <div id="chat-messages-area" class="chat-messages-area"></div>
-
-      <div id="file-preview-box" style="display: none; padding: 6px 16px; background: white; color: #333; font-size: 0.9em; font-family: 'Segoe UI', sans-serif; border-bottom: 1px solid #ddd;">
-        <span style="color: #1762a7;">📄</span>
-        <span id="file-preview-name" style="font-weight: 600; color: #333;"></span>
-        <button id="remove-file-btn" style="background: none; border: none; color: #c82333; font-size: 1.1em; cursor: pointer; margin-left: 10px;" title="Remove File">❌</button>
-      </div>
-
-      <div id="chat-input-bar" class="chat-ui-bar chat-input-bar" style="padding:0">
-        <button id="open-chatgpt-bottom" class="fullwidth-open-btn" aria-label="Open in ChatGPT">Get Questions</button>
-      </div>
-
-      <button id="scroll-to-bottom" title="Scroll to Bottom">⬇️</button>
-    </div>
-  `;
-
-  document.getElementById('ai-change-setup-btn').onclick = () => {
-    showLeaveChatConfirm(() => history.back(), () => {});
-  };
-  document.getElementById('ai-save-all-btn').onclick = () => saveSessionQuestions(sessionParams);
-
-  // Toggle the paste panel thin strip
-  const pasteToggleBtn = document.getElementById('ai-toggle-paste-btn');
-  const pasteZone = document.getElementById('paste-zone');
-  if (pasteToggleBtn && pasteZone) {
-    pasteToggleBtn.onclick = () => {
-      const isOpen = pasteZone.style.display !== 'none';
-      pasteZone.style.display = isOpen ? 'none' : 'block';
-      pasteToggleBtn.textContent = isOpen ? 'Show Paste Panel' : 'Hide Paste Panel';
-      pasteToggleBtn.setAttribute('aria-expanded', String(!isOpen));
-      if (!isOpen) document.getElementById('paste-zone-text')?.focus();
-    };
-  }
-
   // --- Paste panel minimal helpers ---
-  // Show expected N in the tip
-  const _pzExpected = document.getElementById('pz-expected-n');
-  if (_pzExpected) _pzExpected.textContent = String(sessionParams.numQuestions || 20);
+// Show expected N in the tip
+const _pzExpected = document.getElementById('pz-expected-n');
+if (_pzExpected) _pzExpected.textContent = String(sessionParams.numQuestions || 20);
 
-  // Auto-grow textarea a bit for comfort
-  const _pzText = document.getElementById('paste-zone-text');
-  if (_pzText) {
-    const _autoGrow = () => {
-      _pzText.style.height = 'auto';
-      const maxH = Math.floor(window.innerHeight * 0.5); // ~50% of screen
-      const h = Math.min(_pzText.scrollHeight, maxH);
-      _pzText.style.height = h + 'px';
-      _pzText.style.overflowY = (_pzText.scrollHeight > maxH) ? 'auto' : 'hidden';
-    };
-    _pzText.addEventListener('input', _autoGrow);
-    _autoGrow();
-  }
-
-  // Wire the new top-bar "Parse & Preview" button to read from the paste textarea
-  const parsePreviewBtn = document.getElementById('ai-parse-preview-btn');
-  if (parsePreviewBtn) {
-    parsePreviewBtn.onclick = () => {
-      const box = document.getElementById('paste-zone-text');
-      if (!box) {
-        __qb_toast('Paste box not found.');
-        return;
-      }
-      const raw = (box.value || '').trim();
-      if (!raw) {
-        __qb_toast('Nothing to parse. Paste the FINAL SET first.');
-        return;
-      }
-      try {
-        const parsed = (function(raw, sessionParams){
-          const qtype = (sessionParams && sessionParams.questionType) || 'MCQ (Single)';
-          const text = String(raw || '').replace(/\r\n?/g, '\n').trim();
-          const blocks = [];
-          const re = /^Q\s*\d+:[\s\S]*?(?=\nQ\s*\d+:|\s*$)/gm;
-          let m; while ((m = re.exec(text)) !== null) blocks.push(m[0].trim());
-          if (!blocks.length) return [];
-        
-          const wrapParenLatex = s => String(s).replace(/^\((\\[a-zA-Z]+(?:\s*\{[^}]*\})+)\)$/g, '\\($1\\)');
-        
-          const out = [];
-          blocks.forEach((blk, i) => {
-            const lines = blk.split('\n').map(l => l.trim()).filter(Boolean);
-            if (!/^Q\s*\d+:/i.test(lines[0])) return;
-        
-            const meta = lines[0];
-            const levelMatch = meta.match(/Level\s*([1-3])/i);
-            const levelDisp = levelMatch ? `Level ${levelMatch[1]}` : 'Level ?';
-            const marksMatch = meta.match(/(\d+)\s*Mark/i);
-            const marksNum = marksMatch ? parseInt(marksMatch[1], 10) : (qtype.startsWith('MCQ') ? 1 : undefined);
-            const marksDisp = marksNum != null ? `${marksNum} Mark${marksNum === 1 ? '' : 's'}` : '';
-            const normalizedMeta = `Q${i + 1}: ${levelDisp}${marksDisp ? `, ${marksDisp}` : ''} [${qtype}]`;
-        
-            const firstOptIdx = lines.findIndex(l => /^[A-D][).]\s*/.test(l));
-            let questionText = '';
-            let optLines = [];
-            let ansLine = '';
-        
-            const ansIdx = lines.findIndex(l => /^Ans:/i.test(l));
-const stopIdx = [firstOptIdx, ansIdx].filter(i => i >= 0)
-  .reduce((a, b) => Math.min(a, b), Infinity);
-
-if (isFinite(stopIdx)) {
-  // from after Qn: up to the first A)/B)/C)/D) or Ans:
-  questionText = lines.slice(1, stopIdx).join('\n').trim();
-  if (firstOptIdx >= 0) {
-    optLines = lines.slice(firstOptIdx, isFinite(ansIdx) ? ansIdx : undefined)
-      .filter(l => /^[A-D][).]\s*/.test(l));
-  }
-} else {
-  // no options, no answer → everything after Qn: is question body
-  questionText = lines.slice(1).join('\n').trim();
-}
-if (ansIdx >= 0) ansLine = lines[ansIdx];
-        
-            let options = [];
-            if (qtype.startsWith('MCQ')) {
-              const optMap = { A: '', B: '', C: '', D: '' };
-              optLines.forEach(l => {
-                const mo = l.match(/^([A-D])[).]\s*(.+)$/);
-                if (!mo) return;
-                const k = mo[1];
-                let val = mo[2].trim();
-                val = wrapParenLatex(val);
-                optMap[k] = val;
-              });
-              options = ['A','B','C','D'].map(k => optMap[k]);
-            }
-        
-            let answerLetters = [];
-            if (ansLine) {
-              let mm; const letterRE = /\b([A-D])\b/g;
-              while ((mm = letterRE.exec(ansLine)) !== null) answerLetters.push(mm[1]);
-              answerLetters = [...new Set(answerLetters)];
-            }
-            let parsedAnswer = null;
-            if (answerLetters.length) {
-              parsedAnswer = qtype.includes('Multiple') && answerLetters.length > 1
-                ? `Ans: ${answerLetters.map(L => `${L})`).join(', ')}`
-                : `Ans: ${answerLetters[0]})`;
-            }
-        
-            let parsedBody = questionText;
-            if (qtype.startsWith('MCQ')) {
-              const labeled = options.map((t, idx) => `${String.fromCharCode(65 + idx)}) ${t}`);
-              parsedBody = [questionText, ...labeled].join('\n').trim();
-            }
-        
-            out.push({
-              fullText: `${normalizedMeta}\n${parsedBody}${parsedAnswer ? `\n${parsedAnswer}` : ''}`,
-              class: sessionParams.class,
-              subject: sessionParams.subject,
-              chapter: sessionParams.chapter,
-              parsedMeta: normalizedMeta,
-              question: questionText.split('\n')[0] || questionText,
-              options: qtype.startsWith('MCQ') ? options : [],
-              parsedAnswer,
-              parsedBody
-            });
-          });
-        
-          return out;
-        })(raw, sessionParams);
-        if (!parsed.length) {
-          __qb_toast('Could not find any Q1… blocks.');
-          return;
-        }
-        // Replace current session questions (default behavior)
-        currentSessionQuestions = parsed;
-        rerenderAllQuestions();
-        __qb_toast(`Parsed ${parsed.length} question(s).`);
-
-        // Collapse + clear paste panel after a successful parse
-        const pz = document.getElementById('paste-zone');
-        if (pz) pz.style.display = 'none';
-        if (box) {
-          box.value = '';
-          if (typeof _pzText !== 'undefined' && _pzText) {
-            _pzText.dispatchEvent(new Event('input')); // keep auto-grow tidy
-          }
-          if (typeof box.blur === 'function') box.blur(); // optional: close mobile keyboard
-        }
-        const tgl = document.getElementById('ai-toggle-paste-btn');
-        if (tgl) {
-          tgl.textContent = 'Show Paste Panel';
-          tgl.setAttribute?.('aria-expanded', 'false'); // optional a11y
-        }
-        // Optional: clear the textarea after success
-        // box.value = '';
-        _pzText && _pzText.dispatchEvent(new Event('input'));
-      } catch (err) {
-        console.error(err);
-        __qb_toast('Parser error. Check the format (Q1:, A)–D), Ans: …).');
-      }
-    };
-  }
-   
-  const chatPromptInput = document.getElementById('chat-prompt-input');
-
-  // Open ChatGPT with a pre-filled generation prompt (bottom full-width button)
-  const openCgBottomBtn = document.getElementById('open-chatgpt-bottom');
-  if (openCgBottomBtn) {
-    openCgBottomBtn.onclick = () => {
-      const genPrompt = buildChatGptGenerationPrompt(sessionParams);
-      openInChatGptWithPrefill(genPrompt);
-    };
-  }
-
-  // Input bar removed — keep file preview removal working if ever shown via other flows
-  const removeFileBtn = document.getElementById('remove-file-btn');
-  if (removeFileBtn) {
-    removeFileBtn.onclick = () => {
-      stagedFile = null;
-      const box = document.getElementById('file-preview-box');
-      const name = document.getElementById('file-preview-name');
-      if (box) box.style.display = 'none';
-      if (name) name.textContent = '';
-    };
-  }
+// Auto-grow textarea a bit for comfort
+const _pzText = document.getElementById('paste-zone-text');
+if (_pzText) {
+  const _autoGrow = () => {
+    _pzText.style.height = 'auto';
+    const maxH = Math.floor(window.innerHeight * 0.5); // ~50% of screen
+    const h = Math.min(_pzText.scrollHeight, maxH);
+    _pzText.style.height = h + 'px';
+    _pzText.style.overflowY = (_pzText.scrollHeight > maxH) ? 'auto' : 'hidden';
+  };
+  _pzText.addEventListener('input', _autoGrow);
+  _autoGrow();
 }
 
+// Wire the new top-bar "Parse & Preview" button to read from the paste textarea
+const parsePreviewBtn = document.getElementById('ai-parse-preview-btn');
+if (parsePreviewBtn) {
+  parsePreviewBtn.onclick = () => {
+    const box = document.getElementById('paste-zone-text');
+    if (!box) {
+      __qb_toast('Paste box not found.');
+      return;
+    }
+    const raw = (box.value || '').trim();
+    if (!raw) {
+      __qb_toast('Nothing to parse. Paste the FINAL SET first.');
+      return;
+    }
+    try {
+      const parsed = parseFinalSetIntoQuestions(raw, sessionParams);
+      if (!parsed.length) {
+        __qb_toast('Could not find any Q1… blocks.');
+        return;
+      }
+      // Replace current session questions (default behavior)
+      currentSessionQuestions = parsed;
+      rerenderAllQuestions();
+      __qb_toast(Parsed ${parsed.length} question(s).);
+
+      // Collapse + clear paste panel after a successful parse
+      const pz = document.getElementById('paste-zone');
+      if (pz) pz.style.display = 'none';
+      if (box) {
+        box.value = '';
+        if (typeof _pzText !== 'undefined' && _pzText) {
+          _pzText.dispatchEvent(new Event('input')); // keep auto-grow tidy
+        }
+        if (typeof box.blur === 'function') box.blur(); // optional: close mobile keyboard
+      }
+      const tgl = document.getElementById('ai-toggle-paste-btn');
+      if (tgl) {
+        tgl.textContent = 'Show Paste Panel';
+        tgl.setAttribute?.('aria-expanded', 'false'); // optional a11y
+      }
+      // Optional: clear the textarea after success
+      // box.value = '';
+      _pzText && _pzText.dispatchEvent(new Event('input'));
+    } catch (err) {
+      console.error(err);
+      __qb_toast('Parser error. Check the format (Q1:, A)–D), Ans: …).');
+    }
+  };
+}
+
+const chatPromptInput = document.getElementById('chat-prompt-input');
+
+// Open ChatGPT with a pre-filled generation prompt (bottom full-width button)
+const openCgBottomBtn = document.getElementById('open-chatgpt-bottom');
+if (openCgBottomBtn) {
+  openCgBottomBtn.onclick = () => {
+    const genPrompt = buildChatGptGenerationPrompt(sessionParams);
+    openInChatGptWithPrefill(genPrompt);
+  };
+}
+
+// Input bar removed — keep file preview removal working if ever shown via other flows
+const removeFileBtn = document.getElementById('remove-file-btn');
+if (removeFileBtn) {
+  removeFileBtn.onclick = () => {
+    stagedFile = null;
+    const box = document.getElementById('file-preview-box');
+    const name = document.getElementById('file-preview-name');
+    if (box) box.style.display = 'none';
+    if (name) name.textContent = '';
+  };
+}
+
+}
 function updateSendButtonState(chatPromptInput, sendBtn) {
   if (chatPromptInput.value.trim() !== '' || stagedFile) {
     sendBtn.disabled = false;
@@ -1093,14 +1094,20 @@ function setupCustomDropdownsForForm() {
     const subjectInput = document.getElementById('subject-value-ai');
 
     const newSubjects = aiGeneratorConfig.getSubjectsForClass(selectedClass);
-    subjectOptions.innerHTML = newSubjects.map(s => `<div data-value="${s}">${s}</div>`).join('');
+    subjectOptions.innerHTML = newSubjects.map(s => <div data-value="${s}">${s}</div>).join('');
     subjectSelected.textContent = newSubjects[0] || 'Select Subject';
     subjectInput.value = newSubjects[0] || '';
 
     updateChapterDropdown(selectedClass, newSubjects[0] || '');
+
     optionsContainerListener(
-      subjectOptions, subjectSelected, subjectInput, subjectDropdown,
-      (newSubject) => { updateChapterDropdown(selectedClass, newSubject); }
+      subjectOptions,
+      subjectSelected,
+      subjectInput,
+      subjectDropdown,
+      (newSubject) => {
+        updateChapterDropdown(selectedClass, newSubject);
+      }
     );
   });
 
@@ -1120,8 +1127,10 @@ function updateChapterDropdown(selectedClass, selectedSubject) {
   const chapterInput = document.getElementById('chapter-value-ai');
 
   const chapters = (textbooks[selectedClass] && textbooks[selectedClass][selectedSubject])
-    ? textbooks[selectedClass][selectedSubject] : [];
-  chapterOptions.innerHTML = chapters.map(ch => `<div data-value="${ch}">${ch}</div>`).join('');
+    ? textbooks[selectedClass][selectedSubject]
+    : [];
+
+  chapterOptions.innerHTML = chapters.map(ch => <div data-value="${ch}">${ch}</div>).join('');
   chapterSelected.textContent = chapters[0] || 'Select Chapter';
   chapterInput.value = chapters[0] || '';
 
@@ -1158,28 +1167,25 @@ function optionsContainerListener(options, selected, input, dropdown, callback) 
 function toggleDropdown(dropdownId) {
   const currentDropdown = document.getElementById(dropdownId);
   if(!currentDropdown) return;
-  const currentlyOpen = currentDropdown.classList.contains('open');
 
+  const currentlyOpen = currentDropdown.classList.contains('open');
   document.querySelectorAll('.custom-dropdown.open').forEach(d => {
     if (d.id !== dropdownId) d.classList.remove('open');
   });
-
   if(!currentlyOpen) currentDropdown.classList.add('open');
 }
 
 function showConfirmationModal(summary, originalPrompt, sessionParams) {
   const overlay = document.createElement('div');
   overlay.className = 'confirmation-overlay';
-  overlay.innerHTML = `
-    <div class="confirmation-modal">
-      <h3>Confirm Exam Instructions</h3>
-      <p>${summary}</p>
-      <div class="modal-buttons">
-        <button id="confirm-cancel-btn">Cancel</button>
-        <button id="confirm-proceed-btn">Proceed</button>
-      </div>
+  overlay.innerHTML = <div class="confirmation-modal">
+    <h3>Confirm Exam Instructions</h3>
+    <p>${summary}</p>
+    <div class="modal-buttons">
+      <button id="confirm-cancel-btn">Cancel</button>
+      <button id="confirm-proceed-btn">Proceed</button>
     </div>
-  `;
+  </div>;
   document.body.appendChild(overlay);
 
   document.getElementById('confirm-cancel-btn').onclick = () => {
@@ -1187,7 +1193,7 @@ function showConfirmationModal(summary, originalPrompt, sessionParams) {
     // Re-enable the send button if cancelled
     const chatPromptInput = document.getElementById('chat-prompt-input');
     const sendBtn = document.getElementById('chat-send-btn');
-    sendBtn.innerHTML = `<i class="fas fa-paper-plane"></i>`;
+    sendBtn.innerHTML = <i class="fas fa-paper-plane"></i>;
     updateSendButtonState(chatPromptInput, sendBtn);
   };
 
@@ -1201,22 +1207,21 @@ function showConfirmationModal(summary, originalPrompt, sessionParams) {
 function showLeaveChatConfirm(onProceed, onCancel) {
   const overlay = document.createElement('div');
   overlay.className = 'confirmation-overlay';
-  overlay.innerHTML = `
-    <div class="confirmation-modal">
-      <h3>Confirm</h3>
-      <p>Are you sure you want to go back? Unsaved questions in this chat will be lost.</p>
-      <div class="modal-buttons">
-        <button id="leave-cancel-btn">Cancel</button>
-        <button id="leave-proceed-btn">Go Back</button>
-      </div>
+  overlay.innerHTML = <div class="confirmation-modal">
+    <h3>Confirm</h3>
+    <p>Are you sure you want to go back? Unsaved questions in this chat will be lost.</p>
+    <div class="modal-buttons">
+      <button id="leave-cancel-btn">Cancel</button>
+      <button id="leave-proceed-btn">Go Back</button>
     </div>
-  `;
+  </div>;
   document.body.appendChild(overlay);
 
   document.getElementById('leave-cancel-btn').onclick = () => {
     overlay.remove();
     if (onCancel) onCancel();
   };
+
   document.getElementById('leave-proceed-btn').onclick = () => {
     overlay.remove();
     if (onProceed) onProceed();
@@ -1224,13 +1229,19 @@ function showLeaveChatConfirm(onProceed, onCancel) {
 }
 // ===== END ADD =====
 
-    async function proceedWithGeneration(originalPrompt, sessionParams) {
-  const messagesArea = document.getElementById('chat-messages-area');
+async function proceedWithGeneration(originalPrompt, sessionParams) {
+  const messagesArea   = document.getElementById('chat-messages-area');
   const chatPromptInput = document.getElementById('chat-prompt-input');
-  const sendBtn = document.getElementById('chat-send-btn');
-  const didSendFile = stagedFile !== null; // We need to check this again
+  const sendBtn        = document.getElementById('chat-send-btn');
 
-  const loadingMessage = appendChatMessage('Generating questions as per your instructions...', 'system-message', messagesArea);
+  // We need to check this again
+  const didSendFile = stagedFile !== null;
+
+  const loadingMessage = appendChatMessage(
+    'Generating questions as per your instructions...',
+    'system-message',
+    messagesArea
+  );
 
   try {
     let result;
@@ -1239,7 +1250,8 @@ function showLeaveChatConfirm(onProceed, onCancel) {
       let extractPrompt;
 
       if (sessionParams.questionType === "MCQ (Single)") {
-        extractPrompt = `Class: ${sessionParams.class}, Subject: ${sessionParams.subject}, Chapter: ${sessionParams.chapter}.
+        extractPrompt = `
+Class: ${sessionParams.class}, Subject: ${sessionParams.subject}, Chapter: ${sessionParams.chapter}.
 
 IMPORTANT: When a PDF or image file is uploaded, Extract questions EXACTLY as they appear in the uploaded file, WITHOUT adding, changing, or removing anything. Do NOT generate your own questions, explanations, or text. Extract ONLY MCQ (Single correct answer) questions from this file.
 
@@ -1250,11 +1262,13 @@ If any question is missing "Level", analyze the question and assign either "Leve
   - Should be similar to the easier problems from IIT/NEET Foundation workbooks (not regular school textbooks).
   - Use single concepts and avoid multi-step reasoning; questions should be aligned with competitive exam styles (simple but focused).
   - No direct copying from standard board textbooks.
+
 - Level 2: Foundation Difficult & Very Difficult
   - Questions involving moderate application of concepts, sometimes requiring two steps or combining two related ideas.
   - Should resemble 'tricky' questions from IIT/NEET Foundation practice sets, but not as complex as Olympiad/NTSE.
   - Encourage careful reading, analysis, or use of a formula in a less-direct way.
   - Higher challenge than Level 1, but not full Olympiad style.
+
 - Level 3: Challenging & Olympiad/NTSE/IIT Foundation Advanced
   - Require multi-step logical reasoning and combine at least two different concepts.
   - Must have non-standard twists or novel approaches, similar to Olympiad/NTSE/IIT Foundation exams.
@@ -1278,11 +1292,11 @@ C) <Option C>
 D) <Option D>
 Ans: <A), B), C), or D) — only one>
 
-List all MCQ (Single) questions in the order they appear in the file, without any headings, extra text, or explanation. Do not add or change any question content — extract exactly as found. If any meta information is missing, do not reject the question. Insert the appropriate Level (using the definitions above) and "1 Mark" wherever needed.
-
-Output only the extracted questions in this format. Do not include any introduction, heading, or explanation.`;
+List all MCQ (Single) questions in the order they appear in the file, without any headings, extra text, or explanation. Do not add or change any question content — extract exactly as found. If any meta information is missing, do not reject the question. Insert the appropriate Level (using the definitions above) and "1 Mark" wherever needed. Output only the extracted questions in this format. Do not include any introduction, heading, or explanation.
+`;
       } else if (sessionParams.questionType === "MCQ (Multiple)") {
-        extractPrompt = `Class: ${sessionParams.class}, Subject: ${sessionParams.subject}, Chapter: ${sessionParams.chapter}.
+        extractPrompt = `
+Class: ${sessionParams.class}, Subject: ${sessionParams.subject}, Chapter: ${sessionParams.chapter}.
 
 IMPORTANT: When a PDF or image file is uploaded, Extract questions EXACTLY as they appear in the uploaded file, WITHOUT adding, changing, or removing anything. Do NOT generate your own questions, explanations, or text. Extract ONLY MCQ (Multiple correct answers) questions from this file.
 
@@ -1293,11 +1307,13 @@ If any question is missing "Level", analyze the question and assign either "Leve
   - Should be similar to the easier problems from IIT/NEET Foundation workbooks (not regular school textbooks).
   - Use single concepts and avoid multi-step reasoning; questions should be aligned with competitive exam styles (simple but focused).
   - No direct copying from standard board textbooks.
+
 - Level 2: Foundation Difficult & Very Difficult
   - Questions involving moderate application of concepts, sometimes requiring two steps or combining two related ideas.
   - Should resemble 'tricky' questions from IIT/NEET Foundation practice sets, but not as complex as Olympiad/NTSE.
   - Encourage careful reading, analysis, or use of a formula in a less-direct way.
   - Higher challenge than Level 1, but not full Olympiad style.
+
 - Level 3: Challenging & Olympiad/NTSE/IIT Foundation Advanced
   - Require multi-step logical reasoning and combine at least two different concepts.
   - Must have non-standard twists or novel approaches, similar to Olympiad/NTSE/IIT Foundation exams.
@@ -1321,11 +1337,11 @@ C) <Option C>
 D) <Option D>
 Ans: <All correct options, e.g., "A), C), D)" — two or more, comma separated>
 
-List all MCQ (Multiple) questions in the order they appear in the file, without any headings, extra text, or explanation. Do not add or change any question content — extract exactly as found. If any meta information is missing, do not reject the question. Insert the appropriate Level (using the definitions above) and "1 Mark" wherever needed.
-
-Output only the extracted questions in this format. Do not include any introduction, heading, or explanation.`;
+List all MCQ (Multiple) questions in the order they appear in the file, without any headings, extra text, or explanation. Do not add or change any question content — extract exactly as found. If any meta information is missing, do not reject the question. Insert the appropriate Level (using the definitions above) and "1 Mark" wherever needed. Output only the extracted questions in this format. Do not include any introduction, heading, or explanation.
+`;
       } else if (sessionParams.questionType === "Descriptive") {
-        extractPrompt = `Class: ${sessionParams.class}, Subject: ${sessionParams.subject}, Chapter: ${sessionParams.chapter}.
+        extractPrompt = `
+Class: ${sessionParams.class}, Subject: ${sessionParams.subject}, Chapter: ${sessionParams.chapter}.
 
 IMPORTANT: When a PDF or image file is uploaded, extract questions EXACTLY as they appear in the uploaded file, WITHOUT adding, changing, or removing anything. Do NOT generate your own questions, explanations, or text. Extract ONLY descriptive questions from this file.
 
@@ -1333,8 +1349,10 @@ If any question is missing "Level", analyze the question and assign either "Leve
 
 - Level 1: Knowledge/Recall
   - Direct textbook questions, fact recall, or direct comprehension from CBSE text.
+
 - Level 2: Application
   - Application, interpretation, or multi-step thinking, but still within the scope of CBSE textbook.
+
 - Level 3: HOTS (Higher Order Thinking Skills)
   - Analysis, evaluation, synthesis, or questions as labeled HOTS in CBSE/NCERT books.
 
@@ -1347,9 +1365,8 @@ For descriptive questions, each question must be formatted exactly as:
 Q<num>: Level <Level>, <Marks> [Descriptive]
 <Question text>
 
-List all descriptive questions in the order they appear in the file, without any headings, extra text, or explanation. Do not add or change any question content — extract exactly as found. If any meta information is missing, do not reject the question. Insert the appropriate Level (using the definitions above) and "1 Mark" wherever needed.
-
-Output only the extracted questions in this format. Do not include any introduction, heading, or explanation.`;
+List all descriptive questions in the order they appear in the file, without any headings, extra text, or explanation. Do not add or change any question content — extract exactly as found. If any meta information is missing, do not reject the question. Insert the appropriate Level (using the definitions above) and "1 Mark" wherever needed. Output only the extracted questions in this format. Do not include any introduction, heading, or explanation.
+`;
       }
 
       const formData = new FormData();
@@ -1360,13 +1377,14 @@ Output only the extracted questions in this format. Do not include any introduct
         method: 'POST',
         body: formData
       });
+
       result = await response.json();
       if (!response.ok) throw new Error(result.error || "File processing failed.");
 
     } else {
       let fullPromptForAI;
-      const userPrompt = originalPrompt.trim();
 
+      const userPrompt = originalPrompt.trim();
       const subtopicMatch =
         userPrompt.match(/sub-?topics?\s*['":-]?\s*([a-zA-Z0-9 ,\-]+)/i) ||
         userPrompt.match(/topics?\s*['":-]?\s*([a-zA-Z0-9 ,\-]+)/i) ||
@@ -1374,15 +1392,20 @@ Output only the extracted questions in this format. Do not include any introduct
 
       let focusInstruction = '';
       if (subtopicMatch && subtopicMatch[1]) {
-        focusInstruction = `\nIMPORTANT: Generate all questions ONLY from the sub-topic "${subtopicMatch[1].trim()}". Do NOT include questions from any other part of the chapter. All questions must strictly relate to the selected class, subject, chapter, and sub-topic.`;
+        focusInstruction = `
+IMPORTANT: Generate all questions ONLY from the sub-topic "${subtopicMatch[1].trim()}". Do NOT include questions from any other part of the chapter. All questions must strictly relate to the selected class, subject, chapter, and sub-topic.
+`;
       }
 
-      const baseInfo = `Class: ${sessionParams.class}, Subject: ${sessionParams.subject}, Chapter: ${sessionParams.chapter}.${focusInstruction}
-User request: "${userPrompt}".`;
+      const baseInfo = `
+Class: ${sessionParams.class}, Subject: ${sessionParams.subject}, Chapter: ${sessionParams.chapter}.
+${focusInstruction}
+User request: "${userPrompt}".
+`;
 
       if (sessionParams.questionType === "MCQ (Single)") {
-        fullPromptForAI = `${baseInfo}
-
+        fullPromptForAI = `
+${baseInfo}
 Strictly follow these level definitions for every question:
 
 - Level 1: Foundation Easy & Medium
@@ -1408,7 +1431,8 @@ Strictly follow these level definitions for every question:
   - Do not copy questions exactly; always change numbers, variables, or context to fit the chosen class level.
   - If no suitable past questions exist, create original problems of the same high standard—emphasizing higher-order thinking, application, and integration of multiple concepts.
   - Ensure the questions remain accessible to students of the selected class: use only concepts from their syllabus and logical extensions; avoid requiring methods, tricks, or knowledge from higher classes.
-  - Math equations must be written in LaTeX.
+
+- Math equations must be written in LaTeX.
 
 **STRICT ACCURACY INSTRUCTIONS (apply to all Levels):**
 - Before finalizing any question, carefully check that the question is clear, accurate, and unambiguous.
@@ -1424,10 +1448,11 @@ Each question MUST follow this strict format:
 3. On the following lines, provide four options, each starting with "A)", "B)", "C)", and "D)".
 4. On the final line for that question, specify the correct answer using the format "Ans: C)" (only ONE letter).
 
-Provide ONLY the questions in this exact format. Do not add any other text, explanation, or introduction.`;
+Provide ONLY the questions in this exact format. Do not add any other text, explanation, or introduction.
+`;
       } else if (sessionParams.questionType === "MCQ (Multiple)") {
-        fullPromptForAI = `${baseInfo}
-
+        fullPromptForAI = `
+${baseInfo}
 Strictly follow these level definitions for every question:
 
 - Level 1: Foundation Easy & Medium
@@ -1469,9 +1494,9 @@ The user wants Multiple Choice Questions (MCQs) with more than one correct answe
   - Exactly 3 questions must have 2 correct options.
   - Exactly 3 questions must have 3 correct options.
   - Exactly 2 questions must have 4 correct options.
-  - The combination of correct options MUST vary across questions. Do not use the same answer pattern more than once.
-  - The correct answers (A, B, C, D) MUST be distributed as evenly as possible.
-  - Before finishing, DOUBLE CHECK that your output follows the above distribution.
+- The combination of correct options MUST vary across questions. Do not use the same answer pattern more than once.
+- The correct answers (A, B, C, D) MUST be distributed as evenly as possible.
+- Before finishing, DOUBLE CHECK that your output follows the above distribution.
 
 Each question MUST follow this strict format:
 1. Start with the question number, level, and marks (e.g., "Q1: Level 2, 1 Mark").
@@ -1479,11 +1504,12 @@ Each question MUST follow this strict format:
 3. On the following lines, provide four options, each starting with "A)", "B)", "C)", and "D)".
 4. On the final line for that question, specify ALL correct answers using the format "Ans: A), C), D)" (list all correct answers, separated by comma).
 
-Provide ONLY the questions in this exact format. Do not add any other text, explanation, or introduction.`;
+Provide ONLY the questions in this exact format. Do not add any other text, explanation, or introduction.
+`;
       } else {
         // Descriptive
-        fullPromptForAI = `${baseInfo}
-
+        fullPromptForAI = `
+${baseInfo}
 Strictly follow these level definitions for every question:
 
 - Level 1: Foundation Easy & Medium
@@ -1507,6 +1533,7 @@ Strictly follow these level definitions for every question:
   - Do NOT include questions that are direct, single-step, formula-based, or similar to standard textbook problems for the selected class. Avoid straightforward calculation or memory-based questions.
   - Whenever possible, take inspiration from previous Olympiad, NTSE, and JEE Foundation exam papers appropriate to the selected class and topic.
   - Do not copy questions exactly; always change numbers, variables, or context to fit the chosen class level.
+  - If no suitable past questions exist, create original problems of the same high standard—emphasizing higher-order thinking, application, and integration of multiple concepts.
   - Ensure the questions remain accessible to students of the selected class: use only concepts from their syllabus and logical extensions; avoid requiring methods, tricks, or knowledge from higher classes.
   - Math equations must be written in LaTeX.
 
@@ -1522,15 +1549,17 @@ Format each question strictly as:
 Q<num>: Level <Lvl>, <Marks> Marks
 <Question text>
 
-Provide ONLY the questions in this exact format. Do not add any other text, explanation, or introduction.`;
+Provide ONLY the questions in this exact format. Do not add any other text, explanation, or introduction.
+`;
       }
 
       const isCbse = /cbse/i.test(userPrompt);
+
       if (isCbse) {
         if (sessionParams.questionType === "Descriptive") {
           // CBSE DESCRIPTIVE prompt (NO options, NO "Ans:")
-          fullPromptForAI = `${baseInfo}
-
+          fullPromptForAI = `
+${baseInfo}
 You must generate questions ONLY from the CBSE textbook content for the selected class, subject, and chapter. Do not use Foundation, IIT/NEET, or external material.
 
 Assign a Level for each question:
@@ -1548,11 +1577,12 @@ Format strictly:
 Q<num>: Level <1/2/3>, <Marks> [Descriptive]
 <question text>
 
-Do not add options or "Ans:" lines.`;
+Do not add options or "Ans:" lines.
+`;
         } else {
           // CBSE MCQ prompt (keeps options + Ans)
-          fullPromptForAI = `${baseInfo}
-
+          fullPromptForAI = `
+${baseInfo}
 You must generate questions ONLY from the CBSE textbook content for the selected class, subject, and chapter.
 
 Assign a Level for each question:
@@ -1575,7 +1605,8 @@ A) ...
 B) ...
 C) ...
 D) ...
-Ans: ...`;
+Ans: ...
+`;
         }
       }
 
@@ -1584,6 +1615,7 @@ Ans: ...`;
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ prompt: fullPromptForAI })
       });
+
       result = await response.json();
       if (!response.ok) throw new Error(result.error || "API error");
     }
@@ -1595,65 +1627,74 @@ Ans: ...`;
   } finally {
     loadingMessage.remove();
     sendBtn.innerHTML = `<i class="fas fa-paper-plane"></i>`;
+
     if (didSendFile) {
       stagedFile = null;
       document.getElementById('file-preview-box').style.display = 'none';
       document.getElementById('chat-upload-btn').style.color = '#54656f';
     }
+
     updateSendButtonState(chatPromptInput, sendBtn);
   }
 }
 
 async function handleSendPrompt(sessionParams) {
   const chatPromptInput = document.getElementById('chat-prompt-input');
-  const sendBtn = document.getElementById('chat-send-btn');
-  const userPrompt = chatPromptInput.value.trim();
-  const messagesArea = document.getElementById('chat-messages-area');
+  const sendBtn         = document.getElementById('chat-send-btn');
+  const userPrompt      = chatPromptInput.value.trim();
+  const messagesArea    = document.getElementById('chat-messages-area');
 
   if (!userPrompt && !stagedFile) return;
+}
 
-  // --- Stage 1: Get Confirmation ---
-  sendBtn.disabled = true;
-  sendBtn.innerHTML = `<i class="fas fa-spinner fa-spin"></i>`;
+// --- Stage 1: Get Confirmation ---
+sendBtn.disabled = true;
+sendBtn.innerHTML = `<i class="fas fa-spinner fa-spin"></i>`;
 
-  if (userPrompt) appendChatMessage(userPrompt, 'user', messagesArea);
+if (userPrompt) appendChatMessage(userPrompt, 'user', messagesArea);
+chatPromptInput.value = '';
+chatPromptInput.style.height = 'auto';
 
-  chatPromptInput.value = '';
-  chatPromptInput.style.height = 'auto';
+const loadingMessage = appendChatMessage('Parsing instructions...', 'system-message', messagesArea);
 
-  const loadingMessage = appendChatMessage('Parsing instructions...', 'system-message', messagesArea);
+// This is the "meta-prompt" that asks the AI to summarize the teacher's request.
+const promptForSummary = `
+A teacher has provided the following instructions for creating. Re-write and structure these instructions clearly and concisely in a paragraph format for a confirmation message. Start with "You need to create a...". Do not add any conversational text, just the structured instructions.
 
-  // This is the "meta-prompt" that asks the AI to summarize the teacher's request.
-  const promptForSummary = `A teacher has provided the following instructions for creating. Re-write and structure these instructions clearly and concisely in a paragraph format for a confirmation message. Start with "You need to create a...". Do not add any conversational text, just the structured instructions.
+Teacher's instructions: "${userPrompt}"
+`;
 
-Teacher's instructions: "${userPrompt}"`;
+try {
+  // We use the same generation endpoint, but with our special summary prompt.
+  const response = await fetch(`${API_BASE_URL}/api/v1/generate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt: promptForSummary })
+  });
 
-  try {
-    // We use the same generation endpoint, but with our special summary prompt.
-    const response = await fetch(`${API_BASE_URL}/api/v1/generate`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt: promptForSummary })
-    });
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error || "API error");
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || "API error");
 
-    // On success, remove "Parsing..." and show the confirmation modal
-    loadingMessage.remove();
-    showConfirmationModal(result.result, userPrompt, sessionParams);
-  } catch (err) {
-    // If summary fails, show an error and re-enable the button
-    loadingMessage.remove();
-    appendChatMessage(`Error parsing instructions: ${err.message}. Please try again.`, 'system-message', messagesArea);
-    sendBtn.innerHTML = `<i class="fas fa-paper-plane"></i>`;
-    updateSendButtonState(chatPromptInput, sendBtn);
-  }
+  // On success, remove "Parsing..." and show the confirmation modal
+  loadingMessage.remove();
+  showConfirmationModal(result.result, userPrompt, sessionParams);
+
+} catch (err) {
+  // If summary fails, show an error and re-enable the button
+  loadingMessage.remove();
+  appendChatMessage(`Error parsing instructions: ${err.message}. Please try again.`, 'system-message', messagesArea);
+  sendBtn.innerHTML = `<i class="fas fa-paper-plane"></i>`;
+  updateSendButtonState(chatPromptInput, sendBtn);
+}
+
 }
 
 function handleFileUpload(event, sessionParams) {
   const file = event.target.files[0];
   if (!file) return;
+
   stagedFile = file;
+
   document.getElementById('file-preview-box').style.display = 'block';
   document.getElementById('file-preview-name').textContent = file.name;
   document.getElementById('chat-prompt-input').placeholder = "Describe the file or ask a question about it...";
@@ -1672,8 +1713,14 @@ async function saveSessionQuestions(sessionParams) {
   saveButton.disabled = true;
   saveButton.innerHTML = "⏳ Saving...";
 
-  let savedCount = 0, skippedCount = 0;
-  const startNumber = await getNextQuestionNumber(sessionParams.class, sessionParams.subject, sessionParams.chapter);
+  let savedCount = 0,
+      skippedCount = 0;
+
+  const startNumber = await getNextQuestionNumber(
+    sessionParams.class,
+    sessionParams.subject,
+    sessionParams.chapter
+  );
 
   for (let i = 0; i < currentSessionQuestions.length; i++) {
     const qData = currentSessionQuestions[i];
@@ -1682,37 +1729,54 @@ async function saveSessionQuestions(sessionParams) {
     // Normalize and join text for MCQ options as well
     function normalizeQuestion(q) {
       if (!q) return '';
-      return q.replace(/\s+/g, ' ').replace(/<br\s*\/?>/gi, ' ').trim().toLowerCase();
+      return q
+        .replace(/\s+/g, ' ')
+        .replace(/<br\s*\/?>/gi, ' ')
+        .trim()
+        .toLowerCase();
     }
 
     let compareText;
+
     if (qData.options && qData.options.length) {
       // For MCQ, compare question + options as one string
-      compareText = normalizeQuestion((qData.question || '') + ' ' + (qData.options || []).join(' '));
+      compareText = normalizeQuestion(
+        (qData.question || '') + ' ' + (qData.options || []).join(' ')
+      );
     } else {
       // For descriptive/comprehensive
       compareText = normalizeQuestion(
-        (qData.parsedMeta && qData.parsedMeta.includes("[Comprehensive]")) ? qData.fullText : qData.parsedBody
+        (qData.parsedMeta && qData.parsedMeta.includes("[Comprehensive]"))
+          ? qData.fullText
+          : qData.parsedBody
       );
     }
 
-    const snapshot = await db.collection("questions")
+    const snapshot = await db
+      .collection("questions")
       .where("subject", "==", qData.subject)
       .where("chapter", "==", qData.chapter)
       .get();
 
     let isDuplicate = false;
+
     snapshot.forEach(doc => {
       let existingText;
+
       if (doc.data().options && doc.data().options.length) {
         // MCQ: compare question + options
-        existingText = normalizeQuestion((doc.data().question || '') + ' ' + (doc.data().options || []).join(' '));
+        existingText = normalizeQuestion(
+          (doc.data().question || '') + ' ' + (doc.data().options || []).join(' ')
+        );
       } else {
         // Descriptive/comprehensive
         existingText = normalizeQuestion(
-          (doc.data().metaLine && doc.data().metaLine.includes("[Comprehensive]")) ? doc.data().text : doc.data().body
+          (doc.data().metaLine && doc.data().metaLine.includes("[Comprehensive]"))
+            ? doc.data().text
+            : doc.data().body
         );
       }
+
       if (compareText === existingText) {
         isDuplicate = true;
       }
@@ -1730,7 +1794,10 @@ async function saveSessionQuestions(sessionParams) {
     if (qData.parsedMeta && qData.parsedMeta.includes("[Comprehensive]")) {
       // Wrap passage + each MCQ body before saving
       const wrappedPassage = __wrap(qData.passage || '');
-      const wrappedMcqs = (qData.mcqs || []).map(m => ({ ...m, body: __wrap(m.body || '') }));
+      const wrappedMcqs = (qData.mcqs || []).map(m => ({
+        ...m,
+        body: __wrap(m.body || '')
+      }));
       const wrappedFull = __wrap(qData.fullText || '');
 
       await db.collection("questions").add({
@@ -1747,12 +1814,13 @@ async function saveSessionQuestions(sessionParams) {
         createdBy: currentUserProfile.uid,
         timestamp: firebase.firestore.FieldValue.serverTimestamp()
       });
+
     } else {
       // Normal question save (single, multiple, descriptive) — wrap mathy text
-      const wrappedQuestion = __wrap(qData.question || '');
-      const wrappedOptions = (qData.options || []).map(o => __wrap(o || ''));
-      const wrappedBody = __wrap(qData.parsedBody || '');
-      const wrappedFullText = __wrap(qData.fullText || '');
+      const wrappedQuestion  = __wrap(qData.question || '');
+      const wrappedOptions   = (qData.options || []).map(o => __wrap(o || ''));
+      const wrappedBody      = __wrap(qData.parsedBody || '');
+      const wrappedFullText  = __wrap(qData.fullText || '');
 
       let toSave = {
         metaLine: qData.parsedMeta,
@@ -1769,12 +1837,12 @@ async function saveSessionQuestions(sessionParams) {
 
       if (sessionParams.questionType.startsWith('MCQ')) {
         toSave.question = wrappedQuestion;
-        toSave.options = wrappedOptions; // keep as array
-        toSave.answer = qData.parsedAnswer; // letters unchanged
-        toSave.mcqType = sessionParams.questionType;
+        toSave.options  = wrappedOptions; // keep as array
+        toSave.answer   = qData.parsedAnswer; // letters unchanged
+        toSave.mcqType  = sessionParams.questionType;
       } else {
-        toSave.text = wrappedFullText;
-        toSave.body = wrappedBody;
+        toSave.text   = wrappedFullText;
+        toSave.body   = wrappedBody;
         toSave.answer = qData.parsedAnswer;
       }
 
@@ -1824,27 +1892,28 @@ function __normalizeLatexDelimiters(s = '') {
     .replace(/\${3,}/g, '$$')
     .replace(/[ \t]+\n/g, '\n');
 }
-// Decode any HTML entities that might have slipped in from your UI rendering function
+
+// Decode any HTML entities that might have slipped in from your UI rendering
 function __decodeEntities(s = '') {
   const d = document.createElement('textarea');
   d.innerHTML = s;
   return d.value;
 }
-// Wrap ( ... ) as \( ... \) ONLY when the (...) contains a LaTeX command like \frac, \sqrt, \cdot, etc.
-function __wrapParenMath(s='') {
-  return String(s).replace(/\(([^()]*\\[A-Za-z][^()]*)\)/g, '\\($1\\)');
-}
 
 // Convert LaTeX-y input to plain math for ChatGPT prefill
 function __toPlainMath(s = '') {
   let t = String(s);
+
   // remove $ / $$ and \( \) \[ \]
   t = t.replace(/\$\$?/g, '');
   t = t.replace(/\\\(|\\\)|\\\[|\\\]/g, '');
+
   // \frac{a}{b} -> (a)/(b)
   t = t.replace(/\\frac\s*\{([^}]*)\}\s*\{([^}]*)\}/g, '($1)/($2)');
+
   // exponents ^{...} -> ^...
   t = t.replace(/\^\{([^}]+)\}/g, '^$1');
+
   // common symbols
   t = t
     .replace(/\\times/g, '×')
@@ -1854,27 +1923,77 @@ function __toPlainMath(s = '') {
     .replace(/\\neq/g, '≠')
     .replace(/\\pm/g, '±')
     .replace(/\\sqrt\{([^}]+)\}/g, '√($1)');
+
   // drop \left \right
   t = t.replace(/\\left/g, '').replace(/\\right/g, '');
+
   return t.replace(/[ \t]+\n/g, '\n').trim();
+}
+
+function __autoWrapInlineMath(str = '') {
+  const wrap = t => `\\(${t}\\)`;
+
+  return String(str)
+    .split('\n')
+    .map(line => {
+      // Normalize Unicode square root to LaTeX first
+      line = line
+        .replace(/√\s*\(([^()]+)\)/g, '\\\\sqrt{$1}')
+        .replace(/√\s*([A-Za-z0-9]+)/g, '\\\\sqrt{$1}');
+
+      // Leave normal sentences as plain text (prevents italics & space loss)
+      if (/[A-Za-z]{3,}\s+[A-Za-z]{3,}/.test(line) && !/^[A-D]\)/.test(line)) {
+        // Still wrap math-like chunks inside parentheses, e.g. (x^3/2), (\frac{...}{...})
+        return line.replace(/\(([^()]*?(?:\\frac|\\sqrt|[\^_]).*?)\)/g, (_, g1) => {
+          if (/^\s*\d+(?:\.\d+)?\s*$/.test(g1)) return `(${g1})`; // leave (27), (243), etc.
+          return wrap(g1);
+        });
+      }
+
+      // For option lines A)–D): keep label, wrap only math tail
+      const m = line.match(/^([A-D]\)\s*)(.*)$/);
+      let head = '', tail = line;
+
+      if (m) {
+        head = m[1];
+        tail = m[2];
+      }
+
+      tail = tail
+        // parentheses math
+        .replace(/\(([^()]*?(?:\\frac|\\sqrt|[\^_]).*?)\)/g, (_, g1) => {
+          return (/^\s*\d+(?:\.\d+)?\s*$/.test(g1)) ? `(${g1})` : wrap(g1);
+        })
+        // \frac
+        .replace(/\\frac\{[^}]+\}\{[^}]+\}/g, s => wrap(s))
+        // \sqrt
+        .replace(/\\sqrt\{[^}]+\}/g, s => wrap(s))
+        // x^9, x^{5/4}
+        .replace(/\b([a-zA-Z]\s*\^\s*\{?[0-9]+(?:\/[0-9]+)?\}?)/g, s => wrap(s));
+
+      return head + tail;
+    })
+    .join('\n');
 }
 
 /* === ChatGPT handoff helpers (AI Generator) === */
 function __qb_toast(msg) {
   const t = document.createElement('div');
   t.textContent = msg;
-  t.style.cssText =
-    'position:fixed;left:50%;transform:translateX(-50%);bottom:24px;background:#0f3d6b;color:#fff;padding:10px 14px;border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,.2);z-index:100000;font-weight:600;letter-spacing:.2px;font-size:14px;opacity:0.98';
+  t.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);bottom:24px;background:#0f3d6b;color:#fff;padding:10px 14px;border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,.2);z-index:100000;font-weight:600;letter-spacing:.2px;font-size:14px;opacity:0.98';
   document.body.appendChild(t);
+
   setTimeout(() => {
     t.style.transition = 'opacity .35s';
     t.style.opacity = '0';
   }, 1200);
+
   setTimeout(() => t.remove(), 1600);
 }
 
 function buildChatGptPromptFromQuestion(qData, sessionParams) {
   const meta = qData.parsedMeta || '';
+
   const headerBits = [
     sessionParams?.subject && `Subject: ${sessionParams.subject}`,
     sessionParams?.class && `Class: ${sessionParams.class}`,
@@ -1884,10 +2003,12 @@ function buildChatGptPromptFromQuestion(qData, sessionParams) {
     .join(' · ');
 
   // decode & normalize math
-  const rawQ = __decodeEntities((qData.question || '').trim());
+  const rawQ    = __decodeEntities((qData.question || '').trim());
   const rawBody = __decodeEntities((qData.parsedBody || '').trim());
+
   const qText = __toPlainMath(rawQ);
-  const body = __toPlainMath(rawBody);
+  const body  = __toPlainMath(rawBody);
+
   const hasOptions = Array.isArray(qData.options) && qData.options.length === 4;
 
   let prompt = 'Please solve and explain clearly.\n';
@@ -1895,6 +2016,7 @@ function buildChatGptPromptFromQuestion(qData, sessionParams) {
 
   if (qText) {
     prompt += `Question:\n${qText}\n`;
+
     if (hasOptions) {
       const opts = qData.options
         .map((o, i) => {
@@ -1904,6 +2026,7 @@ function buildChatGptPromptFromQuestion(qData, sessionParams) {
           return `${String.fromCharCode(65 + i)}) ${clean}`;
         })
         .join('\n');
+
       prompt += `\nOptions:\n${opts}`;
     }
   } else {
@@ -1915,42 +2038,51 @@ function buildChatGptPromptFromQuestion(qData, sessionParams) {
     : `\n\nRespond with the final answer and a step-by-step explanation.`;
 
   if (meta) prompt += `\n\nMeta: ${meta}`;
+
   return prompt;
 }
 
 async function openInChatGptWithPrefill(prompt) {
   let copied = false;
+
   try {
     await navigator.clipboard.writeText(prompt);
     copied = true;
   } catch (_) {
     /* clipboard may be blocked; continue */
   }
+
   __qb_toast(copied ? 'Copied prompt. Opening ChatGPT…' : 'Opening ChatGPT… (paste prompt manually)');
+
   const url = new URL('https://chatgpt.com/');
   url.searchParams.set('q', prompt); // pre-fill message
   window.open(url.toString(), '_blank', 'noopener');
 }
+
 /* === end helpers === */
 
 /* === Prompt builder for initial generation in ChatGPT (FOUNDATION + CBSE modes, strict rules) === */
 function buildChatGptGenerationPrompt(sessionParams) {
-  const cls = sessionParams.class || '';
-  const subj = sessionParams.subject || '';
-  const chap = sessionParams.chapter || '';
+  const cls   = sessionParams.class || '';
+  const subj  = sessionParams.subject || '';
+  const chap  = sessionParams.chapter || '';
   const qtype = sessionParams.questionType || 'MCQ (Single)';
-  const plan = (sessionParams.levelPlan || '').trim();
+  const plan  = (sessionParams.levelPlan || '').trim();
   const count = sessionParams.numQuestions || 20;
+
   const isCBSE = /cbse/i.test(plan) || /cbse/i.test(subj);
 
   // ---- COMMON headings ----
-  const header = `Class: ${cls}
+  const header = `
+Class: ${cls}
 Subject: ${subj}
 Chapter: ${chap}
-Request: ${plan || (count + ' questions')}`;
+Request: ${plan || (count + ' questions')}
+`;
 
   // ---- LEVEL DEFINITIONS ----
-  const foundationLevels = `Use these Level definitions STRICTLY (Foundation/IIT-NEET mode):
+  const foundationLevels = `
+Use these Level definitions STRICTLY (Foundation/IIT-NEET mode):
 - Level 1: Foundation Easy & Medium
   • Basic conceptual/recall/direct application aligned to Foundation style (not board textbook drill).
   • Single concept, avoid multi-step reasoning; competitive-exam style but simple/focused.
@@ -1961,25 +2093,31 @@ Request: ${plan || (count + ' questions')}`;
   • Multi-step logical reasoning, combining ≥2 concepts, non-standard twists/novel approaches.
   • Do NOT output direct single-step/formula/memory questions.
   • Inspired by Olympiad/NTSE/IIT-Foundation papers but adapted to this class & syllabus (change numbers/contexts).
-  • Keep within the class syllabus; no higher-class methods required.`;
+  • Keep within the class syllabus; no higher-class methods required.
+`;
 
-  const cbseLevels = `Use these Level definitions STRICTLY (CBSE mode):
+  const cbseLevels = `
+Use these Level definitions STRICTLY (CBSE mode):
 - Level 1: Knowledge/Recall (direct textbook/comprehension)
 - Level 2: Application/Interpretation (within CBSE chapter)
-- Level 3: HOTS (analysis/evaluation/synthesis as per CBSE)`;
+- Level 3: HOTS (analysis/evaluation/synthesis as per CBSE)
+`;
 
   // ---- STRICT ACCURACY ----
-  const strictAccuracy = `STRICT ACCURACY (applies to all):
+  const strictAccuracy = `
+STRICT ACCURACY (applies to all):
 • Ensure every question is clear, unambiguous, and correct.
 • Double-check all facts/calculations/options/answers.
 • If any issue is found, fix it before output.
-• Math must use LaTeX where needed (e.g., \\frac{}, \\sqrt{}, exponents).`;
+• Math must use LaTeX where needed (e.g., \\frac{}, \\sqrt{}, exponents).
+`;
 
   // ---- FORMAT RULES (base) ----
   const numberingNote = `• Numbering must be continuous: Q1 to Q${count}.`;
 
   // MCQ format
-  const mcqFormat = `Output EXACTLY ${count} questions. Format each question EXACTLY as:
+  const mcqFormat = `
+Output EXACTLY ${count} questions. Format each question EXACTLY as:
 Q<num>: Level <1/2/3>, 1 Mark [${qtype}]
 <Question text>
 A) <Option A>
@@ -1994,10 +2132,12 @@ ${numberingNote}
 • Use ONLY content from the selected class/subject/chapter (and any subtopic names present in "Request").
 • No headings, introductions, comments, or explanations—questions only.
 • I will ask for a FINAL SET later after corrections. This is the DRAFT output.
-${strictAccuracy}`;
+${strictAccuracy}
+`;
 
   // MCQ Multiple additional distribution rule (per 10)
-  const multiBlockRule = `Additional rules for MCQ (Multiple):
+  const multiBlockRule = `
+Additional rules for MCQ (Multiple):
 • Some questions have multiple correct options (e.g., A), C)).
 • Spread correct letters across A–D; avoid patterns.
 • If total > 10, apply this distribution to EACH block of 10:
@@ -2005,10 +2145,12 @@ ${strictAccuracy}`;
   - Exactly 3 questions with 2 correct options
   - Exactly 3 questions with 3 correct options
   - Exactly 2 questions with 4 correct options
-• Before finishing, self-check that each 10-question block satisfies the distribution.`;
+• Before finishing, self-check that each 10-question block satisfies the distribution.
+`;
 
   // DESCRIPTIVE format
-  const descFormat = `Generate EXACTLY ${count} Descriptive questions. Format each question EXACTLY as:
+  const descFormat = `
+Generate EXACTLY ${count} Descriptive questions. Format each question EXACTLY as:
 Q<num>: Level <1/2/3>, <Marks> [Descriptive]
 <Question text>
 
@@ -2018,31 +2160,34 @@ ${numberingNote}
 • Use ONLY the selected chapter (and any subtopic names present in "Request").
 • No extra text—questions only.
 • I will ask for a FINAL SET later after corrections. This is the DRAFT output.
-${strictAccuracy}`;
+${strictAccuracy}
+`;
 
   // ----- Assemble prompt by type/mode -----
   if (/Descriptive/i.test(qtype)) {
     const levelBlock = isCBSE ? cbseLevels : foundationLevels;
-    return `${header}
-
+    return (
+      `${header}
 ${levelBlock}
-
-${descFormat}`.trim();
+${descFormat}`
+    );
   }
 
   // MCQ (Single or Multiple)
   const levelBlock = isCBSE ? cbseLevels : foundationLevels;
-  const multiNote = /Multiple/i.test(qtype) ? `\n${multiBlockRule}` : '';
+  const multiNote  = /Multiple/i.test(qtype) ? `\n${multiBlockRule}` : '';
 
-  return `${header}
-
+  return (
+    `${header}
 ${levelBlock}
-
-${mcqFormat}${multiNote}`.trim();
+${mcqFormat}
+${multiNote}`.trim()
+  );
 }
 
 function splitMcqOptions(body) {
   if ((body.match(/^[A-D]\)/gm) || []).length >= 3) return body;
+
   if (/A\).+B\).+C\).+D\)/.test(body)) {
     const m = body.match(/A\)([^B]+)B\)([^C]+)C\)([^D]+)D\)(.+)/);
     if (m) {
@@ -2053,13 +2198,16 @@ function splitMcqOptions(body) {
         "D)" + m[4].trim()
       ].join('\n');
     } else {
-      return body.replace(/([A-D]\))/g, '\n$1').replace(/^\n/, '');
+      return body
+        .replace(/([A-D]\))/g, '\n$1')
+        .replace(/^\n/, '');
     }
   }
+
   return body;
 }
-
 /* ========= NEW: Shuffle utilities for MCQs ========= */
+
 /** Strip leading "A)"/"B)"/"C)"/"D)" labels and trim */
 function __normalizeOptionText(s) {
   return String(s || '').replace(/^[A-D][).]\s*/, '').trim();
@@ -2096,6 +2244,7 @@ function shuffleOptionsForQuestion(qData) {
   // Remap answers (if present)
   let newAnsLine = qData.parsedAnswer || null;
   const foundLetters = newAnsLine ? [...newAnsLine.matchAll(/\b([A-D])\)/g)].map(m => m[1]) : [];
+
   if (foundLetters.length > 0) {
     const remappedLetters = foundLetters.map(letter => {
       const oi = letter.charCodeAt(0) - 65; // original index 0..3
@@ -2103,6 +2252,7 @@ function shuffleOptionsForQuestion(qData) {
       const ni = shuffledOldIndices.findIndex(orig => orig === oi);
       return String.fromCharCode(65 + ni);
     });
+
     if (remappedLetters.length === 1) {
       newAnsLine = `Ans: ${remappedLetters[0]})`;
     } else {
@@ -2123,9 +2273,165 @@ function shuffleOptionsForQuestion(qData) {
   qData.options = newOptions.slice(); // store de-labeled texts
   qData.parsedBody = rebuilt;
   if (newAnsLine) qData.parsedAnswer = newAnsLine;
+
   qData.fullText = `${qData.parsedMeta}\n${qData.parsedBody}${qData.parsedAnswer ? `\n${qData.parsedAnswer}` : ''}`;
 }
+
 /* ======== END NEW shuffle utilities ======== */
+
+
+/* ========== FINAL SET parser (for Paste Zone) ========== */
+
+/**
+ * Normalize “Ans:” letters into a clean array of A-D, keeping order.
+ * Accepts: "Ans: C)", "Ans: A), C)", "Ans: B),D)"
+ */
+function __extractAnswerLetters(ansLine = '') {
+  const m = String(ansLine).match(/Ans\s*:\s*([A-D\)\s,]+)/i);
+  if (!m) return [];
+  const letters = [];
+  (m[1].match(/[A-D]\)/gi) || []).forEach(tok => {
+    const L = tok[0].toUpperCase();
+    if (!letters.includes(L)) letters.push(L);
+  });
+  return letters;
+}
+
+/** Remove “Qn:” header line and return {meta, body} */
+function __splitMetaAndBody(block) {
+  const lines = String(block).split('\n');
+  const first = lines.shift() || '';
+  return { meta: first.trim(), body: lines.join('\n').trim() };
+}
+
+/** Ensure options are split into 4 lines starting with A) B) C) D) */
+function __forceOptionLines(body) {
+  // already line-broken?
+  if ((body.match(/^[A-D]\)/gm) || []).length >= 3) return body;
+
+  // try to split inline A)…B)…C)…D)…
+  if (/A\).+B\).+C\).+D\)/.test(body)) {
+    const m = body.match(/A\)([^B]+)B\)([^C]+)C\)([^D]+)D\)(.+)/s);
+    if (m) {
+      return [
+        `A) ${m[1].trim()}`,
+        `B) ${m[2].trim()}`,
+        `C) ${m[3].trim()}`,
+        `D) ${m[4].trim()}`
+      ].join('\n');
+    }
+    return body.replace(/([A-D]\))/g, '\n$1').replace(/^\n/, '');
+  }
+
+  return body;
+}
+
+/**
+ * Parse a pasted FINAL SET block into our session question objects.
+ * Respects the current sessionParams.questionType (MCQ Single/Multiple/Descriptive)
+ */
+function parseFinalSetIntoQuestions(text, sessionParams) {
+  // keep only from first Qn onward (ignore any chatty intro)
+  const startIdx = text.search(/\bQ\s*1\s*:/i);
+  const cleaned = startIdx >= 0 ? text.slice(startIdx) : text;
+
+  const blocks = cleaned
+    .split(/\n(?=Q\s*\d+\s*:)/g)
+    .map(s => s.trim())
+    .filter(s => /^Q\s*\d+\s*:/i.test(s));
+
+  const out = [];
+
+  for (const b of blocks) {
+    const { meta, body } = __splitMetaAndBody(b);
+
+    // Build base qData
+    const qData = {
+      fullText: b,
+      class: sessionParams.class,
+      subject: sessionParams.subject,
+      chapter: sessionParams.chapter,
+      parsedMeta: meta, // temporary; will be renumbered on render
+      question: '',
+      options: [],
+      parsedAnswer: null,
+      parsedBody: ''
+    };
+
+    if (sessionParams.questionType.startsWith('MCQ')) {
+      // split body into Q text, options, and Ans
+      const ansMatch = body.match(/Ans\s*:\s*.*$/im);
+      const ansLine = ansMatch ? ansMatch[0].trim() : null;
+      const withoutAns = ansMatch ? body.replace(ansMatch[0], '').trim() : body.trim();
+
+      // first line is the question text, the rest are options (may be inline)
+      const lines = withoutAns.split('\n').map(l => l.trim()).filter(Boolean);
+      const qText = lines.length ? lines[0] : '';
+
+      let optBlock = lines.slice(1).join('\n');
+      optBlock = __forceOptionLines(optBlock);
+
+      const optLines = optBlock.split('\n').map(x => x.trim()).filter(Boolean);
+
+      // Ensure we have exactly 4 options
+      const A = optLines.find(l => /^A\)/i.test(l)) || 'A) ';
+      const B = optLines.find(l => /^B\)/i.test(l)) || 'B) ';
+      const C = optLines.find(l => /^C\)/i.test(l)) || 'C) ';
+      const D = optLines.find(l => /^D\)/i.test(l)) || 'D) ';
+
+      qData.question = qText;
+      qData.options = [A, B, C, D].map(s => s.replace(/^[A-D]\)\s*/, '').trim());
+
+      qData.parsedAnswer = ansLine
+        ? `Ans: ${__extractAnswerLetters(ansLine).map(L => `${L})`).join(', ')}`
+        : null;
+
+      qData.parsedBody = [
+        qText,
+        `A) ${qData.options[0]}`,
+        `B) ${qData.options[1]}`,
+        `C) ${qData.options[2]}`,
+        `D) ${qData.options[3]}`
+      ].join('\n');
+
+      // Store consistent fullText
+      qData.fullText = `${qData.parsedMeta}\n${qData.parsedBody}${qData.parsedAnswer ? `\n${qData.parsedAnswer}` : ''}`;
+
+    } else {
+      // Descriptive: meta + body (no options/Ans)
+      qData.question = body.split('\n')[0] || '';
+      qData.options = [];
+      qData.parsedAnswer = null;
+      qData.parsedBody = body;
+      qData.fullText = `${qData.parsedMeta}\n${qData.parsedBody}`;
+    }
+
+    out.push(qData);
+  }
+
+  // Normalize meta to our UI style (Level, Marks, Type); renumber later in rerender
+  const TYPE = sessionParams.questionType;
+
+  for (let i = 0; i < out.length; i++) {
+    const m = out[i].parsedMeta;
+
+    // Level
+    const lvl = (m.match(/Level\s*([1-3])/i) || [, '?'])[1];
+
+    // Marks
+    const mkMatch = m.match(/(\d+)\s*Mark/i);
+    const marks = mkMatch ? `${mkMatch[1]} Mark${mkMatch[1] === '1' ? '' : 's'}` : (TYPE.startsWith('MCQ') ? '1 Mark' : '');
+
+    out[i].parsedMeta = `Q${i + 1}: Level ${lvl}, ${marks} [${TYPE}]`;
+
+    // Rebuild fullText using normalized meta
+    out[i].fullText = `${out[i].parsedMeta}\n${out[i].parsedBody}${out[i].parsedAnswer ? `\n${out[i].parsedAnswer}` : ''}`;
+  }
+
+  return out;
+}
+
+/* ========== END FINAL SET parser ========== */
 
 function parseAndDisplayAiQuestions(responseText, messagesArea, sessionParams) {
   // The original logic (leave as-is for MCQ/Descriptive):
@@ -2187,6 +2493,7 @@ function parseAndDisplayAiQuestions(responseText, messagesArea, sessionParams) {
           .split('\n')
           .map(x => x.trim())
           .filter(x => x && x !== '<br>' && x !== '');
+
         questionData.question = lines[0] || '';
         questionData.options = lines.slice(1, 5).map(x => x || '');
         questionData.parsedAnswer = answerMatch[2].trim();
@@ -2197,8 +2504,10 @@ function parseAndDisplayAiQuestions(responseText, messagesArea, sessionParams) {
         questionData.parsedAnswer = null;
         questionData.parsedBody = rawBody;
       }
+
       // NEW: Randomize A/B/C/D and remap the Ans: letters accordingly
       shuffleOptionsForQuestion(questionData);
+
     } else {
       // DESCRIPTIVE: no options, no "Ans:"
       questionData.question = rawBody.trim().split('\n')[0] || '';
@@ -2221,15 +2530,17 @@ function createQuestionElement(qData, index) {
   const questionEl = document.createElement('div');
   questionEl.className = 'message ai-question-item';
   questionEl.dataset.sessionQuestionIndex = index;
+
   questionEl.innerHTML = `
     <div class="question-meta-ai">${qData.parsedMeta}</div>
-    <div class="question-text-ai">${__wrapParenMath(qData.parsedBody)}</div>
+    <div class="question-text-ai">${__autoWrapInlineMath(qData.parsedBody)}</div>
     <div class="question-actions">
       <button class="q-action-btn" title="Options"><i class="fas fa-ellipsis-v"></i></button>
     </div>
   `;
 
   const actionButton = questionEl.querySelector('.q-action-btn');
+
   actionButton.addEventListener('click', (e) => {
     e.stopPropagation();
 
@@ -2302,22 +2613,25 @@ function rerenderAllQuestions() {
       blockEl.dataset.sessionQuestionIndex = i;
 
       // Build MCQ HTMLs
-      const mcqHtml = q.mcqs
-        .map((mcq, k) => {
-          // Remove leading Qn: from mcq.body if present (Q1:, Q2:, etc.)
-          let cleanBody = mcq.body.replace(/^Q\d+:\s*/i, '').replace(/Ans:.*/, '').trim();
-          return `
-            <div class="question-text-ai" style="margin-top:8px; text-align:left;">
-              <b>Q${k+1}.</b> ${__wrapParenMath(cleanBody.replace(/</g,"&lt;").replace(/>/g,"&gt;"))}
-              <div class="temp-answer" style="display:none; margin-top:3px; color:#5d4037;">${mcq.answer ? mcq.answer : ''}</div>
+      const mcqHtml = q.mcqs.map((mcq, k) => {
+        // Remove leading Qn: from mcq.body if present (Q1:, Q2:, etc.)
+        let cleanBody = mcq.body.replace(/^Q\d+:\s*/i, '').replace(/Ans:.*/, '').trim();
+
+        return `
+          <div class="question-text-ai" style="margin-top:8px; text-align:left;">
+            <b>Q${k + 1}.</b> ${__autoWrapInlineMath(cleanBody.replace(/</g,"&lt;").replace(/>/g,"&gt;"))}
+            <div class="temp-answer" style="display:none; margin-top:3px; color:#5d4037;">
+              ${mcq.answer ? mcq.answer : ''}
             </div>
-          `;
-        })
-        .join('');
+          </div>
+        `;
+      }).join('');
 
       blockEl.innerHTML = `
         <div class="question-meta-ai">${q.parsedMeta}</div>
-        <div class="question-text-ai" style="white-space:pre-line; margin-bottom:8px;"><b>Passage:</b> ${__wrapParenMath(q.passage || '')}</div>
+        <div class="question-text-ai" style="white-space:pre-line; margin-bottom:8px;">
+          <b>Passage:</b> ${__autoWrapInlineMath(q.passage || '')}
+        </div>
         ${mcqHtml}
         <div class="question-actions">
           <button class="q-action-btn" title="Options"><i class="fas fa-ellipsis-v"></i></button>
@@ -2337,24 +2651,23 @@ function rerenderAllQuestions() {
           <button class="menu-edit-btn">Edit</button>
           <button class="menu-delete-btn">Delete</button>
         `;
+
         blockEl.appendChild(menu);
 
         menu.querySelector('.menu-show-answer-btn').onclick = () => {
           const q = currentSessionQuestions[i]; // comprehensive data
           const meta = q.parsedMeta || '';
-          const cls = q.class || (lastSessionParams && lastSessionParams.class) || '';
-          const subj = q.subject || (lastSessionParams && lastSessionParams.subject) || '';
-          const chap = q.chapter || (lastSessionParams && lastSessionParams.chapter) || '';
+          const cls  = q.class  || (lastSessionParams && lastSessionParams.class)  || '';
+          const subj = q.subject|| (lastSessionParams && lastSessionParams.subject)|| '';
+          const chap = q.chapter|| (lastSessionParams && lastSessionParams.chapter)|| '';
 
           let prompt = `Please solve and explain clearly.\n`;
           const metaLineParts = [
-            cls && `Class: ${cls}`,
+            cls  && `Class: ${cls}`,
             subj && `Subject: ${subj}`,
             chap && `Chapter: ${chap}`,
             meta && meta.replace(/^Q\d+:\s*/, '').trim()
-          ]
-            .filter(Boolean)
-            .join(' · ');
+          ].filter(Boolean).join(' · ');
           if (metaLineParts) prompt += metaLineParts + `\n\n`;
 
           prompt += `Passage:\n${q.passage}\n\n`;
@@ -2392,6 +2705,7 @@ function rerenderAllQuestions() {
       };
 
       fragment.appendChild(blockEl);
+
     } else {
       // Normal question
       const metaPartsMatch = q.parsedMeta.match(/Q\s*\d+:\s*(.*)/i);
@@ -2409,36 +2723,42 @@ function rerenderAllQuestions() {
 
 function parseMetaLine(metaLine) {
   const meta = { difficulty: null, level: null, marks: null };
-  const diffMatch = metaLine.match(/Q\s*\d+:\s*([^,/]+)/i);
+  const diffMatch  = metaLine.match(/Q\s*\d+:\s*([^,/]+)/i);
   const levelMatch = metaLine.match(/\/Level\s*(\d+)/i);
   const marksMatch = metaLine.match(/(\d+)\s*Mark(s?)/i);
-  if (diffMatch) meta.difficulty = diffMatch[1].trim();
-  if (levelMatch) meta.level = parseInt(levelMatch[1], 10);
-  if (marksMatch) meta.marks = parseInt(marksMatch[1], 10);
+
+  if (diffMatch)  meta.difficulty = diffMatch[1].trim();
+  if (levelMatch) meta.level      = parseInt(levelMatch[1], 10);
+  if (marksMatch) meta.marks      = parseInt(marksMatch[1], 10);
+
   return meta;
 }
 
 async function getNextQuestionNumber(className, subjectName, chapterName) {
-  const query = db
-    .collection("questions")
+  const query = db.collection("questions")
     .where("class", "==", className)
     .where("subject", "==", subjectName)
     .where("chapter", "==", chapterName)
     .orderBy("questionNumber", "desc")
     .limit(1);
+
   const snapshot = await query.get();
   if (snapshot.empty) return 1;
+
   const lastQuestion = snapshot.docs[0].data();
   return (lastQuestion.questionNumber || 0) + 1;
 }
 
 function getTextSimilarity(a, b) {
   if (!a || !b) return 0; // If either is missing, return 0 similarity
+
   a = String(a).toLowerCase().replace(/\s+/g, ' ').trim();
   b = String(b).toLowerCase().replace(/\s+/g, ' ').trim();
+
   const aWords = new Set(a.split(' '));
   const bWords = new Set(b.split(' '));
   const common = [...aWords].filter(w => bWords.has(w));
+
   return common.length / Math.max(aWords.size, bWords.size);
 }
 
@@ -2448,6 +2768,7 @@ document.addEventListener('click', function (event) {
       dropdown.classList.remove('open');
     }
   });
+
   const existingMenu = document.querySelector('.actions-menu');
   if (existingMenu && !existingMenu.contains(event.target) && !event.target.closest('.q-action-btn')) {
     existingMenu.remove();
@@ -2469,15 +2790,19 @@ function showEditPopupForQuestion(index) {
   popup.className = 'edit-popup';
   popup.innerHTML = `
     <h3>Edit Question</h3>
+
     <label>Question:</label>
     <textarea id="edit-q-text" rows="2">${qData.question || ''}</textarea>
 
     <label>Option A:</label>
     <input type="text" id="edit-q-optA" value="${options[0] || ''}">
+
     <label>Option B:</label>
     <input type="text" id="edit-q-optB" value="${options[1] || ''}">
+
     <label>Option C:</label>
     <input type="text" id="edit-q-optC" value="${options[2] || ''}">
+
     <label>Option D:</label>
     <input type="text" id="edit-q-optD" value="${options[3] || ''}">
 
@@ -2497,11 +2822,11 @@ function showEditPopupForQuestion(index) {
   // Save button logic
   document.getElementById('edit-save').onclick = () => {
     // Get edited values
-    const qText = document.getElementById('edit-q-text').value.trim();
-    const optA = document.getElementById('edit-q-optA').value.trim();
-    const optB = document.getElementById('edit-q-optB').value.trim();
-    const optC = document.getElementById('edit-q-optC').value.trim();
-    const optD = document.getElementById('edit-q-optD').value.trim();
+    const qText  = document.getElementById('edit-q-text').value.trim();
+    const optA   = document.getElementById('edit-q-optA').value.trim();
+    const optB   = document.getElementById('edit-q-optB').value.trim();
+    const optC   = document.getElementById('edit-q-optC').value.trim();
+    const optD   = document.getElementById('edit-q-optD').value.trim();
     const answer = document.getElementById('edit-q-answer').value.trim();
 
     // Simple validation (optional)
@@ -2512,8 +2837,8 @@ function showEditPopupForQuestion(index) {
 
     // Update data
     qData.question = qText;
-    qData.options = [optA, optB, optC, optD];
-    qData.parsedBody = [qText, optA, optB, optC, optD].join('\n');
+    qData.options  = [optA, optB, optC, optD];
+    qData.parsedBody = [qText, `A) ${optA}`, `B) ${optB}`, `C) ${optC}`, `D) ${optD}`].join('\n');
     qData.parsedAnswer = `Ans: ${answer}`;
     qData.fullText = `${qData.parsedMeta}\n${qData.parsedBody}\n${qData.parsedAnswer}`;
 
@@ -2522,12 +2847,6 @@ function showEditPopupForQuestion(index) {
     rerenderAllQuestions();
   };
 }
-    
-    </script>
-</body>
+</script> 
+</body> 
 </html>
-
-
-
-
-
