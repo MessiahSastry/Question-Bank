@@ -1669,51 +1669,38 @@ if (qData.parsedMeta && qData.parsedMeta.includes("[Comprehensive]")) {
         }
     }
     
+// Convert LaTeX delimiters to Markdown math that ChatGPT renders well
+function __normalizeLatexDelimiters(s='') {
+  return String(s)
+    // block: \[...\] -> $$...$$
+    .replace(/\\\[/g, '$$').replace(/\\\]/g, '$$')
+    // inline: \(...\) -> $...$
+    .replace(/\\\(/g, '$').replace(/\\\)/g, '$')
+    // collapse accidental $$$ or extra spaces
+    .replace(/\${3,}/g, '$$').replace(/[ \t]+\n/g, '\n');
+}
+
 // Decode any HTML entities that might have slipped in from your UI rendering
 function __decodeEntities(s='') {
   const d = document.createElement('textarea');
   d.innerHTML = s;
   return d.value;
 }
-   // Wrap (...) as \( ... \) when the (...) looks like math:
-//   • contains a TeX command (\frac, \sqrt, \cdot, ...)
-//   • or contains exponents x^{...}, 2^{3/2}, x^2
-//   • or contains subscripts x_{...}, x_2
+// Wrap ( ... ) as \( ... \) ONLY when the (...) contains a LaTeX command like \frac, \sqrt, \cdot, etc.
 function __wrapParenMath(s='') {
-  let out = String(s);
-
-  // ( ... \something ... )
-  out = out.replace(/\(([^()]*\\[A-Za-z][^()]*)\)/g, '\\($1\\)');
-
-  // ( ... x^{...} ... )  or  ( ... 2^{3/2} ... )
-  out = out.replace(/\(([^()]*?[A-Za-z0-9]\s*\^\s*\{[^}]+\}[^()]*)\)/g, '\\($1\\)');
-
-  // ( ... x^2 ... )  or  ( ... 2^3/2 ... )
-  out = out.replace(/\(([^()]*?[A-Za-z0-9]\s*\^\s*[0-9]+(?:\s*\/\s*[0-9]+)?[^()]*)\)/g, '\\($1\\)');
-
-  // ( ... x_{...} ... )
-  out = out.replace(/\(([^()]*?[A-Za-z]\s*_\s*\{[^}]+\}[^()]*)\)/g, '\\($1\\)');
-
-  // ( ... x_2 ... )
-  out = out.replace(/\(([^()]*?[A-Za-z]\s*_\s*[0-9]+[^()]*)\)/g, '\\($1\\)');
-
-  return out;
+  return String(s).replace(/\(([^()]*\\[A-Za-z][^()]*)\)/g, '\\($1\\)');
 }
 
-    // Convert LaTeX-y input to plain math for ChatGPT prefill
+// Convert LaTeX-y input to plain math for ChatGPT prefill
 function __toPlainMath(s='') {
   let t = String(s);
-
   // remove $ / $$ and \( \) \[ \]
   t = t.replace(/\$\$?/g, '');
   t = t.replace(/\\\(|\\\)|\\\[|\\\]/g, '');
-
   // \frac{a}{b} -> (a)/(b)
   t = t.replace(/\\frac\s*\{([^}]*)\}\s*\{([^}]*)\}/g, '($1)/($2)');
-
   // exponents ^{...} -> ^...
   t = t.replace(/\^\{([^}]+)\}/g, '^$1');
-
   // common symbols
   t = t
     .replace(/\\times/g, '×')
@@ -1723,53 +1710,78 @@ function __toPlainMath(s='') {
     .replace(/\\neq/g, '≠')
     .replace(/\\pm/g, '±')
     .replace(/\\sqrt\{([^}]+)\}/g, '√($1)');
-
   // drop \left \right
   t = t.replace(/\\left/g, '').replace(/\\right/g, '');
-
   return t.replace(/[ \t]+\n/g, '\n').trim();
 }
-   function __autoWrapInlineMath(s='') {
-  const PS = '\uE000', PE = '\uE001';
 
-  // protect existing math so we never re-wrap it
-  const protect = t =>
-    t.replace(/\\\(([\s\S]*?)\\\)|\\\[([\s\S]*?)\\\]|\$\$([\s\S]*?)\$\$/g,
-      (_,a,b,c) => PS + (a || b || c) + PE);
-  const unprotect = t =>
-    t.replace(new RegExp(PS + '([\\s\\S]*?)' + PE, 'g'), '\\($1\\)');
+function __autoWrapInlineMath(str='') {
+  // --- helpers ---
+  const PROTECT_START = '\uE000', PROTECT_END = '\uE001';
+  const protectExisting = (s) => {
+    // Protect \(...\), $$...$$, \[...\] by replacing with placeholders
+    return s
+      .replace(/\\\(([\s\S]*?)\\\)/g, (_, g) => PROTECT_START + g.replace(/\\/g,'\\u005c') + PROTECT_END)
+      .replace(/\$\$([\s\S]*?)\$\$/g, (_, g) => PROTECT_START + g.replace(/\\/g,'\\u005c') + PROTECT_END)
+      .replace(/\\\[([\s\S]*?)\\\]/g, (_, g) => PROTECT_START + g.replace(/\\/g,'\\u005c') + PROTECT_END);
+  };
+  const unprotect = (s) => {
+    // Restore protected blocks as \(...\)
+    return s.replace(new RegExp(PROTECT_START+'([\\s\\S]*?)'+PROTECT_END,'g'), (_, g) => {
+      const restored = g.replace(/\\u005c/g,'\\');
+      return \\(${restored}\\);
+    });
+  };
+  const sanitize = (s) => s
+    // normalize roots from glyphs
+    .replace(/√\s*\(([^()]+)\)/g, '\\\\sqrt{$1}')
+    .replace(/√\s*([A-Za-z0-9]+)/g, '\\\\sqrt{$1}')
+    .replace(/³\s*\\\\sqrt\{/g, '\\\\sqrt[3]{')
+    // remove size modifiers that need paired delimiters
+    .replace(/\\left|\\right|\\bigg?|\\Bigg?/g, '');
 
-  // whole TeX constructs
-  const fracRE = /\\(?:tfrac|dfrac|frac)\s*\{[^}]+\}\s*\{\s*[^}]+\s*\}/g;
-  const sqrtRE = /\\sqrt\s*\{[^}]+\}/g;
-  const powRE  = /[A-Za-z0-9]\s*\^\s*(?:\{[^}]+\}|\d+(?:\s*\/\s*\d+)?)/g;
-  const subRE  = /[A-Za-z]\s*_\s*(?:\{[^}]+\}|\d+)/g;
+  // Wrap helper that avoids double wrapping
+  const wrapToken = (s, re) => s.replace(re, (m, pre='') => {
+    // if already wrapped (we protected earlier), there's no \(...\) left here
+    return \\(${m}\\);
+  });
 
-  return String(s).split('\n').map(line => {
-    // keep "A) " etc. outside math
-    const m = line.match(/^([A-D]\)\s*)(.*)$/);
-    let head = '', tail = line;
+  // regexes for TeX tokens (standalone)
+  const tokenRes = [
+    /\\(frac|dfrac|tfrac)\{[^}]+\}\{[^}]+\}/g,     // \frac{a}{b}
+    /\\sqrt(?:\[[^\]]+\])?\{[^}]+\}/g,            // \sqrt{...}, \sqrt[n]{...}
+    /\b[A-Za-z]\s*\^\s*\{[^}]+\}/g,               // x^{...}
+    /\b[A-Za-z]\s*\^\s*[0-9]+(?:\/[0-9]+)?\b/g,   // x^2, x^3/2
+    /\b[0-9]+\s*\^\s*\{[^}]+\}/g,                 // 2^{...}
+    /\b[0-9]+\s*\^\s*[0-9]+(?:\/[0-9]+)?\b/g,     // 2^3, 2^3/2
+    /\\(cdot|times|div|leq|geq|neq|pm|overline|bar)\b/g // common ops/symbols
+  ];
+
+  // also wrap simple ( math ) groups: ( \sqrt{...} ), ( \frac{...}{...} ), etc.
+  const groupRes = [
+    /\(\s*(\\(frac|dfrac|tfrac)\{[^}]+\}\{[^}]+\})\s*\)/g,
+    /\(\s*(\\sqrt(?:\[[^\]]+\])?\{[^}]+\})\s*\)/g
+  ];
+
+  return String(str).split('\n').map(raw => {
+    // keep option labels outside math
+    const m = raw.match(/^([A-D]\)\s*)(.*)$/);
+    let head = '', tail = raw;
     if (m) { head = m[1]; tail = m[2]; }
 
-    tail = protect(tail);
+    // protect & sanitize
+    tail = protectExisting(sanitize(tail));
 
-    // wrap full TeX constructs
-        tail = tail.replace(fracRE, m => `\\(${m}\\)`)
-                   .replace(sqrtRE, m => `\\(${m}\\)`);
-        
-        // PROTECT AGAIN so later rules don't touch what we just wrapped
-        tail = protect(tail);
+    // only wrap specific tokens, never the whole sentence
+    groupRes.forEach(re => { tail = wrapToken(tail, re); });
+    tokenRes.forEach(re => { tail = wrapToken(tail, re); });
 
-    // wrap standalone exponent/subscript expressions not already in ()/math
-    tail = tail.replace(
-      /(^|[^\w\\])((?:[A-Za-z0-9]\s*\^\s*(?:\{[^}]+\}|\d+(?:\s*\/\s*\d+)?))|(?:[A-Za-z]\s*_\s*(?:\{[^}]+\}|\d+)))/g,
-      (all, pre, expr) => `${pre}\\(${expr}\\)`
-    );
-
+    // restore protected math
     tail = unprotect(tail);
     return head + tail;
   }).join('\n');
 }
+
 
     /* === ChatGPT handoff helpers (AI Generator) === */
 function __qb_toast(msg) {
@@ -2282,11 +2294,14 @@ questionData.parsedMeta = `Q${currentSessionQuestions.length + 1}: ${level}, ${m
         
         // ⬇️ Render as HTML so MathJax can typeset \( ... \) and keep line breaks
         const qt = questionEl.querySelector('.question-text-ai');
-        qt.innerHTML = __autoWrapInlineMath(qData.parsedBody || '').replace(/\n/g, '<br>');
+        qt.innerHTML = __autoWrapInlineMath(
+          __normalizeLatexDelimiters(__decodeEntities(qData.parsedBody || ''))
+        ).replace(/\n/g, '<br>');
+        
         if (window.MathJax && MathJax.typesetPromise) {
+          MathJax.typesetClear && MathJax.typesetClear([qt]);
           MathJax.typesetPromise([qt]);
         }
-
         const actionButton = questionEl.querySelector('.q-action-btn');
 
         actionButton.addEventListener('click', (e) => {
@@ -2568,6 +2583,7 @@ questionData.parsedMeta = `Q${currentSessionQuestions.length + 1}: ${level}, ${m
     </script>
 </body>
 </html>
+
 
 
 
