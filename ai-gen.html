@@ -1706,41 +1706,73 @@ function __toPlainMath(s='') {
   return t.replace(/[ \t]+\n/g, '\n').trim();
 }
   function __autoWrapInlineMath(str='') {
-  const hasAnyDelims = s => /\\\(|\\\[|\$\$|\\begin\{/.test(s);
-  const looksLikeTex = s =>
-    /\\frac|\\sqrt|[A-Za-z0-9]\s*\^\s*\{?[-+]?\d/.test(s); // simple & safe
+  // --- helpers ---
+  const PROTECT_START = '\uE000', PROTECT_END = '\uE001';
 
-  const sanitize = s => s
-    // Normalize roots
+  const protectExisting = (s) => {
+    // Protect \(...\), $$...$$, \[...\] by replacing with placeholders
+    return s
+      .replace(/\\\(([\s\S]*?)\\\)/g, (_, g) => PROTECT_START + g.replace(/\\/g,'\\u005c') + PROTECT_END)
+      .replace(/\$\$([\s\S]*?)\$\$/g,    (_, g) => PROTECT_START + g.replace(/\\/g,'\\u005c') + PROTECT_END)
+      .replace(/\\\[([\s\S]*?)\\\]/g,    (_, g) => PROTECT_START + g.replace(/\\/g,'\\u005c') + PROTECT_END);
+  };
+  const unprotect = (s) => {
+    // Restore protected blocks as \(...\)
+    return s.replace(new RegExp(PROTECT_START+'([\\s\\S]*?)'+PROTECT_END,'g'), (_, g) => {
+      const restored = g.replace(/\\u005c/g,'\\');
+      return `\\(${restored}\\)`;
+    });
+  };
+
+  const sanitize = (s) => s
+    // normalize roots from glyphs
     .replace(/√\s*\(([^()]+)\)/g, '\\\\sqrt{$1}')
     .replace(/√\s*([A-Za-z0-9]+)/g, '\\\\sqrt{$1}')
     .replace(/³\s*\\\\sqrt\{/g, '\\\\sqrt[3]{')
-    // Remove size modifiers that require matching delimiters
-    .replace(/\\left|\\right|\\bigg?|\\Bigg?/g, '')
-    // Kill leaked delimiters inside braces
-    .replace(/\{\\\(/g, '{').replace(/\\\)\}/g, '}')
-    // Collapse duplicate delimiters
-    .replace(/\\\(\s*\\\(/g, '\\(')
-    .replace(/\\\)\s*\\\)/g, '\\)')
-    .replace(/\${3,}/g, '$$');
+    // remove size modifiers that need paired delimiters
+    .replace(/\\left|\\right|\\bigg?|\\Bigg?/g, '');
+
+  // Wrap helper that avoids double wrapping
+  const wrapToken = (s, re) =>
+    s.replace(re, (m, pre='') => {
+      // if already wrapped (we protected earlier), there's no \(...\) left here
+      return `\\(${m}\\)`;
+    });
+
+  // regexes for TeX tokens (standalone)
+  const tokenRes = [
+    /\\(frac|dfrac|tfrac)\{[^}]+\}\{[^}]+\}/g,          // \frac{a}{b}
+    /\\sqrt(?:\[[^\]]+\])?\{[^}]+\}/g,                  // \sqrt{...}, \sqrt[n]{...}
+    /\b[A-Za-z]\s*\^\s*\{[^}]+\}/g,                     // x^{...}
+    /\b[A-Za-z]\s*\^\s*[0-9]+(?:\/[0-9]+)?\b/g,         // x^2, x^3/2
+    /\b[0-9]+\s*\^\s*\{[^}]+\}/g,                       // 2^{...}
+    /\b[0-9]+\s*\^\s*[0-9]+(?:\/[0-9]+)?\b/g,           // 2^3, 2^3/2
+    /\\(cdot|times|div|leq|geq|neq|pm|overline|bar)\b/g // common ops/symbols
+  ];
+
+  // also wrap simple ( math ) groups: ( \sqrt{...} ), ( \frac{...}{...} ), etc.
+  const groupRes = [
+    /\(\s*(\\(frac|dfrac|tfrac)\{[^}]+\}\{[^}]+\})\s*\)/g,
+    /\(\s*(\\sqrt(?:\[[^\]]+\])?\{[^}]+\})\s*\)/g
+  ];
 
   return String(str).split('\n').map(raw => {
-    let line = sanitize(raw);
-
-    // Already mathy? leave as-is after cleaning
-    if (hasAnyDelims(line)) return line;
-
-    // Split out option labels like "A) "
-    const m = line.match(/^([A-D]\)\s*)(.*)$/);
-    let head = '', tail = line;
+    // keep option labels outside math
+    const m = raw.match(/^([A-D]\)\s*)(.*)$/);
+    let head = '', tail = raw;
     if (m) { head = m[1]; tail = m[2]; }
 
-    // If the tail clearly contains TeX, wrap the WHOLE tail once.
-    if (looksLikeTex(tail)) {
-      tail = `\\(${tail}\\)`;
-    }
+    // protect & sanitize
+    tail = protectExisting(sanitize(tail));
 
-    return sanitize(head + tail);
+    // only wrap specific tokens, never the whole sentence
+    groupRes.forEach(re => { tail = wrapToken(tail, re); });
+    tokenRes.forEach(re => { tail = wrapToken(tail, re); });
+
+    // restore protected math
+    tail = unprotect(tail);
+
+    return head + tail;
   }).join('\n');
 }
 
@@ -2534,6 +2566,7 @@ questionData.parsedMeta = `Q${currentSessionQuestions.length + 1}: ${level}, ${m
     </script>
 </body>
 </html>
+
 
 
 
