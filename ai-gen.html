@@ -975,7 +975,7 @@ body.chat-lock { overflow: hidden; height: 100vh; }
       // Toggle the paste panel thin strip
       const pasteToggleBtn = document.getElementById('ai-toggle-paste-btn');
       const pasteZone = document.getElementById('paste-zone');
-      if (pasteToggleBtn && pasteZone) {
+            if (pasteToggleBtn && pasteZone) {
         pasteToggleBtn.onclick = () => {
           const isOpen = pasteZone.style.display !== 'none';
           pasteZone.style.display = isOpen ? 'none' : 'block';
@@ -984,100 +984,73 @@ body.chat-lock { overflow: hidden; height: 100vh; }
           if (!isOpen) document.getElementById('paste-zone-text')?.focus();
         };
       }
-    }
-  // --- Paste panel minimal helpers ---
-// Show expected N in the tip
-const _pzExpected = document.getElementById('pz-expected-n');
-if (_pzExpected) _pzExpected.textContent = String(sessionParams.numQuestions || 20);
 
-// Auto-grow textarea a bit for comfort
-const _pzText = document.getElementById('paste-zone-text');
-if (_pzText) {
-  const _autoGrow = () => {
-    _pzText.style.height = 'auto';
-    const maxH = Math.floor(window.innerHeight * 0.5); // ~50% of screen
-    const h = Math.min(_pzText.scrollHeight, maxH);
-    _pzText.style.height = h + 'px';
-    _pzText.style.overflowY = (_pzText.scrollHeight > maxH) ? 'auto' : 'hidden';
-  };
-  _pzText.addEventListener('input', _autoGrow);
-  _autoGrow();
-}
+      // --- Paste panel minimal helpers (scoped to this chat) ---
+      const _pzExpected = document.getElementById('pz-expected-n');
+      if (_pzExpected) _pzExpected.textContent = String(sessionParams.numQuestions || 20);
 
-// Wire the new top-bar "Parse & Preview" button to read from the paste textarea
-const parsePreviewBtn = document.getElementById('ai-parse-preview-btn');
-if (parsePreviewBtn) {
-  parsePreviewBtn.onclick = () => {
-    const box = document.getElementById('paste-zone-text');
-    if (!box) {
-      __qb_toast('Paste box not found.');
-      return;
-    }
-    const raw = (box.value || '').trim();
-    if (!raw) {
-      __qb_toast('Nothing to parse. Paste the FINAL SET first.');
-      return;
-    }
-    try {
-      const parsed = parseFinalSetIntoQuestions(raw, sessionParams);
-      if (!parsed.length) {
-        __qb_toast('Could not find any Q1… blocks.');
-        return;
+      const _pzText = document.getElementById('paste-zone-text');
+      if (_pzText) {
+        const _autoGrow = () => {
+          _pzText.style.height = 'auto';
+          const maxH = Math.floor(window.innerHeight * 0.5);
+          const h = Math.min(_pzText.scrollHeight, maxH);
+          _pzText.style.height = h + 'px';
+          _pzText.style.overflowY = (_pzText.scrollHeight > maxH) ? 'auto' : 'hidden';
+        };
+        _pzText.addEventListener('input', _autoGrow);
+        _autoGrow();
       }
-      // Replace current session questions (default behavior)
-      currentSessionQuestions = parsed;
-      rerenderAllQuestions();
-      __qb_toast(Parsed ${parsed.length} question(s).);
 
-      // Collapse + clear paste panel after a successful parse
-      const pz = document.getElementById('paste-zone');
-      if (pz) pz.style.display = 'none';
-      if (box) {
-        box.value = '';
-        if (typeof _pzText !== 'undefined' && _pzText) {
-          _pzText.dispatchEvent(new Event('input')); // keep auto-grow tidy
-        }
-        if (typeof box.blur === 'function') box.blur(); // optional: close mobile keyboard
+      // Parse & Preview from Paste Panel
+      const parsePreviewBtn = document.getElementById('ai-parse-preview-btn');
+      if (parsePreviewBtn) {
+        parsePreviewBtn.onclick = () => {
+          const box = document.getElementById('paste-zone-text');
+          if (!box) return __qb_toast('Paste box not found.');
+          const raw = (box.value || '').trim();
+          if (!raw) return __qb_toast('Nothing to parse. Paste the FINAL SET first.');
+          try {
+            const parsed = parseFinalSetIntoQuestions(raw, sessionParams);
+            if (!parsed.length) return __qb_toast('Could not find any Q1… blocks.');
+            currentSessionQuestions = parsed;
+            rerenderAllQuestions();
+            __qb_toast(`Parsed ${parsed.length} question(s).`);
+            const pz = document.getElementById('paste-zone');
+            if (pz) pz.style.display = 'none';
+            box.value = '';
+            _pzText && _pzText.dispatchEvent(new Event('input'));
+            const tgl = document.getElementById('ai-toggle-paste-btn');
+            if (tgl) { tgl.textContent = 'Show Paste Panel'; tgl.setAttribute?.('aria-expanded', 'false'); }
+          } catch (err) {
+            console.error(err);
+            __qb_toast('Parser error. Check the format (Q1:, A)–D), Ans: …).');
+          }
+        };
       }
-      const tgl = document.getElementById('ai-toggle-paste-btn');
-      if (tgl) {
-        tgl.textContent = 'Show Paste Panel';
-        tgl.setAttribute?.('aria-expanded', 'false'); // optional a11y
+
+      // Open ChatGPT with prefilled generation prompt (bottom full-width button)
+      const openCgBottomBtn = document.getElementById('open-chatgpt-bottom');
+      if (openCgBottomBtn) {
+        openCgBottomBtn.onclick = () => {
+          const genPrompt = buildChatGptGenerationPrompt(sessionParams);
+          openInChatGptWithPrefill(genPrompt);
+        };
       }
-      // Optional: clear the textarea after success
-      // box.value = '';
-      _pzText && _pzText.dispatchEvent(new Event('input'));
-    } catch (err) {
-      console.error(err);
-      __qb_toast('Parser error. Check the format (Q1:, A)–D), Ans: …).');
+
+      // Keep file-preview remove working
+      const removeFileBtn = document.getElementById('remove-file-btn');
+      if (removeFileBtn) {
+        removeFileBtn.onclick = () => {
+          stagedFile = null;
+          const box = document.getElementById('file-preview-box');
+          const name = document.getElementById('file-preview-name');
+          if (box) box.style.display = 'none';
+          if (name) name.textContent = '';
+        };
+      }
     }
-  };
-}
 
-const chatPromptInput = document.getElementById('chat-prompt-input');
-
-// Open ChatGPT with a pre-filled generation prompt (bottom full-width button)
-const openCgBottomBtn = document.getElementById('open-chatgpt-bottom');
-if (openCgBottomBtn) {
-  openCgBottomBtn.onclick = () => {
-    const genPrompt = buildChatGptGenerationPrompt(sessionParams);
-    openInChatGptWithPrefill(genPrompt);
-  };
-}
-
-// Input bar removed — keep file preview removal working if ever shown via other flows
-const removeFileBtn = document.getElementById('remove-file-btn');
-if (removeFileBtn) {
-  removeFileBtn.onclick = () => {
-    stagedFile = null;
-    const box = document.getElementById('file-preview-box');
-    const name = document.getElementById('file-preview-name');
-    if (box) box.style.display = 'none';
-    if (name) name.textContent = '';
-  };
-}
-
-}
 function updateSendButtonState(chatPromptInput, sendBtn) {
   if (chatPromptInput.value.trim() !== '' || stagedFile) {
     sendBtn.disabled = false;
@@ -1094,7 +1067,7 @@ function setupCustomDropdownsForForm() {
     const subjectInput = document.getElementById('subject-value-ai');
 
     const newSubjects = aiGeneratorConfig.getSubjectsForClass(selectedClass);
-    subjectOptions.innerHTML = newSubjects.map(s => <div data-value="${s}">${s}</div>).join('');
+   subjectOptions.innerHTML = newSubjects.map(s => `<div data-value="${s}">${s}</div>`).join('');
     subjectSelected.textContent = newSubjects[0] || 'Select Subject';
     subjectInput.value = newSubjects[0] || '';
 
@@ -1130,7 +1103,7 @@ function updateChapterDropdown(selectedClass, selectedSubject) {
     ? textbooks[selectedClass][selectedSubject]
     : [];
 
-  chapterOptions.innerHTML = chapters.map(ch => <div data-value="${ch}">${ch}</div>).join('');
+  chapterOptions.innerHTML = chapters.map(ch => `<div data-value="${ch}">${ch}</div>`).join('');
   chapterSelected.textContent = chapters[0] || 'Select Chapter';
   chapterInput.value = chapters[0] || '';
 
@@ -1178,14 +1151,15 @@ function toggleDropdown(dropdownId) {
 function showConfirmationModal(summary, originalPrompt, sessionParams) {
   const overlay = document.createElement('div');
   overlay.className = 'confirmation-overlay';
-  overlay.innerHTML = <div class="confirmation-modal">
+  overlay.innerHTML = `
+  <div class="confirmation-modal">
     <h3>Confirm Exam Instructions</h3>
     <p>${summary}</p>
     <div class="modal-buttons">
       <button id="confirm-cancel-btn">Cancel</button>
       <button id="confirm-proceed-btn">Proceed</button>
     </div>
-  </div>;
+  </div>`;
   document.body.appendChild(overlay);
 
   document.getElementById('confirm-cancel-btn').onclick = () => {
@@ -1193,7 +1167,7 @@ function showConfirmationModal(summary, originalPrompt, sessionParams) {
     // Re-enable the send button if cancelled
     const chatPromptInput = document.getElementById('chat-prompt-input');
     const sendBtn = document.getElementById('chat-send-btn');
-    sendBtn.innerHTML = <i class="fas fa-paper-plane"></i>;
+    sendBtn.innerHTML = `<i class="fas fa-paper-plane"></i>`;
     updateSendButtonState(chatPromptInput, sendBtn);
   };
 
@@ -1207,14 +1181,15 @@ function showConfirmationModal(summary, originalPrompt, sessionParams) {
 function showLeaveChatConfirm(onProceed, onCancel) {
   const overlay = document.createElement('div');
   overlay.className = 'confirmation-overlay';
-  overlay.innerHTML = <div class="confirmation-modal">
+  overlay.innerHTML = `
+  <div class="confirmation-modal">
     <h3>Confirm</h3>
     <p>Are you sure you want to go back? Unsaved questions in this chat will be lost.</p>
     <div class="modal-buttons">
       <button id="leave-cancel-btn">Cancel</button>
       <button id="leave-proceed-btn">Go Back</button>
     </div>
-  </div>;
+  </div>`;
   document.body.appendChild(overlay);
 
   document.getElementById('leave-cancel-btn').onclick = () => {
@@ -2850,3 +2825,4 @@ function showEditPopupForQuestion(index) {
 </script> 
 </body> 
 </html>
+
