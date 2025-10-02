@@ -926,7 +926,91 @@ function loadAiChatInterface(sessionParams) {
         return;
       }
       try {
-        const parsed = parseFinalSetIntoQuestions(raw, sessionParams);
+        const parsed = (function(raw, sessionParams){
+          const qtype = (sessionParams && sessionParams.questionType) || 'MCQ (Single)';
+          const text = String(raw || '').replace(/\r\n?/g, '\n').trim();
+          const blocks = [];
+          const re = /^Q\s*\d+:[\s\S]*?(?=\nQ\s*\d+:|\s*$)/gm;
+          let m; while ((m = re.exec(text)) !== null) blocks.push(m[0].trim());
+          if (!blocks.length) return [];
+        
+          const wrapParenLatex = s => String(s).replace(/^\((\\[a-zA-Z]+(?:\s*\{[^}]*\})+)\)$/g, '\\($1\\)');
+        
+          const out = [];
+          blocks.forEach((blk, i) => {
+            const lines = blk.split('\n').map(l => l.trim()).filter(Boolean);
+            if (!/^Q\s*\d+:/i.test(lines[0])) return;
+        
+            const meta = lines[0];
+            const levelMatch = meta.match(/Level\s*([1-3])/i);
+            const levelDisp = levelMatch ? `Level ${levelMatch[1]}` : 'Level ?';
+            const marksMatch = meta.match(/(\d+)\s*Mark/i);
+            const marksNum = marksMatch ? parseInt(marksMatch[1], 10) : (qtype.startsWith('MCQ') ? 1 : undefined);
+            const marksDisp = marksNum != null ? `${marksNum} Mark${marksNum === 1 ? '' : 's'}` : '';
+            const normalizedMeta = `Q${i + 1}: ${levelDisp}${marksDisp ? `, ${marksDisp}` : ''} [${qtype}]`;
+        
+            const firstOptIdx = lines.findIndex(l => /^[A-D][).]\s+/.test(l));
+            let questionText = '';
+            let optLines = [];
+            let ansLine = '';
+        
+            if (firstOptIdx >= 0) {
+              questionText = lines.slice(1, firstOptIdx).join('\n').trim();
+              optLines = lines.slice(firstOptIdx).filter(l => /^[A-D][).]\s+/.test(l));
+            } else {
+              questionText = lines.slice(1).filter(l => !/^Ans:/i.test(l)).join('\n').trim();
+            }
+            const ansIdx = lines.findIndex(l => /^Ans:/i.test(l));
+            if (ansIdx >= 0) ansLine = lines[ansIdx];
+        
+            let options = [];
+            if (qtype.startsWith('MCQ')) {
+              const optMap = { A: '', B: '', C: '', D: '' };
+              optLines.forEach(l => {
+                const mo = l.match(/^([A-D])[).]\s*(.+)$/);
+                if (!mo) return;
+                const k = mo[1];
+                let val = mo[2].trim();
+                val = wrapParenLatex(val);
+                optMap[k] = val;
+              });
+              options = ['A','B','C','D'].map(k => optMap[k]);
+            }
+        
+            let answerLetters = [];
+            if (ansLine) {
+              let mm; const letterRE = /\b([A-D])\b/g;
+              while ((mm = letterRE.exec(ansLine)) !== null) answerLetters.push(mm[1]);
+              answerLetters = [...new Set(answerLetters)];
+            }
+            let parsedAnswer = null;
+            if (answerLetters.length) {
+              parsedAnswer = qtype.includes('Multiple') && answerLetters.length > 1
+                ? `Ans: ${answerLetters.map(L => `${L})`).join(', ')}`
+                : `Ans: ${answerLetters[0]})`;
+            }
+        
+            let parsedBody = questionText;
+            if (qtype.startsWith('MCQ')) {
+              const labeled = options.map((t, idx) => `${String.fromCharCode(65 + idx)}) ${t}`);
+              parsedBody = [questionText, ...labeled].join('\n').trim();
+            }
+        
+            out.push({
+              fullText: `${normalizedMeta}\n${parsedBody}${parsedAnswer ? `\n${parsedAnswer}` : ''}`,
+              class: sessionParams.class,
+              subject: sessionParams.subject,
+              chapter: sessionParams.chapter,
+              parsedMeta: normalizedMeta,
+              question: questionText.split('\n')[0] || questionText,
+              options: qtype.startsWith('MCQ') ? options : [],
+              parsedAnswer,
+              parsedBody
+            });
+          });
+        
+          return out;
+        })(raw, sessionParams);
         if (!parsed.length) {
           __qb_toast('Could not find any Q1… blocks.');
           return;
@@ -2430,9 +2514,11 @@ function showEditPopupForQuestion(index) {
     rerenderAllQuestions();
   };
 }
+    
     </script>
 </body>
 </html>
+
 
 
 
