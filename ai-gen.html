@@ -960,15 +960,7 @@ function loadAiChatInterface(sessionParams) {
       }
     };
   }
-    function buildChatGptGenerationPrompt(sessionParams) {
-      return `Class: ${sessionParams.class}
-    Subject: ${sessionParams.subject}
-    Chapter: ${sessionParams.chapter}
-    Plan: ${sessionParams.levelPlan || ''}
-    
-    Please generate questions according to this plan.`;
-    }
-
+   
   const chatPromptInput = document.getElementById('chat-prompt-input');
 
   // Open ChatGPT with a pre-filled generation prompt (bottom full-width button)
@@ -1849,6 +1841,114 @@ async function openInChatGptWithPrefill(prompt) {
 }
 /* === end helpers === */
 
+/* === Prompt builder for initial generation in ChatGPT (FOUNDATION + CBSE modes, strict rules) === */
+function buildChatGptGenerationPrompt(sessionParams) {
+  const cls = sessionParams.class || '';
+  const subj = sessionParams.subject || '';
+  const chap = sessionParams.chapter || '';
+  const qtype = sessionParams.questionType || 'MCQ (Single)';
+  const plan = (sessionParams.levelPlan || '').trim();
+  const count = sessionParams.numQuestions || 20;
+  const isCBSE = /cbse/i.test(plan) || /cbse/i.test(subj);
+
+  // ---- COMMON headings ----
+  const header = `Class: ${cls}
+Subject: ${subj}
+Chapter: ${chap}
+Request: ${plan || (count + ' questions')}`;
+
+  // ---- LEVEL DEFINITIONS ----
+  const foundationLevels = `Use these Level definitions STRICTLY (Foundation/IIT-NEET mode):
+- Level 1: Foundation Easy & Medium
+  • Basic conceptual/recall/direct application aligned to Foundation style (not board textbook drill).
+  • Single concept, avoid multi-step reasoning; competitive-exam style but simple/focused.
+- Level 2: Foundation Difficult & Very Difficult
+  • Moderate application; 1–2 steps or combine 2 related ideas.
+  • 'Tricky' Foundation practice style; higher challenge than L1; not full Olympiad.
+- Level 3: Challenging & Olympiad/NTSE/IIT Foundation Advanced
+  • Multi-step logical reasoning, combining ≥2 concepts, non-standard twists/novel approaches.
+  • Do NOT output direct single-step/formula/memory questions.
+  • Inspired by Olympiad/NTSE/IIT-Foundation papers but adapted to this class & syllabus (change numbers/contexts).
+  • Keep within the class syllabus; no higher-class methods required.`;
+
+  const cbseLevels = `Use these Level definitions STRICTLY (CBSE mode):
+- Level 1: Knowledge/Recall (direct textbook/comprehension)
+- Level 2: Application/Interpretation (within CBSE chapter)
+- Level 3: HOTS (analysis/evaluation/synthesis as per CBSE)`;
+
+  // ---- STRICT ACCURACY ----
+  const strictAccuracy = `STRICT ACCURACY (applies to all):
+• Ensure every question is clear, unambiguous, and correct.
+• Double-check all facts/calculations/options/answers.
+• If any issue is found, fix it before output.
+• Math must use LaTeX where needed (e.g., \\frac{}, \\sqrt{}, exponents).`;
+
+  // ---- FORMAT RULES (base) ----
+  const numberingNote = `• Numbering must be continuous: Q1 to Q${count}.`;
+
+  // MCQ format
+  const mcqFormat = `Output EXACTLY ${count} questions. Format each question EXACTLY as:
+Q<num>: Level <1/2/3>, 1 Mark [${qtype}]
+<Question text>
+A) <Option A>
+B) <Option B>
+C) <Option C>
+D) <Option D>
+Ans: <A) or B) or C) or D)>
+
+Rules:
+${numberingNote}
+• Include A)–D) for every MCQ and an "Ans: …" line.
+• Use ONLY content from the selected class/subject/chapter (and any subtopic names present in "Request").
+• No headings, introductions, comments, or explanations—questions only.
+• I will ask for a FINAL SET later after corrections. This is the DRAFT output.
+${strictAccuracy}`;
+
+  // MCQ Multiple additional distribution rule (per 10)
+  const multiBlockRule = `Additional rules for MCQ (Multiple):
+• Some questions have multiple correct options (e.g., A), C)).
+• Spread correct letters across A–D; avoid patterns.
+• If total > 10, apply this distribution to EACH block of 10:
+  - Exactly 2 questions with 1 correct option
+  - Exactly 3 questions with 2 correct options
+  - Exactly 3 questions with 3 correct options
+  - Exactly 2 questions with 4 correct options
+• Before finishing, self-check that each 10-question block satisfies the distribution.`;
+
+  // DESCRIPTIVE format
+  const descFormat = `Generate EXACTLY ${count} Descriptive questions. Format each question EXACTLY as:
+Q<num>: Level <1/2/3>, <Marks> [Descriptive]
+<Question text>
+
+Rules:
+${numberingNote}
+• No options and no "Ans:" lines.
+• Use ONLY the selected chapter (and any subtopic names present in "Request").
+• No extra text—questions only.
+• I will ask for a FINAL SET later after corrections. This is the DRAFT output.
+${strictAccuracy}`;
+
+  // ----- Assemble prompt by type/mode -----
+  if (/Descriptive/i.test(qtype)) {
+    const levelBlock = isCBSE ? cbseLevels : foundationLevels;
+    return `${header}
+
+${levelBlock}
+
+${descFormat}`.trim();
+  }
+
+  // MCQ (Single or Multiple)
+  const levelBlock = isCBSE ? cbseLevels : foundationLevels;
+  const multiNote = /Multiple/i.test(qtype) ? `\n${multiBlockRule}` : '';
+
+  return `${header}
+
+${levelBlock}
+
+${mcqFormat}${multiNote}`.trim();
+}
+
 function splitMcqOptions(body) {
   if ((body.match(/^[A-D]\)/gm) || []).length >= 3) return body;
   if (/A\).+B\).+C\).+D\)/.test(body)) {
@@ -2330,10 +2430,9 @@ function showEditPopupForQuestion(index) {
     rerenderAllQuestions();
   };
 }
-
-
     </script>
 </body>
 </html>
+
 
 
