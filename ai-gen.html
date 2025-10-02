@@ -1708,10 +1708,18 @@ function __toPlainMath(s='') {
    function __autoWrapInlineMath(str='') {
   const wrap = t => `\\(${t}\\)`;
   return String(str).split('\n').map(line => {
-    // Leave normal sentences as plain text (prevents italics & space loss)
+   // Normalize Unicode square root to LaTeX first
+line = line.replace(/√\s*\(([^()]+)\)/g, '\\\\sqrt{$1}')
+           .replace(/√\s*([A-Za-z0-9]+)/g, '\\\\sqrt{$1}');
+
+// Leave normal sentences as plain text (prevents italics & space loss)
+
     if (/[A-Za-z]{3,}\s+[A-Za-z]{3,}/.test(line) && !/^[A-D]\)/.test(line)) {
       // Still wrap math-like chunks inside parentheses, e.g. (x^3/2), (\frac{...}{...})
-      return line.replace(/\(([^()]*?(?:\\frac|\\sqrt|[\^_]).*?)\)/g, (_, g1) => wrap(g1));
+      return line.replace(/\(([^()]*?(?:\\frac|\\sqrt|[\^_]).*?)\)/g, (_, g1) => {
+  if (/^\s*\d+(?:\.\d+)?\s*$/.test(g1)) return `(${g1})`; // leave (27), (243), etc.
+  return wrap(g1);
+});
     }
 
     // For option lines A)–D): keep label, wrap only math tail
@@ -1720,7 +1728,9 @@ function __toPlainMath(s='') {
     if (m) { head = m[1]; tail = m[2]; }
 
     tail = tail
-      .replace(/\(([^()]*?(?:\\frac|\\sqrt|[\^_]).*?)\)/g, (_, g1) => wrap(g1)) // parentheses math
+      .replace(/\(([^()]*?(?:\\frac|\\sqrt|[\^_]).*?)\)/g, (_, g1) => {
+  return (/^\s*\d+(?:\.\d+)?\s*$/.test(g1)) ? `(${g1})` : wrap(g1);
+}) // parentheses math
       .replace(/\\frac\{[^}]+\}\{[^}]+\}/g, s => wrap(s))                       // \frac
       .replace(/\\sqrt\{[^}]+\}/g, s => wrap(s))                                // \sqrt
       .replace(/\b([a-zA-Z]\s*\^\s*\{?[0-9]+(?:\/[0-9]+)?\}?)/g, s => wrap(s)); // x^9, x^{5/4}
@@ -2518,6 +2528,7 @@ questionData.parsedMeta = `Q${currentSessionQuestions.length + 1}: ${level}, ${m
     </script>
 </body>
 </html>
+
 
 
 
