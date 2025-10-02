@@ -1707,33 +1707,43 @@ function __toPlainMath(s='') {
 }
    function __autoWrapInlineMath(str='') {
   const wrap = t => `\\(${t}\\)`;
-  return String(str).split('\n').map(line => {
-   // Normalize Unicode square root to LaTeX first
-line = line.replace(/√\s*\(([^()]+)\)/g, '\\\\sqrt{$1}')
-           .replace(/√\s*([A-Za-z0-9]+)/g, '\\\\sqrt{$1}');
+  const hasDelims = s =>
+    /\\\(|\\\[|\$\$|\\begin\{/.test(s); // already mathy
 
-// Leave normal sentences as plain text (prevents italics & space loss)
+  return String(str).split('\n').map(rawLine => {
+    let line = rawLine;
 
-    if (/[A-Za-z]{3,}\s+[A-Za-z]{3,}/.test(line) && !/^[A-D]\)/.test(line)) {
-      // Still wrap math-like chunks inside parentheses, e.g. (x^3/2), (\frac{...}{...})
-      return line.replace(/\(([^()]*?(?:\\frac|\\sqrt|[\^_]).*?)\)/g, (_, g1) => {
-  if (/^\s*\d+(?:\.\d+)?\s*$/.test(g1)) return `(${g1})`; // leave (27), (243), etc.
-  return wrap(g1);
-});
+    // Normalize unicode √ to LaTeX
+    line = line.replace(/√\s*\(([^()]+)\)/g, '\\\\sqrt{$1}')
+               .replace(/√\s*([A-Za-z0-9]+)/g, '\\\\sqrt{$1}');
+
+    // Remove size modifiers that often cause delimiter errors
+    line = line.replace(/\\left|\\right|\\bigg?|\\Bigg?/g, '');
+
+    // If the line already uses any TeX delimiters, DON'T add new ones.
+    if (hasDelims(line)) {
+      // also collapse accidental duplicates like \(\(
+      line = line.replace(/\\\(\s*\\\(/g, '\\(')
+                 .replace(/\\\)\s*\\\)/g, '\\)')
+                 .replace(/\${3,}/g, '$$');
+      return line;
     }
 
-    // For option lines A)–D): keep label, wrap only math tail
+    // For option lines A)–D): keep the label, process the tail only
     const m = line.match(/^([A-D]\)\s*)(.*)$/);
     let head = '', tail = line;
     if (m) { head = m[1]; tail = m[2]; }
 
+    // Wrap math-y bits found inside parentheses like (x^{2/3}), (\frac{a}{b}), etc.
     tail = tail
       .replace(/\(([^()]*?(?:\\frac|\\sqrt|[\^_]).*?)\)/g, (_, g1) => {
-  return (/^\s*\d+(?:\.\d+)?\s*$/.test(g1)) ? `(${g1})` : wrap(g1);
-}) // parentheses math
-      .replace(/\\frac\{[^}]+\}\{[^}]+\}/g, s => wrap(s))                       // \frac
-      .replace(/\\sqrt\{[^}]+\}/g, s => wrap(s))                                // \sqrt
-      .replace(/\b([a-zA-Z]\s*\^\s*\{?[0-9]+(?:\/[0-9]+)?\}?)/g, s => wrap(s)); // x^9, x^{5/4}
+        // leave pure numbers like (27) unwrapped
+        return (/^\s*\d+(?:\.\d+)?\s*$/.test(g1)) ? `(${g1})` : wrap(g1);
+      })
+      // standalone LaTeX constructs -> wrap
+      .replace(/\\frac\{[^}]+\}\{[^}]+\}/g, s => wrap(s))
+      .replace(/\\sqrt\{[^}]+\}/g, s => wrap(s))
+      .replace(/\b([a-zA-Z]\s*\^\s*\{?[0-9]+(?:\/[0-9]+)?\}?)/g, s => wrap(s));
 
     return head + tail;
   }).join('\n');
@@ -2528,6 +2538,7 @@ questionData.parsedMeta = `Q${currentSessionQuestions.length + 1}: ${level}, ${m
     </script>
 </body>
 </html>
+
 
 
 
