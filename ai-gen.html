@@ -6,7 +6,7 @@
     <link rel="manifest" href="manifest.json">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
-    <script>
+   <script>
   window.MathJax = {
     loader: { load: ['[tex]/noerrors'] },
     tex: {
@@ -1761,7 +1761,7 @@ async function saveSessionQuestions(sessionParams) {
 
     const meta = parseMetaLine(qData.parsedMeta);
     const currentQuestionNumber = startNumber + savedCount; // Increment based on successfully saved count
-    const __wrap = __autoWrapInlineMath;
+    const __wrap = (s) => s;
 
     if (qData.parsedMeta && qData.parsedMeta.includes("[Comprehensive]")) {
       // Wrap passage + each MCQ body before saving
@@ -1871,7 +1871,10 @@ function __decodeEntities(s = '') {
   d.innerHTML = s;
   return d.value;
 }
-
+// Wrap ( ... ) as \( ... \) ONLY when the (...) contains a LaTeX command like \frac, \sqrt, \cdot, etc.
+function __wrapParenMath(s='') {
+  return String(s).replace(/\(([^()]*\\[A-Za-z][^()]*)\)/g, '\\($1\\)');
+}
 // Convert LaTeX-y input to plain math for ChatGPT prefill
 function __toPlainMath(s = '') {
   let t = String(s);
@@ -1900,52 +1903,6 @@ function __toPlainMath(s = '') {
   t = t.replace(/\\left/g, '').replace(/\\right/g, '');
 
   return t.replace(/[ \t]+\n/g, '\n').trim();
-}
-
-function __autoWrapInlineMath(str = '') {
-  const wrap = t => `\\(${t}\\)`;
-
-  return String(str)
-    .split('\n')
-    .map(line => {
-      // Normalize Unicode square root to LaTeX first
-      line = line
-        .replace(/√\s*\(([^()]+)\)/g, '\\\\sqrt{$1}')
-        .replace(/√\s*([A-Za-z0-9]+)/g, '\\\\sqrt{$1}');
-
-      // Leave normal sentences as plain text (prevents italics & space loss)
-      if (/[A-Za-z]{3,}\s+[A-Za-z]{3,}/.test(line) && !/^[A-D]\)/.test(line)) {
-        // Still wrap math-like chunks inside parentheses, e.g. (x^3/2), (\frac{...}{...})
-        return line.replace(/\(([^()]*?(?:\\frac|\\sqrt|[\^_]).*?)\)/g, (_, g1) => {
-          if (/^\s*\d+(?:\.\d+)?\s*$/.test(g1)) return `(${g1})`; // leave (27), (243), etc.
-          return wrap(g1);
-        });
-      }
-
-      // For option lines A)–D): keep label, wrap only math tail
-      const m = line.match(/^([A-D]\)\s*)(.*)$/);
-      let head = '', tail = line;
-
-      if (m) {
-        head = m[1];
-        tail = m[2];
-      }
-
-      tail = tail
-        // parentheses math
-        .replace(/\(([^()]*?(?:\\frac|\\sqrt|[\^_]).*?)\)/g, (_, g1) => {
-          return (/^\s*\d+(?:\.\d+)?\s*$/.test(g1)) ? `(${g1})` : wrap(g1);
-        })
-        // \frac
-        .replace(/\\frac\{[^}]+\}\{[^}]+\}/g, s => wrap(s))
-        // \sqrt
-        .replace(/\\sqrt\{[^}]+\}/g, s => wrap(s))
-        // x^9, x^{5/4}
-        .replace(/\b([a-zA-Z]\s*\^\s*\{?[0-9]+(?:\/[0-9]+)?\}?)/g, s => wrap(s));
-
-      return head + tail;
-    })
-    .join('\n');
 }
 
 /* === ChatGPT handoff helpers (AI Generator) === */
@@ -2505,7 +2462,7 @@ function createQuestionElement(qData, index) {
 
   questionEl.innerHTML = `
     <div class="question-meta-ai">${qData.parsedMeta}</div>
-    <div class="question-text-ai">${__autoWrapInlineMath(qData.parsedBody)}</div>
+    <div class="question-text-ai">${__wrapParenMath(qData.parsedBody)}</div>
     <div class="question-actions">
       <button class="q-action-btn" title="Options"><i class="fas fa-ellipsis-v"></i></button>
     </div>
@@ -2591,7 +2548,7 @@ function rerenderAllQuestions() {
 
         return `
           <div class="question-text-ai" style="margin-top:8px; text-align:left;">
-            <b>Q${k + 1}.</b> ${__autoWrapInlineMath(cleanBody.replace(/</g,"&lt;").replace(/>/g,"&gt;"))}
+            <b>Q${k+1}.</b> ${__wrapParenMath(cleanBody.replace(/</g,"&lt;").replace(/>/g,"&gt;"))}
             <div class="temp-answer" style="display:none; margin-top:3px; color:#5d4037;">
               ${mcq.answer ? mcq.answer : ''}
             </div>
@@ -2601,9 +2558,7 @@ function rerenderAllQuestions() {
 
       blockEl.innerHTML = `
         <div class="question-meta-ai">${q.parsedMeta}</div>
-        <div class="question-text-ai" style="white-space:pre-line; margin-bottom:8px;">
-          <b>Passage:</b> ${__autoWrapInlineMath(q.passage || '')}
-        </div>
+        <div class="question-text-ai" style="white-space:pre-line; margin-bottom:8px;"><b>Passage:</b> ${__wrapParenMath(q.passage || '')}</div>
         ${mcqHtml}
         <div class="question-actions">
           <button class="q-action-btn" title="Options"><i class="fas fa-ellipsis-v"></i></button>
@@ -2822,6 +2777,7 @@ function showEditPopupForQuestion(index) {
 </script> 
 </body> 
 </html>
+
 
 
 
