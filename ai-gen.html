@@ -949,19 +949,27 @@ function loadAiChatInterface(sessionParams) {
             const marksDisp = marksNum != null ? `${marksNum} Mark${marksNum === 1 ? '' : 's'}` : '';
             const normalizedMeta = `Q${i + 1}: ${levelDisp}${marksDisp ? `, ${marksDisp}` : ''} [${qtype}]`;
         
-            const firstOptIdx = lines.findIndex(l => /^[A-D][).]\s+/.test(l));
+            const firstOptIdx = lines.findIndex(l => /^[A-D][).]\s*/.test(l));
             let questionText = '';
             let optLines = [];
             let ansLine = '';
         
-            if (firstOptIdx >= 0) {
-              questionText = lines.slice(1, firstOptIdx).join('\n').trim();
-              optLines = lines.slice(firstOptIdx).filter(l => /^[A-D][).]\s+/.test(l));
-            } else {
-              questionText = lines.slice(1).filter(l => !/^Ans:/i.test(l)).join('\n').trim();
-            }
             const ansIdx = lines.findIndex(l => /^Ans:/i.test(l));
-            if (ansIdx >= 0) ansLine = lines[ansIdx];
+const stopIdx = [firstOptIdx, ansIdx].filter(i => i >= 0)
+  .reduce((a, b) => Math.min(a, b), Infinity);
+
+if (isFinite(stopIdx)) {
+  // from after Qn: up to the first A)/B)/C)/D) or Ans:
+  questionText = lines.slice(1, stopIdx).join('\n').trim();
+  if (firstOptIdx >= 0) {
+    optLines = lines.slice(firstOptIdx, isFinite(ansIdx) ? ansIdx : undefined)
+      .filter(l => /^[A-D][).]\s*/.test(l));
+  }
+} else {
+  // no options, no answer → everything after Qn: is question body
+  questionText = lines.slice(1).join('\n').trim();
+}
+if (ansIdx >= 0) ansLine = lines[ansIdx];
         
             let options = [];
             if (qtype.startsWith('MCQ')) {
@@ -2518,6 +2526,7 @@ function showEditPopupForQuestion(index) {
     </script>
 </body>
 </html>
+
 
 
 
