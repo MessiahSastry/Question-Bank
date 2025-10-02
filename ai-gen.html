@@ -624,23 +624,24 @@ body.chat-lock { overflow: hidden; height: 100vh; }
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js"></script>
 
    <script>
-    // --- FULL JAVASCRIPT ---
+// --- FULL JAVASCRIPT ---
+const API_BASE_URL = 'https://question-bank-lqsu.onrender.com';
 
-    const API_BASE_URL = 'https://question-bank-lqsu.onrender.com';
-    const firebaseConfig = {
-      apiKey: "AIzaSyAszVhWXUUOYLQ7VimKmPKf1yEu_CI9RCE",
-      authDomain: "stpatricks-questionbank.firebaseapp.com",
-      projectId: "stpatricks-questionbank",
-      storageBucket: "stpatricks-questionbank.appspot.com",
-      messagingSenderId: "917615322861",
-      appId: "1:917615322861:web:c6c890aa2184dd395b8ee4"
-    };
-    firebase.initializeApp(firebaseConfig);
-    const auth = firebase.auth();
-   const db = firebase.firestore(); let stagedFile = null;
+const firebaseConfig = {
+  apiKey: "AIzaSyAszVhWXUUOYLQ7VimKmPKf1yEu_CI9RCE",
+  authDomain: "stpatricks-questionbank.firebaseapp.com",
+  projectId: "stpatricks-questionbank",
+  storageBucket: "stpatricks-questionbank.appspot.com",
+  messagingSenderId: "917615322861",
+  appId: "1:917615322861:web:c6c890aa2184dd395b8ee4"
+};
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+const db = firebase.firestore();
+
+let stagedFile = null;
 let currentUserProfile = null;
-let currentSessionQuestions = [];
-// NEW: navigation guards
+let currentSessionQuestions = []; // NEW: navigation guards
 let currentPage = 'form';
 let lastSessionParams = null;
 
@@ -659,396 +660,451 @@ const aiGeneratorConfig = {
   questionTypes: ["MCQ (Single)", "MCQ (Multiple)", "Descriptive"],
   getSubjectsForClass: function(className) { return this.subjectMappings[className] || []; }
 };
-  
-    document.addEventListener('DOMContentLoaded', () => {
-      auth.onAuthStateChanged(user => {
-        if (user) {
-          currentUserProfile = { uid: user.uid, email: user.email, displayName: user.displayName };
-          const state = history.state || {};
+
+document.addEventListener('DOMContentLoaded', () => {
+  auth.onAuthStateChanged(user => {
+    if (user) {
+      currentUserProfile = { uid: user.uid, email: user.email, displayName: user.displayName };
+      const state = history.state || {};
+      if (state.page === 'chat') {
+        loadAiChatInterface(state.sessionParams);
+      } else {
+        loadAiQuestionGeneratorForm();
+      }
+    } else {
+      window.location.href = 'login.html';
+    }
+  });
+
+  window.addEventListener('popstate', (event) => {
+    const state = event.state || {};
+    // If we are leaving chat, confirm first
+    if (currentPage === 'chat' && state.page !== 'chat') {
+      showLeaveChatConfirm(
+        () => { // proceed
+          currentPage = state.page === 'chat' ? 'chat' : 'form';
           if (state.page === 'chat') {
-            loadAiChatInterface(state.sessionParams);
+            loadAiChatInterface(state.sessionParams || lastSessionParams || {});
           } else {
             loadAiQuestionGeneratorForm();
           }
-        } else {
-          window.location.href = 'login.html';
+        },
+        () => { // cancel -> restore chat state
+          history.pushState({ page: 'chat', sessionParams: lastSessionParams }, 'Chat', '#chat');
         }
-      });
-      window.addEventListener('popstate', (event) => {
-  const state = event.state || {};
+      );
+      return; // stop default handling until user decides
+    }
+    // Normal navigation
+    if (state.page === 'chat') {
+      loadAiChatInterface(state.sessionParams || lastSessionParams || {});
+    } else {
+      loadAiQuestionGeneratorForm();
+    }
+  });
 
-  // If we are leaving chat, confirm first
-  if (currentPage === 'chat' && state.page !== 'chat') {
-    showLeaveChatConfirm(
-      () => { // proceed
-        currentPage = state.page === 'chat' ? 'chat' : 'form';
-        if (state.page === 'chat') {
-          loadAiChatInterface(state.sessionParams || lastSessionParams || {});
-        } else {
-          loadAiQuestionGeneratorForm();
-        }
-      },
-      () => { // cancel -> restore chat state
-        history.pushState({ page: 'chat', sessionParams: lastSessionParams }, 'Chat', '#chat');
-      }
-    );
-    return; // stop default handling until user decides
-  }
-
-  // Normal navigation
-  if (state.page === 'chat') {
-    loadAiChatInterface(state.sessionParams || lastSessionParams || {});
-  } else {
-    loadAiQuestionGeneratorForm();
-  }
+  // Warn if user tries to close/refresh while in chat with unsaved questions
+  window.addEventListener('beforeunload', (e) => {
+    if (currentPage === 'chat' && Array.isArray(currentSessionQuestions) && currentSessionQuestions.length > 0) {
+      e.preventDefault();
+      e.returnValue = ''; // required for Chrome/Edge
+    }
+  });
 });
-        // Warn if user tries to close/refresh while in chat with unsaved questions
-window.addEventListener('beforeunload', (e) => {
-  if (currentPage === 'chat' && Array.isArray(currentSessionQuestions) && currentSessionQuestions.length > 0) {
-    e.preventDefault();
-    e.returnValue = ''; // required for Chrome/Edge
-  }
-});
-    });
-    
-    function loadAiQuestionGeneratorForm() {
-    currentPage = 'form';
-    document.body.classList.remove('chat-lock');
-      document.getElementById('main-header').style.display = 'flex';
-      const container = document.getElementById('ai-container');
-      container.innerHTML = '<div class="setup-form-container"></div>';
-      const formContainer = container.querySelector('.setup-form-container');
-      const classesHTML = aiGeneratorConfig.classes.map(c => `<div data-value="${c}">${c}</div>`).join('');
-      const initialSubjects = aiGeneratorConfig.getSubjectsForClass(aiGeneratorConfig.classes[0]);
-      const subjectsHTML = initialSubjects.map(s => `<div data-value="${s}">${s}</div>`).join('');
-      const qTypesHTML = aiGeneratorConfig.questionTypes.map(qt => `<div data-value="${qt}">${qt}</div>`).join('');
-      
-            formContainer.innerHTML = `
-      <h2>AI Question Generator</h2>
-        <form id="ai-setup-form">
-            <div class="form-group"><label>Class:</label><div id="class-dropdown-ai" class="custom-dropdown"><input type="hidden" id="class-value-ai" value="${aiGeneratorConfig.classes[0]}"><div class="selected-option">${aiGeneratorConfig.classes[0]}</div><div class="dropdown-options">${classesHTML}</div></div></div>
-            <div class="form-group"><label>Subject:</label><div id="subject-dropdown-ai" class="custom-dropdown"><input type="hidden" id="subject-value-ai" value="${initialSubjects[0] || ''}"><div class="selected-option">${initialSubjects[0] || 'Select Subject'}</div><div class="dropdown-options">${subjectsHTML}</div></div></div>
-            <div class="form-group"><label>Question Type:</label><div id="qtype-dropdown-ai" class="custom-dropdown"><input type="hidden" id="qtype-value-ai" value="${aiGeneratorConfig.questionTypes[0]}"><div class="selected-option">${aiGeneratorConfig.questionTypes[0]}</div><div class="dropdown-options">${qTypesHTML}</div></div></div>
-            <div class="form-group">
-              <label>Chapter:</label>
-              <div id="chapter-dropdown-ai" class="custom-dropdown">
-                <input type="hidden" id="chapter-value-ai" value="">
-                <div class="selected-option">Select Chapter</div>
-                <div class="dropdown-options"></div>
-              </div>
-            </div>
 
-            <!-- NEW: Single input for Questions & Levels -->
-            <div class="form-group">
-              <label>Questions & Levels:</label>
-              <input type="text" id="qlevel-plan-ai" placeholder="e.g., 20 Level 2   |   20 Mixed (L1–L3)   |   15 (L1:5, L2:5, L3:5)" />
-              <div style="font-size:12px;color:#5b6b7a;margin-top:6px;">
-                Examples: <em>20 Level 2</em> · <em>20 Mixed (L1–L3)</em> · <em>15 (L1:5, L2:5, L3:5)</em>
-              </div>
-            </div>
+function loadAiQuestionGeneratorForm() {
+  currentPage = 'form';
+  document.body.classList.remove('chat-lock');
+  document.getElementById('main-header').style.display = 'flex';
 
-            <button type="submit">Start Generating</button>
-       </form>`;
-        const initialChapters =
-          textbooks[aiGeneratorConfig.classes[0]] && textbooks[aiGeneratorConfig.classes[0]][initialSubjects[0]]
-            ? textbooks[aiGeneratorConfig.classes[0]][initialSubjects[0]]
-            : [];
-        const chaptersHTML = initialChapters.map(ch => `<div data-value="${ch}">${ch}</div>`).join('');
-        const chapterDropdown = formContainer.querySelector('#chapter-dropdown-ai .dropdown-options');
-        const chapterSelected = formContainer.querySelector('#chapter-dropdown-ai .selected-option');
-        const chapterInput = formContainer.querySelector('#chapter-value-ai');
-        chapterDropdown.innerHTML = chaptersHTML;
-        chapterSelected.textContent = initialChapters[0] || 'Select Chapter';
-        chapterInput.value = initialChapters[0] || '';
-      
-      setupCustomDropdownsForForm();
-           document.getElementById("ai-setup-form").onsubmit = (e) => {
-        e.preventDefault();
+  const container = document.getElementById('ai-container');
+  container.innerHTML = '<div class="setup-form-container"></div>';
+  const formContainer = container.querySelector('.setup-form-container');
 
-        const planRaw = (document.getElementById('qlevel-plan-ai').value || '').trim();
-        const numMatch = planRaw.match(/\d+/); // first integer in the plan
-        const derivedCount = numMatch ? parseInt(numMatch[0], 10) : 20; // fallback 20
+  const classesHTML = aiGeneratorConfig.classes.map(c => `<div data-value="${c}">${c}</div>`).join('');
+  const initialSubjects = aiGeneratorConfig.getSubjectsForClass(aiGeneratorConfig.classes[0]);
+  const subjectsHTML = initialSubjects.map(s => `<div data-value="${s}">${s}</div>`).join('');
+  const qTypesHTML = aiGeneratorConfig.questionTypes.map(qt => `<div data-value="${qt}">${qt}</div>`).join('');
 
-        const sessionParams = {
-          class: document.getElementById('class-value-ai').value,
-          subject: document.getElementById('subject-value-ai').value,
-          questionType: document.getElementById('qtype-value-ai').value,
-          chapter: document.getElementById('chapter-value-ai').value,
-          levelPlan: planRaw || '20 Level 2',     // NEW: free-form plan text the user typed
-          numQuestions: derivedCount               // NEW: numeric count derived from plan
-        };
-
-        if (!sessionParams.chapter || !sessionParams.subject) return;
-        history.pushState({ page: 'chat', sessionParams: sessionParams }, 'Chat', '#chat');
-        loadAiChatInterface(sessionParams);
-      };
-    }
-    
-    function loadAiChatInterface(sessionParams) {
-    currentPage = 'chat';
-    lastSessionParams = sessionParams;
-
-    document.body.classList.add('chat-lock');
-    document.getElementById('main-header').style.display = 'none';
-        const container = document.getElementById('ai-container');
-        currentSessionQuestions = [];
-        container.innerHTML = `
-        <div class="ai-chat-container">
-            <div class="ai-chat-header chat-ui-bar">
-                <div class="chat-header-line">
-                    <p><b>Class:</b> ${sessionParams.class} / <b>Subject:</b> ${sessionParams.subject}</p>
-                </div>
-                <div class="chat-header-line">
-                    <p><b>Chapter:</b> ${sessionParams.chapter}</p>
-                </div>
-                 <div class="chat-header-line">
-                    <p><b>Plan:</b> ${sessionParams.levelPlan || ''}</p>
-                </div>
-                    <div class="chat-header-line buttons actions-row">
-                  <button id="ai-change-setup-btn" class="btn action-saffron">Change Setup</button>
-                  <button id="ai-parse-preview-btn" class="btn action-outline">Preview</button>
-                  <button id="ai-save-all-btn" class="btn action-green">Save All</button>
-                </div>
-              </div> <!-- end .ai-chat-header -->
-
-             <button id="ai-toggle-paste-btn" class="strip-cta">
-              Show Paste Panel
-            </button>
-              <!-- Paste Zone (FINAL SET from ChatGPT) -->
-            <div id="paste-zone" class="paste-zone"
-                 style="display:none;background:#ffffff;border:1px solid #bcd6ef;border-radius:10px;margin:10px 15px 0 15px;">
-              <div class="pz-head" style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid #e6eff8;">
-                <span style="font-weight:700;color:#0f3d6b;">Paste FINAL QUESTIONS</span>
-              </div>
-            
-              <!-- BIGGER textarea (~half screen) -->
-              <textarea id="paste-zone-text"
-                        placeholder="Paste the FINAL SET block here (Q1 … QN). The parser ignores extra chat text automatically."
-                        style="width:100%;box-sizing:border-box;border:none;outline:none;padding:12px 12px 16px 12px;
-                               font-size:15px;line-height:1.4;resize:vertical;background:#fff;border-radius:0 0 10px 10px;
-                               min-height:45vh;height:45vh;"></textarea>
-            
-              <div class="pz-note" style="font-size:12px;color:#5b6b7a;padding:0 12px 12px 12px;">
-                Tip: Ask AI for one corrected block (Q1–Q<span id="pz-expected-n"></span>) with no extra text. Then paste it here.
-              </div>
-            </div>
-
-            <div id="chat-messages-area" class="chat-messages-area"></div>
-            <div id="file-preview-box" style="display: none; padding: 6px 16px; background: white; color: #333; font-size: 0.9em; font-family: 'Segoe UI', sans-serif; border-bottom: 1px solid #ddd;">
-                <span style="color: #1762a7;">📄</span>
-                <span id="file-preview-name" style="font-weight: 600; color: #333;"></span>
-                <button id="remove-file-btn" style="background: none; border: none; color: #c82333; font-size: 1.1em; cursor: pointer; margin-left: 10px;" title="Remove File">❌</button>
-            </div>
-            <div id="chat-input-bar" class="chat-ui-bar chat-input-bar" style="padding:0">
-  <button id="open-chatgpt-bottom" class="fullwidth-open-btn" aria-label="Open in ChatGPT">Get Questions</button>
-</div>
-            <button id="scroll-to-bottom" title="Scroll to Bottom">⬇️</button>
-        </div>`;
-        document.getElementById('ai-change-setup-btn').onclick = () => {
-  showLeaveChatConfirm(() => history.back(), () => {});
-};
-        document.getElementById('ai-save-all-btn').onclick = () => saveSessionQuestions(sessionParams);
-               // Toggle the paste panel thin strip
-        const pasteToggleBtn = document.getElementById('ai-toggle-paste-btn');
-        const pasteZone = document.getElementById('paste-zone');
-        if (pasteToggleBtn && pasteZone) {
-          pasteToggleBtn.onclick = () => {
-            const isOpen = pasteZone.style.display !== 'none';
-            pasteZone.style.display = isOpen ? 'none' : 'block';
-            pasteToggleBtn.textContent = isOpen ? 'Show Paste Panel' : 'Hide Paste Panel';
-            pasteToggleBtn.setAttribute('aria-expanded', String(!isOpen));
-            if (!isOpen) document.getElementById('paste-zone-text')?.focus();
-          };
-        }
-
-        // --- Paste panel minimal helpers ---
-// Show expected N in the tip
-const _pzExpected = document.getElementById('pz-expected-n');
-if (_pzExpected) _pzExpected.textContent = String(sessionParams.numQuestions || 20);
-
-// Auto-grow textarea a bit for comfort
-const _pzText = document.getElementById('paste-zone-text');
-if (_pzText) {
-  const _autoGrow = () => {
-    _pzText.style.height = 'auto';
-      const maxH = Math.floor(window.innerHeight * 0.5); // ~50% of screen
-    const h = Math.min(_pzText.scrollHeight, maxH);
-    _pzText.style.height = h + 'px';
-    _pzText.style.overflowY = (_pzText.scrollHeight > maxH) ? 'auto' : 'hidden';
-  };
-  _pzText.addEventListener('input', _autoGrow);
-  _autoGrow();
-}
-
-// Wire the new top-bar "Parse & Preview" button to read from the paste textarea
-const parsePreviewBtn = document.getElementById('ai-parse-preview-btn');
-if (parsePreviewBtn) {
-  parsePreviewBtn.onclick = () => {
-    const box = document.getElementById('paste-zone-text');
-    if (!box) { __qb_toast('Paste box not found.'); return; }
-    const raw = (box.value || '').trim();
-    if (!raw) { __qb_toast('Nothing to parse. Paste the FINAL SET first.'); return; }
-
-    try {
-      const parsed = parseFinalSetIntoQuestions(raw, sessionParams);
-      if (!parsed.length) { __qb_toast('Could not find any Q1… blocks.'); return; }
-
-      // Replace current session questions (default behavior)
-      currentSessionQuestions = parsed;
-      rerenderAllQuestions();
-      __qb_toast(`Parsed ${parsed.length} question(s).`);
-      // Collapse + clear paste panel after a successful parse
-const pz = document.getElementById('paste-zone');
-if (pz) pz.style.display = 'none';
-
-if (box) {
-  box.value = '';
-  if (typeof _pzText !== 'undefined' && _pzText) {
-    _pzText.dispatchEvent(new Event('input')); // keep auto-grow tidy
-  }
-  if (typeof box.blur === 'function') box.blur(); // optional: close mobile keyboard
-}
-
-const tgl = document.getElementById('ai-toggle-paste-btn');
-if (tgl) {
-  tgl.textContent = 'Show Paste Panel';
-  tgl.setAttribute?.('aria-expanded', 'false'); // optional a11y
-}
-
-      // Optional: clear the textarea after success
-      // box.value = ''; _pzText && _pzText.dispatchEvent(new Event('input'));
-    } catch (err) {
-      console.error(err);
-      __qb_toast('Parser error. Check the format (Q1:, A)–D), Ans: …).');
-    }
-  };
-}
-        const chatPromptInput = document.getElementById('chat-prompt-input');
-                // Open ChatGPT with a pre-filled generation prompt (bottom full-width button)
-                const openCgBottomBtn = document.getElementById('open-chatgpt-bottom');
-                if (openCgBottomBtn) {
-                  openCgBottomBtn.onclick = () => {
-                    const genPrompt = buildChatGptGenerationPrompt(sessionParams);
-                    openInChatGptWithPrefill(genPrompt);
-                  };
-                }
-                
-        // Input bar removed — keep file preview removal working if ever shown via other flows
-const removeFileBtn = document.getElementById('remove-file-btn');
-if (removeFileBtn) {
-  removeFileBtn.onclick = () => {
-    stagedFile = null;
-    const box = document.getElementById('file-preview-box');
-    const name = document.getElementById('file-preview-name');
-    if (box) box.style.display = 'none';
-    if (name) name.textContent = '';
-  };
-}
-    } 
-
-    function updateSendButtonState(chatPromptInput, sendBtn) {
-        if (chatPromptInput.value.trim() !== '' || stagedFile) {
-            sendBtn.disabled = false;
-        } else {
-            sendBtn.disabled = true;
-        }
-    }
-    
-    function setupCustomDropdownsForForm() {
-        setupCustomDropdown('class-dropdown-ai', 'class-value-ai', (selectedClass) => {
-            const subjectDropdown = document.getElementById('subject-dropdown-ai');
-            const subjectOptions = subjectDropdown.querySelector('.dropdown-options');
-            const subjectSelected = subjectDropdown.querySelector('.selected-option');
-            const subjectInput = document.getElementById('subject-value-ai');
-            const newSubjects = aiGeneratorConfig.getSubjectsForClass(selectedClass);
-            subjectOptions.innerHTML = newSubjects.map(s => `<div data-value="${s}">${s}</div>`).join('');
-            subjectSelected.textContent = newSubjects[0] || 'Select Subject';
-            subjectInput.value = newSubjects[0] || '';
-            updateChapterDropdown(selectedClass, newSubjects[0] || '');
-            optionsContainerListener(subjectOptions, subjectSelected, subjectInput, subjectDropdown, (newSubject) => {
-                updateChapterDropdown(selectedClass, newSubject);
-            });
-        });
-        setupCustomDropdown('subject-dropdown-ai', 'subject-value-ai', (selectedSubject) => {
-            const selectedClass = document.getElementById('class-value-ai').value;
-            updateChapterDropdown(selectedClass, selectedSubject);
-        });
-        setupCustomDropdown('qtype-dropdown-ai', 'qtype-value-ai');
-        setupCustomDropdown('chapter-dropdown-ai', 'chapter-value-ai');
-    }
-
-    function updateChapterDropdown(selectedClass, selectedSubject) {
-        const chapterDropdown = document.getElementById('chapter-dropdown-ai');
-        const chapterOptions = chapterDropdown.querySelector('.dropdown-options');
-        const chapterSelected = chapterDropdown.querySelector('.selected-option');
-        const chapterInput = document.getElementById('chapter-value-ai');
-        const chapters = (textbooks[selectedClass] && textbooks[selectedClass][selectedSubject]) ? textbooks[selectedClass][selectedSubject] : [];
-        chapterOptions.innerHTML = chapters.map(ch => `<div data-value="${ch}">${ch}</div>`).join('');
-        chapterSelected.textContent = chapters[0] || 'Select Chapter';
-        chapterInput.value = chapters[0] || '';
-        optionsContainerListener(chapterOptions, chapterSelected, chapterInput, chapterDropdown, null);
-    }
-
-    function setupCustomDropdown(dropdownId, inputId, callback) {
-        const dropdown = document.getElementById(dropdownId);
-        if (!dropdown) return;
-        const selected = dropdown.querySelector('.selected-option');
-        const options = dropdown.querySelector('.dropdown-options');
-        const input = document.getElementById(inputId);
-        selected.onclick = (e) => { e.stopPropagation(); toggleDropdown(dropdownId); };
-        optionsContainerListener(options, selected, input, dropdown, callback);
-    }
-
-    function optionsContainerListener(options, selected, input, dropdown, callback) {
-        options.querySelectorAll('div[data-value]').forEach(option => {
-            option.onclick = () => {
-                selected.textContent = option.textContent;
-                input.value = option.dataset.value;
-                dropdown.classList.remove('open');
-                if (callback) callback(input.value);
-            };
-        });
-    }
-
-    function toggleDropdown(dropdownId) {
-        const currentDropdown = document.getElementById(dropdownId);
-        if(!currentDropdown) return;
-        const currentlyOpen = currentDropdown.classList.contains('open');
-        document.querySelectorAll('.custom-dropdown.open').forEach(d => {
-            if (d.id !== dropdownId) d.classList.remove('open');
-        });
-        if(!currentlyOpen) currentDropdown.classList.add('open');
-    }
-       function showConfirmationModal(summary, originalPrompt, sessionParams) {
-    const overlay = document.createElement('div');
-    overlay.className = 'confirmation-overlay';
-
-    overlay.innerHTML = `
-        <div class="confirmation-modal">
-            <h3>Confirm Exam Instructions</h3>
-            <p>${summary}</p>
-            <div class="modal-buttons">
-                <button id="confirm-cancel-btn">Cancel</button>
-                <button id="confirm-proceed-btn">Proceed</button>
-            </div>
+  formContainer.innerHTML = `
+    <h2>AI Question Generator</h2>
+    <form id="ai-setup-form">
+      <div class="form-group">
+        <label>Class:</label>
+        <div id="class-dropdown-ai" class="custom-dropdown">
+          <input type="hidden" id="class-value-ai" value="${aiGeneratorConfig.classes[0]}">
+          <div class="selected-option">${aiGeneratorConfig.classes[0]}</div>
+          <div class="dropdown-options">${classesHTML}</div>
         </div>
-    `;
-    document.body.appendChild(overlay);
+      </div>
 
-    document.getElementById('confirm-cancel-btn').onclick = () => {
-        overlay.remove();
-        // Re-enable the send button if cancelled
-        const chatPromptInput = document.getElementById('chat-prompt-input');
-        const sendBtn = document.getElementById('chat-send-btn');
-        sendBtn.innerHTML = `<i class="fas fa-paper-plane"></i>`;
-        updateSendButtonState(chatPromptInput, sendBtn);
-    };
+      <div class="form-group">
+        <label>Subject:</label>
+        <div id="subject-dropdown-ai" class="custom-dropdown">
+          <input type="hidden" id="subject-value-ai" value="${initialSubjects[0] || ''}">
+          <div class="selected-option">${initialSubjects[0] || 'Select Subject'}</div>
+          <div class="dropdown-options">${subjectsHTML}</div>
+        </div>
+      </div>
 
-    document.getElementById('confirm-proceed-btn').onclick = () => {
-        overlay.remove();
-        proceedWithGeneration(originalPrompt, sessionParams);
+      <div class="form-group">
+        <label>Question Type:</label>
+        <div id="qtype-dropdown-ai" class="custom-dropdown">
+          <input type="hidden" id="qtype-value-ai" value="${aiGeneratorConfig.questionTypes[0]}">
+          <div class="selected-option">${aiGeneratorConfig.questionTypes[0]}</div>
+          <div class="dropdown-options">${qTypesHTML}</div>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>Chapter:</label>
+        <div id="chapter-dropdown-ai" class="custom-dropdown">
+          <input type="hidden" id="chapter-value-ai" value="">
+          <div class="selected-option">Select Chapter</div>
+          <div class="dropdown-options"></div>
+        </div>
+      </div>
+
+      <!-- NEW: Single input for Questions & Levels -->
+      <div class="form-group">
+        <label>Questions & Levels:</label>
+        <input type="text" id="qlevel-plan-ai" placeholder="e.g., 20 Level 2 | 20 Mixed (L1–L3) | 15 (L1:5, L2:5, L3:5)" />
+        <div style="font-size:12px;color:#5b6b7a;margin-top:6px;">
+          Examples: <em>20 Level 2</em> · <em>20 Mixed (L1–L3)</em> · <em>15 (L1:5, L2:5, L3:5)</em>
+        </div>
+      </div>
+
+      <button type="submit">Start Generating</button>
+    </form>
+  `;
+
+  const initialChapters = (textbooks[aiGeneratorConfig.classes[0]] && textbooks[aiGeneratorConfig.classes[0]][initialSubjects[0]])
+    ? textbooks[aiGeneratorConfig.classes[0]][initialSubjects[0]] : [];
+  const chaptersHTML = initialChapters.map(ch => `<div data-value="${ch}">${ch}</div>`).join('');
+  const chapterDropdown = formContainer.querySelector('#chapter-dropdown-ai .dropdown-options');
+  const chapterSelected = formContainer.querySelector('#chapter-dropdown-ai .selected-option');
+  const chapterInput = formContainer.querySelector('#chapter-value-ai');
+  chapterDropdown.innerHTML = chaptersHTML;
+  chapterSelected.textContent = initialChapters[0] || 'Select Chapter';
+  chapterInput.value = initialChapters[0] || '';
+
+  setupCustomDropdownsForForm();
+
+  document.getElementById("ai-setup-form").onsubmit = (e) => {
+    e.preventDefault();
+    const planRaw = (document.getElementById('qlevel-plan-ai').value || '').trim();
+    const numMatch = planRaw.match(/\d+/); // first integer in the plan
+    const derivedCount = numMatch ? parseInt(numMatch[0], 10) : 20; // fallback 20
+
+    const sessionParams = {
+      class: document.getElementById('class-value-ai').value,
+      subject: document.getElementById('subject-value-ai').value,
+      questionType: document.getElementById('qtype-value-ai').value,
+      chapter: document.getElementById('chapter-value-ai').value,
+      levelPlan: planRaw || '20 Level 2', // NEW: free-form plan text the user typed
+      numQuestions: derivedCount // NEW: numeric count derived from plan
     };
+    if (!sessionParams.chapter || !sessionParams.subject) return;
+
+    history.pushState({ page: 'chat', sessionParams: sessionParams }, 'Chat', '#chat');
+    loadAiChatInterface(sessionParams);
+  };
 }
+
+function loadAiChatInterface(sessionParams) {
+  currentPage = 'chat';
+  lastSessionParams = sessionParams;
+  document.body.classList.add('chat-lock');
+  document.getElementById('main-header').style.display = 'none';
+
+  const container = document.getElementById('ai-container');
+  currentSessionQuestions = [];
+  container.innerHTML = `
+    <div class="ai-chat-container">
+      <div class="ai-chat-header chat-ui-bar">
+        <div class="chat-header-line">
+          <p><b>Class:</b> ${sessionParams.class} / <b>Subject:</b> ${sessionParams.subject}</p>
+        </div>
+        <div class="chat-header-line">
+          <p><b>Chapter:</b> ${sessionParams.chapter}</p>
+        </div>
+        <div class="chat-header-line">
+          <p><b>Plan:</b> ${sessionParams.levelPlan || ''}</p>
+        </div>
+        <div class="chat-header-line buttons actions-row">
+          <button id="ai-change-setup-btn" class="btn action-saffron">Change Setup</button>
+          <button id="ai-parse-preview-btn" class="btn action-outline">Preview</button>
+          <button id="ai-save-all-btn" class="btn action-green">Save All</button>
+        </div>
+      </div>
+      <!-- end .ai-chat-header -->
+
+      <button id="ai-toggle-paste-btn" class="strip-cta"> Show Paste Panel </button>
+
+      <!-- Paste Zone (FINAL SET from ChatGPT) -->
+      <div id="paste-zone" class="paste-zone" style="display:none;background:#ffffff;border:1px solid #bcd6ef;border-radius:10px;margin:10px 15px 0 15px;">
+        <div class="pz-head" style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid #e6eff8;">
+          <span style="font-weight:700;color:#0f3d6b;">Paste FINAL QUESTIONS</span>
+        </div>
+
+        <!-- BIGGER textarea (~half screen) -->
+        <textarea
+          id="paste-zone-text"
+          placeholder="Paste the FINAL SET block here (Q1 … QN). The parser ignores extra chat text automatically."
+          style="width:100%;box-sizing:border-box;border:none;outline:none;padding:12px 12px 16px 12px; font-size:15px;line-height:1.4;resize:vertical;background:#fff;border-radius:0 0 10px 10px; min-height:45vh;height:45vh;"></textarea>
+
+        <div class="pz-note" style="font-size:12px;color:#5b6b7a;padding:0 12px 12px 12px;">
+          Tip: Ask AI for one corrected block (Q1–Q<span id="pz-expected-n"></span>) with no extra text. Then paste it here.
+        </div>
+      </div>
+
+      <div id="chat-messages-area" class="chat-messages-area"></div>
+
+      <div id="file-preview-box" style="display: none; padding: 6px 16px; background: white; color: #333; font-size: 0.9em; font-family: 'Segoe UI', sans-serif; border-bottom: 1px solid #ddd;">
+        <span style="color: #1762a7;">📄</span>
+        <span id="file-preview-name" style="font-weight: 600; color: #333;"></span>
+        <button id="remove-file-btn" style="background: none; border: none; color: #c82333; font-size: 1.1em; cursor: pointer; margin-left: 10px;" title="Remove File">❌</button>
+      </div>
+
+      <div id="chat-input-bar" class="chat-ui-bar chat-input-bar" style="padding:0">
+        <button id="open-chatgpt-bottom" class="fullwidth-open-btn" aria-label="Open in ChatGPT">Get Questions</button>
+      </div>
+
+      <button id="scroll-to-bottom" title="Scroll to Bottom">⬇️</button>
+    </div>
+  `;
+
+  document.getElementById('ai-change-setup-btn').onclick = () => {
+    showLeaveChatConfirm(() => history.back(), () => {});
+  };
+  document.getElementById('ai-save-all-btn').onclick = () => saveSessionQuestions(sessionParams);
+
+  // Toggle the paste panel thin strip
+  const pasteToggleBtn = document.getElementById('ai-toggle-paste-btn');
+  const pasteZone = document.getElementById('paste-zone');
+  if (pasteToggleBtn && pasteZone) {
+    pasteToggleBtn.onclick = () => {
+      const isOpen = pasteZone.style.display !== 'none';
+      pasteZone.style.display = isOpen ? 'none' : 'block';
+      pasteToggleBtn.textContent = isOpen ? 'Show Paste Panel' : 'Hide Paste Panel';
+      pasteToggleBtn.setAttribute('aria-expanded', String(!isOpen));
+      if (!isOpen) document.getElementById('paste-zone-text')?.focus();
+    };
+  }
+
+  // --- Paste panel minimal helpers ---
+  // Show expected N in the tip
+  const _pzExpected = document.getElementById('pz-expected-n');
+  if (_pzExpected) _pzExpected.textContent = String(sessionParams.numQuestions || 20);
+
+  // Auto-grow textarea a bit for comfort
+  const _pzText = document.getElementById('paste-zone-text');
+  if (_pzText) {
+    const _autoGrow = () => {
+      _pzText.style.height = 'auto';
+      const maxH = Math.floor(window.innerHeight * 0.5); // ~50% of screen
+      const h = Math.min(_pzText.scrollHeight, maxH);
+      _pzText.style.height = h + 'px';
+      _pzText.style.overflowY = (_pzText.scrollHeight > maxH) ? 'auto' : 'hidden';
+    };
+    _pzText.addEventListener('input', _autoGrow);
+    _autoGrow();
+  }
+
+  // Wire the new top-bar "Parse & Preview" button to read from the paste textarea
+  const parsePreviewBtn = document.getElementById('ai-parse-preview-btn');
+  if (parsePreviewBtn) {
+    parsePreviewBtn.onclick = () => {
+      const box = document.getElementById('paste-zone-text');
+      if (!box) {
+        __qb_toast('Paste box not found.');
+        return;
+      }
+      const raw = (box.value || '').trim();
+      if (!raw) {
+        __qb_toast('Nothing to parse. Paste the FINAL SET first.');
+        return;
+      }
+      try {
+        const parsed = parseFinalSetIntoQuestions(raw, sessionParams);
+        if (!parsed.length) {
+          __qb_toast('Could not find any Q1… blocks.');
+          return;
+        }
+        // Replace current session questions (default behavior)
+        currentSessionQuestions = parsed;
+        rerenderAllQuestions();
+        __qb_toast(`Parsed ${parsed.length} question(s).`);
+
+        // Collapse + clear paste panel after a successful parse
+        const pz = document.getElementById('paste-zone');
+        if (pz) pz.style.display = 'none';
+        if (box) {
+          box.value = '';
+          if (typeof _pzText !== 'undefined' && _pzText) {
+            _pzText.dispatchEvent(new Event('input')); // keep auto-grow tidy
+          }
+          if (typeof box.blur === 'function') box.blur(); // optional: close mobile keyboard
+        }
+        const tgl = document.getElementById('ai-toggle-paste-btn');
+        if (tgl) {
+          tgl.textContent = 'Show Paste Panel';
+          tgl.setAttribute?.('aria-expanded', 'false'); // optional a11y
+        }
+        // Optional: clear the textarea after success
+        // box.value = '';
+        _pzText && _pzText.dispatchEvent(new Event('input'));
+      } catch (err) {
+        console.error(err);
+        __qb_toast('Parser error. Check the format (Q1:, A)–D), Ans: …).');
+      }
+    };
+  }
+
+  const chatPromptInput = document.getElementById('chat-prompt-input');
+
+  // Open ChatGPT with a pre-filled generation prompt (bottom full-width button)
+  const openCgBottomBtn = document.getElementById('open-chatgpt-bottom');
+  if (openCgBottomBtn) {
+    openCgBottomBtn.onclick = () => {
+      const genPrompt = buildChatGptGenerationPrompt(sessionParams);
+      openInChatGptWithPrefill(genPrompt);
+    };
+  }
+
+  // Input bar removed — keep file preview removal working if ever shown via other flows
+  const removeFileBtn = document.getElementById('remove-file-btn');
+  if (removeFileBtn) {
+    removeFileBtn.onclick = () => {
+      stagedFile = null;
+      const box = document.getElementById('file-preview-box');
+      const name = document.getElementById('file-preview-name');
+      if (box) box.style.display = 'none';
+      if (name) name.textContent = '';
+    };
+  }
+}
+
+function updateSendButtonState(chatPromptInput, sendBtn) {
+  if (chatPromptInput.value.trim() !== '' || stagedFile) {
+    sendBtn.disabled = false;
+  } else {
+    sendBtn.disabled = true;
+  }
+}
+
+function setupCustomDropdownsForForm() {
+  setupCustomDropdown('class-dropdown-ai', 'class-value-ai', (selectedClass) => {
+    const subjectDropdown = document.getElementById('subject-dropdown-ai');
+    const subjectOptions = subjectDropdown.querySelector('.dropdown-options');
+    const subjectSelected = subjectDropdown.querySelector('.selected-option');
+    const subjectInput = document.getElementById('subject-value-ai');
+
+    const newSubjects = aiGeneratorConfig.getSubjectsForClass(selectedClass);
+    subjectOptions.innerHTML = newSubjects.map(s => `<div data-value="${s}">${s}</div>`).join('');
+    subjectSelected.textContent = newSubjects[0] || 'Select Subject';
+    subjectInput.value = newSubjects[0] || '';
+
+    updateChapterDropdown(selectedClass, newSubjects[0] || '');
+    optionsContainerListener(
+      subjectOptions, subjectSelected, subjectInput, subjectDropdown,
+      (newSubject) => { updateChapterDropdown(selectedClass, newSubject); }
+    );
+  });
+
+  setupCustomDropdown('subject-dropdown-ai', 'subject-value-ai', (selectedSubject) => {
+    const selectedClass = document.getElementById('class-value-ai').value;
+    updateChapterDropdown(selectedClass, selectedSubject);
+  });
+
+  setupCustomDropdown('qtype-dropdown-ai', 'qtype-value-ai');
+  setupCustomDropdown('chapter-dropdown-ai', 'chapter-value-ai');
+}
+
+function updateChapterDropdown(selectedClass, selectedSubject) {
+  const chapterDropdown = document.getElementById('chapter-dropdown-ai');
+  const chapterOptions = chapterDropdown.querySelector('.dropdown-options');
+  const chapterSelected = chapterDropdown.querySelector('.selected-option');
+  const chapterInput = document.getElementById('chapter-value-ai');
+
+  const chapters = (textbooks[selectedClass] && textbooks[selectedClass][selectedSubject])
+    ? textbooks[selectedClass][selectedSubject] : [];
+  chapterOptions.innerHTML = chapters.map(ch => `<div data-value="${ch}">${ch}</div>`).join('');
+  chapterSelected.textContent = chapters[0] || 'Select Chapter';
+  chapterInput.value = chapters[0] || '';
+
+  optionsContainerListener(chapterOptions, chapterSelected, chapterInput, chapterDropdown, null);
+}
+
+function setupCustomDropdown(dropdownId, inputId, callback) {
+  const dropdown = document.getElementById(dropdownId);
+  if (!dropdown) return;
+
+  const selected = dropdown.querySelector('.selected-option');
+  const options = dropdown.querySelector('.dropdown-options');
+  const input = document.getElementById(inputId);
+
+  selected.onclick = (e) => {
+    e.stopPropagation();
+    toggleDropdown(dropdownId);
+  };
+
+  optionsContainerListener(options, selected, input, dropdown, callback);
+}
+
+function optionsContainerListener(options, selected, input, dropdown, callback) {
+  options.querySelectorAll('div[data-value]').forEach(option => {
+    option.onclick = () => {
+      selected.textContent = option.textContent;
+      input.value = option.dataset.value;
+      dropdown.classList.remove('open');
+      if (callback) callback(input.value);
+    };
+  });
+}
+
+function toggleDropdown(dropdownId) {
+  const currentDropdown = document.getElementById(dropdownId);
+  if(!currentDropdown) return;
+  const currentlyOpen = currentDropdown.classList.contains('open');
+
+  document.querySelectorAll('.custom-dropdown.open').forEach(d => {
+    if (d.id !== dropdownId) d.classList.remove('open');
+  });
+
+  if(!currentlyOpen) currentDropdown.classList.add('open');
+}
+
+function showConfirmationModal(summary, originalPrompt, sessionParams) {
+  const overlay = document.createElement('div');
+  overlay.className = 'confirmation-overlay';
+  overlay.innerHTML = `
+    <div class="confirmation-modal">
+      <h3>Confirm Exam Instructions</h3>
+      <p>${summary}</p>
+      <div class="modal-buttons">
+        <button id="confirm-cancel-btn">Cancel</button>
+        <button id="confirm-proceed-btn">Proceed</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  document.getElementById('confirm-cancel-btn').onclick = () => {
+    overlay.remove();
+    // Re-enable the send button if cancelled
+    const chatPromptInput = document.getElementById('chat-prompt-input');
+    const sendBtn = document.getElementById('chat-send-btn');
+    sendBtn.innerHTML = `<i class="fas fa-paper-plane"></i>`;
+    updateSendButtonState(chatPromptInput, sendBtn);
+  };
+
+  document.getElementById('confirm-proceed-btn').onclick = () => {
+    overlay.remove();
+    proceedWithGeneration(originalPrompt, sessionParams);
+  };
+}
+
 // ===== ADD BELOW (confirm helper that reuses your modal CSS) =====
 function showLeaveChatConfirm(onProceed, onCancel) {
   const overlay = document.createElement('div');
@@ -1680,8 +1736,8 @@ function __normalizeLatexDelimiters(s='') {
     .replace(/\${3,}/g, '$$').replace(/[ \t]+\n/g, '\n');
 }
 
-// Decode any HTML entities that might have slipped in from your UI rendering
-function __decodeEntities(s='') {
+// Decode any HTML entities that might have slipped in from your UI rendering function
+function __decodeEntities(s = '') {
   const d = document.createElement('textarea');
   d.innerHTML = s;
   return d.value;
@@ -1692,7 +1748,7 @@ function __wrapParenMath(s='') {
 }
 
 // Convert LaTeX-y input to plain math for ChatGPT prefill
-function __toPlainMath(s='') {
+function __toPlainMath(s = '') {
   let t = String(s);
   // remove $ / $$ and \( \) \[ \]
   t = t.replace(/\$\$?/g, '');
@@ -1715,81 +1771,17 @@ function __toPlainMath(s='') {
   return t.replace(/[ \t]+\n/g, '\n').trim();
 }
 
-function __autoWrapInlineMath(str='') {
-  // --- helpers ---
-  const PROTECT_START = '\uE000', PROTECT_END = '\uE001';
-  const protectExisting = (s) => {
-    // Protect \(...\), $$...$$, \[...\] by replacing with placeholders
-    return s
-      .replace(/\\\(([\s\S]*?)\\\)/g, (_, g) => PROTECT_START + g.replace(/\\/g,'\\u005c') + PROTECT_END)
-      .replace(/\$\$([\s\S]*?)\$\$/g, (_, g) => PROTECT_START + g.replace(/\\/g,'\\u005c') + PROTECT_END)
-      .replace(/\\\[([\s\S]*?)\\\]/g, (_, g) => PROTECT_START + g.replace(/\\/g,'\\u005c') + PROTECT_END);
-  };
-  const unprotect = (s) => {
-    // Restore protected blocks as \(...\)
-    return s.replace(new RegExp(PROTECT_START+'([\\s\\S]*?)'+PROTECT_END,'g'), (_, g) => {
-      const restored = g.replace(/\\u005c/g,'\\');
-      return `\\(${restored}\\)`;
-    });
-  };
-  const sanitize = (s) => s
-    // normalize roots from glyphs
-    .replace(/√\s*\(([^()]+)\)/g, '\\\\sqrt{$1}')
-    .replace(/√\s*([A-Za-z0-9]+)/g, '\\\\sqrt{$1}')
-    .replace(/³\s*\\\\sqrt\{/g, '\\\\sqrt[3]{')
-    // remove size modifiers that need paired delimiters
-    .replace(/\\left|\\right|\\bigg?|\\Bigg?/g, '');
-
-  // Wrap helper that avoids double wrapping
-  const wrapToken = (s, re) => s.replace(re, (m, pre='') => {
-    // if already wrapped (we protected earlier), there's no \(...\) left here
-   return `\\(${m}\\)`;
-  });
-
-  // regexes for TeX tokens (standalone)
-  const tokenRes = [
-    /\\(frac|dfrac|tfrac)\{[^}]+\}\{[^}]+\}/g,     // \frac{a}{b}
-    /\\sqrt(?:\[[^\]]+\])?\{[^}]+\}/g,            // \sqrt{...}, \sqrt[n]{...}
-    /\b[A-Za-z]\s*\^\s*\{[^}]+\}/g,               // x^{...}
-    /\b[A-Za-z]\s*\^\s*[0-9]+(?:\/[0-9]+)?\b/g,   // x^2, x^3/2
-    /\b[0-9]+\s*\^\s*\{[^}]+\}/g,                 // 2^{...}
-    /\b[0-9]+\s*\^\s*[0-9]+(?:\/[0-9]+)?\b/g,     // 2^3, 2^3/2
-    /\\(cdot|times|div|leq|geq|neq|pm|overline|bar)\b/g // common ops/symbols
-  ];
-
-  // also wrap simple ( math ) groups: ( \sqrt{...} ), ( \frac{...}{...} ), etc.
-  const groupRes = [
-    /\(\s*(\\(frac|dfrac|tfrac)\{[^}]+\}\{[^}]+\})\s*\)/g,
-    /\(\s*(\\sqrt(?:\[[^\]]+\])?\{[^}]+\})\s*\)/g
-  ];
-
-  return String(str).split('\n').map(raw => {
-    // keep option labels outside math
-    const m = raw.match(/^([A-D]\)\s*)(.*)$/);
-    let head = '', tail = raw;
-    if (m) { head = m[1]; tail = m[2]; }
-
-    // protect & sanitize
-    tail = protectExisting(sanitize(tail));
-
-    // only wrap specific tokens, never the whole sentence
-    groupRes.forEach(re => { tail = wrapToken(tail, re); });
-    tokenRes.forEach(re => { tail = wrapToken(tail, re); });
-
-    // restore protected math
-    tail = unprotect(tail);
-    return head + tail;
-  }).join('\n');
-}
-
-
-    /* === ChatGPT handoff helpers (AI Generator) === */
+/* === ChatGPT handoff helpers (AI Generator) === */
 function __qb_toast(msg) {
   const t = document.createElement('div');
   t.textContent = msg;
-  t.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);bottom:24px;background:#0f3d6b;color:#fff;padding:10px 14px;border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,.2);z-index:100000;font-weight:600;letter-spacing:.2px;font-size:14px;opacity:0.98';
+  t.style.cssText =
+    'position:fixed;left:50%;transform:translateX(-50%);bottom:24px;background:#0f3d6b;color:#fff;padding:10px 14px;border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,.2);z-index:100000;font-weight:600;letter-spacing:.2px;font-size:14px;opacity:0.98';
   document.body.appendChild(t);
-  setTimeout(() => { t.style.transition='opacity .35s'; t.style.opacity='0'; }, 1200);
+  setTimeout(() => {
+    t.style.transition = 'opacity .35s';
+    t.style.opacity = '0';
+  }, 1200);
   setTimeout(() => t.remove(), 1600);
 }
 
@@ -1799,14 +1791,15 @@ function buildChatGptPromptFromQuestion(qData, sessionParams) {
     sessionParams?.subject && `Subject: ${sessionParams.subject}`,
     sessionParams?.class && `Class: ${sessionParams.class}`,
     sessionParams?.chapter && `Chapter: ${sessionParams.chapter}`
-  ].filter(Boolean).join(' · ');
+  ]
+    .filter(Boolean)
+    .join(' · ');
 
   // decode & normalize math
   const rawQ = __decodeEntities((qData.question || '').trim());
   const rawBody = __decodeEntities((qData.parsedBody || '').trim());
   const qText = __toPlainMath(rawQ);
-const body  = __toPlainMath(rawBody);
-
+  const body = __toPlainMath(rawBody);
   const hasOptions = Array.isArray(qData.options) && qData.options.length === 4;
 
   let prompt = 'Please solve and explain clearly.\n';
@@ -1815,14 +1808,14 @@ const body  = __toPlainMath(rawBody);
   if (qText) {
     prompt += `Question:\n${qText}\n`;
     if (hasOptions) {
-      const opts = qData.options.map((o, i) => {
-       const clean = __toPlainMath(
-  __decodeEntities(
-    String(o || '').replace(/^[A-D][).]\s*/, '')
-  )
-);
-        return `${String.fromCharCode(65 + i)}) ${clean}`;
-      }).join('\n');
+      const opts = qData.options
+        .map((o, i) => {
+          const clean = __toPlainMath(
+            __decodeEntities(String(o || '').replace(/^[A-D][).]\s*/, ''))
+          );
+          return `${String.fromCharCode(65 + i)}) ${clean}`;
+        })
+        .join('\n');
       prompt += `\nOptions:\n${opts}`;
     }
   } else {
@@ -1842,137 +1835,15 @@ async function openInChatGptWithPrefill(prompt) {
   try {
     await navigator.clipboard.writeText(prompt);
     copied = true;
-  } catch (_) { /* clipboard may be blocked; continue */ }
-
+  } catch (_) {
+    /* clipboard may be blocked; continue */
+  }
   __qb_toast(copied ? 'Copied prompt. Opening ChatGPT…' : 'Opening ChatGPT… (paste prompt manually)');
   const url = new URL('https://chatgpt.com/');
-  url.searchParams.set('q', prompt);   // pre-fill message
+  url.searchParams.set('q', prompt); // pre-fill message
   window.open(url.toString(), '_blank', 'noopener');
 }
 /* === end helpers === */
-/* === Prompt builder for initial generation in ChatGPT (FOUNDATION + CBSE modes, strict rules) === */
-function buildChatGptGenerationPrompt(sessionParams) {
-  const cls = sessionParams.class || '';
-  const subj = sessionParams.subject || '';
-  const chap = sessionParams.chapter || '';
-  const qtype = sessionParams.questionType || 'MCQ (Single)';
-  const plan  = (sessionParams.levelPlan || '').trim();
-  const count = sessionParams.numQuestions || 20;
-
-  const isCBSE = /cbse/i.test(plan) || /cbse/i.test(subj);
-
-  // ---- COMMON headings ----
-  const header =
-`Class: ${cls}
-Subject: ${subj}
-Chapter: ${chap}
-Request: ${plan || (count + ' questions')}
-`;
-
-  // ---- LEVEL DEFINITIONS ----
-  const foundationLevels =
-`Use these Level definitions STRICTLY (Foundation/IIT-NEET mode):
-- Level 1: Foundation Easy & Medium
-  • Basic conceptual/recall/direct application aligned to Foundation style (not board textbook drill).
-  • Single concept, avoid multi-step reasoning; competitive-exam style but simple/focused.
-- Level 2: Foundation Difficult & Very Difficult
-  • Moderate application; 1–2 steps or combine 2 related ideas.
-  • 'Tricky' Foundation practice style; higher challenge than L1; not full Olympiad.
-- Level 3: Challenging & Olympiad/NTSE/IIT Foundation Advanced
-  • Multi-step logical reasoning, combining ≥2 concepts, non-standard twists/novel approaches.
-  • Do NOT output direct single-step/formula/memory questions.
-  • Inspired by Olympiad/NTSE/IIT-Foundation papers but adapted to this class & syllabus (change numbers/contexts).
-  • Keep within the class syllabus; no higher-class methods required.`;
-
-  const cbseLevels =
-`Use these Level definitions STRICTLY (CBSE mode):
-- Level 1: Knowledge/Recall (direct textbook/comprehension)
-- Level 2: Application/Interpretation (within CBSE chapter)
-- Level 3: HOTS (analysis/evaluation/synthesis as per CBSE)`;
-
-  // ---- STRICT ACCURACY ----
-  const strictAccuracy =
-`STRICT ACCURACY (applies to all):
-• Ensure every question is clear, unambiguous, and correct.
-• Double-check all facts/calculations/options/answers.
-• If any issue is found, fix it before output.
-• Math must use LaTeX where needed (e.g., \\frac{}, \\sqrt{}, exponents).`;
-
-  // ---- FORMAT RULES (base) ----
-  const numberingNote = `• Numbering must be continuous: Q1 to Q${count}.`;
-
-  // MCQ format
-  const mcqFormat =
-`Output EXACTLY ${count} questions.
-
-Format each question EXACTLY as:
-Q<num>: Level <1/2/3>, 1 Mark [${qtype}]
-<Question text>
-A) <Option A>
-B) <Option B>
-C) <Option C>
-D) <Option D>
-Ans: <A) or B) or C) or D)>
-
-Rules:
-${numberingNote}
-• Include A)–D) for every MCQ and an "Ans: …" line.
-• Use ONLY content from the selected class/subject/chapter (and any subtopic names present in "Request").
-• No headings, introductions, comments, or explanations—questions only.
-• I will ask for a FINAL SET later after corrections. This is the DRAFT output.
-${strictAccuracy}`;
-
-  // MCQ Multiple additional distribution rule (per 10)
-  const multiBlockRule =
-`Additional rules for MCQ (Multiple):
-• Some questions have multiple correct options (e.g., A), C)).
-• Spread correct letters across A–D; avoid patterns.
-• If total > 10, apply this distribution to EACH block of 10:
-  - Exactly 2 questions with 1 correct option
-  - Exactly 3 questions with 2 correct options
-  - Exactly 3 questions with 3 correct options
-  - Exactly 2 questions with 4 correct options
-• Before finishing, self-check that each 10-question block satisfies the distribution.`;
-
-  // DESCRIPTIVE format
-  const descFormat =
-`Generate EXACTLY ${count} Descriptive questions.
-
-Format each question EXACTLY as:
-Q<num>: Level <1/2/3>, <Marks> [Descriptive]
-<Question text>
-
-Rules:
-${numberingNote}
-• No options and no "Ans:" lines.
-• Use ONLY the selected chapter (and any subtopic names present in "Request").
-• No extra text—questions only.
-• I will ask for a FINAL SET later after corrections. This is the DRAFT output.
-${strictAccuracy}`;
-
-  // ----- Assemble prompt by type/mode -----
-  if (/Descriptive/i.test(qtype)) {
-    const levelBlock = isCBSE ? cbseLevels : foundationLevels;
-    return (
-`${header}
-${levelBlock}
-
-${descFormat}`
-    );
-  }
-
-  // MCQ (Single or Multiple)
-  const levelBlock = isCBSE ? cbseLevels : foundationLevels;
-  const multiNote  = /Multiple/i.test(qtype) ? `\n${multiBlockRule}` : '';
-
-  return (
-`${header}
-${levelBlock}
-
-${mcqFormat}
-${multiNote}`.trim()
-  );
-}
 
 function splitMcqOptions(body) {
   if ((body.match(/^[A-D]\)/gm) || []).length >= 3) return body;
@@ -2028,10 +1899,7 @@ function shuffleOptionsForQuestion(qData) {
 
   // Remap answers (if present)
   let newAnsLine = qData.parsedAnswer || null;
-  const foundLetters = newAnsLine
-    ? [...newAnsLine.matchAll(/\b([A-D])\)/g)].map(m => m[1])
-    : [];
-
+  const foundLetters = newAnsLine ? [...newAnsLine.matchAll(/\b([A-D])\)/g)].map(m => m[1]) : [];
   if (foundLetters.length > 0) {
     const remappedLetters = foundLetters.map(letter => {
       const oi = letter.charCodeAt(0) - 65; // original index 0..3
@@ -2039,7 +1907,6 @@ function shuffleOptionsForQuestion(qData) {
       const ni = shuffledOldIndices.findIndex(orig => orig === oi);
       return String.fromCharCode(65 + ni);
     });
-
     if (remappedLetters.length === 1) {
       newAnsLine = `Ans: ${remappedLetters[0]})`;
     } else {
@@ -2057,560 +1924,410 @@ function shuffleOptionsForQuestion(qData) {
   ].join('\n');
 
   // Mutate qData consistently
-  qData.options = newOptions.slice();      // store de-labeled texts
+  qData.options = newOptions.slice(); // store de-labeled texts
   qData.parsedBody = rebuilt;
   if (newAnsLine) qData.parsedAnswer = newAnsLine;
   qData.fullText = `${qData.parsedMeta}\n${qData.parsedBody}${qData.parsedAnswer ? `\n${qData.parsedAnswer}` : ''}`;
 }
 /* ======== END NEW shuffle utilities ======== */
-/* ========== FINAL SET parser (for Paste Zone) ========== */
-/**
- * Normalize “Ans:” letters into a clean array of A-D, keeping order.
- * Accepts: "Ans: C)", "Ans: A), C)", "Ans: B),D)"
- */
-function __extractAnswerLetters(ansLine='') {
-  const m = String(ansLine).match(/Ans\s*:\s*([A-D\)\s,]+)/i);
-  if (!m) return [];
-  const letters = [];
-  (m[1].match(/[A-D]\)/gi) || []).forEach(tok => {
-    const L = tok[0].toUpperCase();
-    if (!letters.includes(L)) letters.push(L);
+
+function parseAndDisplayAiQuestions(responseText, messagesArea, sessionParams) {
+  // The original logic (leave as-is for MCQ/Descriptive):
+  const questionBlocks = responseText
+    .split(/\n(?=Q\s*\d+:)/g)
+    .map(q => q.trim())
+    .filter(q => q.match(/^Q\s*\d+:/));
+
+  if (questionBlocks.length === 0 && responseText) {
+    // fallback: show as plain text ONLY if parsing failed
+    appendChatMessage(responseText, 'ai', messagesArea);
+    return;
+  }
+
+  const fragment = document.createDocumentFragment();
+
+  questionBlocks.forEach((qText) => {
+    const questionData = {
+      fullText: qText,
+      class: sessionParams.class,
+      subject: sessionParams.subject,
+      chapter: sessionParams.chapter
+    };
+
+    const metaMatch = qText.match(/^(Q\s*\d+:.*)/);
+    if (!metaMatch) {
+      console.warn("Skipping a block that is not a valid question:", qText);
+      return;
+    }
+
+    let originalMeta = metaMatch[1];
+    let level = "";
+    let marks = "";
+
+    let levelMatch = originalMeta.match(/Level\s*([1-3])/i);
+    if (levelMatch) {
+      level = `Level ${levelMatch[1]}`;
+    } else {
+      level = "Level ?";
+    }
+
+    const marksMatch = originalMeta.match(/(\d+)\s*Mark/i);
+    if (marksMatch) {
+      marks = `${marksMatch[1]} Mark${marksMatch[1] === "1" ? "" : "s"}`;
+    } else {
+      marks = sessionParams.questionType.startsWith("MCQ") ? "1 Mark" : "";
+    }
+
+    questionData.parsedMeta = `Q${currentSessionQuestions.length + 1}: ${level}, ${marks} [${sessionParams.questionType}]`;
+
+    let rawBody = qText.substring(originalMeta.length).trim();
+    const answerRegex = /(.*)(Ans:\s*.*)/s;
+    const answerMatch = rawBody.match(answerRegex);
+
+    if (sessionParams.questionType.startsWith('MCQ')) {
+      if (answerMatch) {
+        const questionAndOptions = answerMatch[1].trim();
+        const lines = questionAndOptions
+          .split('\n')
+          .map(x => x.trim())
+          .filter(x => x && x !== '<br>' && x !== '');
+        questionData.question = lines[0] || '';
+        questionData.options = lines.slice(1, 5).map(x => x || '');
+        questionData.parsedAnswer = answerMatch[2].trim();
+        questionData.parsedBody = lines.join('\n');
+      } else {
+        questionData.question = rawBody.split('\n')[0].trim();
+        questionData.options = rawBody.split('\n').slice(1, 5).map(x => x.trim());
+        questionData.parsedAnswer = null;
+        questionData.parsedBody = rawBody;
+      }
+      // NEW: Randomize A/B/C/D and remap the Ans: letters accordingly
+      shuffleOptionsForQuestion(questionData);
+    } else {
+      // DESCRIPTIVE: no options, no "Ans:"
+      questionData.question = rawBody.trim().split('\n')[0] || '';
+      questionData.options = [];
+      questionData.parsedAnswer = null;
+      questionData.parsedBody = rawBody.trim();
+    }
+
+    currentSessionQuestions.push(questionData);
+    const questionEl = createQuestionElement(questionData, currentSessionQuestions.length - 1);
+    fragment.appendChild(questionEl);
   });
-  return letters;
+
+  messagesArea.appendChild(fragment);
+  if (window.MathJax) MathJax.typesetPromise([messagesArea]);
+  messagesArea.scrollTop = messagesArea.scrollHeight;
 }
 
-/** Remove “Qn:” header line and return {meta, body} */
-function __splitMetaAndBody(block) {
-  const lines = String(block).split('\n');
-  const first = lines.shift() || '';
-  return {
-    meta: first.trim(),
-    body: lines.join('\n').trim()
+function createQuestionElement(qData, index) {
+  const questionEl = document.createElement('div');
+  questionEl.className = 'message ai-question-item';
+  questionEl.dataset.sessionQuestionIndex = index;
+  questionEl.innerHTML = `
+    <div class="question-meta-ai">${qData.parsedMeta}</div>
+    <div class="question-text-ai">${__wrapParenMath(qData.parsedBody)}</div>
+    <div class="question-actions">
+      <button class="q-action-btn" title="Options"><i class="fas fa-ellipsis-v"></i></button>
+    </div>
+  `;
+
+  const actionButton = questionEl.querySelector('.q-action-btn');
+  actionButton.addEventListener('click', (e) => {
+    e.stopPropagation();
+
+    const existingMenu = document.querySelector('.actions-menu');
+    if (existingMenu) existingMenu.remove();
+
+    const menu = document.createElement('div');
+    menu.className = 'actions-menu';
+    menu.innerHTML = `
+      <button class="menu-show-answer-btn">Show Answer</button>
+      <button class="menu-edit-btn">Edit</button>
+      <button class="menu-delete-btn">Delete</button>
+    `;
+
+    const isAnswerShowing = questionEl.querySelector('.temp-answer');
+    if (isAnswerShowing) {
+      const buttonInMenu = menu.querySelector('.menu-show-answer-btn');
+      buttonInMenu.textContent = 'Hide Answer';
+    }
+
+    questionEl.appendChild(menu);
+
+    menu.querySelector('.menu-show-answer-btn').onclick = async (event) => {
+      event.stopPropagation();
+      try {
+        const q = currentSessionQuestions[index];
+        const prompt = buildChatGptPromptFromQuestion(q, lastSessionParams || {});
+        await openInChatGptWithPrefill(prompt);
+      } catch (err) {
+        __qb_toast('Could not open ChatGPT.');
+        console.error(err);
+      }
+      menu.remove();
+    };
+
+    menu.querySelector('.menu-edit-btn').onclick = () => {
+      showEditPopupForQuestion(index);
+      menu.remove();
+    };
+
+    menu.querySelector('.menu-delete-btn').onclick = () => {
+      if (confirm('Are you sure you want to delete this question?')) {
+        currentSessionQuestions.splice(index, 1);
+        rerenderAllQuestions();
+      }
+      menu.remove();
+    };
+  });
+
+  return questionEl;
+}
+
+function rerenderAllQuestions() {
+  const messagesArea = document.getElementById('chat-messages-area');
+  messagesArea.querySelectorAll('.ai-question-item').forEach(item => item.remove());
+
+  const fragment = document.createDocumentFragment();
+
+  currentSessionQuestions.forEach((q, i) => {
+    // For comprehensives, we need a different renderer
+    if (q.parsedMeta && q.parsedMeta.includes("[Comprehensive]")) {
+      // Renumber meta
+      const metaPartsMatch = q.parsedMeta.match(/Q\s*\d+:\s*(.*)/i);
+      const details = metaPartsMatch ? metaPartsMatch[1] : '';
+      q.parsedMeta = `Q${i + 1}: ${details}`;
+
+      // Build element (copy from parseAndDisplayAiQuestions)
+      const blockEl = document.createElement('div');
+      blockEl.className = 'message ai-question-item';
+      blockEl.dataset.sessionQuestionIndex = i;
+
+      // Build MCQ HTMLs
+      const mcqHtml = q.mcqs
+        .map((mcq, k) => {
+          // Remove leading Qn: from mcq.body if present (Q1:, Q2:, etc.)
+          let cleanBody = mcq.body.replace(/^Q\d+:\s*/i, '').replace(/Ans:.*/, '').trim();
+          return `
+            <div class="question-text-ai" style="margin-top:8px; text-align:left;">
+              <b>Q${k+1}.</b> ${__wrapParenMath(cleanBody.replace(/</g,"&lt;").replace(/>/g,"&gt;"))}
+              <div class="temp-answer" style="display:none; margin-top:3px; color:#5d4037;">${mcq.answer ? mcq.answer : ''}</div>
+            </div>
+          `;
+        })
+        .join('');
+
+      blockEl.innerHTML = `
+        <div class="question-meta-ai">${q.parsedMeta}</div>
+        <div class="question-text-ai" style="white-space:pre-line; margin-bottom:8px;"><b>Passage:</b> ${__wrapParenMath(q.passage || '')}</div>
+        ${mcqHtml}
+        <div class="question-actions">
+          <button class="q-action-btn" title="Options"><i class="fas fa-ellipsis-v"></i></button>
+        </div>
+      `;
+
+      blockEl.querySelector('.q-action-btn').onclick = (e) => {
+        e.stopPropagation();
+
+        const existingMenu = document.querySelector('.actions-menu');
+        if (existingMenu) existingMenu.remove();
+
+        const menu = document.createElement('div');
+        menu.className = 'actions-menu';
+        menu.innerHTML = `
+          <button class="menu-show-answer-btn">Show Answer</button>
+          <button class="menu-edit-btn">Edit</button>
+          <button class="menu-delete-btn">Delete</button>
+        `;
+        blockEl.appendChild(menu);
+
+        menu.querySelector('.menu-show-answer-btn').onclick = () => {
+          const q = currentSessionQuestions[i]; // comprehensive data
+          const meta = q.parsedMeta || '';
+          const cls = q.class || (lastSessionParams && lastSessionParams.class) || '';
+          const subj = q.subject || (lastSessionParams && lastSessionParams.subject) || '';
+          const chap = q.chapter || (lastSessionParams && lastSessionParams.chapter) || '';
+
+          let prompt = `Please solve and explain clearly.\n`;
+          const metaLineParts = [
+            cls && `Class: ${cls}`,
+            subj && `Subject: ${subj}`,
+            chap && `Chapter: ${chap}`,
+            meta && meta.replace(/^Q\d+:\s*/, '').trim()
+          ]
+            .filter(Boolean)
+            .join(' · ');
+          if (metaLineParts) prompt += metaLineParts + `\n\n`;
+
+          prompt += `Passage:\n${q.passage}\n\n`;
+
+          if (Array.isArray(q.mcqs) && q.mcqs.length) {
+            prompt += `Questions:\n`;
+            q.mcqs.forEach((mcq, idx) => {
+              const cleanBody = (mcq.body || '').replace(/^Q\d+:\s*/i, '').trim();
+              prompt += `\nQ${idx + 1}.\n${cleanBody}\n`;
+              if (mcq.answer) {
+                prompt += `(If you know, the key says: ${mcq.answer})\n`;
+              }
+            });
+            prompt += `\nRespond with answers for each MCQ (e.g., A–D) and brief step-by-step explanations.`;
+          } else {
+            prompt += `Respond with the final answers and brief explanations.`;
+          }
+
+          openInChatGptWithPrefill(prompt);
+          menu.remove();
+        };
+
+        menu.querySelector('.menu-edit-btn').onclick = () => {
+          showEditPopupForComprehensive(i);
+          menu.remove();
+        };
+
+        menu.querySelector('.menu-delete-btn').onclick = () => {
+          if (confirm('Are you sure you want to delete this comprehensive?')) {
+            currentSessionQuestions.splice(i, 1);
+            rerenderAllQuestions();
+          }
+          menu.remove();
+        };
+      };
+
+      fragment.appendChild(blockEl);
+    } else {
+      // Normal question
+      const metaPartsMatch = q.parsedMeta.match(/Q\s*\d+:\s*(.*)/i);
+      const details = metaPartsMatch ? metaPartsMatch[1] : '';
+      q.parsedMeta = `Q${i + 1}: ${details}`;
+
+      const questionEl = createQuestionElement(q, i);
+      fragment.appendChild(questionEl);
+    }
+  });
+
+  messagesArea.appendChild(fragment);
+  if (window.MathJax) MathJax.typesetPromise([messagesArea]);
+}
+
+function parseMetaLine(metaLine) {
+  const meta = { difficulty: null, level: null, marks: null };
+  const diffMatch = metaLine.match(/Q\s*\d+:\s*([^,/]+)/i);
+  const levelMatch = metaLine.match(/\/Level\s*(\d+)/i);
+  const marksMatch = metaLine.match(/(\d+)\s*Mark(s?)/i);
+  if (diffMatch) meta.difficulty = diffMatch[1].trim();
+  if (levelMatch) meta.level = parseInt(levelMatch[1], 10);
+  if (marksMatch) meta.marks = parseInt(marksMatch[1], 10);
+  return meta;
+}
+
+async function getNextQuestionNumber(className, subjectName, chapterName) {
+  const query = db
+    .collection("questions")
+    .where("class", "==", className)
+    .where("subject", "==", subjectName)
+    .where("chapter", "==", chapterName)
+    .orderBy("questionNumber", "desc")
+    .limit(1);
+  const snapshot = await query.get();
+  if (snapshot.empty) return 1;
+  const lastQuestion = snapshot.docs[0].data();
+  return (lastQuestion.questionNumber || 0) + 1;
+}
+
+function getTextSimilarity(a, b) {
+  if (!a || !b) return 0; // If either is missing, return 0 similarity
+  a = String(a).toLowerCase().replace(/\s+/g, ' ').trim();
+  b = String(b).toLowerCase().replace(/\s+/g, ' ').trim();
+  const aWords = new Set(a.split(' '));
+  const bWords = new Set(b.split(' '));
+  const common = [...aWords].filter(w => bWords.has(w));
+  return common.length / Math.max(aWords.size, bWords.size);
+}
+
+document.addEventListener('click', function (event) {
+  document.querySelectorAll('.custom-dropdown.open').forEach(dropdown => {
+    if (!dropdown.contains(event.target)) {
+      dropdown.classList.remove('open');
+    }
+  });
+  const existingMenu = document.querySelector('.actions-menu');
+  if (existingMenu && !existingMenu.contains(event.target) && !event.target.closest('.q-action-btn')) {
+    existingMenu.remove();
+  }
+});
+
+function showEditPopupForQuestion(index) {
+  const qData = currentSessionQuestions[index];
+
+  // Remove existing popup if any
+  document.querySelectorAll('.edit-popup').forEach(p => p.remove());
+
+  // Prepare default values
+  const options = (qData.options && qData.options.length === 4) ? qData.options : ["", "", "", ""];
+  const answerVal = qData.parsedAnswer ? qData.parsedAnswer.replace(/^Ans:\s*/i, "") : "";
+
+  // Create popup
+  const popup = document.createElement('div');
+  popup.className = 'edit-popup';
+  popup.innerHTML = `
+    <h3>Edit Question</h3>
+    <label>Question:</label>
+    <textarea id="edit-q-text" rows="2">${qData.question || ''}</textarea>
+
+    <label>Option A:</label>
+    <input type="text" id="edit-q-optA" value="${options[0] || ''}">
+    <label>Option B:</label>
+    <input type="text" id="edit-q-optB" value="${options[1] || ''}">
+    <label>Option C:</label>
+    <input type="text" id="edit-q-optC" value="${options[2] || ''}">
+    <label>Option D:</label>
+    <input type="text" id="edit-q-optD" value="${options[3] || ''}">
+
+    <label>Answer (e.g., "A)", or "A), C)" for multiple correct):</label>
+    <input type="text" id="edit-q-answer" value="${answerVal}">
+
+    <div class="popup-buttons">
+      <button id="edit-cancel">Cancel</button>
+      <button id="edit-save">Save</button>
+    </div>
+  `;
+  document.body.appendChild(popup);
+
+  // Cancel button logic
+  document.getElementById('edit-cancel').onclick = () => popup.remove();
+
+  // Save button logic
+  document.getElementById('edit-save').onclick = () => {
+    // Get edited values
+    const qText = document.getElementById('edit-q-text').value.trim();
+    const optA = document.getElementById('edit-q-optA').value.trim();
+    const optB = document.getElementById('edit-q-optB').value.trim();
+    const optC = document.getElementById('edit-q-optC').value.trim();
+    const optD = document.getElementById('edit-q-optD').value.trim();
+    const answer = document.getElementById('edit-q-answer').value.trim();
+
+    // Simple validation (optional)
+    if (!qText || !optA || !optB || !optC || !optD || !answer) {
+      alert("All fields are required.");
+      return;
+    }
+
+    // Update data
+    qData.question = qText;
+    qData.options = [optA, optB, optC, optD];
+    qData.parsedBody = [qText, optA, optB, optC, optD].join('\n');
+    qData.parsedAnswer = `Ans: ${answer}`;
+    qData.fullText = `${qData.parsedMeta}\n${qData.parsedBody}\n${qData.parsedAnswer}`;
+
+    // Close popup and re-render
+    popup.remove();
+    rerenderAllQuestions();
   };
 }
 
-/** Ensure options are split into 4 lines starting with A) B) C) D) */
-function __forceOptionLines(body) {
-  // already line-broken?
-  if ((body.match(/^[A-D]\)/gm) || []).length >= 3) return body;
-  // try to split inline A)…B)…C)…D)…
-  if (/A\).+B\).+C\).+D\)/.test(body)) {
-    const m = body.match(/A\)([^B]+)B\)([^C]+)C\)([^D]+)D\)(.+)/s);
-    if (m) {
-      return [
-        `A) ${m[1].trim()}`,
-        `B) ${m[2].trim()}`,
-        `C) ${m[3].trim()}`,
-        `D) ${m[4].trim()}`
-      ].join('\n');
-    }
-    return body.replace(/([A-D]\))/g, '\n$1').replace(/^\n/, '');
-  }
-  return body;
-}
-
-/**
- * Parse a pasted FINAL SET block into our session question objects.
- * Respects the current sessionParams.questionType (MCQ Single/Multiple/Descriptive)
- */
-function parseFinalSetIntoQuestions(text, sessionParams) {
-  // keep only from first Qn onward (ignore any chatty intro)
-  const startIdx = text.search(/\bQ\s*1\s*:/i);
-  const cleaned = startIdx >= 0 ? text.slice(startIdx) : text;
-
-  const blocks = cleaned
-    .split(/\n(?=Q\s*\d+\s*:)/g)
-    .map(s => s.trim())
-    .filter(s => /^Q\s*\d+\s*:/i.test(s));
-
-  const out = [];
-  for (const b of blocks) {
-    const { meta, body } = __splitMetaAndBody(b);
-
-    // Build base qData
-    const qData = {
-      fullText: b,
-      class: sessionParams.class,
-      subject: sessionParams.subject,
-      chapter: sessionParams.chapter,
-      parsedMeta: meta,            // temporary; will be renumbered on render
-      question: '',
-      options: [],
-      parsedAnswer: null,
-      parsedBody: ''
-    };
-
-    if (sessionParams.questionType.startsWith('MCQ')) {
-      // split body into Q text, options, and Ans
-      const ansMatch = body.match(/Ans\s*:\s*.*$/im);
-      const ansLine  = ansMatch ? ansMatch[0].trim() : null;
-      const withoutAns = ansMatch ? body.replace(ansMatch[0], '').trim() : body.trim();
-
-      // first line is the question text, the rest are options (may be inline)
-      const lines = withoutAns.split('\n').map(l => l.trim()).filter(Boolean);
-      const qText = lines.length ? lines[0] : '';
-      let optBlock = lines.slice(1).join('\n');
-      optBlock = __forceOptionLines(optBlock);
-      const optLines = optBlock.split('\n').map(x => x.trim()).filter(Boolean);
-
-      // Ensure we have exactly 4 options
-      const A = optLines.find(l => /^A\)/i.test(l)) || 'A) ';
-      const B = optLines.find(l => /^B\)/i.test(l)) || 'B) ';
-      const C = optLines.find(l => /^C\)/i.test(l)) || 'C) ';
-      const D = optLines.find(l => /^D\)/i.test(l)) || 'D) ';
-
-      qData.question = qText;
-      qData.options  = [A, B, C, D].map(s => s.replace(/^[A-D]\)\s*/,'').trim());
-      qData.parsedAnswer = ansLine ? `Ans: ${__extractAnswerLetters(ansLine).map(L => `${L})`).join(', ')}` : null;
-      qData.parsedBody = [qText, `A) ${qData.options[0]}`, `B) ${qData.options[1]}`, `C) ${qData.options[2]}`, `D) ${qData.options[3]}`].join('\n');
-
-      // Store consistent fullText
-      qData.fullText = `${qData.parsedMeta}\n${qData.parsedBody}${qData.parsedAnswer ? `\n${qData.parsedAnswer}` : ''}`;
-
-    } else {
-      // Descriptive: meta + body (no options/Ans)
-      qData.question = body.split('\n')[0] || '';
-      qData.options = [];
-      qData.parsedAnswer = null;
-      qData.parsedBody = body;
-      qData.fullText = `${qData.parsedMeta}\n${qData.parsedBody}`;
-    }
-
-    out.push(qData);
-  }
-
-  // Normalize meta to our UI style (Level, Marks, Type); renumber later in rerender
-  const TYPE = sessionParams.questionType;
-  for (let i = 0; i < out.length; i++) {
-    const m = out[i].parsedMeta;
-
-    // Level
-    const lvl = (m.match(/Level\s*([1-3])/i) || [,'?'])[1];
-    // Marks
-    const mkMatch = m.match(/(\d+)\s*Mark/i);
-    const marks = mkMatch ? `${mkMatch[1]} Mark${mkMatch[1] === '1' ? '' : 's'}` :
-                 (TYPE.startsWith('MCQ') ? '1 Mark' : '');
-
-    out[i].parsedMeta = `Q${i+1}: Level ${lvl}, ${marks} [${TYPE}]`;
-    // Rebuild fullText using normalized meta
-    out[i].fullText = `${out[i].parsedMeta}\n${out[i].parsedBody}${out[i].parsedAnswer ? `\n${out[i].parsedAnswer}` : ''}`;
-  }
-
-  return out;
-}
-/* ========== END FINAL SET parser ========== */
-
-    function parseAndDisplayAiQuestions(responseText, messagesArea, sessionParams) {
-
-       // The original logic (leave as-is for MCQ/Descriptive):
-    const questionBlocks = responseText.split(/\n(?=Q\s*\d+:)/g).map(q => q.trim()).filter(q => q.match(/^Q\s*\d+:/));
-
-       if (questionBlocks.length === 0 && responseText) {
-            // fallback: show as plain text ONLY if parsing failed
-            appendChatMessage(responseText, 'ai', messagesArea);
-            return;
-        }
-        const fragment = document.createDocumentFragment();
-        questionBlocks.forEach((qText) => {
-            const questionData = {
-                fullText: qText,
-                class: sessionParams.class,
-                subject: sessionParams.subject,
-                chapter: sessionParams.chapter
-            };
-
-            const metaMatch = qText.match(/^(Q\s*\d+:.*)/);
-            if (!metaMatch) {
-                console.warn("Skipping a block that is not a valid question:", qText);
-                return; 
-            }
-
-            let originalMeta = metaMatch[1];
-            let level = "";
-let marks = "";
-let levelMatch = originalMeta.match(/Level\s*([1-3])/i);
-if (levelMatch) {
-  level = `Level ${levelMatch[1]}`;
-} else {
-  level = "Level ?";
-}
-const marksMatch = originalMeta.match(/(\d+)\s*Mark/i);
-if (marksMatch) {
-  marks = `${marksMatch[1]} Mark${marksMatch[1] === "1" ? "" : "s"}`;
-} else {
-  marks = sessionParams.questionType.startsWith("MCQ") ? "1 Mark" : "";
-}
-questionData.parsedMeta = `Q${currentSessionQuestions.length + 1}: ${level}, ${marks} [${sessionParams.questionType}]`;
-          
-            let rawBody = qText.substring(originalMeta.length).trim();
-            const answerRegex = /(.*)(Ans:\s*.*)/s;
-            const answerMatch = rawBody.match(answerRegex);
-
-            if (sessionParams.questionType.startsWith('MCQ')) {
-  if (answerMatch) {
-    const questionAndOptions = answerMatch[1].trim();
-    const lines = questionAndOptions
-      .split('\n')
-      .map(x => x.trim())
-      .filter(x => x && x !== '<br>' && x !== '');
-    questionData.question = lines[0] || '';
-    questionData.options = lines.slice(1, 5).map(x => x || '');
-    questionData.parsedAnswer = answerMatch[2].trim();
-    questionData.parsedBody = lines.join('\n');
-  } else {
-    questionData.question = rawBody.split('\n')[0].trim();
-    questionData.options = rawBody.split('\n').slice(1, 5).map(x => x.trim());
-    questionData.parsedAnswer = null;
-    questionData.parsedBody = rawBody;
-  }
-
-  // NEW: Randomize A/B/C/D and remap the Ans: letters accordingly
-  shuffleOptionsForQuestion(questionData);
-
-} else {
-  // DESCRIPTIVE: no options, no "Ans:"
-  questionData.question = rawBody.trim().split('\n')[0] || '';
-  questionData.options = [];
-  questionData.parsedAnswer = null;
-  questionData.parsedBody = rawBody.trim();
-}
-            currentSessionQuestions.push(questionData);
-            const questionEl = createQuestionElement(questionData, currentSessionQuestions.length - 1);
-            fragment.appendChild(questionEl);
-        });
-
-        messagesArea.appendChild(fragment);
-        if (window.MathJax) MathJax.typesetPromise([messagesArea]);
-        messagesArea.scrollTop = messagesArea.scrollHeight;
-    }
-
-    function createQuestionElement(qData, index) {
-        const questionEl = document.createElement('div');
-        questionEl.className = 'message ai-question-item';
-        questionEl.dataset.sessionQuestionIndex = index;
-
-             questionEl.innerHTML = `
-            <div class="question-meta-ai">${qData.parsedMeta}</div>
-            <div class="question-text-ai"></div>
-            <div class="question-actions">
-                <button class="q-action-btn" title="Options"><i class="fas fa-ellipsis-v"></i></button>
-            </div>`;
-        
-        // ⬇️ Render as HTML so MathJax can typeset \( ... \) and keep line breaks
-        const qt = questionEl.querySelector('.question-text-ai');
-        qt.innerHTML = __autoWrapInlineMath(
-          __normalizeLatexDelimiters(__decodeEntities(qData.parsedBody || ''))
-        ).replace(/\n/g, '<br>');
-        
-        if (window.MathJax && MathJax.typesetPromise) {
-          MathJax.typesetClear && MathJax.typesetClear([qt]);
-          MathJax.typesetPromise([qt]);
-        }
-        const actionButton = questionEl.querySelector('.q-action-btn');
-
-        actionButton.addEventListener('click', (e) => {
-            e.stopPropagation();
-
-            const existingMenu = document.querySelector('.actions-menu');
-            if (existingMenu) existingMenu.remove();
-
-            const menu = document.createElement('div');
-            menu.className = 'actions-menu';
-            menu.innerHTML = `
-                <button class="menu-show-answer-btn">Show Answer</button>
-                <button class="menu-edit-btn">Edit</button>
-                <button class="menu-delete-btn">Delete</button>`;
-            
-            const isAnswerShowing = questionEl.querySelector('.temp-answer');
-            if (isAnswerShowing) {
-                const buttonInMenu = menu.querySelector('.menu-show-answer-btn');
-                buttonInMenu.textContent = 'Hide Answer';
-            }
-
-            questionEl.appendChild(menu);
-
-           menu.querySelector('.menu-show-answer-btn').onclick = async (event) => {
-  event.stopPropagation();
-  try {
-    const q = currentSessionQuestions[index];
-    const prompt = buildChatGptPromptFromQuestion(q, lastSessionParams || {});
-    await openInChatGptWithPrefill(prompt);
-  } catch (err) {
-    __qb_toast('Could not open ChatGPT.');
-    console.error(err);
-  }
-  menu.remove();
-};
-
-            menu.querySelector('.menu-edit-btn').onclick = () => {
-                showEditPopupForQuestion(index);
-                menu.remove();
-            };
-
-            menu.querySelector('.menu-delete-btn').onclick = () => {
-                if (confirm('Are you sure you want to delete this question?')) {
-                    currentSessionQuestions.splice(index, 1);
-                    rerenderAllQuestions();
-                }
-                menu.remove();
-            };
-        });
-        
-        return questionEl;
-    }
-
-   function rerenderAllQuestions() {
-    const messagesArea = document.getElementById('chat-messages-area');
-    messagesArea.querySelectorAll('.ai-question-item').forEach(item => item.remove());
-
-    const fragment = document.createDocumentFragment();
-    currentSessionQuestions.forEach((q, i) => {
-        // For comprehensives, we need a different renderer
-        if (q.parsedMeta && q.parsedMeta.includes("[Comprehensive]")) {
-            // Renumber meta
-            const metaPartsMatch = q.parsedMeta.match(/Q\s*\d+:\s*(.*)/i);
-            const details = metaPartsMatch ? metaPartsMatch[1] : '';
-            q.parsedMeta = `Q${i + 1}: ${details}`;
-            // Build element (copy from parseAndDisplayAiQuestions)
-            const blockEl = document.createElement('div');
-            blockEl.className = 'message ai-question-item';
-            blockEl.dataset.sessionQuestionIndex = i;
-
-            // Build MCQ HTMLs
-            const mcqHtml = q.mcqs.map((mcq, k) => {
-                // Remove leading Qn: from mcq.body if present (Q1:, Q2:, etc.)
-                let cleanBody = mcq.body.replace(/^Q\d+:\s*/i, '').replace(/Ans:.*/,'').trim();
-                return `
-                    <div class="question-text-ai" style="margin-top:8px; text-align:left;">
-                        <b>Q${k+1}.</b> ${__wrapParenMath(cleanBody.replace(/</g,"&lt;").replace(/>/g,"&gt;"))}
-                        <div class="temp-answer" style="display:none; margin-top:3px; color:#5d4037;">${mcq.answer ? mcq.answer : ''}</div>
-                    </div>
-                `;
-            }).join('');
-            blockEl.innerHTML = `
-                <div class="question-meta-ai">${q.parsedMeta}</div>
-                <div class="question-text-ai" style="white-space:pre-line; margin-bottom:8px;"><b>Passage:</b> ${__wrapParenMath(q.passage || '')}</div>
-                ${mcqHtml}
-                <div class="question-actions">
-                    <button class="q-action-btn" title="Options"><i class="fas fa-ellipsis-v"></i></button>
-                </div>
-            `;
-            blockEl.querySelector('.q-action-btn').onclick = (e) => {
-                e.stopPropagation();
-                const existingMenu = document.querySelector('.actions-menu');
-                if (existingMenu) existingMenu.remove();
-                const menu = document.createElement('div');
-                menu.className = 'actions-menu';
-                menu.innerHTML = `
-                    <button class="menu-show-answer-btn">Show Answer</button>
-                    <button class="menu-edit-btn">Edit</button>
-                    <button class="menu-delete-btn">Delete</button>`;
-                blockEl.appendChild(menu);
-
-                menu.querySelector('.menu-show-answer-btn').onclick = () => {
-                  const q = currentSessionQuestions[i]; // comprehensive data
-                  const meta = q.parsedMeta || '';
-                  const cls = q.class || (lastSessionParams && lastSessionParams.class) || '';
-                  const subj = q.subject || (lastSessionParams && lastSessionParams.subject) || '';
-                  const chap = q.chapter || (lastSessionParams && lastSessionParams.chapter) || '';
-                
-                  let prompt = `Please solve and explain clearly.\n`;
-                  const metaLineParts = [
-                    cls && `Class: ${cls}`,
-                    subj && `Subject: ${subj}`,
-                    chap && `Chapter: ${chap}`,
-                    meta && meta.replace(/^Q\d+:\s*/, '').trim()
-                  ].filter(Boolean).join(' · ');
-                  if (metaLineParts) prompt += metaLineParts + `\n\n`;
-                
-                  prompt += `Passage:\n${q.passage}\n\n`;
-                
-                  if (Array.isArray(q.mcqs) && q.mcqs.length) {
-                    prompt += `Questions:\n`;
-                    q.mcqs.forEach((mcq, idx) => {
-                      const cleanBody = (mcq.body || '').replace(/^Q\d+:\s*/i, '').trim();
-                      prompt += `\nQ${idx + 1}.\n${cleanBody}\n`;
-                      if (mcq.answer) {
-                        prompt += `(If you know, the key says: ${mcq.answer})\n`;
-                      }
-                    });
-                    prompt += `\nRespond with answers for each MCQ (e.g., A–D) and brief step-by-step explanations.`;
-                  } else {
-                    prompt += `Respond with the final answers and brief explanations.`;
-                  }
-                
-                  openInChatGptWithPrefill(prompt);
-                  menu.remove();
-                };
-                menu.querySelector('.menu-edit-btn').onclick = () => {
-                    showEditPopupForComprehensive(i);
-                    menu.remove();
-                };
-                menu.querySelector('.menu-delete-btn').onclick = () => {
-                    if (confirm('Are you sure you want to delete this comprehensive?')) {
-                        currentSessionQuestions.splice(i, 1);
-                        rerenderAllQuestions();
-                    }
-                    menu.remove();
-                };
-            };
-
-            fragment.appendChild(blockEl);
-
-        } else {
-            // Normal question
-            const metaPartsMatch = q.parsedMeta.match(/Q\s*\d+:\s*(.*)/i);
-            const details = metaPartsMatch ? metaPartsMatch[1] : '';
-            q.parsedMeta = `Q${i + 1}: ${details}`;
-            const questionEl = createQuestionElement(q, i);
-            fragment.appendChild(questionEl);
-        }
-    });
-    messagesArea.appendChild(fragment);
-    if (window.MathJax) MathJax.typesetPromise([messagesArea]);
-}
-
-    function parseMetaLine(metaLine) {
-        const meta = { difficulty: null, level: null, marks: null };
-        const diffMatch = metaLine.match(/Q\s*\d+:\s*([^,/]+)/i);
-        const levelMatch = metaLine.match(/\/Level\s*(\d+)/i);
-        const marksMatch = metaLine.match(/(\d+)\s*Mark(s?)/i);
-
-        if (diffMatch) meta.difficulty = diffMatch[1].trim();
-        if (levelMatch) meta.level = parseInt(levelMatch[1], 10);
-        if (marksMatch) meta.marks = parseInt(marksMatch[1], 10);
-        
-        return meta;
-    }
-
-    async function getNextQuestionNumber(className, subjectName, chapterName) {
-        const query = db.collection("questions")
-            .where("class", "==", className)
-            .where("subject", "==", subjectName)
-            .where("chapter", "==", chapterName)
-            .orderBy("questionNumber", "desc")
-            .limit(1);
-
-        const snapshot = await query.get();
-        if (snapshot.empty) return 1;
-
-        const lastQuestion = snapshot.docs[0].data();
-        return (lastQuestion.questionNumber || 0) + 1;
-    }
-
-    function getTextSimilarity(a, b) {
-    if (!a || !b) return 0; // If either is missing, return 0 similarity
-    a = String(a).toLowerCase().replace(/\s+/g, ' ').trim();
-    b = String(b).toLowerCase().replace(/\s+/g, ' ').trim();
-    const aWords = new Set(a.split(' '));
-    const bWords = new Set(b.split(' '));
-    const common = [...aWords].filter(w => bWords.has(w));
-    return common.length / Math.max(aWords.size, bWords.size);
-}
-   
-    document.addEventListener('click', function(event) {
-        document.querySelectorAll('.custom-dropdown.open').forEach(dropdown => {
-            if (!dropdown.contains(event.target)) {
-                dropdown.classList.remove('open');
-            }
-        });
-        const existingMenu = document.querySelector('.actions-menu');
-        if (existingMenu && !existingMenu.contains(event.target) && !event.target.closest('.q-action-btn')) {
-            existingMenu.remove();
-        }
-    });
-       function showEditPopupForQuestion(index) {
-    const qData = currentSessionQuestions[index];
-    // Remove existing popup if any
-    document.querySelectorAll('.edit-popup').forEach(p => p.remove());
-
-    // Prepare default values
-    const options = (qData.options && qData.options.length === 4) ? qData.options : ["", "", "", ""];
-    const answerVal = qData.parsedAnswer ? qData.parsedAnswer.replace(/^Ans:\s*/i, "") : "";
-
-    // Create popup
-    const popup = document.createElement('div');
-    popup.className = 'edit-popup';
-    popup.innerHTML = `
-        <h3>Edit Question</h3>
-        <label>Question:</label>
-        <textarea id="edit-q-text" rows="2">${qData.question || ''}</textarea>
-        <label>Option A:</label>
-        <input type="text" id="edit-q-optA" value="${options[0] || ''}">
-        <label>Option B:</label>
-        <input type="text" id="edit-q-optB" value="${options[1] || ''}">
-        <label>Option C:</label>
-        <input type="text" id="edit-q-optC" value="${options[2] || ''}">
-        <label>Option D:</label>
-        <input type="text" id="edit-q-optD" value="${options[3] || ''}">
-        <label>Answer (e.g., "A)", or "A), C)" for multiple correct):</label>
-        <input type="text" id="edit-q-answer" value="${answerVal}">
-        <div class="popup-buttons">
-            <button id="edit-cancel">Cancel</button>
-            <button id="edit-save">Save</button>
-        </div>
-    `;
-    document.body.appendChild(popup);
-
-    // Cancel button logic
-    document.getElementById('edit-cancel').onclick = () => popup.remove();
-
-    // Save button logic
-    document.getElementById('edit-save').onclick = () => {
-        // Get edited values
-        const qText = document.getElementById('edit-q-text').value.trim();
-        const optA = document.getElementById('edit-q-optA').value.trim();
-        const optB = document.getElementById('edit-q-optB').value.trim();
-        const optC = document.getElementById('edit-q-optC').value.trim();
-        const optD = document.getElementById('edit-q-optD').value.trim();
-        const answer = document.getElementById('edit-q-answer').value.trim();
-
-        // Simple validation (optional)
-        if (!qText || !optA || !optB || !optC || !optD || !answer) {
-            alert("All fields are required.");
-            return;
-        }
-
-        // Update data
-        qData.question = qText;
-        qData.options = [optA, optB, optC, optD];
-        qData.parsedBody = [qText, optA, optB, optC, optD].join('\n');
-        qData.parsedAnswer = `Ans: ${answer}`;
-        qData.fullText = `${qData.parsedMeta}\n${qData.parsedBody}\n${qData.parsedAnswer}`;
-
-        // Close popup and re-render
-        popup.remove();
-        rerenderAllQuestions();
-    };
-}
 
     </script>
 </body>
 </html>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
