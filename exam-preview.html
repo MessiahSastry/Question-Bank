@@ -358,13 +358,33 @@
 </div>
  <script>
    function autoLatexAll(str) {
-  str = str.replace(/\$begin\{pmatrix\}/g, '\\begin{pmatrix}');
-  str = str.replace(/\$end\{pmatrix\}/g, '\\end{pmatrix}');
-  str = str.replace(/\$pmatrix\$/g, '');
-  str = str.replace(/Send/g, '');
-  str = str.replace(/\$([^\$]+)\$/g, '\\($1\\)');
+  if (!str) return '';
+
+  // normalize legacy markers
+  str = str.replace(/\$begin\{pmatrix\}/g, '\\begin{pmatrix}')
+           .replace(/\$end\{pmatrix\}/g, '\\end{pmatrix}')
+           .replace(/\$pmatrix\$/g, '')
+           .replace(/Send/g, '');
+
+  // if already delimited, convert $...$ → \( ... \) and return
+  const hasDelims = /\$[^$]+\$|\\\([^]*?\\\)|\\\[[\s\S]*?\\\]/.test(str);
+  if (hasDelims) return str.replace(/\$([^\$]+)\$/g, '\\($1\\)');
+
+  // heuristic: decide if it "looks like math"
+  const looksLikeMath =
+    /(\^|_|\\frac|\\sqrt|\\binom|\\sum|\\int|\\lim|\\log|\\sin|\\cos|\\tan|[≤≥≈≠∞√])/.test(str) ||
+    /[α-ωΑ-Ω]/.test(str) ||              // Greek
+    /[A-Za-z]\s*\^\s*\d/.test(str) ||    // x^2
+    /[A-Za-z]\d/.test(str) ||            // a1, x2
+    /\b[xyzw]\s*=\s*/i.test(str);        // x = ...
+
+  if (looksLikeMath) {
+    const safe = str.replace(/\\/g, '\\\\');   // keep backslashes
+    return `\\(${safe}\\)`;
+  }
   return str;
 }
+
 function removeMetaPrefix(str) {
   return str
     .replace(/^Q\d+:\s*Level\s*\d+,\s*\d+\s*Mark[s]?\s*/i, '')
@@ -788,6 +808,7 @@ if (exam.subjects && exam.subjects.length > 1) {
     page.innerHTML += contentHTML;
     page.innerHTML += `<div class="print-footer-spacer"></div>`;
     container.appendChild(page);
+    container.classList.add('mjx-process'); // allow MathJax to typeset this subtree
    const doTypeset = () =>
   window.MathJax.typesetPromise([container]).catch(err => console.error('MathJax typeset failed:', err));
 
@@ -952,12 +973,3 @@ window.addEventListener('DOMContentLoaded', () => {
 </script>
  </body>
 </html>
-
-
-
-
-
-
-
-
-
