@@ -9,12 +9,16 @@
   <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/docx/8.0.1/docx.min.js"></script>
   <script>
-    window.MathJax = {
-      tex: { inlineMath: [["$", "$"], ["\\(", "\\)"]] },
-      svg: { fontCache: "global" }
-    };
-  </script>
-  <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
+  window.MathJax = {
+    tex: { inlineMath: [["$", "$"], ["\\(", "\\)"]], processEscapes: true },
+    svg: { fontCache: "global" },
+    options: {
+      ignoreHtmlClass: 'no-mjx',
+      processHtmlClass: 'mjx-process'
+    }
+  };
+</script>
+  <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
   <style>
     body {
       background: #f4f8fc;
@@ -357,30 +361,28 @@
   </div>
 </div>
  <script>
-   function autoLatexAll(str) {
+  function autoLatexAll(str) {
   if (!str) return '';
 
-  // normalize legacy markers
+  // normalize legacy markers used by older content
   str = str.replace(/\$begin\{pmatrix\}/g, '\\begin{pmatrix}')
            .replace(/\$end\{pmatrix\}/g, '\\end{pmatrix}')
            .replace(/\$pmatrix\$/g, '')
            .replace(/Send/g, '');
 
-  // if already delimited, convert $...$ → \( ... \) and return
-  const hasDelims = /\$[^$]+\$|\\\([^]*?\\\)|\\\[[\s\S]*?\\\]/.test(str);
-  if (hasDelims) return str.replace(/\$([^\$]+)\$/g, '\\($1\\)');
+  // If author already delimited math, just normalize $...$ → \( ... \)
+  if (/\$[^$]+\$|\\\([^]*?\\\)|\\\[[\s\S]*?\\\]/.test(str)) {
+    return str.replace(/\$([^\$]+)\$/g, '\\($1\\)');
+  }
 
-  // heuristic: decide if it "looks like math"
-  const looksLikeMath =
-    /(\^|_|\\frac|\\sqrt|\\binom|\\sum|\\int|\\lim|\\log|\\sin|\\cos|\\tan|[≤≥≈≠∞√])/.test(str) ||
-    /[α-ωΑ-Ω]/.test(str) ||              // Greek
-    /[A-Za-z]\s*\^\s*\d/.test(str) ||    // x^2
-    /[A-Za-z]\d/.test(str) ||            // a1, x2
-    /\b[xyzw]\s*=\s*/i.test(str);        // x = ...
+  // Only auto-wrap SHORT symbolic fragments, never full sentences
+  const words = str.trim().split(/\s+/).length;
+  const hasMathTokens = /(\^|_|\\frac|\\sqrt|\\binom|\\sum|\\int|\\lim|\\log|\\sin|\\cos|\\tan|[≤≥≈≠∞√])/.test(str);
+  const isDimension = /\[[^\]]+\]/.test(str); // e.g. [M^0 L^2 T^-2]
+  const looksAlgebra = /\b[A-Za-z]\s*\^\s*\d\b|[A-Za-z]\d/.test(str) || /\b[xyz]\s*=/.test(str);
 
-  if (looksLikeMath) {
-    const safe = str.replace(/\\/g, '\\\\');   // keep backslashes
-    return `\\(${safe}\\)`;
+  if ((isDimension || hasMathTokens || looksAlgebra) && words <= 6) {
+    return `\\(${str}\\)`;
   }
   return str;
 }
@@ -973,3 +975,4 @@ window.addEventListener('DOMContentLoaded', () => {
 </script>
  </body>
 </html>
+
