@@ -157,16 +157,21 @@
       <h2>Review & Edit Exam Paper</h2>
       <div id="exam-review-area"></div>
       <div style="display: flex; flex-direction: column; align-items: center; gap: 14px; margin-top: 24px; width: 100%;">
-         <button class="save-btn" id="randomize-numbers-btn" style="background:#f08035;">
-        <i class="fas fa-random"></i> Randomize Numbers in Problems
-        </button>
-        <button class="save-btn" id="save-review-btn">
-          <i class="fas fa-save"></i> Save Changes
-        </button>
-        <button class="preview-btn" id="preview-btn">
-          <i class="fas fa-eye"></i> Preview Question Paper
-        </button>
-      </div>
+  <button class="save-btn" id="randomize-numbers-btn" style="background:#f08035;">
+    <i class="fas fa-random"></i> Randomize Numbers (Copy Prompt → Open ChatGPT)
+  </button>
+
+  <button class="save-btn" id="apply-json-btn" style="background:#1762a7;">
+    <i class="fas fa-paste"></i> Paste JSON from ChatGPT
+  </button>
+
+  <button class="save-btn" id="save-review-btn">
+    <i class="fas fa-save"></i> Save Changes
+  </button>
+  <button class="preview-btn" id="preview-btn">
+    <i class="fas fa-eye"></i> Preview Question Paper
+  </button>
+</div>
     </div>
   </main>
 </div>
@@ -349,42 +354,42 @@ area.querySelectorAll('.num-questions, .marks-per-question').forEach(el => {
 });
     MathJax.typesetPromise();
 
-    // Inline editing indicators for all [contenteditable]
-    area.querySelectorAll('[contenteditable]').forEach(el => {
-      el.addEventListener('input', function() {
-        this.classList.add('edited');
-        // Remove existing edit-indicator
-        const parent = this.parentNode;
-        const existing = parent.querySelector('.edit-indicator');
-        if (existing) existing.remove();
-        // Add new one
-        const ind = document.createElement('span');
-        ind.className = 'edit-indicator';
-        ind.textContent = 'Edited';
-        parent.appendChild(ind);
-      });
-      el.addEventListener('blur', function() {
-        this.classList.remove('edited');
-        if (this.parentNode && this.parentNode.querySelector('.edit-indicator')) {
-          setTimeout(() => {
-            if (this.parentNode) {
-              const indicator = this.parentNode.querySelector('.edit-indicator');
-              if (indicator) indicator.remove();
-            }
-          }, 600);
+   // Inline editing indicators for all [contenteditable]
+area.querySelectorAll('[contenteditable]').forEach(el => {
+  el.addEventListener('input', function() {
+    this.classList.add('edited');
+    // Remove existing edit-indicator
+    const parent = this.parentNode;
+    const existing = parent.querySelector('.edit-indicator');
+    if (existing) existing.remove();
+    // Add new one
+    const ind = document.createElement('span');
+    ind.className = 'edit-indicator';
+    ind.textContent = 'Edited';
+    parent.appendChild(ind);
+  });
+  el.addEventListener('blur', function() {
+    this.classList.remove('edited');
+    if (this.parentNode && this.parentNode.querySelector('.edit-indicator')) {
+      setTimeout(() => {
+        if (this.parentNode) {
+          const indicator = this.parentNode.querySelector('.edit-indicator');
+          if (indicator) indicator.remove();
         }
-      });
-    });
-  }
-  function saveEdits() {
-    const paper = getExamPaper();
-    if (!paper) return;
-    // Section names
-    document.querySelectorAll('.section-header').forEach(sec => {
-      const subjIdx = +sec.dataset.subject, secIdx = +sec.dataset.section;
-      paper.subjects[subjIdx].sections[secIdx].label = sec.textContent.replace(/<[^>]+>/g,'').replace(/Edited$/,'').trim();
-    });
-      // Number of Questions and Marks Per Question (editable)
+      }, 600);
+    }
+  });
+});
+}
+function saveEdits() {
+  const paper = getExamPaper();
+  if (!paper) return;
+  // Section names
+  document.querySelectorAll('.section-header').forEach(sec => {
+    const subjIdx = +sec.dataset.subject, secIdx = +sec.dataset.section;
+    paper.subjects[subjIdx].sections[secIdx].label = sec.textContent.replace(/<[^>]+>/g,'').replace(/Edited$/,'').trim();
+  });
+  // Number of Questions and Marks Per Question (editable)
   document.querySelectorAll('.num-questions').forEach(span => {
     const subjIdx = +span.dataset.subject, secIdx = +span.dataset.section;
     let val = parseInt(span.textContent.trim());
@@ -395,263 +400,316 @@ area.querySelectorAll('.num-questions, .marks-per-question').forEach(el => {
     let val = parseInt(span.textContent.trim());
     if (!isNaN(val) && val > 0) paper.subjects[subjIdx].sections[secIdx].marksPerQuestion = val;
   });
-    // Instructions (editable flex row)
-    document.querySelectorAll('.section-instructions').forEach(ins => {
-      const subjIdx = +ins.dataset.subject, secIdx = +ins.dataset.section;
-      paper.subjects[subjIdx].sections[secIdx].instructions = ins.innerText.trim();
-    });
- // Questions — update text, options (if MCQ), answer key, and marks
-document.querySelectorAll('.question-row').forEach(qr => {
-  const subjIdx = +qr.dataset.subject, secIdx = +qr.dataset.section, qIdx = +qr.dataset.question;
-
-  // Marks
-  const newMarks = qr.querySelector('.marks-box')?.innerText?.trim() ?? '';
-  paper.subjects[subjIdx].sections[secIdx].questions[qIdx].marks = newMarks;
-
-  // Text
-  const newText = qr.querySelector('.question-text')?.innerText?.trim() ?? '';
-  if (newText) paper.subjects[subjIdx].sections[secIdx].questions[qIdx].text = newText;
-
-  // Options (if present)
-  const optNodes = qr.querySelectorAll('.mcq-opt');
-  if (optNodes && optNodes.length === 4) {
-    const updatedOpts = Array.from(optNodes).map(n => (n.innerText || '').trim());
-    paper.subjects[subjIdx].sections[secIdx].questions[qIdx].options = updatedOpts;
-  }
-
-  // Answer key (letters like A or A,C)
-  const ansNode = qr.querySelector('.answer-box');
-  if (ansNode) {
-    let raw = (ansNode.innerText || '').toUpperCase().replace(/[^A-D,]/g,'').replace(/\s+/g,'');
-    // Normalize duplicates & order: A,B,C,D unique, keep original order
-    const seen = new Set();
-    const letters = raw.split(',').filter(x => /^[A-D]$/.test(x) && !seen.has(x) && seen.add(x));
-    paper.subjects[subjIdx].sections[secIdx].questions[qIdx].answer = letters.join(letters.length > 1 ? ',' : '');
-  }
-});
-
-    // Re-number questions continuously across ALL subjects and sections
-let n = 1;
-(paper.subjects || []).forEach(subj => {
-  (subj.sections || []).forEach(sec => {
-    (sec.questions || []).forEach(q => { q.number = n++; });
+  // Instructions (editable flex row)
+  document.querySelectorAll('.section-instructions').forEach(ins => {
+    const subjIdx = +ins.dataset.subject, secIdx = +ins.dataset.section;
+    paper.subjects[subjIdx].sections[secIdx].instructions = ins.innerText.trim();
   });
-});
-    setExamPaper(paper);
-    alert('Changes saved!');
-  }
+  // Questions — update text, options (if MCQ), answer key, and marks
+  document.querySelectorAll('.question-row').forEach(qr => {
+    const subjIdx = +qr.dataset.subject, secIdx = +qr.dataset.section, qIdx = +qr.dataset.question;
 
-  document.getElementById('save-review-btn').onclick = saveEdits;
-  window.onload = renderExam;
-  document.getElementById('preview-btn').onclick = function() {
-    saveEdits();
-    const paper = getExamPaper();
-    if (paper) {
-      sessionStorage.setItem('finalExamData', JSON.stringify(paper));
-      window.location.href = 'exam-preview.html';
-    } else {
-      alert('No exam paper found!');
+    // Marks
+    const newMarks = qr.querySelector('.marks-box')?.innerText?.trim() ?? '';
+    paper.subjects[subjIdx].sections[secIdx].questions[qIdx].marks = newMarks;
+
+    // Text
+    const newText = qr.querySelector('.question-text')?.innerText?.trim() ?? '';
+    if (newText) paper.subjects[subjIdx].sections[secIdx].questions[qIdx].text = newText;
+
+    // Options (if present)
+    const optNodes = qr.querySelectorAll('.mcq-opt');
+    if (optNodes && optNodes.length === 4) {
+      const updatedOpts = Array.from(optNodes).map(n => (n.innerText || '').trim());
+      paper.subjects[subjIdx].sections[secIdx].questions[qIdx].options = updatedOpts;
     }
-  };
- // --- Add this code at the end of your <script> ---
-document.getElementById('randomize-numbers-btn').onclick = async function() {
+
+    // Answer key (letters like A or A,C)
+    const ansNode = qr.querySelector('.answer-box');
+    if (ansNode) {
+      let raw = (ansNode.innerText || '').toUpperCase().replace(/[^A-D,]/g,'').replace(/\s+/g,'');
+      // Normalize duplicates & order: A,B,C,D unique, keep original order
+      const seen = new Set();
+      const letters = raw.split(',').filter(x => /^[A-D]$/.test(x) && !seen.has(x) && (seen.add(x), true));
+      paper.subjects[subjIdx].sections[secIdx].questions[qIdx].answer = letters.join(letters.length > 1 ? ',' : '');
+    }
+  });
+
+  // Re-number questions continuously across ALL subjects and sections
+  let n = 1;
+  (paper.subjects || []).forEach(subj => {
+    (subj.sections || []).forEach(sec => {
+      (sec.questions || []).forEach(q => { q.number = n++; });
+    });
+  });
+  setExamPaper(paper);
+  alert('Changes saved!');
+}
+
+document.getElementById('save-review-btn').onclick = saveEdits;
+window.onload = renderExam;
+document.getElementById('preview-btn').onclick = function() {
   saveEdits();
   const paper = getExamPaper();
-  if (!paper) {
+  if (paper) {
+    sessionStorage.setItem('finalExamData', JSON.stringify(paper));
+    window.location.href = 'exam-preview.html';
+  } else {
     alert('No exam paper found!');
+  }
+};
+
+// --- Add this code at the end of your <script> ---
+document.getElementById('randomize-numbers-btn').onclick = async function() {
+  // --- stateful auto-batch controller: prepares batches or advances to next prompt ---
+  const btn = document.getElementById('randomize-numbers-btn');
+
+  // Helper: small guidance/status banner
+  function ensureGuide() {
+    let g = document.getElementById('rand-guide');
+    if (!g) {
+      g = document.createElement('div');
+      g.id = 'rand-guide';
+      g.style.cssText = 'margin-top:10px;padding:10px 12px;border:1px solid #bcd6ef;background:#f7fafd;border-radius:8px;color:#0f3d6b;font-size:.98em;';
+      btn.parentElement.insertBefore(g, btn.nextSibling);
+    }
+    return g;
+  }
+  function setGuide(html) {
+    const g = ensureGuide();
+    g.innerHTML = html;
+  }
+
+  // If a session already exists, just re-copy/open the current batch prompt
+  if (window.__randState && Array.isArray(window.__randState.batches)) {
+    const st = window.__randState;
+    const total = st.batches.length;
+    const i = st.idx + 1;
+    const promptText = buildRandomizePrompt(st.batches[st.idx]);
+    try {
+      await navigator.clipboard.writeText(promptText);
+      setGuide(`<b>Batch ${i}/${total}</b> prompt copied again. Opened ChatGPT. Paste → run → copy JSON → click <i>Paste JSON from ChatGPT</i>.`);
+      window.open('https://chat.openai.com/', '_blank', 'noopener');
+    } catch (e) {
+      alert('Copy failed. A window will open with the prompt for manual copy.');
+      const w = window.open('', '_blank', 'noopener,width=900,height=650,scrollbars=yes');
+      if (w) { w.document.write(`<pre style="white-space:pre-wrap;font-family:monospace;padding:16px;">${promptText.replace(/[<>&]/g, m => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[m]))}</pre>`); w.document.close(); }
+    }
+    btn.innerHTML = `<i class="fas fa-random"></i> Copy Batch ${i}/${total} Prompt (again)`;
     return;
   }
- // Deep copy backup to restore any question if parsing fails
-const backup = JSON.parse(JSON.stringify(paper));
 
-  // Gather all eligible questions
-  let allQuestions = [];
+  // Fresh session
+  saveEdits();
+  const paper = getExamPaper();
+  if (!paper) { alert('No exam paper found!'); return; }
+
+  // Gather eligible questions (Math/Physics/Chemistry + contains a number)
+  const all = [];
   paper.subjects.forEach((subjectBlock, subjIdx) => {
     (subjectBlock.sections || []).forEach((section, sIdx) => {
       (section.questions || []).forEach((q, qIdx) => {
         const isProbSubject = ["math", "math 1", "math 2", "physics", "chemistry"].some(
-          s => subjectBlock.subject.toLowerCase().includes(s)
+          s => (subjectBlock.subject || '').toLowerCase().includes(s)
         );
         if (!isProbSubject) return;
-        const hasNumber = /\d/.test(q.text);
-        if (!hasNumber) return;
-        allQuestions.push({
-          subjIdx, sIdx, qIdx,
-          subject: subjectBlock.subject,
-          sectionLabel: section.label,
-          question: q.text,
-          options: q.options || [],
-        });
+        const text = (q.text || q.body || q.question || '');
+        if (!/\d/.test(text)) return;
+        all.push({ subjIdx, sIdx, qIdx, subject: subjectBlock.subject, sectionLabel: section.label, stem: text, options: Array.isArray(q.options) ? q.options : [] });
       });
     });
   });
 
-  if (allQuestions.length === 0) {
-    alert("No numerical problem-solving questions found in Math/Physics/Chemistry.");
+  if (all.length === 0) {
+    alert('No numerical problem-solving questions found in Math/Physics/Chemistry.');
     return;
   }
 
-  // --- Batch processing ---
-  const BATCH_SIZE = 10;
-  const totalBatches = Math.ceil(allQuestions.length / BATCH_SIZE);
-  let updatedBlocks = [];
-  let aiFailed = false;
+  // --- Make batches of size 15, but ensure last batch >= 12 if possible ---
+  function makeBatches(items, maxSize = 15, minSize = 12) {
+    const chunks = [];
+    for (let i = 0; i < items.length; i += maxSize) chunks.push(items.slice(i, i + maxSize));
+    if (chunks.length >= 2) {
+      const last = chunks[chunks.length - 1];
+      const prev = chunks[chunks.length - 2];
+      if (last.length < minSize && prev.length > minSize) {
+        const need = minSize - last.length;
+        const take = Math.min(need, prev.length - minSize);
+        if (take > 0) {
+          last.unshift(...prev.splice(prev.length - take, take));
+        }
+      }
+    }
+    return chunks;
+  }
 
-  const btn = document.getElementById('randomize-numbers-btn');
-  btn.disabled = true;
-  btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Randomizing...';
+  const batches = makeBatches(all, 15, 12);
+  // Save session state
+  window.__randState = {
+    batches,                // array of arrays of question-maps
+    idx: 0,                 // current batch index
+    appliedCount: 0,        // total questions updated so far
+    paperBackup: JSON.parse(JSON.stringify(paper)) // full backup
+  };
 
-  for (let b = 0; b < totalBatches; b++) {
-    const batchQuestions = allQuestions.slice(b * BATCH_SIZE, (b + 1) * BATCH_SIZE);
-    const prompt = `
+  const total = batches.length;
+  const promptText = buildRandomizePrompt(batches[0]);
+  try {
+    await navigator.clipboard.writeText(promptText);
+    setGuide(`<b>Batch 1/${total}</b> prompt copied. I opened ChatGPT. Steps:<br>1) Paste & run<br>2) Copy STRICT JSON array<br>3) Return here → click <i>Paste JSON from ChatGPT</i>`);
+    window.open('https://chat.openai.com/', '_blank', 'noopener');
+  } catch (e) {
+    alert('Copy failed. A window will open with the prompt for manual copy.');
+    const w = window.open('', '_blank', 'noopener,width=900,height=650,scrollbars=yes');
+    if (w) { w.document.write(`<pre style="white-space:pre-wrap;font-family:monospace;padding:16px;">${promptText.replace(/[<>&]/g, m => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[m]))}</pre>`); w.document.close(); }
+  }
+  btn.innerHTML = `<i class="fas fa-random"></i> Copy Batch 1/${total} Prompt (again)`;
+};
+// --- END ---
+
+function buildRandomizePrompt(batchQuestions) {
+  const header = `
 You will receive a batch of questions (mostly numerical). For EACH question:
-- Keep the SAME wording/structure; only change the numeric values to new reasonable integers (avoid 0/1 unless appropriate).
+- Keep the SAME wording/structure; only change numeric values to new reasonable integers (avoid 0/1 unless appropriate).
 - Recompute all options so they match the new numbers.
 - MCQ (Single): exactly one correct option.
 - MCQ (Multiple): 1–4 correct options (you choose per question).
- - **Randomly should assign the number of correct options for each question as follows with out fail:**
-        - 20% questions: 1 correct option
-        - 30% questions: 2 correct options
-        - 30% questions: 3 correct options
-        - 20% questions: 4 correct options (all correct)
-- **Never return a question where none of the options are correct.** Ensure at least one—and exactly the intended number—of correct options.
-- **Shuffle the options AND the correct answer letters** each time; ensure the answer key matches the shuffled options.
-- **Double-check** that the answer key corresponds to the recomputed options after number changes.
-- **Never include** options like "All of the above", "None of the above", "None of these", or similar—use only concrete answers.
-- If a question is theoretical/non-numerical, **leave it unchanged**.
+- Randomize intended correct-count distribution across the batch approximately as:
+  • 20%: 1 correct option
+  • 30%: 2 correct options
+  • 30%: 3 correct options
+  • 20%: 4 correct options (all correct)
+- Never return a question where none of the options are correct.
+- Shuffle options AND ensure the answer letters match the shuffled options.
 - Preserve any TeX/Math formatting already present (e.g., \\( ... \\)).
-
-Return **STRICT JSON only** (no prose, no markdown fences). EXACT shape:
+- Return STRICT JSON only (no prose, no markdown fences). EXACT shape:
 [
   {
     "stem": "<updated question text>",
     "options": ["A text","B text","C text","D text"],
-    "answer": ["A"]                 // or ["A","C"] for multiple; letters only A–D
+    "answer": ["A"]           // or ["A","C"] for multiple; letters A–D only
   },
   ...
 ]
 
 Input items (JSON per line):
-${batchQuestions.map((q, idx) => JSON.stringify({
-  index: idx + 1,
-  subject: q.subject,
-  section: q.sectionLabel,
-  stem: q.question,
-  options: q.options
-})).join('\n')}
-`;
-    let aiResult;
-    try {
-      const response = await fetch('https://question-bank-lqsu.onrender.com/api/v1/generate', {
-        method: 'POST',
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt })
-      });
-      const data = await response.json();
-      if (!response.ok || !data.result) throw new Error(data.error || "AI Error");
-      aiResult = data.result;
-    } catch (e) {
-      alert("AI error: " + e.message);
-      aiFailed = true;
-      break;
-    }
-    // --- Parse STRICT JSON ---
-let items;
-try {
-  const cleaned = String(aiResult).replace(/```json|```/gi, '').trim();
-  items = JSON.parse(cleaned);
-} catch (e) {
-  console.warn("AI raw output (invalid JSON) for batch", b + 1, aiResult);
-  alert(`AI returned invalid JSON for batch ${b + 1}. No changes applied for this batch.`);
-  aiFailed = true;
-  break;
+`.trim();
+
+  const lines = batchQuestions.map((q, idx) => JSON.stringify({
+    index: idx + 1,
+    subject: q.subject,
+    section: q.sectionLabel,
+    stem: q.stem,
+    options: q.options
+  })).join('\n');
+
+  return `${header}\n${lines}\n`;
 }
 
-// Validate array length matches this batch
-if (!Array.isArray(items) || items.length !== batchQuestions.length) {
-  console.warn("AI JSON length mismatch for batch", b + 1, items);
-  alert(`AI returned ${Array.isArray(items) ? items.length : 0} of ${batchQuestions.length} items in batch ${b + 1}. No changes applied for this batch.`);
-  aiFailed = true;
-  break;
-}
+document.getElementById('apply-json-btn').onclick = async function() {
+  const paper = getExamPaper();
+  if (!paper) { alert('No exam paper found!'); return; }
 
-updatedBlocks.push(items);
-}
-  if (aiFailed) {
-    btn.disabled = false;
-    btn.innerHTML = '<i class="fas fa-random"></i> Randomize Numbers in Problems';
+  if (!window.__randState || !Array.isArray(window.__randState.batches)) {
+    alert('No active randomize session. Click “Randomize Numbers (Copy Prompt → Open ChatGPT)” first.');
     return;
   }
 
- // ===== Apply AI JSON results back to paper (safe) =====
-let applied = 0;
-for (let b = 0; b < updatedBlocks.length; b++) {
-  const batchQuestions = allQuestions.slice(b * BATCH_SIZE, (b + 1) * BATCH_SIZE);
-  const items = updatedBlocks[b]; // array of { stem, options[4], answer[...] }
+  const st = window.__randState;
+  const totalBatches = st.batches.length;
+  const currentIdx = st.idx;
+  const currentMap = st.batches[currentIdx]; // this batch’s mapping
+
+  const raw = prompt(`Paste the STRICT JSON array returned by ChatGPT for Batch ${currentIdx + 1}/${totalBatches}:`, '');
+  if (!raw) return;
+
+  let items;
+  try {
+    const cleaned = String(raw).replace(/```json|```/gi, '').trim();
+    items = JSON.parse(cleaned);
+  } catch {
+    alert('Invalid JSON. Please paste only the JSON array.');
+    return;
+  }
+
+  if (!Array.isArray(items) || items.length !== currentMap.length) {
+    alert(`JSON length mismatch. Expected ${currentMap.length} items, got ${Array.isArray(items) ? items.length : 0}.`);
+    return;
+  }
+
+  const backup = JSON.parse(JSON.stringify(paper));
+  let applied = 0;
 
   for (let i = 0; i < items.length; i++) {
-    const { subjIdx, sIdx, qIdx } = batchQuestions[i];
+    const { subjIdx, sIdx, qIdx } = currentMap[i];
     const out = items[i] || {};
-
     const stem = (out.stem || '').trim();
     const opts = Array.isArray(out.options) ? out.options.map(x => String(x || '').trim()) : [];
-    let ansLetters = Array.isArray(out.answer) ? out.answer.map(x => String(x || '').trim().toUpperCase()) : [];
+    let ans = Array.isArray(out.answer) ? out.answer.map(x => String(x || '').trim().toUpperCase()) : [];
 
-    // Normalize answer letters: keep only A–D, unique, preserve order
+    // Normalize A–D unique in order
     const seen = new Set();
-    ansLetters = ansLetters.filter(L => /^[A-D]$/.test(L) && !seen.has(L) && (seen.add(L), true));
+    ans = ans.filter(L => /^[A-D]$/.test(L) && !seen.has(L) && (seen.add(L), true));
 
     const qObj = paper.subjects[subjIdx].sections[sIdx].questions[qIdx];
 
-    // Overwrite ONLY if valid
     const validStem = stem.replace(/<[^>]+>/g, '').length >= 3;
     const validOpts = opts.length === 4 && opts.every(s => s.length > 0);
-    const validAns  = ansLetters.length >= 1;
+    const validAns  = ans.length >= 1;
 
     if (validStem) qObj.text = stem;
     if (validOpts) qObj.options = opts;
-    if (validAns)  qObj.answer = ansLetters.join(ansLetters.length > 1 ? ',' : '');
+    if (validAns)  qObj.answer = ans.join(ans.length > 1 ? ',' : '');
 
-    // Guard: if MCQ options exist but answer ended up empty, restore original answer
+    // Guards
     if (Array.isArray(qObj.options) && qObj.options.length === 4 && !qObj.answer) {
       const orig = backup.subjects[subjIdx].sections[sIdx].questions[qIdx];
       if (orig?.answer) qObj.answer = orig.answer;
     }
-
-    // Guard: if stem ended up empty, restore original stem
     if (!qObj.text || !qObj.text.trim()) {
       const orig = backup.subjects[subjIdx].sections[sIdx].questions[qIdx];
-      if (orig?.text) qObj.text = orig.text;
+      if (orig?.text || orig?.question) qObj.text = (orig.text || orig.question);
     }
 
     applied++;
   }
-}
-   // Final safety net: restore any question that lost its stem entirely
-paper.subjects.forEach((subjectBlock, si) => {
-  (subjectBlock.sections || []).forEach((section, sj) => {
-    (section.questions || []).forEach((q, qk) => {
-      const txt = (q.text || q.question || '').trim();
-      if (!txt) {
-        const orig = (((backup.subjects || [])[si] || {}).sections || [])[sj]?.questions?.[qk];
-        if (orig && (orig.text || orig.question)) {
-          q.text = (orig.text || orig.question);
-        }
-      }
-    });
-  });
-});
 
   setExamPaper(paper);
   renderExam();
-  alert("Numbers in all numerical problems have been randomized!");
-  btn.disabled = false;
-  btn.innerHTML = '<i class="fas fa-random"></i> Randomize Numbers in Problems';
+
+  // Update session progress
+  st.appliedCount += applied;
+  st.idx++;
+
+  // Guidance & next step
+  const btn = document.getElementById('randomize-numbers-btn');
+  const guide = document.getElementById('rand-guide');
+  if (st.idx >= totalBatches) {
+    alert(`All batches applied. Total updates: ${st.appliedCount}.`);
+    if (guide) guide.innerHTML = `<b>Done.</b> Applied ${st.appliedCount} updates across ${totalBatches} batches.`;
+    btn.innerHTML = '<i class="fas fa-random"></i> Randomize Numbers (Copy Prompt → Open ChatGPT)';
+    // Clear session
+    delete window.__randState;
+    return;
+  }
+
+  const nextIdx = st.idx;
+  const nextPrompt = buildRandomizePrompt(st.batches[nextIdx]);
+  try {
+    await navigator.clipboard.writeText(nextPrompt);
+    if (guide) guide.innerHTML = `<b>Batch ${nextIdx + 1}/${totalBatches}</b> prompt copied. I opened ChatGPT. Steps:<br>1) Paste & run<br>2) Copy STRICT JSON<br>3) Return → click <i>Paste JSON from ChatGPT</i>`;
+    window.open('https://chat.openai.com/', '_blank', 'noopener');
+  } catch (e) {
+    alert('Copy failed. A window will open with the next prompt for manual copy.');
+    const w = window.open('', '_blank', 'noopener,width=900,height=650,scrollbars=yes');
+    if (w) { w.document.write(`<pre style="white-space:pre-wrap;font-family:monospace;padding:16px;">${nextPrompt.replace(/[<>&]/g, m => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[m]))}</pre>`); w.document.close(); }
+  }
+  btn.innerHTML = `<i class="fas fa-random"></i> Copy Batch ${nextIdx + 1}/${totalBatches} Prompt (again)`;
 };
-// --- END ---
 </script>
 </body>
 </html>
+
 
 
 
