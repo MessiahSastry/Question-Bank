@@ -1687,92 +1687,101 @@ pdf.text(rankTxt, x + wTot/2, y, { align:'center', baseline:'alphabetic' });
     pdf.setTextColor(0,0,0);
    }
 } 
- // === Grade Band Legend (single horizontal band inside rounded box) ===
-(function drawGradeBandLegend(){
-  try {
-    // Pull the active grading scale (uses school default or exam custom)
-    const scale = (typeof getActiveScale === 'function') ? getActiveScale() : null;
-    if (!Array.isArray(scale) || !scale.length) return;
+ // === Grading Scale Legend (single rounded box; columns with dividers; global scale) ===
+ (function drawGlobalGradingLegendBox(){
+   try {
+     // 1) Use the active/global grading scale (already custom if set, else legacy)
+     const scale = (typeof getActiveScale === 'function') ? getActiveScale() : null;
+     if (!Array.isArray(scale) || !scale.length) return;
 
-    // Sort by min descending → A+ … F
-    const rows = [...scale].sort((a,b)=>(b.min ?? 0) - (a.min ?? 0));
-    const ranges = rows.map(r => `${(r.min ?? '')}–${(r.max ?? '')}`);
-    const grades = rows.map(r => String(r.grade ?? ''));
+     // 2) Build columns: "95 - 100 (A+)" … highest → lowest, with clean integers
+     const rows = [...scale].sort((a,b)=>(b.min ?? 0) - (a.min ?? 0));
+     const toInt = v => (Number.isFinite(+v) ? Math.round(+v) : '');
+     const cols = rows.map(r => `${toInt(r.min)} - ${toInt(r.max)} (${String(r.grade || '').toUpperCase()})`);
 
-    // Page/frame metrics (match back page border)
-    const W = 3509, H = 2481;
-    const borderX = 120, borderY = 120, borderW = W - 240, borderH = H - 240;
+     // 3) Page/frame metrics (match back page border)
+     const W = 3509, H = 2481;
+     const borderX = 120, borderY = 120, borderW = W - 240, borderH = H - 240;
 
-    // Typography
-    const title     = 'GRADING SCALE';
-    const titleSize = 54;   // legend title
-    const rangeSize = 44;   // top row (range)
-    const gradeSize = 62;   // bottom row (grade)
-    const rowGapY   = 14;   // gap between ranges and grades
-    const colGapX   = 34;   // gap between columns
+     // 4) Typography & layout
+     const titleText = 'GRADING SCALE';
+     const titleSize = 54;          // title font size
+     const colSize   = 46;          // each column font size
+     const rowGapY   = 14;          // gap between title and columns
+     const colGapX   = 34;          // gap between columns
+     const padX      = 36, padY = 22; // box inner padding
+     const rRadius   = 16;          // rounded corners
 
-    // Measure per-column widths (max of range/gr. text per column)
-    pdf.setFont('helvetica','bold');
-    const meas = (txt, sz) => { pdf.setFontSize(sz); return Math.ceil(pdf.getTextWidth(String(txt))); };
-    const rangeWs = ranges.map(t => meas(t, rangeSize));
-    const gradeWs = grades.map(t => meas(t, gradeSize));
-    const colWs   = rangeWs.map((w,i)=> Math.max(w, gradeWs[i]));
+     // 5) Measure
+     pdf.setFont('helvetica','bold');
+     const textW = (t, sz) => { pdf.setFontSize(sz); return Math.ceil(pdf.getTextWidth(String(t))); };
+     const titleW = textW(titleText, titleSize);
+     const colWs  = cols.map(c => textW(c, colSize));
+     const colsW  = colWs.reduce((a,w)=>a+w,0) + colGapX * (Math.max(0, cols.length - 1));
+     const innerW = Math.max(titleW, colsW);
 
-    // Rounded box sizing
-    const padX = 36, padY = 22;
-    const contentW = colWs.reduce((a,w)=>a+w,0) + colGapX * (colWs.length - 1);
-    const boxW = Math.min(Math.floor(borderW*0.96), contentW + padX*2);
-    const boxH = padY + titleSize + 18 + rangeSize + rowGapY + gradeSize + padY;
+     // 6) Box sizing within border; center; anchor at bottom; scale if needed
+     const maxBoxW = Math.floor(borderW * 0.96);
+     const rawBoxW = innerW + padX * 2;
+     const scaleK  = rawBoxW > maxBoxW ? (maxBoxW / rawBoxW) : 1;
 
-    // Anchor: stick the legend at the bottom inside the border so it never overlaps rows
-    const bottomMargin = 24;
-    let topY = borderY + borderH - boxH - bottomMargin;
+     const boxW = Math.round(rawBoxW * scaleK);
+     const boxH = Math.round(
+       (padY + titleSize + 14 + rowGapY + colSize + padY) * scaleK
+     );
+     const boxX = borderX + Math.round((borderW - boxW) / 2);
+     const boxY = borderY + borderH - boxH - 24; // 24px bottom margin
 
-    const boxX = borderX + Math.round((borderW - boxW)/2);
-    const startX = boxX + Math.round((boxW - contentW)/2);
+     // 7) Draw rounded box
+     pdf.setDrawColor(15, 61, 107);
+     pdf.setLineWidth(2);
+     pdf.roundedRect(boxX, boxY, boxW, boxH, rRadius, rRadius, 'S');
 
-    // Draw rounded box
-    pdf.setDrawColor(15,61,107);
-    pdf.setLineWidth(2);
-    pdf.roundedRect(boxX, topY, boxW, boxH, 16, 16, 'S');
+     // 8) Title
+     pdf.setTextColor(15, 61, 107);
+     pdf.setFontSize(Math.round(titleSize * scaleK));
+     pdf.text(titleText, boxX + Math.round(boxW/2), boxY + Math.round(padY * scaleK) + Math.round((titleSize * scaleK)/2), {
+       align:'center', baseline:'middle'
+     });
 
-    // Title
-    pdf.setTextColor(15,61,107);
-    pdf.setFontSize(titleSize);
-    pdf.text(title, boxX + boxW/2, topY + padY + Math.round(titleSize/2), {
-      align:'center', baseline:'middle'
-    });
+     // 9) Columns row (centered) with vertical separators
+     let x = boxX + Math.round((boxW - Math.round(innerW * scaleK)) / 2);
+     const baseline = boxY + Math.round(padY * scaleK + titleSize * scaleK + 14 * scaleK + colSize * scaleK);
 
-    // Top row: ranges
-    let cx = startX;
-    const baseRangeY = topY + padY + titleSize + 18 + Math.round(rangeSize/2);
-    pdf.setFontSize(rangeSize);
-    ranges.forEach((txt,i) => {
-      const w = colWs[i];
-      pdf.text(txt, cx + w/2, baseRangeY, { align:'center', baseline:'middle' });
-      cx += w + colGapX;
-    });
+     pdf.setTextColor(0, 0, 0);
+     pdf.setFontSize(Math.round(colSize * scaleK));
 
-    // Bottom row: grades (aligned under ranges)
-    cx = startX;
-    const baseGradeY = baseRangeY + rowGapY + Math.round(gradeSize);
-    pdf.setTextColor(22,163,74);
-    pdf.setFontSize(gradeSize);
-    grades.forEach((txt,i) => {
-      const w = colWs[i];
-      pdf.text(txt, cx + w/2, baseGradeY, { align:'center', baseline:'alphabetic' });
-      cx += w + colGapX;
-    });
+     cols.forEach((txt, i) => {
+       const w = Math.round(colWs[i] * scaleK);
+       // Text centered in its column
+       pdf.text(txt, x + Math.round(w/2), baseline, { align:'center', baseline:'alphabetic' });
 
-    // restore
-    pdf.setTextColor(0,0,0);
-    pdf.setLineWidth(1);
-  } catch(e) {
-    console.warn('Grade band legend render failed:', e);
-  }
-})();
-// === /Grade Band Legend ===
+       // Vertical divider after each column (except last)
+       if (i < cols.length - 1) {
+         const gapHalf = Math.round((colGapX * scaleK) / 2);
+         const sepX = x + w + gapHalf;
+         const topY = baseline - Math.round(colSize * scaleK) - Math.round(6 * scaleK);
+         const botY = baseline - Math.round(2 * scaleK);
 
+         pdf.setDrawColor(180, 200, 233); // subtle divider
+         pdf.setLineWidth(1);
+         pdf.line(sepX, topY, sepX, botY);
+
+         // restore for next loop
+         pdf.setDrawColor(0,0,0);
+         pdf.setLineWidth(1);
+       }
+
+       x += w + Math.round(colGapX * scaleK);
+     });
+
+     // restore defaults
+     pdf.setTextColor(0,0,0);
+   } catch (e) {
+     console.warn('Global grading legend render failed:', e);
+   }
+ })();
+ // === /Grading Scale Legend ===
 }  
 function drawSubjectsHeader(pdf, y) {
 
@@ -2854,6 +2863,7 @@ page.render({ canvasContext: ctx, viewport });
 </div>
 </body>
 </html>
+
 
 
 
