@@ -641,6 +641,84 @@ downloadAllBtn.onclick = async () => {
 let __examStructure = null;           // cached per current exam selection
 let __examHasSubtopics = false;       // quick flag for layout decisions
 
+/* ===== Grading scale resolver (per-exam) =====
+   Priority:
+   1) Selected exam's grading.scale (mode: 'custom')
+   2) Legacy fallback (matches old fixed thresholds)
+*/
+const LEGACY_GRADING_SCALE = [
+  { grade: 'A+', min: 95, max: 100 },
+  { grade: 'A',  min: 90, max: 94.9999 },
+  { grade: 'B+', min: 85, max: 89.9999 },
+  { grade: 'B',  min: 80, max: 84.9999 },
+  { grade: 'C+', min: 70, max: 79.9999 },
+  { grade: 'C',  min: 60, max: 69.9999 },
+  { grade: 'D',  min: 50, max: 59.9999 },
+  { grade: 'E',  min: 40, max: 49.9999 },
+  { grade: 'F',  min: 0,  max: 39.9999 }
+];
+
+// sanitize + sort scale (descending by min)
+function _normalizeScale(scaleArr) {
+  const arr = Array.isArray(scaleArr) ? scaleArr.slice() : [];
+  return arr
+    .map(r => ({
+      grade: String(r?.grade ?? '').trim(),
+      min: Number.isFinite(+r?.min) ? +r.min : NaN,
+      max: Number.isFinite(+r?.max) ? +r.max : NaN
+    }))
+    .filter(r => r.grade && !Number.isNaN(r.min) && !Number.isNaN(r.max))
+    .sort((a, b) => b.min - a.min);
+}
+
+// Resolve scale for a given examId from loaded `exams` list
+function getScaleForExamId(examId) {
+  try {
+    const ex = (Array.isArray(exams) ? exams.find(e => e.id === examId) : null);
+    const s  = ex?.grading?.scale;
+    const mode = ex?.grading?.mode;
+    if (mode === 'custom' && Array.isArray(s) && s.length) {
+      const norm = _normalizeScale(s);
+      if (norm.length) return norm;
+    }
+  } catch {}
+  return _normalizeScale(LEGACY_GRADING_SCALE);
+}
+
+// Resolve scale for the currently selected exam
+function getActiveScale() {
+  const exId = (examSel?.value || '').trim();
+  return getScaleForExamId(exId);
+}
+
+// Compute grade from percentage using a scale
+function gradeFromPctUsingScale(pct, scale = getActiveScale()) {
+  if (pct == null || !Number.isFinite(+pct)) return '';
+  const p = +pct;
+  const table = _normalizeScale(scale);
+  for (const row of table) {
+    if (p >= row.min && p <= row.max) return row.grade;
+  }
+  return ''; // out of range → blank
+}
+
+// Determine "fail" for visuals (rings). By default, treat grade 'F' as fail.
+// If no 'F' band exists, compute the lowest passing min and fail if below it.
+function isFailPct(pct, scale = getActiveScale()) {
+  if (pct == null || !Number.isFinite(+pct)) return false;
+  const table = _normalizeScale(scale);
+  const g = gradeFromPctUsingScale(+pct, table);
+  if (g && /^f(?:ail)?$/i.test(g)) return true;
+
+  // derive pass threshold if needed
+  const passing = table.filter(r => !/^f(?:ail)?$/i.test(String(r.grade)));
+  if (passing.length) {
+    const minPass = Math.min(...passing.map(r => r.min));
+    return +pct < minPass;
+  }
+  // fallback to legacy < 40 as fail
+  return +pct < 40;
+}
 
 /**
  * Builds the exam structure from the selected exam definition and (optionally)
@@ -1368,17 +1446,8 @@ const lineY = subHeaderY - Math.ceil(subHeaderSize * 0.60) - DIVIDER_UP;
 
   // Precompute per-exam TOTALS and PERCENTAGE for summary rows
   const perExam = new Map(); // exId -> { total, max, grade, pct }
-  const gradeFromPct = (pct) => (
-    pct == null ? '' :
-    (pct >= 95) ? 'A+' :
-    (pct >= 90) ? 'A'  :
-    (pct >= 85) ? 'B+' :
-    (pct >= 80) ? 'B'  :
-    (pct >= 70) ? 'C+' :
-    (pct >= 60) ? 'C'  :
-    (pct >= 50) ? 'D'  :
-    (pct >= 40) ? 'E'  : 'F'
-  );
+// (grading via gradeFromPctUsingScale; local function removed)
+
   for (const g of groups) {
     let sum = 0, max = 0;
     for (const r of backData.rows) {
@@ -1389,7 +1458,7 @@ const lineY = subHeaderY - Math.ceil(subHeaderSize * 0.60) - DIVIDER_UP;
       if (mmax  != null) max += mmax;
     }
     const pct = (max > 0) ? Math.round((sum / max) * 100) : null;
-    perExam.set(g.examId, { total: sum, max, pct, grade: gradeFromPct(pct) });
+    perExam.set(g.examId, { total: sum, max, pct, grade: gradeFromPctUsingScale(pct, getScaleForExamId(g.examId)) });
   }
 
   // Rows (NO PAGINATION)
@@ -1426,27 +1495,27 @@ const lineY = subHeaderY - Math.ceil(subHeaderSize * 0.60) - DIVIDER_UP;
   const cxTot = x + wTot/2;
    pdf.text(showAB(t), cxTot, y, { align:'center', baseline:'alphabetic' });
 
-  // draw red ring like front page when we have numeric marks & max
-  if (typeof ex.marks === 'number' && typeof ex.max === 'number' && ex.max > 0) {
-    const pct = (ex.marks / ex.max) * 100;
-    if (pct < 40) {
-      pdf.setDrawColor(...COLOR_RED);
-      pdf.setLineWidth(2.5);
-      // ellipse sized to cell; tweak factors if you want a bigger ring
-      const rx = Math.max(28, wTot * 0.18);
-      const ry = Math.max(20, cellSize * 0.42);
-      pdf.ellipse(cxTot, y - Math.round(cellSize * 0.25), rx, ry, 'D');
-      pdf.setLineWidth(1);
-      pdf.setDrawColor(0,0,0);
-    }
+  // draw red ring when grade is failing per the active scale
+if (typeof ex.marks === 'number' && typeof ex.max === 'number' && ex.max > 0) {
+  const pct = (ex.marks / ex.max) * 100;
+  if (isFailPct(pct, getScaleForExamId(g.examId))) {
+    pdf.setDrawColor(...COLOR_RED);
+    pdf.setLineWidth(2.5);
+    // ellipse sized to cell; tweak factors if you want a bigger ring
+    const rx = Math.max(28, wTot * 0.18);
+    const ry = Math.max(20, cellSize * 0.42);
+    pdf.ellipse(cxTot, y - Math.round(cellSize * 0.25), rx, ry, 'D');
+    pdf.setLineWidth(1);
+    pdf.setDrawColor(0,0,0);
   }
+}
   x += wTot + gapBase;
 
   // GRADE — recompute from TOTAL & max using the same thresholds as front page
 let gradeDisplay = '-';
 if (typeof t === 'number' && typeof ex.max === 'number' && ex.max > 0) {
   const pctCell = (t / ex.max) * 100;
-  gradeDisplay = gradeFromPct(pctCell); // uses >=95 A+, >=90 A, ..., <40 F
+  gradeDisplay = gradeFromPctUsingScale(pctCell, getScaleForExamId(g.examId));
 }
 pdf.text(gradeDisplay, x + wGr/2, y, { align:'center', baseline:'alphabetic' });
 x += wGr + gapBase;
@@ -1618,6 +1687,93 @@ pdf.text(rankTxt, x + wTot/2, y, { align:'center', baseline:'alphabetic' });
     pdf.setTextColor(0,0,0);
    }
 } 
+/ === Grade Band Legend (single horizontal band inside rounded box) ===
+(function drawGradeBandLegend(){
+  try {
+    // Pull the active grading scale (uses school default or exam custom)
+    const scale = (typeof getActiveScale === 'function') ? getActiveScale() : null;
+    if (!Array.isArray(scale) || !scale.length) return;
+
+    // Sort by min descending → A+ … F
+    const rows = [...scale].sort((a,b)=>(b.min ?? 0) - (a.min ?? 0));
+    const ranges = rows.map(r => `${(r.min ?? '')}–${(r.max ?? '')}`);
+    const grades = rows.map(r => String(r.grade ?? ''));
+
+    // Page/frame metrics (match back page border)
+    const W = 3509, H = 2481;
+    const borderX = 120, borderY = 120, borderW = W - 240, borderH = H - 240;
+
+    // Typography
+    const title     = 'GRADING SCALE';
+    const titleSize = 54;   // legend title
+    const rangeSize = 44;   // top row (range)
+    const gradeSize = 62;   // bottom row (grade)
+    const rowGapY   = 14;   // gap between ranges and grades
+    const colGapX   = 34;   // gap between columns
+
+    // Measure per-column widths (max of range/gr. text per column)
+    pdf.setFont('helvetica','bold');
+    const meas = (txt, sz) => { pdf.setFontSize(sz); return Math.ceil(pdf.getTextWidth(String(txt))); };
+    const rangeWs = ranges.map(t => meas(t, rangeSize));
+    const gradeWs = grades.map(t => meas(t, gradeSize));
+    const colWs   = rangeWs.map((w,i)=> Math.max(w, gradeWs[i]));
+
+    // Rounded box sizing
+    const padX = 36, padY = 22;
+    const contentW = colWs.reduce((a,w)=>a+w,0) + colGapX * (colWs.length - 1);
+    const boxW = Math.min(Math.floor(borderW*0.96), contentW + padX*2);
+    const boxH = padY + titleSize + 18 + rangeSize + rowGapY + gradeSize + padY;
+
+    // Anchor: small gap below “RANK / PERCENTAGE” baseline (y)
+    let topY = y + 26;
+    const maxBottom = borderY + borderH - 24;
+    if (topY + boxH > maxBottom) topY = Math.max(borderY + 620, maxBottom - boxH);
+
+    const boxX = borderX + Math.round((borderW - boxW)/2);
+    const startX = boxX + Math.round((boxW - contentW)/2);
+
+    // Draw rounded box
+    pdf.setDrawColor(15,61,107);
+    pdf.setLineWidth(2);
+    pdf.roundedRect(boxX, topY, boxW, boxH, 16, 16, 'S');
+
+    // Title
+    pdf.setTextColor(15,61,107);
+    pdf.setFontSize(titleSize);
+    pdf.text(title, boxX + boxW/2, topY + padY + Math.round(titleSize/2), {
+      align:'center', baseline:'middle'
+    });
+
+    // Top row: ranges
+    let cx = startX;
+    const baseRangeY = topY + padY + titleSize + 18 + Math.round(rangeSize/2);
+    pdf.setFontSize(rangeSize);
+    ranges.forEach((txt,i) => {
+      const w = colWs[i];
+      pdf.text(txt, cx + w/2, baseRangeY, { align:'center', baseline:'middle' });
+      cx += w + colGapX;
+    });
+
+    // Bottom row: grades (aligned under ranges)
+    cx = startX;
+    const baseGradeY = baseRangeY + rowGapY + Math.round(gradeSize);
+    pdf.setTextColor(22,163,74);
+    pdf.setFontSize(gradeSize);
+    grades.forEach((txt,i) => {
+      const w = colWs[i];
+      pdf.text(txt, cx + w/2, baseGradeY, { align:'center', baseline:'alphabetic' });
+      cx += w + colGapX;
+    });
+
+    // restore
+    pdf.setTextColor(0,0,0);
+    pdf.setLineWidth(1);
+  } catch(e) {
+    console.warn('Grade band legend render failed:', e);
+  }
+})();
+// === /Grade Band Legend ===
+
 }  
 function drawSubjectsHeader(pdf, y) {
 
@@ -1708,16 +1864,16 @@ leftText(pdf, subjName, leftEdge, rowY, 60, COLOR_GREEN, 'bold');
 
      case '__total':
   centerText(pdf, showAB(tMarks), c.x, rowY, 60, COLOR_GREEN, 'bold');
-         // Fail ring if % < 40 and both numbers known
-        if (tMarks !== 'AB' && typeof tMarks === 'number' && typeof subjMax === 'number' && subjMax > 0) {
-          const pct = (tMarks / subjMax) * 100;
-          if (pct < 40) {
-            pdf.setDrawColor(...COLOR_RED);
-            pdf.setLineWidth(4);
-            pdf.ellipse(c.x, rowY - 10, 55, 38, 'D');
-            pdf.setLineWidth(1);
-          }
-        }
+         // Fail ring if failing per active scale and both numbers known
+if (tMarks !== 'AB' && typeof tMarks === 'number' && typeof subjMax === 'number' && subjMax > 0) {
+  const pct = (tMarks / subjMax) * 100;
+  if (isFailPct(pct, getActiveScale())) {
+    pdf.setDrawColor(...COLOR_RED);
+    pdf.setLineWidth(4);
+    pdf.ellipse(c.x, rowY - 10, 55, 38, 'D');
+    pdf.setLineWidth(1);
+  }
+}
         break;
 
       case '__grade':
@@ -2132,22 +2288,15 @@ if (subtopics.length && subSrc) {
     }
 
     // Grade computation
-    let grade = '';
-    if (subtopics.length && subtopics.every(st => st.mark === 'AB' || st.mark === '' )) {
-      grade = 'AB'; // all subtopic entries absent/blank
-    } else if (subjectTotalMax && subjectTotalMax > 0) {
-      const pct = (subjectTotalMarks / subjectTotalMax) * 100;
-      grade = (pct >= 95) ? 'A+' :
-              (pct >= 90) ? 'A'  :
-              (pct >= 85) ? 'B+' :
-              (pct >= 80) ? 'B'  :
-              (pct >= 70) ? 'C+' :
-              (pct >= 60) ? 'C'  :
-              (pct >= 50) ? 'D'  :
-              (pct >= 40) ? 'E'  : 'F';
-    } else {
-      grade = ''; // unknown max → no grade
-    }
+let grade = '';
+if (subtopics.length && subtopics.every(st => st.mark === 'AB' || st.mark === '' )) {
+  grade = 'AB'; // all subtopic entries absent/blank
+} else if (subjectTotalMax && subjectTotalMax > 0) {
+  const pct = (subjectTotalMarks / subjectTotalMax) * 100;
+  grade = gradeFromPctUsingScale(pct, getActiveScale());
+} else {
+  grade = ''; // unknown max → no grade
+}
 
     // Aggregate to overall
     if (isNum(subjectTotalMarks)) totalMarksAll += subjectTotalMarks;
@@ -2202,16 +2351,8 @@ if (subtopics.length && subSrc) {
     totalMarks: totalMarksAll,
     totalMax: totalMaxAll,
     overallGrade: totalMaxAll
-      ? ((totalMarksAll/totalMaxAll)*100 >= 95 ? 'A+'
-        : (totalMarksAll/totalMaxAll)*100 >= 90 ? 'A'
-        : (totalMarksAll/totalMaxAll)*100 >= 85 ? 'B+'
-        : (totalMarksAll/totalMaxAll)*100 >= 80 ? 'B'
-        : (totalMarksAll/totalMaxAll)*100 >= 70 ? 'C+'
-        : (totalMarksAll/totalMaxAll)*100 >= 60 ? 'C'
-        : (totalMarksAll/totalMaxAll)*100 >= 50 ? 'D'
-        : (totalMarksAll/totalMaxAll)*100 >= 40 ? 'E'
-        : 'F')
-      : '',
+  ? gradeFromPctUsingScale((totalMarksAll / totalMaxAll) * 100, getActiveScale())
+  : '',
     photoUrl: stu.photoUrl || stu.photoURL || '',
     photoPath: stu.photoPath || '',
     attendance: attArr
@@ -2313,18 +2454,10 @@ async function buildBackDataForStudent(stu) {
 
       // grade only when both numbers are known
       let gradeTxt = '-';
-      if (typeof marksVal === 'number' && typeof fixedMax === 'number' && fixedMax > 0) {
-        const pct = (marksVal / fixedMax) * 100;
-        gradeTxt =
-          (pct >= 95) ? 'A+' :
-          (pct >= 90) ? 'A'  :
-          (pct >= 85) ? 'B+' :
-          (pct >= 80) ? 'B'  :
-          (pct >= 70) ? 'C+' :
-          (pct >= 60) ? 'C'  :
-          (pct >= 50) ? 'D'  :
-          (pct >= 40) ? 'E'  : 'F';
-      }
+if (typeof marksVal === 'number' && typeof fixedMax === 'number' && fixedMax > 0) {
+  const pct = (marksVal / fixedMax) * 100;
+  gradeTxt = gradeFromPctUsingScale(pct, getScaleForExamId(exId));
+}
 
       row.exams[exId] = { marks: marksVal, max: fixedMax, grade: gradeTxt };
     }
@@ -2486,17 +2619,11 @@ for (let i = 0; i < Math.min(rowSubs.length, rowsY.length); i++) {
 const totalMarks = (typeof student.totalMarks === "number") ? student.totalMarks : 0;
 const totalMax   = (typeof student.totalMax   === "number") ? student.totalMax   : 0;
 
-// Totals (ensure overallGrade fallback)  // (using totalMarks/totalMax declared above)
-student.overallGrade = student.overallGrade || (totalMax > 0 ? (
-  ((totalMarks/totalMax)*100 >= 95) ? 'A+' :
-  ((totalMarks/totalMax)*100 >= 90) ? 'A'  :
-  ((totalMarks/totalMax)*100 >= 85) ? 'B+' :
-  ((totalMarks/totalMax)*100 >= 80) ? 'B'  :
-  ((totalMarks/totalMax)*100 >= 70) ? 'C+' :
-  ((totalMarks/totalMax)*100 >= 60) ? 'C'  :
-  ((totalMarks/totalMax)*100 >= 50) ? 'D'  :
-  ((totalMarks/totalMax)*100 >= 40) ? 'E'  : 'F'
-) : '');
+// Totals (ensure overallGrade fallback) using active grading scale
+student.overallGrade = student.overallGrade || (totalMax > 0
+  ? gradeFromPctUsingScale((totalMarks / totalMax) * 100, getActiveScale())
+  : ''
+);
 
 // Dynamic Xs from the auto-spread columns
 const xSubject = getColX('__subject');
@@ -2644,17 +2771,11 @@ for (let i = 0; i < Math.min(rowSubs.length, rowsY.length); i++) {
 const totalMarks = (typeof student.totalMarks === "number") ? student.totalMarks : 0;
 const totalMax   = (typeof student.totalMax   === "number") ? student.totalMax   : 0;
 
-// Totals (ensure overallGrade fallback)  // (using totalMarks/totalMax declared above)
-student.overallGrade = student.overallGrade || (totalMax > 0 ? (
-  ((totalMarks/totalMax)*100 >= 95) ? 'A+' :
-  ((totalMarks/totalMax)*100 >= 90) ? 'A'  :
-  ((totalMarks/totalMax)*100 >= 85) ? 'B+' :
-  ((totalMarks/totalMax)*100 >= 80) ? 'B'  :
-  ((totalMarks/totalMax)*100 >= 70) ? 'C+' :
-  ((totalMarks/totalMax)*100 >= 60) ? 'C'  :
-  ((totalMarks/totalMax)*100 >= 50) ? 'D'  :
-  ((totalMarks/totalMax)*100 >= 40) ? 'E'  : 'F'
-) : '');
+// Totals (ensure overallGrade fallback) using active grading scale
+student.overallGrade = student.overallGrade || (totalMax > 0
+  ? gradeFromPctUsingScale((totalMarks / totalMax) * 100, getActiveScale())
+  : ''
+);
 
 // Dynamic Xs from the auto-spread columns
 const xSubject = getColX('__subject');
@@ -2734,6 +2855,7 @@ page.render({ canvasContext: ctx, viewport });
 </div>
 </body>
 </html>
+
 
 
 
