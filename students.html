@@ -1440,6 +1440,90 @@ if (window.__editPhotoBlob) {
   openAbsenteesModal();
 };
 }
+// ===== Grading Defaults (school-wide) =====
+const LEGACY_GRADING_SCALE = [
+  { grade: 'A+', min: 95, max: 100 },
+  { grade: 'A',  min: 90, max: 94.99 },
+  { grade: 'B+', min: 80, max: 89.99 },
+  { grade: 'B',  min: 70, max: 79.99 },
+  { grade: 'C+', min: 60, max: 69.99 },
+  { grade: 'C',  min: 50, max: 59.99 },
+  { grade: 'D',  min: 40, max: 49.99 },
+  { grade: 'F',  min: 0,  max: 39.99 }
+];
+
+// read school default stored at years/{academicYear}/settings/gradingDefault
+async function readSchoolGradingDefault() {
+  try {
+    const ref = db.collection('years').doc(academicYear)
+      .collection('settings').doc('gradingDefault');
+    const snap = await ref.get();
+    if (!snap.exists) return null;
+    const data = snap.data() || null;
+    if (!data || !Array.isArray(data.scale)) return null;
+    return { mode: data.mode || 'custom', scale: data.scale };
+  } catch (e) {
+    console.warn('readSchoolGradingDefault error:', e);
+    return null;
+  }
+}
+
+// write school default (called when admin chooses “set as school default”)
+async function writeSchoolGradingDefault(scale, meta = {}) {
+  const ref = db.collection('years').doc(academicYear)
+    .collection('settings').doc('gradingDefault');
+  const payload = {
+    mode: 'custom',
+    scale: Array.isArray(scale) ? scale : [],
+    updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    updatedBy: (window.currentUserEmail || ''),
+    source: meta || {}
+  };
+  return ref.set(payload, { merge: true });
+}
+
+// simple validator: ordered ranges, no overlaps, 0–100 coverage optional
+function validateGradingScale(scale) {
+  if (!Array.isArray(scale) || !scale.length) return false;
+  const rows = scale.map(r => ({
+    grade: String(r.grade || '').trim(),
+    min: Number(r.min),
+    max: Number(r.max)
+  })).filter(r => r.grade && !Number.isNaN(r.min) && !Number.isNaN(r.max));
+  if (!rows.length) return false;
+  // sort descending by min so A+…F appears first if provided that way
+  rows.sort((a, b) => b.min - a.min);
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    if (r.min < 0 || r.max > 100 || r.min > r.max) return false;
+    if (i > 0) {
+      const p = rows[i - 1];
+      if (r.max > p.min) return false; // overlap check (assuming sorted by min desc)
+    }
+  }
+  return true;
+}
+
+// resolve which scale to use for an exam (exam → school default → legacy)
+function resolveScaleForExam(exam, schoolDefault) {
+  if (exam && exam.grading && Array.isArray(exam.grading.scale) && validateGradingScale(exam.grading.scale)) {
+    return exam.grading.scale;
+  }
+  if (schoolDefault && Array.isArray(schoolDefault.scale) && validateGradingScale(schoolDefault.scale)) {
+    return schoolDefault.scale;
+  }
+  return LEGACY_GRADING_SCALE;
+}
+
+// compute a grade string from percentage using a given scale
+function gradeFromPercent(pct, scale) {
+  const s = Array.isArray(scale) ? scale : LEGACY_GRADING_SCALE;
+  for (const row of s) {
+    if (pct >= Number(row.min) && pct <= Number(row.max)) return row.grade;
+  }
+  return 'Ungraded';
+}
+
 // ========== EXAM SETTINGS ===========
 function showExamSettingsPopup() {
   const classGroup = getClassGroupName(currentClassName);
@@ -1447,8 +1531,13 @@ function showExamSettingsPopup() {
   db.collection('years').doc(academicYear)
     .collection('exams').doc('classGroups')
     .collection(classGroup)
-    .get()
-    .then(snap => {
+   .get()
+    .then(async snap => {
+      const schoolDefault = await readSchoolGradingDefault();
+      const preloadScale = (schoolDefault && Array.isArray(schoolDefault.scale) && schoolDefault.scale.length)
+        ? schoolDefault.scale
+        : LEGACY_GRADING_SCALE;
+
       let exams = [];
       snap.forEach(doc => exams.push({ id: doc.id, ...doc.data() }));
       let html = `
@@ -1526,13 +1615,53 @@ function showExamSettingsPopup() {
   </button>
 </div>
         
-        <label>Subjects</label>
+                <label>Subjects</label>
         <div id="subjectsContainer"></div>
         <button type="button" id="addSubjectBtn"
             style="margin:6px 0 14px 0; background:#1762a7;color:#fff;
                    padding:7px 13px;border:none;border-radius:7px;font-weight:600;">
             + Add Subject
           </button>
+
+        <!-- ===== Grading System (school-wide default prefilled) ===== -->
+        <div style="margin-top:6px; border-top:1px solid #eef3f9; padding-top:10px;">
+          <label style="display:flex; align-items:center; gap:10px;">
+            <span>Grading System</span>
+            <span style="font-size:0.85em; color:#666;">(Prefilled from School Default if set; otherwise legacy)</span>
+          </label>
+
+          <div style="display:flex; align-items:center; gap:12px; margin:8px 0 6px 0;">
+            <label style="display:flex; align-items:center; gap:8px; margin:0;">
+              <input type="checkbox" id="setAsSchoolDefault" checked />
+              <span>Set this as <strong>School Default</strong> for all classes</span>
+            </label>
+          </div>
+
+          <div id="gradingRows" style="display:grid; grid-template-columns:120px 1fr 1fr 70px; gap:8px; align-items:center;">
+            <div style="font-weight:700; color:#1762a7;">Grade</div>
+            <div style="font-weight:700; color:#1762a7;">Min %</div>
+            <div style="font-weight:700; color:#1762a7;">Max %</div>
+            <div></div>
+            ${
+              (preloadScale || []).map((r, i) => `
+                <input type="text" class="grade-name" value="${r.grade}" placeholder="A+" style="padding:8px; border:1px solid #c7d7ea; border-radius:6px; background:#f7fafd;">
+                <input type="number" class="grade-min" value="${r.min}" step="0.01" min="0" max="100" style="padding:8px; border:1px solid #c7d7ea; border-radius:6px; background:#f7fafd;">
+                <input type="number" class="grade-max" value="${r.max}" step="0.01" min="0" max="100" style="padding:8px; border:1px solid #c7d7ea; border-radius:6px; background:#f7fafd;">
+                ${isAdmin ? `<button type="button" class="option-btn remove-grade" style="width:70px; padding:5px;">Remove</button>` : `<div></div>`}
+              `).join('')
+            }
+          </div>
+
+          ${isAdmin ? `
+          <div style="margin-top:8px;">
+            <button type="button" id="addGradeRowBtn"
+              style="background:#1762a7;color:#fff;padding:7px 13px;border:none;border-radius:7px;font-weight:600;">
+              + Add Grade Row
+            </button>
+          </div>` : ''}
+        </div>
+        <!-- ===== /Grading System ===== -->
+
         </div>
         <div class="popup-btn-row" style="margin-top:10px;">
           <button type="button" class="popup-cancel-btn">Close</button>
@@ -1623,6 +1752,30 @@ let srcIds = [];
     return true;
   });
 }
+               // ---- Collect Grading Scale from UI (rows) ----
+        let gradingScale = [];
+        {
+          const wrap = popupContent.querySelector('#gradingRows');
+          if (wrap) {
+            const names = Array.from(wrap.querySelectorAll('.grade-name'));
+            const mins  = Array.from(wrap.querySelectorAll('.grade-min'));
+            const maxs  = Array.from(wrap.querySelectorAll('.grade-max'));
+            const n = Math.min(names.length, mins.length, maxs.length);
+            for (let i = 0; i < n; i++) {
+              const g  = (names[i].value || '').trim();
+              const mi = parseFloat(mins[i].value);
+              const ma = parseFloat(maxs[i].value);
+              if (g && !isNaN(mi) && !isNaN(ma)) gradingScale.push({ grade: g, min: mi, max: ma });
+            }
+          }
+          if (!gradingScale.length) gradingScale = LEGACY_GRADING_SCALE.slice();
+          if (!validateGradingScale(gradingScale)) {
+            alert('Please fix the Grading System: ranges must be valid, ordered, non-overlapping, and within 0–100.');
+            return;
+          }
+        }
+        const setAsSchoolDefault = !!popupContent.querySelector('#setAsSchoolDefault')?.checked;
+
         // Check for duplicates before adding
         db.collection('years').doc(academicYear)
           .collection('exams').doc('classGroups')
@@ -1634,12 +1787,34 @@ let srcIds = [];
               alert("Exam with this (or very similar) name already exists!");
               return;
             }
-            // If not duplicate, add
-            db.collection('years').doc(academicYear)
+            // If not duplicate, add (attach grading)
+            return db.collection('years').doc(academicYear)
               .collection('exams').doc('classGroups')
               .collection(classGroup)
-              .add({ name, nameKey, subjects, subtopics })
-              .then(() => { closePopup(); showExamSettingsPopup(); });
+              .add({ 
+                name, 
+                nameKey, 
+                subjects, 
+                subtopics,
+                grading: { mode: 'custom', scale: gradingScale }
+              });
+          })
+          .then(async (docRef) => {
+            if (!docRef) return; // early-exit if duplicate branch above
+            // Persist school-wide default if requested
+            if (setAsSchoolDefault) {
+              try {
+                await writeSchoolGradingDefault(gradingScale, { classGroup, examId: docRef.id, examName: name });
+              } catch (e) {
+                console.warn('writeSchoolGradingDefault failed:', e);
+                // non-blocking: still close popup
+              }
+            }
+            closePopup();
+            showExamSettingsPopup();
+          })
+          .catch(err => {
+            alert('Error adding exam: ' + (err?.message || err));
           });
       });
 
@@ -1720,12 +1895,48 @@ if (addSubtopicBtn) {
         `;
         subjectsContainer.appendChild(div);
       }
+    if (addSubjectBtn) {
+  addSubjectBtn.onclick = () => addSubjectField();
+  // start with one empty row
+  addSubjectField();
+}
+     // === Grading UI (Add Exam) ===
+(function setupGradingUI(){
+  const rowsWrap = popupContent.querySelector('#gradingRows');
+  const addBtn   = popupContent.querySelector('#addGradeRowBtn');
 
-      if (addSubjectBtn) {
-        addSubjectBtn.onclick = () => addSubjectField();
-        // start with one empty row
-        addSubjectField();
+  function _rowHtml() {
+    return `
+      <input type="text" class="grade-name" placeholder="A+" style="padding:8px; border:1px solid #c7d7ea; border-radius:6px; background:#f7fafd;">
+      <input type="number" class="grade-min" step="0.01" min="0" max="100" style="padding:8px; border:1px solid #c7d7ea; border-radius:6px; background:#f7fafd;">
+      <input type="number" class="grade-max" step="0.01" min="0" max="100" style="padding:8px; border:1px solid #c7d7ea; border-radius:6px; background:#f7fafd;">
+      <button type="button" class="option-btn remove-grade" style="width:70px; padding:5px;">Remove</button>
+    `;
+  }
+
+  if (addBtn && rowsWrap) {
+    addBtn.onclick = () => {
+      const frag = document.createElement('div');
+      frag.innerHTML = _rowHtml();
+      // append 4 cells (grid columns) to rowsWrap
+      Array.from(frag.children).forEach(ch => rowsWrap.appendChild(ch));
+    };
+  }
+
+  if (rowsWrap) {
+    rowsWrap.addEventListener('click', (e) => {
+      if (e.target && e.target.classList.contains('remove-grade')) {
+        // remove the 4 sibling cells that make this row
+        const idx = Array.from(rowsWrap.children).indexOf(e.target);
+        // row structure: [grade, min, max, remove] -> remove those 4 in reverse order
+        for (let k = 0; k < 4; k++) {
+          const last = rowsWrap.children[idx - k];
+          if (last) rowsWrap.removeChild(last);
+        }
       }
+    });
+  }
+})();
       // Attach Edit button handlers
       setTimeout(() => {
         popupContent.querySelectorAll('[data-edit]').forEach(btn => {
@@ -1746,9 +1957,11 @@ function showEditExamPopup(examId) {
     .collection('exams').doc('classGroups')
     .collection(classGroup).doc(examId)
     .get()
-    .then(doc => {
+    .then(async doc => {
       if (!doc.exists) return alert("Exam not found!");
       const exam = doc.data();
+      const schoolDefault = await readSchoolGradingDefault();
+      const preloadScale = resolveScaleForExam(exam, schoolDefault);
       showPopup(`
         <form id="editExamForm" style="display:flex; flex-direction:column; max-height:75vh;">
       <div style="flex:1; overflow-y:auto; padding-right:4px;">
@@ -1795,13 +2008,53 @@ function showEditExamPopup(examId) {
   </button>
 </div>
           
-          <label>Subjects</label>
+                   <label>Subjects</label>
           <div id="editSubjectsContainer"></div>
           <button type="button" id="editAddSubjectBtn"
             style="margin:6px 0 14px 0; background:#1762a7;color:#fff;
                    padding:7px 13px;border:none;border-radius:7px;font-weight:600;">
             + Add Subject
           </button>
+
+          <!-- ===== Grading System (prefilled from school default / exam / legacy) ===== -->
+          <div style="margin-top:6px; border-top:1px solid #eef3f9; padding-top:10px;">
+            <label style="display:flex; align-items:center; gap:10px;">
+              <span>Grading System</span>
+              <span style="font-size:0.85em; color:#666;">(Prefilled; you can edit below)</span>
+            </label>
+
+            <div style="display:flex; align-items:center; gap:12px; margin:8px 0 6px 0;">
+              <label style="display:flex; align-items:center; gap:8px; margin:0;">
+                <input type="checkbox" id="editSetAsSchoolDefault" checked />
+                <span>Set this as <strong>School Default</strong> for all classes</span>
+              </label>
+            </div>
+
+            <div id="editGradingRows" style="display:grid; grid-template-columns:120px 1fr 1fr 70px; gap:8px; align-items:center;">
+              <div style="font-weight:700; color:#1762a7;">Grade</div>
+              <div style="font-weight:700; color:#1762a7;">Min %</div>
+              <div style="font-weight:700; color:#1762a7;">Max %</div>
+              <div></div>
+              ${
+                (preloadScale || []).map(r => `
+                  <input type="text" class="edit-grade-name" value="${r.grade}" placeholder="A+" style="padding:8px; border:1px solid #c7d7ea; border-radius:6px; background:#f7fafd;">
+                  <input type="number" class="edit-grade-min" value="${r.min}" step="0.01" min="0" max="100" style="padding:8px; border:1px solid #c7d7ea; border-radius:6px; background:#f7fafd;">
+                  <input type="number" class="edit-grade-max" value="${r.max}" step="0.01" min="0" max="100" style="padding:8px; border:1px solid #c7d7ea; border-radius:6px; background:#f7fafd;">
+                  ${isAdmin ? `<button type="button" class="option-btn edit-remove-grade" style="width:70px; padding:5px;">Remove</button>` : `<div></div>`}
+                `).join('')
+              }
+            </div>
+
+            ${isAdmin ? `
+            <div style="margin-top:8px;">
+              <button type="button" id="editAddGradeRowBtn"
+                style="background:#1762a7;color:#fff;padding:7px 13px;border:none;border-radius:7px;font-weight:600;">
+                + Add Grade Row
+              </button>
+            </div>` : ''}
+          </div>
+          <!-- ===== /Grading System ===== -->
+
           <div class="popup-btn-row" style="margin-top:10px;">
             <button type="button" class="popup-cancel-btn">Cancel</button>
             <button type="submit" class="popup-action-btn">Save Changes</button>
@@ -1893,6 +2146,30 @@ let srcIds = [];
     return true;
   });
 }
+        // ---- Collect Grading Scale from Edit UI ----
+        let gradingScale = [];
+        {
+          const wrap = popupContent.querySelector('#editGradingRows');
+          if (wrap) {
+            const names = Array.from(wrap.querySelectorAll('.edit-grade-name'));
+            const mins  = Array.from(wrap.querySelectorAll('.edit-grade-min'));
+            const maxs  = Array.from(wrap.querySelectorAll('.edit-grade-max'));
+            const n = Math.min(names.length, mins.length, maxs.length);
+            for (let i = 0; i < n; i++) {
+              const g  = (names[i].value || '').trim();
+              const mi = parseFloat(mins[i].value);
+              const ma = parseFloat(maxs[i].value);
+              if (g && !isNaN(mi) && !isNaN(ma)) gradingScale.push({ grade: g, min: mi, max: ma });
+            }
+          }
+          if (!gradingScale.length) gradingScale = LEGACY_GRADING_SCALE.slice();
+          if (!validateGradingScale(gradingScale)) {
+            alert('Please fix the Grading System: ranges must be valid, ordered, non-overlapping, and within 0–100.');
+            return;
+          }
+        }
+        const setAsSchoolDefault = !!popupContent.querySelector('#editSetAsSchoolDefault')?.checked;
+
         // Check for duplicates (but exclude this examId itself)
         db.collection('years').doc(academicYear)
           .collection('exams').doc('classGroups')
@@ -1914,8 +2191,15 @@ let srcIds = [];
             db.collection('years').doc(academicYear)
               .collection('exams').doc('classGroups')
               .collection(classGroup).doc(examId)
-              .update({ name, nameKey, subjects, subtopics })
-              .then(() => { 
+                           .update({ name, nameKey, subjects, subtopics, grading: { mode: 'custom', scale: gradingScale } })
+                           .then(async () => { 
+                if (setAsSchoolDefault) {
+                  try {
+                    await writeSchoolGradingDefault(gradingScale, { classGroup, examId, examName: name });
+                  } catch (e) {
+                    console.warn('writeSchoolGradingDefault failed:', e);
+                  }
+                }
                 closePopup(); 
                 showExamSettingsPopup(); 
               });
@@ -1941,6 +2225,41 @@ let srcIds = [];
         exam.subjects.forEach(subj => addSubjectField(subj.name, subj.max));
       }
       addSubjectBtn.onclick = () => addSubjectField();
+            // === Grading UI (Edit Exam) ===
+      (function setupEditGradingUI(){
+        const rowsWrap = popupContent.querySelector('#editGradingRows');
+        const addBtn   = popupContent.querySelector('#editAddGradeRowBtn');
+
+        function _rowHtml() {
+          return `
+            <input type="text" class="edit-grade-name" placeholder="A+" style="padding:8px; border:1px solid #c7d7ea; border-radius:6px; background:#f7fafd;">
+            <input type="number" class="edit-grade-min" step="0.01" min="0" max="100" style="padding:8px; border:1px solid #c7d7ea; border-radius:6px; background:#f7fafd;">
+            <input type="number" class="edit-grade-max" step="0.01" min="0" max="100" style="padding:8px; border:1px solid #c7d7ea; border-radius:6px; background:#f7fafd;">
+            <button type="button" class="option-btn edit-remove-grade" style="width:70px; padding:5px;">Remove</button>
+          `;
+        }
+
+        if (addBtn && rowsWrap) {
+          addBtn.onclick = () => {
+            const frag = document.createElement('div');
+            frag.innerHTML = _rowHtml();
+            Array.from(frag.children).forEach(ch => rowsWrap.appendChild(ch));
+          };
+        }
+
+        if (rowsWrap) {
+          rowsWrap.addEventListener('click', (e) => {
+            if (e.target && e.target.classList.contains('edit-remove-grade')) {
+              const idx = Array.from(rowsWrap.children).indexOf(e.target);
+              for (let k = 0; k < 4; k++) {
+                const last = rowsWrap.children[idx - k];
+                if (last) rowsWrap.removeChild(last);
+              }
+            }
+          });
+        }
+      })();
+
      // --- Subtopic Fields Logic for Edit (manual) + Internal controls ---
 const editSubtopicsContainer = popupContent.querySelector('#editSubtopicsContainer');
 const editAddSubtopicBtn     = popupContent.querySelector('#editAddSubtopicBtn');
@@ -2333,7 +2652,7 @@ function _computeInternalFromArray(sourceItems, internalMax) {
 }).join('')
                                     }
                               
-                                    <div style="grid-column:1;">&nbsp;</div>
+                                                                       <div style="grid-column:1;">&nbsp;</div>
                                     <div class="sub-label"
                                          style="grid-column:2; color:#c62828; font-weight:700;">
                                       Total
@@ -2347,12 +2666,15 @@ function _computeInternalFromArray(sourceItems, internalMax) {
                               
                                     <small class="total-hint" data-stu="${stu.id}"
                                            style="grid-column:2 / 4; color:#888;"></small>
+                                    <small class="grade-pill" data-stu="${stu.id}"
+                                           style="grid-column:2 / 4; color:#1762a7; font-weight:700;"></small>
                                   </div>
                                 `;
                               }
                              // fallback: no subtopics → single total input (original flow)
                             const soloPre = (marksData[stu.id] != null) ? marksData[stu.id] : '';
                             return `
+                                                         return `
                               <div class="marks-row">
                                 <span class="roll-name">${stu.roll ? stu.roll + '. ' : ''}${stu.name}</span>
                                 <input
@@ -2362,6 +2684,7 @@ function _computeInternalFromArray(sourceItems, internalMax) {
                                   min="0" max="${max}" step="1"
                                   class="marks-input"
                                 />
+                                <small class="grade-pill" data-stu="${stu.id}" style="margin-left:10px;color:#1762a7;font-weight:700;"></small>
                               </div>
                             `;
                           }).join('')
@@ -2450,7 +2773,7 @@ if (Object.keys(subsMap).length === 0 && (isNaN(totalVal) || !totalEl || totalEl
               });
               // Auto-sum per student (robust, with event delegation)
               {
-                function recomputeFor(stuId) {
+                                function recomputeFor(stuId) {
                   const boxes = popupContent.querySelectorAll(`.sub-input[data-stu="${stuId}"]`);
                   let sum = 0;
                   boxes.forEach(b => {
@@ -2460,6 +2783,7 @@ if (Object.keys(subsMap).length === 0 && (isNaN(totalVal) || !totalEl || totalEl
               
                   const totalEl = popupContent.querySelector(`.total-input[data-stu="${stuId}"]`);
                   const hintEl  = popupContent.querySelector(`.total-hint[data-stu="${stuId}"]`);
+                  const gradeEl = popupContent.querySelector(`.grade-pill[data-stu="${stuId}"]`);
               
                   if (totalEl) {
                     totalEl.value = boxes.length ? Number(sum.toFixed(2)) : '';
@@ -2472,6 +2796,17 @@ if (Object.keys(subsMap).length === 0 && (isNaN(totalVal) || !totalEl || totalEl
                     } else {
                       hintEl.textContent = '';
                       hintEl.style.color = '#888';
+                    }
+                  }
+                  // grade
+                  if (gradeEl) {
+                    if (boxes.length && max > 0) {
+                      const pct = Math.max(0, Math.min(100, (sum / max) * 100));
+                      // use exam's grading scale resolved earlier
+                      const scale = resolveScaleForExam(exam, await readSchoolGradingDefault());
+                      gradeEl.textContent = `Grade: ${gradeFromPercent(pct, scale)}`;
+                    } else {
+                      gradeEl.textContent = '';
                     }
                   }
                 }
@@ -2496,7 +2831,7 @@ if (Object.keys(subsMap).length === 0 && (isNaN(totalVal) || !totalEl || totalEl
               await nextFrame(); 
               await nextFrame();
           
-              function recomputeFor(stuId) {
+                           async function recomputeFor(stuId) {
                 const boxes = popupContent.querySelectorAll(`.sub-input[data-stu="${stuId}"]`);
                 let sum = 0;
                 boxes.forEach(b => {
@@ -2506,6 +2841,7 @@ if (Object.keys(subsMap).length === 0 && (isNaN(totalVal) || !totalEl || totalEl
           
                 const totalEl = popupContent.querySelector(`.total-input[data-stu="${stuId}"]`);
                 const hintEl  = popupContent.querySelector(`.total-hint[data-stu="${stuId}"]`);
+                const gradeEl = popupContent.querySelector(`.grade-pill[data-stu="${stuId}"]`);
           
                 if (totalEl) {
                   totalEl.value = boxes.length ? Number(sum.toFixed(2)) : '';
@@ -2520,18 +2856,50 @@ if (Object.keys(subsMap).length === 0 && (isNaN(totalVal) || !totalEl || totalEl
                     hintEl.style.color = '#888';
                   }
                 }
+                if (gradeEl) {
+                  if (boxes.length && max > 0) {
+                    const pct = Math.max(0, Math.min(100, (sum / max) * 100));
+                    const scale = resolveScaleForExam(exam, await readSchoolGradingDefault());
+                    gradeEl.textContent = `Grade: ${gradeFromPercent(pct, scale)}`;
+                  } else {
+                    gradeEl.textContent = '';
+                  }
+                }
               }
           
               // attach multiple event types for reliability on mobile
-              popupContent.querySelectorAll('.sub-input').forEach(inp => {
+                            popupContent.querySelectorAll('.sub-input').forEach(inp => {
                 const sid = inp.getAttribute('data-stu');
                 ['input','change','keyup','blur'].forEach(evt =>
                   inp.addEventListener(evt, () => recomputeFor(sid))
                 );
               });
+              // also recompute grade in single-total (no subtopics) rows
+              popupContent.querySelectorAll('input[name^="marks_"]').forEach(inp => {
+                const sid = inp.name.replace('marks_', '');
+                const gradeEl = popupContent.querySelector(`.grade-pill[data-stu="${sid}"]`);
+                const updateSolo = async () => {
+                  const v = parseFloat(inp.value);
+                  if (!isNaN(v) && max > 0) {
+                    const pct = Math.max(0, Math.min(100, (v / max) * 100));
+                    const scale = resolveScaleForExam(exam, await readSchoolGradingDefault());
+                    if (gradeEl) gradeEl.textContent = `Grade: ${gradeFromPercent(pct, scale)}`;
+                  } else if (gradeEl) {
+                    gradeEl.textContent = '';
+                  }
+                };
+                ['input','change','keyup','blur'].forEach(evt => inp.addEventListener(evt, updateSolo));
+                // initial
+                updateSolo();
+              });
           
-              // initial compute (prefilled values)
+                            // initial compute (prefilled values)
               students.forEach(s => recomputeFor(s.id));
+              // also initialize solo rows (no subtopics)
+              popupContent.querySelectorAll('input[name^="marks_"]').forEach(inp => {
+                const ev = new Event('input');
+                inp.dispatchEvent(ev);
+              });
             })();
           }
           });
@@ -3840,4 +4208,5 @@ if (marksFileInput) {
 </script>
 </body>
 </html>
+
 
