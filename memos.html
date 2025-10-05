@@ -1722,7 +1722,7 @@ pdf.text(rankTxt, x + wTot/2, y, { align:'center', baseline:'alphabetic' });
     pdf.setTextColor(0,0,0);
    }
 } 
- // === Grading Scale Legend (single rounded box; columns with dividers; uses global default via getActiveScale) ===
+// === Grading Scale Legend (single-line: label BEFORE the scale) ===
 (function drawGlobalGradingLegendBox(){
   try {
     const scale = (typeof getActiveScale === 'function') ? getActiveScale() : null;
@@ -1731,28 +1731,31 @@ pdf.text(rankTxt, x + wTot/2, y, { align:'center', baseline:'alphabetic' });
     // Highest → lowest; display clean integers
     const rows = [...scale].sort((a,b)=>(b.min ?? 0) - (a.min ?? 0));
     const toInt = v => (Number.isFinite(+v) ? Math.round(+v) : '');
-    const cols = rows.map(r => `${toInt(r.min)} - ${toInt(r.max)} (${String(r.grade || '').toUpperCase()})`);
+    const bands = rows.map(r => `${toInt(r.min)} - ${toInt(r.max)} (${String(r.grade || '').toUpperCase()})`);
 
-    // Page border frame
+    // Page border frame (same anchors as before)
     const W = 3509, H = 2481;
     const borderX = 120, borderY = 120, borderW = W - 240, borderH = H - 240;
 
-    // Typography & layout
-    const titleText = 'GRADING SCALE';
-    const titleSize = 54;
-    const colSize   = 46;
-    const rowGapY   = 14;
-    const colGapX   = 34;
-    const padX      = 36, padY = 22;
+    // Typography & layout (single line)
+    const labelText = 'GRADING SCALE:';
+    const labelSize = 46;
+    const bandSize  = 46;
+    const padX      = 24, padY = 18;
     const rRadius   = 16;
+    const gapX      = 34;  // space between label ↔ first band and between bands
 
-    pdf.setFont('helvetica','bold');
-    const textW = (t, sz) => { pdf.setFontSize(sz); return Math.ceil(pdf.getTextWidth(String(t))); };
+    const textW = (t, sz) => {
+      pdf.setFont('helvetica','bold');
+      pdf.setFontSize(sz);
+      return Math.ceil(pdf.getTextWidth(String(t)));
+    };
 
-    const titleW = textW(titleText, titleSize);
-    const colWs  = cols.map(c => textW(c, colSize));
-    const colsW  = colWs.reduce((a,w)=>a+w,0) + colGapX * (Math.max(0, cols.length - 1));
-    const innerW = Math.max(titleW, colsW);
+    const labelW = textW(labelText, labelSize);
+    const bandWs = bands.map(b => textW(b, bandSize));
+    const bandsW = bandWs.reduce((a,w)=>a+w,0) + gapX * Math.max(0, bands.length - 1);
+
+    const innerW = labelW + gapX + bandsW;
 
     // Fit within margins; center; bottom anchor
     const maxBoxW = Math.floor(borderW * 0.96);
@@ -1760,7 +1763,7 @@ pdf.text(rankTxt, x + wTot/2, y, { align:'center', baseline:'alphabetic' });
     const scaleK  = rawBoxW > maxBoxW ? (maxBoxW / rawBoxW) : 1;
 
     const boxW = Math.round(rawBoxW * scaleK);
-    const boxH = Math.round((padY + titleSize + 14 + rowGapY + colSize + padY) * scaleK);
+    const boxH = Math.round((padY + bandSize + padY) * scaleK);
     const boxX = borderX + Math.round((borderW - boxW) / 2);
     const boxY = borderY + borderH - boxH - 24;
 
@@ -1769,39 +1772,40 @@ pdf.text(rankTxt, x + wTot/2, y, { align:'center', baseline:'alphabetic' });
     pdf.setLineWidth(2);
     pdf.roundedRect(boxX, boxY, boxW, boxH, rRadius, rRadius, 'S');
 
-   /* Title */
-pdf.setTextColor(15, 61, 107);
-pdf.setFontSize(Math.round(titleSize * scaleK));
-pdf.text(titleText, boxX + Math.round(boxW/2), boxY + Math.round(padY * scaleK) + Math.round((titleSize * scaleK)/2), {
-  align:'center', baseline:'middle'
-});
+    // Row baseline
+    let x = boxX + Math.round(padX * scaleK);
+    const y = boxY + Math.round(padY * scaleK + bandSize * scaleK);
 
-/* Columns row (centered) + vertical separators */
-let x = boxX + Math.round((boxW - Math.round(innerW * scaleK)) / 2);
-const baseline = boxY + Math.round(padY * scaleK + titleSize * scaleK + 14 * scaleK + colSize * scaleK);
+    // Label (before the scale)
+    pdf.setFont('helvetica','bold');
+    pdf.setTextColor(15, 61, 107);
+    pdf.setFontSize(Math.round(labelSize * scaleK));
+    pdf.text(labelText, x, y, { align:'left', baseline:'alphabetic' });
+    x += Math.round((labelW + gapX) * scaleK);
 
-pdf.setTextColor(0, 0, 0);
-pdf.setFontSize(Math.round(colSize * scaleK));
+    // Bands
+    pdf.setTextColor(0, 0, 0);
+    pdf.setFontSize(Math.round(bandSize * scaleK));
+    bands.forEach((txt, i) => {
+      const w = Math.round(bandWs[i] * scaleK);
+      pdf.text(txt, x, y, { align:'left', baseline:'alphabetic' });
 
-    cols.forEach((txt, i) => {
-      const w = Math.round(colWs[i] * scaleK);
-      pdf.text(txt, x + Math.round(w/2), baseline, { align:'center', baseline:'alphabetic' });
-
-      if (i < cols.length - 1) {
-        const gapHalf = Math.round((colGapX * scaleK) / 2);
-        const sepX = x + w + gapHalf;
-        const topY = baseline - Math.round(colSize * scaleK) - Math.round(6 * scaleK);
-        const botY = baseline - Math.round(2 * scaleK);
+      // Optional thin separators between band items (not after the label)
+      if (i < bands.length - 1) {
+        const sepX = x + w + Math.round(gapX * scaleK / 2);
+        const topY = y - Math.round(bandSize * scaleK) + Math.round(4 * scaleK);
+        const botY = y - Math.round(2 * scaleK);
         pdf.setDrawColor(180, 200, 233);
-pdf.setLineWidth(1);
-pdf.line(sepX, topY, sepX, botY);
-pdf.setDrawColor(0,0,0);
-pdf.setLineWidth(1);
-
+        pdf.setLineWidth(1);
+        pdf.line(sepX, topY, sepX, botY);
+        pdf.setDrawColor(15, 61, 107);
+        pdf.setLineWidth(2);
       }
-      x += w + Math.round(colGapX * scaleK);
+
+      x += w + Math.round(gapX * scaleK);
     });
 
+    // reset color
     pdf.setTextColor(0,0,0);
   } catch(e) {
     console.warn('Global grading legend render failed:', e);
@@ -2889,6 +2893,7 @@ page.render({ canvasContext: ctx, viewport });
 </div>
 </body>
 </html>
+
 
 
 
