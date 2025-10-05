@@ -312,14 +312,17 @@ const ATT_MONTHS_AX = [
   { key: '03', label: 'March'  }
 ];
 
-// Draws a 3-row attendance table (header + 2 data rows), dynamic columns up to last month with data
-// REPLACE WITH:
+// Draws a centered, auto-expanding attendance table.
+// It shows months up to the last one that has any data (work or pres > 0).
 function drawAttendanceTable(pdf, attArr) {
-  // Center within the attendance box and use rounded corners
-  const BOX_LEFT = 392, BOX_RIGHT = 1675;
-  const startY = ATT_TABLE_START.y;
+  // --- Target frame (the light attendance box area on your template) ---
+  // Adjust these two numbers only if your template box changes.
+  const FRAME_LEFT  = 392;
+  const FRAME_RIGHT = 1675;
 
-  // Determine last month with any data
+  const startY = ATT_TABLE_START.y; // you already positioned this nicely
+
+  // 1) Decide how many months to render (up to the last month with any data)
   const lastIdx = (() => {
     let idx = -1;
     (attArr || []).forEach((m, i) => {
@@ -332,57 +335,67 @@ function drawAttendanceTable(pdf, attArr) {
   const monthsToShow = ATT_MONTHS_AX.slice(0, lastIdx + 1);
   const cols = monthsToShow.length;
 
-  // Geometry (centered)
+  // 2) Geometry (center the whole table inside the frame)
+  const frameW = FRAME_RIGHT - FRAME_LEFT;
+
+  // keep left label column constant so the month columns flex
   const labelColW = 300;
-  const availW = BOX_RIGHT - BOX_LEFT;
-  const colW = (availW - labelColW) / Math.max(cols, 1);
-  const rowH = 96;
-  const rows = 3;
+  const availForMonths = Math.max(180, frameW - labelColW);
+
+  // Minimum column width; if we have many months it will shrink but not below this
+  const MIN_COL_W = 120;
+  const colW = Math.max(MIN_COL_W, Math.floor(availForMonths / Math.max(cols, 1)));
+
+  // total table width that we will actually draw (could be < frameW)
   const tableW = labelColW + colW * cols;
-  const tableH = rowH * rows;
 
-  // Center horizontally
-  const startX = BOX_LEFT + Math.round((availW - tableW) / 2);
+  // center horizontally inside the frame
+  const startX = FRAME_LEFT + Math.round((frameW - tableW) / 2);
 
-  // Rounded outer border with light fill
+  // 3) Row geometry
+  const rows = 3;          // Header + Working Days + Days Present
+  const rowH = 75;
+  const tableH = rows * rowH;
+
+  // 4) Box + grid
   pdf.setDrawColor(15, 61, 107);
   pdf.setFillColor(250, 253, 255);
   pdf.setLineWidth(2);
   pdf.roundedRect(startX, startY, tableW, tableH, 14, 14, 'FD');
 
-  // Grid lines
-  pdf.setDrawColor(15, 61, 107);
+  // vertical lines
   pdf.setLineWidth(1.4);
   for (let c = 1; c <= cols; c++) {
     const x = startX + labelColW + c * colW;
     pdf.line(x, startY, x, startY + tableH);
   }
+  // horizontal lines
   for (let r = 1; r < rows; r++) {
     const y = startY + r * rowH;
     pdf.line(startX, y, startX + tableW, y);
   }
 
-  // Colors
+  // 5) Typography (auto scale down when many months so text never collides)
+  const autoSize = (base, min) => Math.max(min, Math.min(base, Math.floor((colW / 180) * base)));
+  const headerSize  = autoSize(64, 38);  // month names
+  const labelSize   = autoSize(60, 36);  // left labels
+  const numbersSize = autoSize(60, 36);  // numbers
+
   const ORANGE = [255, 122, 0];
   const GREEN  = [22, 163, 74];
   const BROWN  = [139, 69, 19];
 
-  // Larger typography
-  const headerSize  = 64; // month names
-  const labelSize   = 60; // left labels
-  const numbersSize = 60; // numbers
-
-  // Month headers — centered
+  // 6) Month headers
   pdf.setFont('helvetica', 'bold');
   pdf.setTextColor(...ORANGE);
   pdf.setFontSize(headerSize);
   monthsToShow.forEach((m, c) => {
     const cx = startX + labelColW + c * colW + colW / 2;
-    const cy = startY + rowH / 2 + 14;
+    const cy = startY + rowH / 2 + 10;
     pdf.text(m.label, cx, cy, { align: 'center', baseline: 'middle' });
   });
 
-  // Left column labels — centered
+  // 7) Left labels
   pdf.setTextColor(...ORANGE);
   pdf.setFontSize(labelSize);
   const labelCX = startX + labelColW / 2;
@@ -391,30 +404,34 @@ function drawAttendanceTable(pdf, attArr) {
   pdf.text('Working Days:', labelCX, startY + rowH + rowH / 2 + padY,     { align: 'center', baseline: 'middle' });
   pdf.text('Days Present:', labelCX, startY + 2 * rowH + rowH / 2 + padY, { align: 'center', baseline: 'middle' });
 
-  // Numbers (centered)
+  // 8) Numbers
   pdf.setFont('helvetica', 'bold');
   pdf.setFontSize(numbersSize);
 
+  // Working Days (green)
   pdf.setTextColor(...GREEN);
   monthsToShow.forEach((m, c) => {
     const v = Number(attArr?.[c]?.work) || 0;
+    if (!v) return;
     const cx = startX + labelColW + c * colW + colW / 2;
     const cy = startY + rowH + rowH / 2 + padY;
-    const txt = v ? String(v) : '';
-    if (txt) pdf.text(txt, cx, cy, { align: 'center', baseline: 'middle' });
+    pdf.text(String(v), cx, cy, { align: 'center', baseline: 'middle' });
   });
 
+  // Days Present (brown)
   pdf.setTextColor(...BROWN);
   monthsToShow.forEach((m, c) => {
-    const v = (typeof attArr?.[c]?.pres === 'number') ? attArr[c].pres : (Number(attArr?.[c]?.pres) || 0);
+    const raw = attArr?.[c]?.pres;
+    const v = (typeof raw === 'number') ? raw : (Number(raw) || 0);
+    if (!v) return;
     const cx = startX + labelColW + c * colW + colW / 2;
     const cy = startY + 2 * rowH + rowH / 2 + padY;
-    const txt = v ? String(v) : '';
-    if (txt) pdf.text(txt, cx, cy, { align: 'center', baseline: 'middle' });
+    pdf.text(String(v), cx, cy, { align: 'center', baseline: 'middle' });
   });
 
-  pdf.setTextColor(0, 0, 0);
+  pdf.setTextColor(0,0,0);
 }
+
 const COLOR_GREEN = [22,163,74];
 const COLOR_RED   = [220,38,38];
 const COLOR_BLUE  = [15,61,107];   // for subtopic columns
@@ -3307,6 +3324,7 @@ page.render({ canvasContext: ctx, viewport });
 </div>
 </body>
 </html>
+
 
 
 
