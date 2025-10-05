@@ -2068,67 +2068,7 @@ function leftText(pdf, text, x, y, size=12, color=[0,0,0], fontStyle="bold", fon
   pdf.setFont("helvetica", "normal");
   pdf.setTextColor(0,0,0);
 }
-  // ---- Auto-remark generator (front page, current exam) ----
-function buildAutoRemark(student) {
-  const pct = Number.isFinite(+student.percentage) ? +student.percentage : null;
-
-  // subject-level percents
-  const toPct = (m, M) => (typeof m === 'number' && typeof M === 'number' && M > 0) ? (m / M) * 100 : null;
-  const subjects = Array.isArray(student.subjects) ? student.subjects : [];
-
-  const percents = subjects.map(s => ({
-    name: String(s.name || '').trim(),
-    p: toPct(s.marks === 'AB' ? null : s.marks, s.max),
-    isAB: s.marks === 'AB'
-  }));
-
-  const fail = percents.filter(x => x.p !== null && isFailPct(x.p)).map(x => x.name);
-  const ab   = percents.filter(x => x.isAB).map(x => x.name);
-  const strong = percents.filter(x => x.p !== null && x.p >= 80).sort((a,b)=>b.p-a.p).slice(0,2).map(x => x.name);
-  const weak   = percents
-    .filter(x => (x.p !== null && x.p <= 60) || x.isAB)
-    .sort((a,b)=> (a.p ?? -1) - (b.p ?? -1))
-    .slice(0,2)
-    .map(x => x.name);
-
-  // attendance rate (10 months band already built in student.attendance)
-  let work = 0, pres = 0;
-  (student.attendance || []).forEach(m => {
-    const w = Number(m.work) || 0;
-    const p = Number(m.pres) || 0;
-    work += w; pres += p;
-  });
-  const attRate = work > 0 ? Math.round((pres / work) * 100) : null;
-
-  // Overall tone (no “foundations”)
-  let opening = '';
-  if (pct != null) {
-    if (pct >= 85) opening = 'Outstanding performance in this assessment.';
-    else if (pct >= 70) opening = 'Very good overall performance.';
-    else if (pct >= 60) opening = 'Good effort; keep building your skills.';
-    else if (pct >= 40) opening = 'Needs consistent practice to strengthen core concepts.';
-    else opening = 'Immediate support is required to improve core concepts.';
-  }
-
-  // Focus / strength
-  const parts = [];
-  if (fail.length) parts.push(`Focus on ${fail.join(', ')}.`);
-  else if (weak.length) parts.push(`Work on ${weak.join(', ')}.`);
-  if (strong.length) parts.push(`Strong in ${strong.join(', ')}—well done.`);
-
-  // Attendance note (below 90% should be noted)
-  if (attRate != null && attRate < 90) {
-    parts.push('Attendance is below 90%; aim for regular presence.');
-  }
-
-  // Fallback if nothing computed
-  if (!opening && parts.length === 0) return 'Assessment in progress. Please contact the class teacher for details.';
-
-  const remark = [opening, ...parts].filter(Boolean).join(' ');
-  // Trim to a reasonable size
-  return remark.length > 280 ? (remark.slice(0,277) + '…') : remark;
-}
-
+ 
 // ---- Drawer for the remark box (placed below attendance table) ----
 function drawRemarkBox(pdf, text) {
   // Box bounds (from your coordinates)
@@ -2332,6 +2272,215 @@ function _extractSubjectTotalsFromMarks(marksObj, structure) {
   return subjects;
 }
 
+/* =========================
+   REMARKS ENGINE (randomized)
+   ========================= */
+function pick(arr){ return Array.isArray(arr) && arr.length ? arr[Math.floor(Math.random()*arr.length)] : ''; }
+function formatSubjectsList(arr, limit = 3) {
+  const list = (arr || []).filter(Boolean).slice(0, limit);
+  if (!list.length) return '';
+  if (list.length === 1) return list[0];
+  if (list.length === 2) return `${list[0]} and ${list[1]}`;
+  return `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`;
+}
+const REMARK_POOLS = {
+  overall: {
+    ge95: [
+      "Outstanding overall performance—keep it up.",
+      "Excellent work throughout; maintain this momentum.",
+      "Best performance this term; continue in the same way.",
+      "Exceptional result; stay consistent and keep aiming high.",
+      "A top-tier performance; well done and carry this forward."
+    ],
+    ge90: [
+      "Very good overall performance; continue this progress.",
+      "A very good result—keep the pace steady.",
+      "You’re doing very well overall; stay on track.",
+      "Very good outcome; maintain regular practice."
+    ],
+    ge85: [
+      "Good overall performance; strive for even better next time.",
+      "A good result—aim a little higher in the next assessment.",
+      "Good progress; with steady practice you can reach very good.",
+      "A solid effort; push for a better score next time.",
+      "Good work overall; set a higher target and go for it."
+    ],
+    ge70: [
+      "A steady performance; regular revision will raise your score.",
+      "You are on the right track; keep practicing to do better.",
+      "Decent outcome; focus on daily review to improve.",
+      "Acceptable progress; aim for a better band next time.",
+      "Reasonable performance; consistent effort will help you move up."
+    ],
+    ge60: [
+      "Fair performance; increase practice to do better.",
+      "Results are fair; plan regular study to improve.",
+      "Some improvement is needed; revise daily and follow guidance.",
+      "Fair outcome; tighten your routine for a better result.",
+      "Progress is modest; more focused effort will lift your score."
+    ],
+    ge40: [
+      "Improvement is needed; begin daily revision with close guidance.",
+      "Put in steady effort; you can achieve a better result.",
+      "Focus on regular practice to lift your overall performance.",
+      "Begin a clear study plan; revise what was taught each day.",
+      "More effort is required; work through examples and ask for help."
+    ],
+    lt40: [
+      "Significant improvement is required; start with the basics and seek guidance.",
+      "Immediate and steady effort is needed; follow a strict daily plan.",
+      "Begin from core concepts and practice every day to recover.",
+      "Intensive revision is necessary; meet your teacher for support.",
+      "Focused work is urgently needed; rebuild step by step."
+    ]
+  },
+  praise95: [
+    "You are excellent in {SUBJECTS}.",
+    "Best performance in {SUBJECTS}—well done.",
+    "Outstanding work in {SUBJECTS}.",
+    "Top-level result in {SUBJECTS}; keep it up.",
+    "Excellent command of {SUBJECTS}; maintain this level."
+  ],
+  praise90: [
+    "Very good in {SUBJECTS}.",
+    "A very good performance in {SUBJECTS}.",
+    "You have done very well in {SUBJECTS}.",
+    "Very good result in {SUBJECTS}; continue this progress.",
+    "Very good grasp of {SUBJECTS}."
+  ],
+  praise85: [
+    "Good in {SUBJECTS}; strive to get more.",
+    "A good result in {SUBJECTS}; aim higher next time.",
+    "Good progress in {SUBJECTS}; push for very good.",
+    "A steady result in {SUBJECTS}; target a better band.",
+    "Good showing in {SUBJECTS}; keep working for the best."
+  ],
+  focusLE60: [
+    "Give better focus to {SUBJECTS}.",
+    "Spend extra time on {SUBJECTS} to improve.",
+    "Please revise {SUBJECTS} regularly to raise your score.",
+    "Work through the basics and practice {SUBJECTS} daily.",
+    "Strengthen {SUBJECTS} with consistent revision and exercises."
+  ],
+  focusLT50: [
+    "Marks are below 50% in {SUBJECTS}; immediate practice is needed.",
+    "{SUBJECTS} is below 50%; revise fundamentals every day.",
+    "Low score in {SUBJECTS}; focus on core topics first.",
+    "{SUBJECTS} needs urgent attention; follow a daily practice plan.",
+    "Below 50% in {SUBJECTS}; meet your teacher and clear doubts regularly."
+  ],
+  focusFail: [
+    "Failed in {SUBJECTS}; begin remedial practice without delay.",
+    "{SUBJECTS} is in the fail band; rebuild from basics and seek guidance.",
+    "Failure in {SUBJECTS}; follow a strict revision schedule and clear doubts.",
+    "{SUBJECTS} requires urgent remediation; complete all pending work.",
+    "Not passed in {SUBJECTS}; daily coaching and revision are necessary."
+  ],
+  focusAB: [
+    "No marks recorded in {SUBJECTS}; ensure completion next time.",
+    "{SUBJECTS} not attempted; please attend and submit on time.",
+    "Marks are missing in {SUBJECTS}; complete the assessment promptly.",
+    "{SUBJECTS} entry is absent; attempt the next exam without fail.",
+    "Please ensure {SUBJECTS} is attempted and recorded in the next test."
+  ],
+  attendance: {
+    ge95: [
+      "Attendance is excellent at {ATT}%.",
+      "Very regular in attendance ({ATT}%).",
+      "Consistently present with {ATT}% attendance.",
+      "Excellent regularity at {ATT}%.",
+      "Attendance is commendable at {ATT}%."
+    ],
+    ge90: [
+      "Good attendance at {ATT}%.",
+      "Attendance is satisfactory ({ATT}%); keep it up.",
+      "Regular attendance at {ATT}%—maintain this habit.",
+      "{ATT}% attendance is good; stay consistent.",
+      "A steady record of {ATT}% attendance."
+    ],
+    ge75: [
+      "Attendance is {ATT}%; please be more regular.",
+      "{ATT}% attendance needs improvement to keep pace.",
+      "Raise attendance from {ATT}% to avoid learning gaps.",
+      "Attendance at {ATT}% is low; aim for better regularity.",
+      "Be more consistent—{ATT}% attendance should improve."
+    ],
+    lt75: [
+      "Attendance is low at {ATT}%—immediate improvement is necessary.",
+      "Frequent absences ({ATT}%) are affecting progress; be regular.",
+      "Very low attendance ({ATT}%)—make daily presence a priority.",
+      "{ATT}% attendance is inadequate; urgent action is required.",
+      "Attendance must improve sharply from {ATT}% to support learning."
+    ]
+  },
+  closing: [
+    "Keep practicing daily and ask for help whenever you have doubts.",
+    "Stay regular with revision and clear doubts on time.",
+    "Daily practice and timely doubt-clearing will help you do better."
+  ]
+};
+function buildAutoRemark(student) {
+  const overallPct = Number.isFinite(+student.percentage) ? +student.percentage : null;
+  const subs = Array.isArray(student.subjects) ? student.subjects : [];
+  const perSub = subs.map(s => {
+    const m = (s && s.marks === 'AB') ? null : (typeof s?.marks === 'number' ? s.marks : null);
+    const M = (typeof s?.max === 'number' ? s.max : null);
+    const p = (m != null && M != null && M > 0) ? (m / M) * 100 : null;
+    return { name: String(s?.name || '').trim(), pct: p, isAB: s?.marks === 'AB', isFail: (p != null) ? isFailPct(p) : false };
+  });
+  const best95   = perSub.filter(x => x.pct != null && x.pct >= 95).map(x => x.name);
+  const very90   = perSub.filter(x => x.pct != null && x.pct >= 90 && x.pct < 95).map(x => x.name);
+  const good85   = perSub.filter(x => x.pct != null && x.pct >= 85 && x.pct < 90).map(x => x.name);
+  const weakLT50 = perSub.filter(x => (x.pct != null && x.pct < 50) && !x.isFail).map(x => x.name);
+  const weakLE60 = perSub.filter(x => (x.pct != null && x.pct <= 60) && !x.isFail).map(x => x.name);
+  const failSubs = perSub.filter(x => x.isFail).map(x => x.name);
+  const abSubs   = perSub.filter(x => x.isAB).map(x => x.name);
+
+  let work = 0, pres = 0;
+  (student.attendance || []).forEach(m => { work += Number(m.work) || 0; pres += Number(m.pres) || 0; });
+  const att = work > 0 ? Math.round((pres / work) * 100) : null;
+
+  const parts = [];
+  if (overallPct != null) {
+    let pool;
+    if      (overallPct >= 95) pool = REMARK_POOLS.overall.ge95;
+    else if (overallPct >= 90) pool = REMARK_POOLS.overall.ge90;
+    else if (overallPct >= 85) pool = REMARK_POOLS.overall.ge85;
+    else if (overallPct >= 70) pool = REMARK_POOLS.overall.ge70;
+    else if (overallPct >= 60) pool = REMARK_POOLS.overall.ge60;
+    else if (overallPct >= 40) pool = REMARK_POOLS.overall.ge40;
+    else                       pool = REMARK_POOLS.overall.lt40;
+    parts.push(pick(pool));
+  }
+  if (best95.length) {
+    parts.push(pick(REMARK_POOLS.praise95).replace('{SUBJECTS}', formatSubjectsList(best95)));
+  } else if (very90.length) {
+    parts.push(pick(REMARK_POOLS.praise90).replace('{SUBJECTS}', formatSubjectsList(very90)));
+  } else if (good85.length) {
+    parts.push(pick(REMARK_POOLS.praise85).replace('{SUBJECTS}', formatSubjectsList(good85)));
+  }
+  if (failSubs.length) {
+    parts.push(pick(REMARK_POOLS.focusFail).replace('{SUBJECTS}', formatSubjectsList(failSubs)));
+  } else if (weakLT50.length) {
+    parts.push(pick(REMARK_POOLS.focusLT50).replace('{SUBJECTS}', formatSubjectsList(weakLT50)));
+  } else if (weakLE60.length) {
+    parts.push(pick(REMARK_POOLS.focusLE60).replace('{SUBJECTS}', formatSubjectsList(weakLE60)));
+  }
+  if (abSubs.length && !failSubs.length) {
+    parts.push(pick(REMARK_POOLS.focusAB).replace('{SUBJECTS}', formatSubjectsList(abSubs)));
+  }
+  if (att != null) {
+    let apool;
+    if      (att >= 95) apool = REMARK_POOLS.attendance.ge95;
+    else if (att >= 90) apool = REMARK_POOLS.attendance.ge90;
+    else if (att >= 75) apool = REMARK_POOLS.attendance.ge75;
+    else                apool = REMARK_POOLS.attendance.lt75;
+    parts.push(pick(apool).replace('{ATT}', String(att)));
+  }
+  parts.push(pick(REMARK_POOLS.closing));
+  const remark = parts.filter(Boolean).join(' ');
+  return remark.length > 380 ? (remark.slice(0, 377) + '…') : remark;
+}
 // ======= PDF GENERATION =========
 async function fetchStudentData(stu) {
   // 0) Resolve current selections + exam structure
@@ -3005,6 +3154,7 @@ page.render({ canvasContext: ctx, viewport });
 </div>
 </body>
 </html>
+
 
 
 
