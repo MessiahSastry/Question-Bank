@@ -761,9 +761,9 @@ function showStudentList() {
     ).join('')
     : `<span style="color:#999;">No students in this section.</span>`;
 }
-yearSel.onchange = () => { __attendanceCache = null; __marksCache?.clear?.(); __photoCache?.clear?.(); loadClasses(); };
-classSel.onchange = () => { __attendanceCache = null; __marksCache?.clear?.(); __photoCache?.clear?.(); loadSections(); };
-sectionSel.onchange = () => { __attendanceCache = null; __marksCache?.clear?.(); __photoCache?.clear?.(); loadExams(); };
+yearSel.onchange = () => { __attendanceCache = null; __marksCache?.clear?.(); __photoCache?.clear?.(); __examStructCache?.clear?.(); loadClasses(); };
+classSel.onchange = () => { __attendanceCache = null; __marksCache?.clear?.(); __photoCache?.clear?.(); __examStructCache?.clear?.(); loadSections(); };
+sectionSel.onchange = () => { __attendanceCache = null; __marksCache?.clear?.(); __photoCache?.clear?.(); __examStructCache?.clear?.(); loadExams(); };
 examSel.onchange = () => loadStudents();
 
 window.downloadOne = async function(studentId) {
@@ -818,7 +818,8 @@ downloadAllBtn.onclick = async () => {
 };
 
 // ======= EXAM STRUCTURE (subjects, subtopics, max) =======
-let __examStructure = null;           // cached per current exam selection
+let __examStructure = null;           // last-resolved structure
+const __examStructCache = new Map();  // key: year|class|section|exam -> structure
 let __examHasSubtopics = false;       // quick flag for layout decisions
 
 /* ===== Grading scale resolver (per-exam) =====
@@ -1056,29 +1057,35 @@ subjects = subjects.map(s => {
 
 /** Get or rebuild the structure for current selects */
 async function getExamStructure() {
-  const examId = examSel.value;
+  const year = yearSel.value, classId = classSel.value, sectionId = sectionSel.value, examId = examSel.value;
+  const key = [year, classId, sectionId, examId].join('|');
+  if (__examStructCache.has(key)) {
+    __examStructure = __examStructCache.get(key);
+    __examHasSubtopics = !!__examStructure.hasSubtopics;
+    return __examStructure;
+  }
   const examObj = exams.find(e => e.id === examId);
   if (!examObj) {
     __examStructure = { subjects: [], hasSubtopics: false };
     return __examStructure;
   }
-  // Rebuild every time exam/class/section changes (simple & safe)
-  return await buildExamStructure(examObj, {
-    year: yearSel.value,
-    classId: classSel.value,
-    sectionId: sectionSel.value
-  });
+  const built = await buildExamStructure(examObj, { year, classId, sectionId });
+  __examStructCache.set(key, built);
+  __examStructure = built;
+  __examHasSubtopics = !!built.hasSubtopics;
+  return built;
 }
 // Get the exam structure for a specific examId (used by back page)
 // Uses the same builder and class/year/section context as the front page.
 async function getExamStructureForExamId(examId) {
+  const year = yearSel.value, classId = classSel.value, sectionId = sectionSel.value;
+  const key = [year, classId, sectionId, examId].join('|');
+  if (__examStructCache.has(key)) return __examStructCache.get(key);
   const examObj = exams.find(e => e.id === examId);
   if (!examObj) return { subjects: [], hasSubtopics: false };
-  return await buildExamStructure(examObj, {
-    year: yearSel.value,
-    classId: classSel.value,
-    sectionId: sectionSel.value
-  });
+  const built = await buildExamStructure(examObj, { year, classId, sectionId });
+  __examStructCache.set(key, built);
+  return built;
 }
 
 // ======= PDF Helpers ========
@@ -2654,6 +2661,30 @@ function buildAutoRemark(student) {
   const remark = parts.filter(Boolean).join(' ');
   return remark.length > 380 ? (remark.slice(0, 377) + '…') : remark;
 }
+// --- Concurrency limiter (promise pool) ---
+function pLimit(concurrency){
+  const q=[]; let active=0;
+  const next=()=>{ if(active>=concurrency||q.length===0) return;
+    active++; const {fn,resolve,reject}=q.shift();
+    Promise.resolve().then(fn).then(
+      v=>{active--; resolve(v); next();},
+      e=>{active--; reject(e); next();}
+    );
+  };
+  return fn=>new Promise((resolve,reject)=>{ q.push({fn,resolve,reject}); next(); });
+}
+
+// Build full dataset for all students in parallel (uses caches)
+async function getAllStudentFullData(){
+  // warm caches shared by all students
+  await getSectionAttendance();
+  await getExamStructure();
+
+  const limit = pLimit(8); // ← tune to 6–10 if needed
+  const tasks = (students || []).map(stu => limit(() => fetchStudentData(stu)));
+  return await Promise.all(tasks);
+}
+
 // ======= PDF GENERATION =========
 async function fetchStudentData(stu) {
   // 0) Resolve current selections + exam structure
@@ -3343,6 +3374,7 @@ page.render({ canvasContext: ctx, viewport });
 </div>
 </body>
 </html>
+
 
 
 
