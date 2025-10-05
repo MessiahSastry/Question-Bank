@@ -294,6 +294,20 @@ async function getMemo() {
   if (!__memoCache) __memoCache = await loadMemoImg(MEMO_PNG_FILE);
   return __memoCache;
 }
+// Read section attendance once per class/section/year per session
+let __attendanceCache = null;
+async function getSectionAttendance() {
+  if (__attendanceCache) return __attendanceCache;
+  const year = yearSel.value, classId = classSel.value, sectionId = sectionSel.value;
+  if (!year || !classId || !sectionId) { __attendanceCache = { forEach: () => {} }; return __attendanceCache; }
+  const snap = await db.collection('years').doc(year)
+    .collection('classes').doc(classId)
+    .collection('sections').doc(sectionId)
+    .collection('attendance').get();
+  __attendanceCache = snap;
+  return __attendanceCache;
+}
+
 // Attendance table origin (dynamic months)
 // Table will be drawn from this starting point:
 const ATT_TABLE_START = { x: 238, y: 2758 };
@@ -747,9 +761,9 @@ function showStudentList() {
     ).join('')
     : `<span style="color:#999;">No students in this section.</span>`;
 }
-yearSel.onchange = () => loadClasses();
-classSel.onchange = () => loadSections();
-sectionSel.onchange = () => loadExams();
+yearSel.onchange = () => { __attendanceCache = null; __marksCache?.clear?.(); __photoCache?.clear?.(); loadClasses(); };
+classSel.onchange = () => { __attendanceCache = null; __marksCache?.clear?.(); __photoCache?.clear?.(); loadSections(); };
+sectionSel.onchange = () => { __attendanceCache = null; __marksCache?.clear?.(); __photoCache?.clear?.(); loadExams(); };
 examSel.onchange = () => loadStudents();
 
 window.downloadOne = async function(studentId) {
@@ -795,12 +809,14 @@ previewBtn.onclick = async () => {
 downloadAllBtn.onclick = async () => {
   showSpinner();
   try {
-    await generatePDF(students, false);
+    const fullDataArr = await getAllStudentFullData();
+    await generatePDF(fullDataArr, false);
     showToast("Download completed.");
   } finally {
     hideSpinner();
   }
 };
+
 // ======= EXAM STRUCTURE (subjects, subtopics, max) =======
 let __examStructure = null;           // cached per current exam selection
 let __examHasSubtopics = false;       // quick flag for layout decisions
@@ -2089,17 +2105,22 @@ function buildStorageUrlFromPath(path) {
 }
 
 // Fetch any image URL and return a dataURL (base64) for jsPDF.addImage
+// Fetch any image URL and return a dataURL (base64) for jsPDF.addImage (cached)
+const __photoCache = new Map();
 async function urlToDataURL(url) {
+  if (!url) return '';
+  if (__photoCache.has(url)) return __photoCache.get(url);
   const res = await fetch(url);
   const blob = await res.blob();
-  return await new Promise((resolve, reject) => {
+  const data = await new Promise((resolve, reject) => {
     const r = new FileReader();
     r.onload = e => resolve(e.target.result);
     r.onerror = reject;
     r.readAsDataURL(blob);
   });
+  __photoCache.set(url, data);
+  return data;
 }
-
 async function drawStudentPhoto(pdf, stu) {
   try {
     // 1) Resolve a URL for the photo
@@ -2308,6 +2329,7 @@ async function _readMarksDocFor(stuId, examId) {
 }
 
 async function computeRanksByExam(examIds) {
+  if (!Array.isArray(examIds) || examIds.length === 0) return new Map();
   const out = new Map(); // examId -> Map(studentId -> rank)
   for (const exId of (examIds || [])) {
     const struct = await getExamStructureForExamId(exId);
@@ -2754,14 +2776,9 @@ if (subtopics.length && subtopics.every(st => st.mark === 'AB' || st.mark === ''
     });
   }
 
-  // 4) Attendance (unchanged)
-  let attSnap = { forEach: () => {} };
-  if (year && classId && sectionId) {
-    attSnap = await db.collection('years').doc(year)
-      .collection('classes').doc(classId)
-      .collection('sections').doc(sectionId)
-      .collection('attendance').get();
-  }
+  // 4) Attendance (cached)
+const attSnap = await getSectionAttendance();
+
   const months = ['06','07','08','09','10','11','12','01','02','03'];
   const attArr = months.map(() => ({work:0, pres:0}));
   attSnap.forEach(doc => {
@@ -3326,6 +3343,7 @@ page.render({ canvasContext: ctx, viewport });
 </div>
 </body>
 </html>
+
 
 
 
