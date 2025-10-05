@@ -313,8 +313,10 @@ const ATT_MONTHS_AX = [
 ];
 
 // Draws a 3-row attendance table (header + 2 data rows), dynamic columns up to last month with data
+// REPLACE WITH:
 function drawAttendanceTable(pdf, attArr) {
-  const startX = ATT_TABLE_START.x;
+  // Center within the attendance box and use rounded corners
+  const BOX_LEFT = 392, BOX_RIGHT = 1675;
   const startY = ATT_TABLE_START.y;
 
   // Determine last month with any data
@@ -324,85 +326,95 @@ function drawAttendanceTable(pdf, attArr) {
       const has = (Number(m?.work) || 0) > 0 || (Number(m?.pres) || 0) > 0;
       if (has) idx = i;
     });
-    return Math.max(idx, 0); // at least first month
+    return Math.max(idx, 0);
   })();
 
   const monthsToShow = ATT_MONTHS_AX.slice(0, lastIdx + 1);
   const cols = monthsToShow.length;
 
-  // Geometry
-  const labelColW = 260;         // left label column
-  const colW =  (1675 - 392 - labelColW) / Math.max(cols, 1); // fit inside existing attendance box width
-  const rowH = 88;               // row height
-  const rows = 3;                // Header + 2 data rows
+  // Geometry (centered)
+  const labelColW = 300;
+  const availW = BOX_RIGHT - BOX_LEFT;
+  const colW = (availW - labelColW) / Math.max(cols, 1);
+  const rowH = 96;
+  const rows = 3;
   const tableW = labelColW + colW * cols;
   const tableH = rowH * rows;
 
-  // Outer border
-  pdf.setDrawColor(0, 0, 0);
-  pdf.setLineWidth(1);
-  pdf.rect(startX, startY, tableW, tableH);
+  // Center horizontally
+  const startX = BOX_LEFT + Math.round((availW - tableW) / 2);
 
-  // Vertical lines
-  for (let c = 0; c <= cols; c++) {
+  // Rounded outer border with light fill
+  pdf.setDrawColor(15, 61, 107);
+  pdf.setFillColor(250, 253, 255);
+  pdf.setLineWidth(2);
+  pdf.roundedRect(startX, startY, tableW, tableH, 14, 14, 'FD');
+
+  // Grid lines
+  pdf.setDrawColor(15, 61, 107);
+  pdf.setLineWidth(1.4);
+  for (let c = 1; c <= cols; c++) {
     const x = startX + labelColW + c * colW;
-    if (c === 0) continue; // skip left border (already drawn)
     pdf.line(x, startY, x, startY + tableH);
   }
-  // Label column vertical (left border already drawn)
-
-  // Horizontal lines
   for (let r = 1; r < rows; r++) {
     const y = startY + r * rowH;
     pdf.line(startX, y, startX + tableW, y);
   }
 
-  // Text styles
+  // Colors
   const ORANGE = [255, 122, 0];
   const GREEN  = [22, 163, 74];
   const BROWN  = [139, 69, 19];
 
-  // Header cells (month names) — orange, centered
+  // Larger typography
+  const headerSize  = 64; // month names
+  const labelSize   = 60; // left labels
+  const numbersSize = 60; // numbers
+
+  // Month headers — centered
   pdf.setFont('helvetica', 'bold');
-  pdf.setFontSize(46);
   pdf.setTextColor(...ORANGE);
+  pdf.setFontSize(headerSize);
   monthsToShow.forEach((m, c) => {
     const cx = startX + labelColW + c * colW + colW / 2;
     const cy = startY + rowH / 2 + 14;
     pdf.text(m.label, cx, cy, { align: 'center', baseline: 'middle' });
   });
 
-  // Row labels (left label column) — orange, left aligned with small padding
-  const pad = 14;
-  pdf.text('Attendance', startX + pad, startY + rowH / 2 + 14, { align: 'left', baseline: 'middle' });
-  pdf.text('Working Days:', startX + pad, startY + rowH + rowH / 2 + 14, { align: 'left', baseline: 'middle' });
-  pdf.text('Days Present:', startX + pad, startY + 2 * rowH + rowH / 2 + 14, { align: 'left', baseline: 'middle' });
+  // Left column labels — centered
+  pdf.setTextColor(...ORANGE);
+  pdf.setFontSize(labelSize);
+  const labelCX = startX + labelColW / 2;
+  const padY = 14;
+  pdf.text('Attendance',    labelCX, startY + rowH / 2 + padY,            { align: 'center', baseline: 'middle' });
+  pdf.text('Working Days:', labelCX, startY + rowH + rowH / 2 + padY,     { align: 'center', baseline: 'middle' });
+  pdf.text('Days Present:', labelCX, startY + 2 * rowH + rowH / 2 + padY, { align: 'center', baseline: 'middle' });
 
-  // Numbers
+  // Numbers (centered)
   pdf.setFont('helvetica', 'bold');
-  pdf.setFontSize(46);
+  pdf.setFontSize(numbersSize);
 
-  // Working Days row — green
   pdf.setTextColor(...GREEN);
   monthsToShow.forEach((m, c) => {
     const v = Number(attArr?.[c]?.work) || 0;
     const cx = startX + labelColW + c * colW + colW / 2;
-    const cy = startY + rowH + rowH / 2 + 14;
+    const cy = startY + rowH + rowH / 2 + padY;
     const txt = v ? String(v) : '';
     if (txt) pdf.text(txt, cx, cy, { align: 'center', baseline: 'middle' });
   });
 
-  // Days Present row — brown
   pdf.setTextColor(...BROWN);
   monthsToShow.forEach((m, c) => {
     const v = (typeof attArr?.[c]?.pres === 'number') ? attArr[c].pres : (Number(attArr?.[c]?.pres) || 0);
     const cx = startX + labelColW + c * colW + colW / 2;
-    const cy = startY + 2 * rowH + rowH / 2 + 14;
+    const cy = startY + 2 * rowH + rowH / 2 + padY;
     const txt = v ? String(v) : '';
     if (txt) pdf.text(txt, cx, cy, { align: 'center', baseline: 'middle' });
   });
-}
 
+  pdf.setTextColor(0, 0, 0);
+}
 const COLOR_GREEN = [22,163,74];
 const COLOR_RED   = [220,38,38];
 const COLOR_BLUE  = [15,61,107];   // for subtopic columns
@@ -3295,6 +3307,7 @@ page.render({ canvasContext: ctx, viewport });
 </div>
 </body>
 </html>
+
 
 
 
