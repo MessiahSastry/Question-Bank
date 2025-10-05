@@ -294,9 +294,114 @@ async function getMemo() {
   if (!__memoCache) __memoCache = await loadMemoImg(MEMO_PNG_FILE);
   return __memoCache;
 }
-// Attendance 10 months, work & pres (same as before)
-const attWorkCoords = [[725, 2956],[867, 2956],[1049, 2956],[1221, 2956],[1356, 2956],[1491, 2956],[1622, 2956],[1758, 2956],[1889, 2956],[2056, 2956]];
-const attPresCoords = [[725, 3027],[867, 3027],[1049, 3027],[1221, 3027],[1356, 3027],[1491, 3027],[1622, 3027],[1758, 3027],[1889, 3027],[2056, 3027]];
+// Attendance table origin (dynamic months)
+// Table will be drawn from this starting point:
+const ATT_TABLE_START = { x: 238, y: 2758 };
+
+// Month labels in academic order (used to decide how many columns to render)
+const ATT_MONTHS_AX = [
+  { key: '06', label: 'June'   },
+  { key: '07', label: 'July'   },
+  { key: '08', label: 'August' },
+  { key: '09', label: 'Sep'    },
+  { key: '10', label: 'Oct'    },
+  { key: '11', label: 'Nov'    },
+  { key: '12', label: 'Dec'    },
+  { key: '01', label: 'Jan'    },
+  { key: '02', label: 'Feb'    },
+  { key: '03', label: 'March'  }
+];
+
+// Draws a 3-row attendance table (header + 2 data rows), dynamic columns up to last month with data
+function drawAttendanceTable(pdf, attArr) {
+  const startX = ATT_TABLE_START.x;
+  const startY = ATT_TABLE_START.y;
+
+  // Determine last month with any data
+  const lastIdx = (() => {
+    let idx = -1;
+    (attArr || []).forEach((m, i) => {
+      const has = (Number(m?.work) || 0) > 0 || (Number(m?.pres) || 0) > 0;
+      if (has) idx = i;
+    });
+    return Math.max(idx, 0); // at least first month
+  })();
+
+  const monthsToShow = ATT_MONTHS_AX.slice(0, lastIdx + 1);
+  const cols = monthsToShow.length;
+
+  // Geometry
+  const labelColW = 260;         // left label column
+  const colW =  (1675 - 392 - labelColW) / Math.max(cols, 1); // fit inside existing attendance box width
+  const rowH = 88;               // row height
+  const rows = 3;                // Header + 2 data rows
+  const tableW = labelColW + colW * cols;
+  const tableH = rowH * rows;
+
+  // Outer border
+  pdf.setDrawColor(0, 0, 0);
+  pdf.setLineWidth(1);
+  pdf.rect(startX, startY, tableW, tableH);
+
+  // Vertical lines
+  for (let c = 0; c <= cols; c++) {
+    const x = startX + labelColW + c * colW;
+    if (c === 0) continue; // skip left border (already drawn)
+    pdf.line(x, startY, x, startY + tableH);
+  }
+  // Label column vertical (left border already drawn)
+
+  // Horizontal lines
+  for (let r = 1; r < rows; r++) {
+    const y = startY + r * rowH;
+    pdf.line(startX, y, startX + tableW, y);
+  }
+
+  // Text styles
+  const ORANGE = [255, 122, 0];
+  const GREEN  = [22, 163, 74];
+  const BROWN  = [139, 69, 19];
+
+  // Header cells (month names) — orange, centered
+  pdf.setFont('helvetica', 'bold');
+  pdf.setFontSize(46);
+  pdf.setTextColor(...ORANGE);
+  monthsToShow.forEach((m, c) => {
+    const cx = startX + labelColW + c * colW + colW / 2;
+    const cy = startY + rowH / 2 + 14;
+    pdf.text(m.label, cx, cy, { align: 'center', baseline: 'middle' });
+  });
+
+  // Row labels (left label column) — orange, left aligned with small padding
+  const pad = 14;
+  pdf.text('Attendance', startX + pad, startY + rowH / 2 + 14, { align: 'left', baseline: 'middle' });
+  pdf.text('Working Days:', startX + pad, startY + rowH + rowH / 2 + 14, { align: 'left', baseline: 'middle' });
+  pdf.text('Days Present:', startX + pad, startY + 2 * rowH + rowH / 2 + 14, { align: 'left', baseline: 'middle' });
+
+  // Numbers
+  pdf.setFont('helvetica', 'bold');
+  pdf.setFontSize(46);
+
+  // Working Days row — green
+  pdf.setTextColor(...GREEN);
+  monthsToShow.forEach((m, c) => {
+    const v = Number(attArr?.[c]?.work) || 0;
+    const cx = startX + labelColW + c * colW + colW / 2;
+    const cy = startY + rowH + rowH / 2 + 14;
+    const txt = v ? String(v) : '';
+    if (txt) pdf.text(txt, cx, cy, { align: 'center', baseline: 'middle' });
+  });
+
+  // Days Present row — brown
+  pdf.setTextColor(...BROWN);
+  monthsToShow.forEach((m, c) => {
+    const v = (typeof attArr?.[c]?.pres === 'number') ? attArr[c].pres : (Number(attArr?.[c]?.pres) || 0);
+    const cx = startX + labelColW + c * colW + colW / 2;
+    const cy = startY + 2 * rowH + rowH / 2 + 14;
+    const txt = v ? String(v) : '';
+    if (txt) pdf.text(txt, cx, cy, { align: 'center', baseline: 'middle' });
+  });
+}
 
 const COLOR_GREEN = [22,163,74];
 const COLOR_RED   = [220,38,38];
@@ -2960,6 +3065,7 @@ centerText(pdf, student.overallGrade, xGrade, totalYAdj, 60, COLOR_GRADE);
     // === Remarks box (below attendance, above signature) ===
 try {
   const remark = buildAutoRemark(student);
+  drawAttendanceTable(pdf, student.attendance);
   drawRemarkBox(pdf, remark);
 } catch(e) { console.warn('Remark box failed:', e); }
 
@@ -3116,6 +3222,7 @@ for (let i = 0; i < 10; i++) {
 // === Remarks box (below attendance, above signature) ===
 try {
   const remark = buildAutoRemark(student);
+  drawAttendanceTable(pdf, student.attendance);
   drawRemarkBox(pdf, remark);
 } catch(e) { console.warn('Remark box failed:', e); }
 
@@ -3169,6 +3276,7 @@ page.render({ canvasContext: ctx, viewport });
 </div>
 </body>
 </html>
+
 
 
 
