@@ -2068,6 +2068,101 @@ function leftText(pdf, text, x, y, size=12, color=[0,0,0], fontStyle="bold", fon
   pdf.setFont("helvetica", "normal");
   pdf.setTextColor(0,0,0);
 }
+  // ---- Auto-remark generator (front page, current exam) ----
+function buildAutoRemark(student) {
+  const pct = Number.isFinite(+student.percentage) ? +student.percentage : null;
+
+  // subject-level percents
+  const toPct = (m, M) => (typeof m === 'number' && typeof M === 'number' && M > 0) ? (m / M) * 100 : null;
+  const subjects = Array.isArray(student.subjects) ? student.subjects : [];
+
+  const percents = subjects.map(s => ({
+    name: String(s.name || '').trim(),
+    p: toPct(s.marks === 'AB' ? null : s.marks, s.max),
+    isAB: s.marks === 'AB'
+  }));
+
+  const fail = percents.filter(x => x.p !== null && isFailPct(x.p)).map(x => x.name);
+  const ab   = percents.filter(x => x.isAB).map(x => x.name);
+  const strong = percents.filter(x => x.p !== null && x.p >= 80).sort((a,b)=>b.p-a.p).slice(0,2).map(x => x.name);
+  const weak   = percents
+    .filter(x => (x.p !== null && x.p <= 60) || x.isAB)
+    .sort((a,b)=> (a.p ?? -1) - (b.p ?? -1))
+    .slice(0,2)
+    .map(x => x.name);
+
+  // attendance rate (10 months band already built in student.attendance)
+  let work = 0, pres = 0;
+  (student.attendance || []).forEach(m => {
+    const w = Number(m.work) || 0;
+    const p = Number(m.pres) || 0;
+    work += w; pres += p;
+  });
+  const attRate = work > 0 ? Math.round((pres / work) * 100) : null;
+
+  // Overall tone (no “foundations”)
+  let opening = '';
+  if (pct != null) {
+    if (pct >= 85) opening = 'Outstanding performance in this assessment.';
+    else if (pct >= 70) opening = 'Very good overall performance.';
+    else if (pct >= 60) opening = 'Good effort; keep building your skills.';
+    else if (pct >= 40) opening = 'Needs consistent practice to strengthen core concepts.';
+    else opening = 'Immediate support is required to improve core concepts.';
+  }
+
+  // Focus / strength
+  const parts = [];
+  if (fail.length) parts.push(`Focus on ${fail.join(', ')}.`);
+  else if (weak.length) parts.push(`Work on ${weak.join(', ')}.`);
+  if (strong.length) parts.push(`Strong in ${strong.join(', ')}—well done.`);
+
+  // Attendance note (below 90% should be noted)
+  if (attRate != null && attRate < 90) {
+    parts.push('Attendance is below 90%; aim for regular presence.');
+  }
+
+  // Fallback if nothing computed
+  if (!opening && parts.length === 0) return 'Assessment in progress. Please contact the class teacher for details.';
+
+  const remark = [opening, ...parts].filter(Boolean).join(' ');
+  // Trim to a reasonable size
+  return remark.length > 280 ? (remark.slice(0,277) + '…') : remark;
+}
+
+// ---- Drawer for the remark box (placed below attendance table) ----
+function drawRemarkBox(pdf, text) {
+  // Positioning tuned for your page:
+  // Attendance numbers sit around y ≈ 2956..3027, signature is lower.
+  const x = 380;           // left margin of the box
+  const y = 3140;          // just below the attendance grid
+  const w = 1720;          // width to fit centered area
+  const h = 150;           // height for 2–3 short lines
+
+  // Box style (blue fill, orange border; black text inside looks crisp)
+  pdf.setDrawColor(255, 122, 0);   // orange border
+  pdf.setFillColor(230, 242, 255); // soft blue fill
+  pdf.setLineWidth(2);
+  pdf.roundedRect(x, y, w, h, 14, 14, 'FD');
+
+  // Text
+  pdf.setFont('helvetica','bold');
+  pdf.setTextColor(15, 61, 107);
+  const label = 'REMARKS';
+  pdf.setFontSize(44);
+  pdf.text(label, x + 18, y + 54, { align:'left', baseline:'alphabetic' });
+
+  // Body
+  pdf.setFont('helvetica','normal');
+  pdf.setTextColor(0, 0, 0);
+  pdf.setFontSize(42);
+  const wrap = pdf.splitTextToSize(String(text || ''), w - 36 - 140); // leave room after label
+  // baseline for first line (aligned with label)
+  const bodyX = x + 140;
+  const bodyY = y + 54;
+  wrap.slice(0,3).forEach((line, i) => {
+    pdf.text(line, bodyX, bodyY + i * 44, { align:'left', baseline:'alphabetic' });
+  });
+}
 function formatClass(val) {
   if (!val) return '';
   return val.replace(/^(\d+)(\w+)$/, (m, num, suff) => num.toUpperCase() + suff.toLowerCase());
@@ -2691,6 +2786,11 @@ centerText(pdf, student.overallGrade, xGrade, totalYAdj, 60, COLOR_GRADE);
       centerText(pdf, String(a.work || ""), attWorkCoords[i][0], attWorkCoords[i][1], 60, COLOR_GREEN);
       centerText(pdf, String(a.pres || ""), attPresCoords[i][0], attPresCoords[i][1], 60, COLOR_BROWN);
     }
+    // === Remarks box (below attendance, above signature) ===
+try {
+  const remark = buildAutoRemark(student);
+  drawRemarkBox(pdf, remark);
+} catch(e) { console.warn('Remark box failed:', e); }
 
        // Back page (landscape) on preview, only if there is something to show
     try {
@@ -2837,12 +2937,16 @@ centerText(pdf, (totalMarks === '' || totalMarks == null ? 'AB' : String(totalMa
 centerText(pdf, student.overallGrade, xGrade, totalYAdj, 60, COLOR_GRADE);
     
     // Attendance on preview
-    // Attendance on preview
 for (let i = 0; i < 10; i++) {
   const a = (student.attendance && student.attendance[i]) || { work: "", pres: "" };
   centerText(pdf, String(a.work || ""), attWorkCoords[i][0], attWorkCoords[i][1], 60, COLOR_GREEN);
   centerText(pdf, String(a.pres || ""), attPresCoords[i][0], attPresCoords[i][1], 60, COLOR_BROWN);
 }
+// === Remarks box (below attendance, above signature) ===
+try {
+  const remark = buildAutoRemark(student);
+  drawRemarkBox(pdf, remark);
+} catch(e) { console.warn('Remark box failed:', e); }
 
 // ⇣ Add back page (landscape) to PREVIEW when at least one exam column is chosen
 try {
@@ -2894,6 +2998,7 @@ page.render({ canvasContext: ctx, viewport });
 </div>
 </body>
 </html>
+
 
 
 
