@@ -2071,43 +2071,58 @@ function leftText(pdf, text, x, y, size=12, color=[0,0,0], fontStyle="bold", fon
  
 // ---- Drawer for the remark box (placed below attendance table) ----
 function drawRemarkBox(pdf, text) {
-  // Box bounds (from your coordinates)
+  // Box anchors (same left/top/width as before)
   const x = 392;                 // left
   const y = 3130;                // top
-  const w = 1675 - 392;          // 1283
-  const h = 3334 - 3130;         // 204
+  const w = 1675 - 392;          // width
 
-  // Box: soft blue fill, orange border
-  pdf.setDrawColor(255, 122, 0);
-  pdf.setFillColor(230, 242, 255);
-  pdf.setLineWidth(2);
-  pdf.roundedRect(x, y, w, h, 14, 14, 'FD');
-
-  // Heading — left aligned, larger
-  pdf.setFont('times', 'bold');
+  // Heading ABOVE the box (left-aligned)
+  pdf.setFont('helvetica', 'bold');
   pdf.setTextColor(15, 61, 107);
   pdf.setFontSize(56);
-  const padX = 20;
-  const headingBaseline = y + 64;
-  pdf.text('REMARKS', x + padX, headingBaseline, { align: 'left', baseline: 'alphabetic' });
+  pdf.text('REMARKS', x, y - 16, { align: 'left', baseline: 'alphabetic' });
 
-  // Body — next line, bigger, comfortable line height
-  pdf.setFont('times', 'normal');
-  pdf.setTextColor(0, 0, 0);
-  const bodyFontSize = 48;
-  const lineGap = 54;
-  pdf.setFontSize(bodyFontSize);
+  // Body typography & sentence-by-sentence wrapping (helvetica)
+const padX = 20;
+const padY = 16;
+const bodyFontSize = 48;
+const lineGap = 54;
+pdf.setFont('helvetica', 'normal');
+pdf.setTextColor(0, 0, 0);
+pdf.setFontSize(bodyFontSize);
 
-  const bodyX = x + padX;
-  const bodyY = headingBaseline + 22;      // start on next line after heading
-  const wrapWidth = w - padX * 2;
+const wrapWidth = w - padX * 2;
+const bodyText = String(text || 'Assessment in progress. Details will be updated shortly.');
 
-  const bodyText = String(text || 'Assessment in progress. Details will be updated shortly.');
-  const wrapped = pdf.splitTextToSize(bodyText, wrapWidth);
+// Split into sentences and wrap each sentence separately
+const sentences = bodyText
+  .replace(/\s+/g, ' ')
+  .match(/[^.!?]+[.!?]?/g) || [bodyText];
 
-  // Draw up to 4 lines within the box height
-  for (let i = 0; i < Math.min(4, wrapped.length); i++) {
-    pdf.text(wrapped[i], bodyX, bodyY + i * lineGap, { align: 'left', baseline: 'alphabetic' });
+const lines = [];
+sentences.forEach(s => {
+  const trimmed = s.trim();
+  if (trimmed) {
+    const pieces = pdf.splitTextToSize(trimmed, wrapWidth);
+    pieces.forEach(p => lines.push(p));
+  }
+});
+
+// Dynamic height to fit all lines
+const maxLines = Math.min(lines.length, 60);
+const contentH = maxLines * lineGap;
+const minH = 160;
+const h = Math.max(minH, contentH + padY * 2);
+
+// Draw box (no fill, GREEN border)
+pdf.setDrawColor(22, 163, 74); // green
+pdf.setLineWidth(4);
+pdf.roundedRect(x, y, w, h, 14, 14, 'S'); // stroke only (no fill)
+
+// Draw sentence lines
+const startY = y + padY + bodyFontSize;
+for (let i = 0; i < maxLines; i++) {
+  pdf.text(lines[i], x + padX, startY + i * lineGap, { align: 'left', baseline: 'alphabetic' });
   }
 }
 function formatClass(val) {
@@ -3154,6 +3169,7 @@ page.render({ canvasContext: ctx, viewport });
 </div>
 </body>
 </html>
+
 
 
 
