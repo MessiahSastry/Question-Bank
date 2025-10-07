@@ -1052,12 +1052,11 @@ async function buildExamStructure(examObj, { year, classId, sectionId } = {}) {
       }
 
            // If subject has no explicit subtopics but exam has an exam-wide schema, use it
-      if ((!subtopics || subtopics.length === 0) && examWideSubs && examWideSubs.length) {
-        subtopics = examWideSubs.map(t => ({ name: t.name, max: t.max }));
-      }
-      if (subtopics.length) __examHasSubtopics = true;
-      return { name, subtopics, subjectMax };
-
+        if ((!subtopics || subtopics.length === 0) && examWideSubs && examWideSubs.length) {
+          subtopics = examWideSubs.map(t => ({ name: t.name, max: t.max }));
+        }
+        if (Array.isArray(subtopics) && subtopics.length) __examHasSubtopics = true;
+        return { name, subtopics, subjectMax };
     });
   }
 
@@ -1126,13 +1125,15 @@ subjects = subjects.map(s => {
     }
   }
 
-  return s;
-    // If still missing subtopics and exam-wide schema exists, apply it
+  // ✅ If still missing subtopics and exam-wide schema exists, apply it (this must be BEFORE return)
   if ((!s.subtopics || s.subtopics.length === 0) && examWideSubs && examWideSubs.length) {
     s.subtopics = examWideSubs.map(t => ({ name: t.name, max: t.max }));
     __examHasSubtopics = true;
   }
+
+  return s;
 });
+
       }
     } catch (e) {
       console.warn('Exam structure inference skipped:', e);
@@ -2830,8 +2831,21 @@ if ((!subtopics.length) && subSrc) {
 if (subtopics.length && subSrc) {
   for (const st of subtopics) {
     const k = Object.keys(subSrc).find(x => nkey(x) === nkey(st.name));
-    const v = (k ? subSrc[k] : subSrc[st.name]);
-    st.mark = (v === 'AB' || v === 'ab' || v === 'Ab') ? 'AB' : (isNum(v) ? +v : '');
+    const raw = (k !== undefined) ? subSrc[k] : subSrc[st.name];
+
+    // Accept numbers AND numeric strings; normalize explicit AB
+    let mark;
+    if (raw === 'AB' || String(raw).toUpperCase() === 'AB') {
+      mark = 'AB';
+    } else if (raw === '' || raw === null || raw === undefined) {
+      mark = '';                         // will render as AB later
+    } else if (Number.isFinite(+raw)) {
+      mark = +raw;                       // "0", "12.5", 0 → numbers
+    } else {
+      mark = '';                         // unknown → blank
+    }
+
+    st.mark = mark;
   }
 }
 
@@ -3524,6 +3538,7 @@ page.render({ canvasContext: ctx, viewport });
 </script>
 </body>
 </html>
+
 
 
 
