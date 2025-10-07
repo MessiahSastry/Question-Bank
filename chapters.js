@@ -107,6 +107,7 @@ window.textbooks = {
       "Nature of Chemistry",
       "Language of Chemistry",
       "Language of Chemistry(symbol of elements & Valency)",
+      "Language of Chemistry(Types of Ions & Chemical Formula)",
       "Basic Concept Of Chemistry",
       "Atomic Structure",
       "Chemical Bonding",
@@ -262,6 +263,7 @@ window.textbooks = {
     "Chemistry IIT & NEET": [
       "States of Matter",
       "Basic Concepts of Chemistry (Atomic Mass, Molecular Mass & Mole Concept)",
+      "Basic Concepts of Chemistry (Types of Reactions & Laws of Chemical Combination)",
       "Language of Chemistry",
       "Atomic Structure",
       "Classification of Elements",
@@ -708,6 +710,7 @@ window.textbooks = {
     ]
   }
 };
+
 
 
 
