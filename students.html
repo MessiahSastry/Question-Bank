@@ -619,21 +619,17 @@ function setupDropdown(dropdownId, selectedId, listId, onSelect) {
         const classId=document.getElementById('certClassSelected').dataset.value;
         const className=document.getElementById('certClassSelected').textContent;
         const classGroup=getClassGroupName(className);
-        db.collection('years').doc(academicYear)
-          .collection('exams').doc('classGroups').collection(classGroup).orderBy('name').get()
-          .then(examSnap=>{
-            let exams=[];
-            examSnap.forEach(d=>exams.push({id:d.id,...d.data()}));
-            const certExamList=document.getElementById('certExamList');
-            certExamList.innerHTML=exams.map(e=>`
-              <div class="dropdown-option" data-id="${e.id}">${e.name}</div>
-            `).join('');
-            const examSelected=document.getElementById('certExamSelected');
-            examSelected.textContent="--Select--";
-            examSelected.dataset.value="";
-            // re-attach exam dropdown as well
-            setupDropdown('certExamDropdown','certExamSelected','certExamList');
-            // ---- PREFILL (optional) ----
+        fetchEffectiveExams(classId, className).then(exams=>{
+  const certExamList=document.getElementById('certExamList');
+  certExamList.innerHTML=(exams||[]).map(e=>`
+    <div class="dropdown-option" data-id="${e.id}">${e.name}</div>
+  `).join('');
+  const examSelected=document.getElementById('certExamSelected');
+  examSelected.textContent="--Select--";
+  examSelected.dataset.value="";
+  // re-attach exam dropdown as well
+  setupDropdown('certExamDropdown','certExamSelected','certExamList');
+  // ---- PREFILL (optional) ----
 (async function prefillIfAny() {
   if (!prefill || !prefill.classId) return;
 
@@ -660,59 +656,55 @@ function setupDropdown(dropdownId, selectedId, listId, onSelect) {
     const className = document.getElementById('certClassSelected').textContent;
     const classGroup = getClassGroupName(className);
 
-    const examSnap = await db.collection('years').doc(academicYear)
-      .collection('exams').doc('classGroups').collection(classGroup).orderBy('name').get();
+    const examsEff = await fetchEffectiveExams(prefill.classId, className);
+const certExamList = document.getElementById('certExamList');
+certExamList.innerHTML = (examsEff||[]).map(e => `
+  <div class="dropdown-option" data-id="${e.id}">${e.name}</div>
+`).join('');
 
-    const certExamList = document.getElementById('certExamList');
-    certExamList.innerHTML = examSnap.docs.map(e => `
-      <div class="dropdown-option" data-id="${e.id}">${e.data().name}</div>
-    `).join('');
-
-    const examSel = document.getElementById('certExamSelected');
-    examSel.textContent   = '--Select--';
-    examSel.dataset.value = '';
-    setupDropdown('certExamDropdown','certExamSelected','certExamList');
+const examSel = document.getElementById('certExamSelected');
+examSel.textContent   = '--Select--';
+examSel.dataset.value = '';
+setupDropdown('certExamDropdown','certExamSelected','certExamList');
   });
 
   // If we already know the section, load exams now and prefill exam too
   if (prefill.sectionId) {
-    const className  = classSel.textContent;
-    const classGroup = getClassGroupName(className);
-    const examSnap = await db.collection('years').doc(academicYear)
-      .collection('exams').doc('classGroups').collection(classGroup).orderBy('name').get();
+  const className = classSel.textContent;
+  const classId   = classSel.dataset.value;
 
-    const certExamList = document.getElementById('certExamList');
-    certExamList.innerHTML = examSnap.docs.map(e => `
-      <div class="dropdown-option" data-id="${e.id}">${e.data().name}</div>
-    `).join('');
+  const exams = await fetchEffectiveExams(classId, className);
+  const certExamList = document.getElementById('certExamList');
+  certExamList.innerHTML = (exams || []).map(e => `
+    <div class="dropdown-option" data-id="${e.id}">${e.name}</div>
+  `).join('');
 
-    const examSel = document.getElementById('certExamSelected');
-    examSel.textContent   = prefill.examName || '--Select--';
-    examSel.dataset.value = prefill.examId   || '';
-    setupDropdown('certExamDropdown','certExamSelected','certExamList');
-  }
+  const examSel = document.getElementById('certExamSelected');
+  examSel.textContent   = prefill.examName || '--Select--';
+  examSel.dataset.value = prefill.examId   || '';
+  setupDropdown('certExamDropdown','certExamSelected','certExamList');
+}
 })();
       });
       });
     });
 });
-      setupDropdown('certSectionDropdown','certSectionSelected','certSectionList',(sectionId,sectionName)=>{
-        const classId=document.getElementById('certClassSelected').dataset.value;
-        const className=document.getElementById('certClassSelected').textContent;
-        const classGroup=getClassGroupName(className);
-        db.collection('years').doc(academicYear)
-          .collection('exams').doc('classGroups').collection(classGroup).orderBy('name').get()
-          .then(examSnap=>{
-            let exams=[];
-            examSnap.forEach(d=>exams.push({id:d.id,...d.data()}));
-            const certExamList=document.getElementById('certExamList');
-            certExamList.innerHTML=exams.map(e=>`
-              <div class="dropdown-option" data-id="${e.id}">${e.name}</div>
-            `).join('');
-            document.getElementById('certExamSelected').textContent="--Select--";
-            document.getElementById('certExamSelected').dataset.value="";
-          });
-      });
+      setupDropdown('certSectionDropdown','certSectionSelected','certSectionList', (sectionId, sectionName) => {
+  const classId  = document.getElementById('certClassSelected').dataset.value;
+  const className = document.getElementById('certClassSelected').textContent;
+
+  fetchEffectiveExams(classId, className).then((exams) => {
+  const certExamList = document.getElementById('certExamList');
+  const listHtml = (Array.isArray(exams) && exams.length)
+    ? exams.map(e => `<div class="dropdown-option" data-id="${e.id}">${e.name}</div>`).join('')
+    : `<div class="dropdown-option" data-id="" style="color:#888;">No exams for this class</div>`;
+  certExamList.innerHTML = listHtml;
+
+  const examSel = document.getElementById('certExamSelected');
+  examSel.textContent = (Array.isArray(exams) && exams.length) ? "--Select--" : "No exams";
+  examSel.dataset.value = (Array.isArray(exams) && exams.length) ? "" : "";
+});
+});
 
       setupDropdown('certExamDropdown','certExamSelected','certExamList');
     });
@@ -1524,46 +1516,143 @@ function gradeFromPercent(pct, scale) {
   return 'Ungraded';
 }
 
+// ===== EFFECTIVE EXAMS (group defaults + class overrides) =====
+async function fetchEffectiveExams(classId, className) {
+  const group = getClassGroupName(className);
+
+  // 1) Load group exams (baseline)
+  const groupSnap = await db.collection('years').doc(academicYear)
+    .collection('exams').doc('classGroups')
+    .collection(group).get();
+
+  const map = new Map(); // id -> exam
+  groupSnap.forEach(d => {
+    map.set(d.id, { id: d.id, ...d.data(), __origin: 'group' });
+  });
+
+  // 2) Load class overrides
+  const overSnap = await db.collection('years').doc(academicYear)
+    .collection('classes').doc(classId)
+    .collection('examOverrides').get();
+
+  overSnap.forEach(doc => {
+    const o = doc.data() || {};
+
+    // Class-only exam: doesn’t exist in group, lives only for this class
+    if (o.origin === 'class-only') {
+      map.set(doc.id, { id: doc.id, ...o, __origin: 'class-only' });
+      return;
+    }
+
+    // Hide an inherited exam for this class
+    if (o.hidden === true) {
+      map.delete(doc.id);
+      return;
+    }
+
+    // Field-level override over a group exam
+    if (map.has(doc.id)) {
+      const base = map.get(doc.id);
+      map.set(doc.id, {
+        ...base,
+        name:        (o.name ?? base.name),
+        subjects:    (Array.isArray(o.subjects) && o.subjects.length ? o.subjects : base.subjects),
+        subtopics:   (Array.isArray(o.subtopics) && o.subtopics.length ? o.subtopics : base.subtopics),
+        grading:     (o.grading || base.grading),
+        __origin:    'overridden'
+      });
+    } else {
+      // If override points to an unknown id, treat as class-only to be safe
+      map.set(doc.id, { id: doc.id, ...o, __origin: 'class-only' });
+    }
+  });
+
+  // 3) Return a sorted list (by name)
+  const list = Array.from(map.values());
+  list.sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+  return list;
+}
+// --- shim: keep both names working safely ---
+if (typeof getExamsForCurrentClass !== 'function' && typeof fetchEffectiveExams === 'function') {
+  // expose legacy name
+  var getExamsForCurrentClass = function() {
+    return fetchEffectiveExams(currentClassId, currentClassName);
+  };
+}
+if (typeof fetchEffectiveExams !== 'function' && typeof getExamsForCurrentClass === 'function') {
+  // expose new name
+  var fetchEffectiveExams = function(classId, className) {
+    return getExamsForCurrentClass();
+  };
+}
 // ========== EXAM SETTINGS ===========
 function showExamSettingsPopup() {
   const classGroup = getClassGroupName(currentClassName);
-  // Fetch all exams for this group
-  db.collection('years').doc(academicYear)
-    .collection('exams').doc('classGroups')
-    .collection(classGroup)
-   .get()
-    .then(async snap => {
-      const schoolDefault = await readSchoolGradingDefault();
-      const preloadScale = (schoolDefault && Array.isArray(schoolDefault.scale) && schoolDefault.scale.length)
-        ? schoolDefault.scale
-        : LEGACY_GRADING_SCALE;
 
-      let exams = [];
-      snap.forEach(doc => exams.push({ id: doc.id, ...doc.data() }));
-      let html = `
+  Promise.all([
+    fetchEffectiveExams(currentClassId, currentClassName), // effective list
+    db.collection('years').doc(academicYear)
+      .collection('classes').doc(currentClassId)
+      .collection('examOverrides').limit(1).get(),         // to infer “customized” state
+    readSchoolGradingDefault()
+  ]).then(([examsEff, overSnap, schoolDefault]) => {
+    const preloadScale = (schoolDefault && Array.isArray(schoolDefault.scale) && schoolDefault.scale.length)
+      ? schoolDefault.scale
+      : LEGACY_GRADING_SCALE;
+
+    const isCustomized = !overSnap.empty; // any override/class-only/hide present?
+    const sourceChip = isCustomized ? 'Customized for this class' : 'Using group defaults';
+
+    const exams = Array.isArray(examsEff) ? examsEff : [];
+    let html = `
         <div class="popup-title">Exam Settings</div>
-        <div id="examListArea" style="max-height:240px;overflow-y:auto;margin-bottom:12px;">
+
+<!-- Source strip -->
+<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin:6px 0 10px 0;">
+  <span style="font-size:.92em; padding:4px 10px; border-radius:999px;
+               background:${isCustomized ? '#fff3e0' : '#e8f3ff'};
+               color:${isCustomized ? '#b05300' : '#0f3d6b'};
+               border:1px solid ${isCustomized ? '#ffd7a6' : '#c7d7ea'};">
+    ${sourceChip}
+  </span>
+
+  <label style="display:flex;align-items:center;gap:8px;font-size:.95em;color:#444;">
+    <span>Use group exams</span>
+    <input type="checkbox" id="classCustomizeToggle" ${isCustomized ? '' : 'checked'} />
+    <span>Customize for this class</span>
+  </label>
+</div>
+
+<div id="examListArea" style="max-height:240px;overflow-y:auto;margin-bottom:12px;">
           ${exams.length === 0 
-            ? '<div style="color:#888;font-style:italic;">No exams found.</div>' 
-            : exams.map((exam, idx) => `
-                <div style="border-bottom:1px solid #f1f1f1;margin-bottom:7px;padding-bottom:7px;">
-                  <strong>${exam.name}</strong>
-                  ${isAdmin ? `<button type="button" class="popup-action-btn" data-edit="${exam.id}" style="margin-left:10px;padding:2px 8px;font-size:0.9em;">Edit</button>` : ''}
-                  <div style="margin-top:6px;margin-left:8px;font-size:0.99em;">
-                  ${Array.isArray(exam.subjects) && exam.subjects.length > 0
-                    ? exam.subjects.map(subj => `${subj.name} <span style="color:#888;">(Max: ${subj.max})</span>`).join(', ')
-                    : '<span style="color:#aaa;">No subjects</span>'
-                  }
-                </div>
-                <div style="margin-top:4px;margin-left:8px;font-size:0.95em;color:#444;">
-                  ${
-                    Array.isArray(exam.subtopics) && exam.subtopics.length > 0
-                      ? 'Subtopics: ' + exam.subtopics.map(st => `${st.name} <span style="color:#888;">(${st.max})</span>`).join(', ')
-                      : ''
-                  }
-                </div>
-               </div>
-              `).join('')}
+  ? '<div style="color:#888;font-style:italic;">No exams found.</div>' 
+  : exams.map((exam, idx) => {
+      const badge = exam.__origin === 'class-only'
+        ? '<span style="margin-left:8px;font-size:.8em;padding:2px 8px;border-radius:999px;background:#eaf8ea;color:#207a2b;border:1px solid #9fddb1;">Class-only</span>'
+        : exam.__origin === 'overridden'
+          ? '<span style="margin-left:8px;font-size:.8em;padding:2px 8px;border-radius:999px;background:#fff7e6;color:#a26100;border:1px solid #ffd79a;">Overridden</span>'
+          : '<span style="margin-left:8px;font-size:.8em;padding:2px 8px;border-radius:999px;background:#e8f3ff;color:#0f3d6b;border:1px solid #c7d7ea;">Inherited</span>';
+
+      return `
+      <div style="border-bottom:1px solid #f1f1f1;margin-bottom:7px;padding-bottom:7px;">
+        <strong>${exam.name}</strong>${badge}
+        ${isAdmin ? `<button type="button" class="popup-action-btn" data-edit="${exam.id}" style="margin-left:10px;padding:2px 8px;font-size:0.9em;">Edit</button>` : ''}
+        <div style="margin-top:6px;margin-left:8px;font-size:0.99em;">
+        ${Array.isArray(exam.subjects) && exam.subjects.length > 0
+          ? exam.subjects.map(subj => `${subj.name} <span style="color:#888;">(Max: ${subj.max})</span>`).join(', ')
+          : '<span style="color:#aaa;">No subjects</span>'
+        }
+      </div>
+      <div style="margin-top:4px;margin-left:8px;font-size:0.95em;color:#444;">
+        ${
+          Array.isArray(exam.subtopics) && exam.subtopics.length > 0
+            ? 'Subtopics: ' + exam.subtopics.map(st => `${st.name} <span style="color:#888;">(${st.max})</span>`).join(', ')
+            : ''
+        }
+      </div>
+     </div>
+    `;
+    }).join('')}
         </div>
         ${isAdmin ? `
       <form id="addExamForm" style="display:flex; flex-direction:column; max-height:58vh;">
@@ -1817,7 +1906,13 @@ let srcIds = [];
             alert('Error adding exam: ' + (err?.message || err));
           });
       });
-
+  // Temporary UI-only handler; real save in Step 4
+const customizeTgl = popupContent.querySelector('#classCustomizeToggle');
+if (customizeTgl) {
+  customizeTgl.addEventListener('change', () => {
+    alert('This switch is UI-only in Step 3.\nIn Step 4 we will persist class overrides (enable/disable) safely.');
+  });
+}
     // --- Subtopic Fields Logic (manual rows) + Internal controls ---
 const subtopicsContainer  = popupContent.querySelector('#subtopicsContainer');
 const addSubtopicBtn      = popupContent.querySelector('#addSubtopicBtn');
@@ -2380,21 +2475,15 @@ if (editAddSubtopicBtn) {
 function showEnterMarksPopup() {
   console.log('showEnterMarksPopup called');
   console.log('academicYear:', academicYear);
-  const classGroup = getClassGroupName(currentClassName);
-db.collection('years').doc(academicYear)
-  .collection('exams').doc('classGroups')
-  .collection(classGroup).orderBy('name').get()
-    .then(examSnap => {
-      let exams = [];
-      examSnap.forEach(doc => exams.push({ id: doc.id, ...doc.data() }));
-      if (exams.length === 0) {
-        showPopup(`<div class="popup-title">Enter Marks</div>
-          <div style="margin:16px 0;">No exams found! Please add exams first.</div>
-          <div class="popup-btn-row"><button class="popup-cancel-btn">Close</button></div>
-        `);
-        return;
-      }
-      let html = `
+ fetchEffectiveExams(currentClassId, currentClassName).then(exams => {
+  if (!Array.isArray(exams) || exams.length === 0) {
+    showPopup(`<div class="popup-title">Enter Marks</div>
+      <div style="margin:16px 0;">No exams found! Please add exams first.</div>
+      <div class="popup-btn-row"><button class="popup-cancel-btn">Close</button></div>
+    `);
+    return;
+  }
+  let html = `
         <form id="selectExamForm">
           <div class="popup-title">Enter Marks</div>
           <label>Select Exam</label>
@@ -2429,8 +2518,12 @@ db.collection('years').doc(academicYear)
                 students.push({ id: doc.id, ...data });
               }
             });
-            const exam = exams.find(ex => ex.id === examId);
-            const subj = (exam && exam.subjects) ? exam.subjects.find(s => s.name === subjectName) : null;
+            const exam = (Array.isArray(exams) ? exams.find(ex => ex.id === examId) : null);
+if (!exam) {
+  alert('Selected exam is unavailable. Please pick another.');
+  return;
+}
+const subj = Array.isArray(exam.subjects) ? exam.subjects.find(s => s.name === subjectName) : null;
             const max = subj ? subj.max : 100;
             let subtopics = [];
 if (subj && Array.isArray(subj.subtopics) && subj.subtopics.length > 0) {
@@ -4214,6 +4307,7 @@ if (marksFileInput) {
 </script>
 </body>
 </html>
+
 
 
 
