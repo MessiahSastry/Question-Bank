@@ -217,56 +217,71 @@ function getClassGroupName(className) {
 // ===== EFFECTIVE EXAMS (group defaults + class overrides) =====
 async function fetchEffectiveExams(year, classId, className) {
   const group = getClassGroupName(className);
+  const yearRef = db.collection('years').doc(year);
 
-  // 1) Load group exams (baseline)
-  const groupSnap = await db.collection('years').doc(year)
+  // --- 1) GROUP EXAMS (supports BOTH structures) ---
+  // a) years/{year}/exams/classGroups/{group}/*
+  let groupSnap = await yearRef
     .collection('exams').doc('classGroups')
     .collection(group).get();
 
-  const map = new Map(); // id -> exam
+  // b) Fallback legacy: years/{year}/classGroups/{group}/exams/*
+  if (groupSnap.empty) {
+    try {
+      groupSnap = await yearRef
+        .collection('classGroups').doc(group)
+        .collection('exams').get();
+    } catch(e) { /* ignore */ }
+  }
+
+  const map = new Map();
   groupSnap.forEach(d => map.set(d.id, { id: d.id, ...d.data(), __origin: 'group' }));
 
-  // 2) Load class overrides
-  const overSnap = await db.collection('years').doc(year)
-    .collection('classes').doc(classId)
+  // --- 2) CLASS OVERRIDES / CLASS-ONLY (supports BOTH names) ---
+  // Prefer: years/{year}/classes/{classId}/examOverrides/*
+  let overSnap = await yearRef.collection('classes').doc(classId)
     .collection('examOverrides').get();
+
+  // Also accept: years/{year}/classes/{classId}/exams/*
+  if (overSnap.empty) {
+    try {
+      overSnap = await yearRef.collection('classes').doc(classId)
+        .collection('exams').get();
+    } catch(e) { /* ignore */ }
+  }
 
   overSnap.forEach(doc => {
     const o = doc.data() || {};
 
-    // Class-only exam
-    if (o.origin === 'class-only') {
-      map.set(doc.id, { id: doc.id, ...o, __origin: 'class-only' });
-      return;
-    }
-    // Hide inherited exam for this class
+    // hide inherited exam for this class
     if (o.hidden === true) {
       map.delete(doc.id);
       return;
     }
-    // Field-level override on a group exam
-    if (map.has(doc.id)) {
-      const base = map.get(doc.id);
-      map.set(doc.id, {
-        ...base,
-        name:      (o.name ?? base.name),
-        subjects:  (Array.isArray(o.subjects) && o.subjects.length ? o.subjects : base.subjects),
-        subtopics: (Array.isArray(o.subtopics) && o.subtopics.length ? o.subtopics : base.subtopics),
-        grading:   (o.grading || base.grading),
-        __origin:  'overridden'
-      });
-    } else {
-      // Unknown id in overrides → treat safe as class-only
+
+    // class-only (or unknown id): add as its own exam
+    if (o.origin === 'class-only' || !map.has(doc.id)) {
       map.set(doc.id, { id: doc.id, ...o, __origin: 'class-only' });
+      return;
     }
+
+    // field-level override on group exam
+    const base = map.get(doc.id);
+    map.set(doc.id, {
+      ...base,
+      name:      (o.name ?? base.name),
+      subjects:  (Array.isArray(o.subjects) && o.subjects.length ? o.subjects : base.subjects),
+      subtopics: (Array.isArray(o.subtopics) && o.subtopics.length ? o.subtopics : base.subtopics),
+      grading:   (o.grading || base.grading),
+      __origin:  'overridden'
+    });
   });
 
-  // 3) Sorted list by name
+  // --- 3) Return sorted list by name (stable for UI) ---
   const list = Array.from(map.values());
-  list.sort((a,b) => String(a.name||'').localeCompare(String(b.name||'')));
+  list.sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
   return list;
 }
-
 
 // Custom Y coordinates (exact order as your template for each memo)
 // === Canonical subject-key normalizer (use everywhere) ===
@@ -3486,6 +3501,7 @@ page.render({ canvasContext: ctx, viewport });
 </script>
 </body>
 </html>
+
 
 
 
