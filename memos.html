@@ -214,6 +214,60 @@ function getClassGroupName(className) {
   return "6-9";
 }
 
+// ===== EFFECTIVE EXAMS (group defaults + class overrides) =====
+async function fetchEffectiveExams(year, classId, className) {
+  const group = getClassGroupName(className);
+
+  // 1) Load group exams (baseline)
+  const groupSnap = await db.collection('years').doc(year)
+    .collection('exams').doc('classGroups')
+    .collection(group).get();
+
+  const map = new Map(); // id -> exam
+  groupSnap.forEach(d => map.set(d.id, { id: d.id, ...d.data(), __origin: 'group' }));
+
+  // 2) Load class overrides
+  const overSnap = await db.collection('years').doc(year)
+    .collection('classes').doc(classId)
+    .collection('examOverrides').get();
+
+  overSnap.forEach(doc => {
+    const o = doc.data() || {};
+
+    // Class-only exam
+    if (o.origin === 'class-only') {
+      map.set(doc.id, { id: doc.id, ...o, __origin: 'class-only' });
+      return;
+    }
+    // Hide inherited exam for this class
+    if (o.hidden === true) {
+      map.delete(doc.id);
+      return;
+    }
+    // Field-level override on a group exam
+    if (map.has(doc.id)) {
+      const base = map.get(doc.id);
+      map.set(doc.id, {
+        ...base,
+        name:      (o.name ?? base.name),
+        subjects:  (Array.isArray(o.subjects) && o.subjects.length ? o.subjects : base.subjects),
+        subtopics: (Array.isArray(o.subtopics) && o.subtopics.length ? o.subtopics : base.subtopics),
+        grading:   (o.grading || base.grading),
+        __origin:  'overridden'
+      });
+    } else {
+      // Unknown id in overrides → treat safe as class-only
+      map.set(doc.id, { id: doc.id, ...o, __origin: 'class-only' });
+    }
+  });
+
+  // 3) Sorted list by name
+  const list = Array.from(map.values());
+  list.sort((a,b) => String(a.name||'').localeCompare(String(b.name||'')));
+  return list;
+}
+
+
 // Custom Y coordinates (exact order as your template for each memo)
 // === Canonical subject-key normalizer (use everywhere) ===
 function nkey(s) {
@@ -530,6 +584,7 @@ const yearSel    = document.getElementById('yearSel');
 const classSel   = document.getElementById('classSel');
 const sectionSel = document.getElementById('sectionSel');
 const examSel    = document.getElementById('examSel');
+let exams = [];
 
 const backPlan = { examCols: [] };
 
@@ -672,81 +727,44 @@ sectionChoices.setChoiceByValue(sections[0]?.id || '');
 await loadExams();
 }
 async function loadExams() {
-  let year = yearSel.value;
-  let classId = classSel.value;
-  // Get class group for this class (reuse your CLASS_GROUP_MAP from students.html if possible)
-  let classObj = classes.find(c => c.id === classId);
-let className = classObj ? classObj.name : '';
-// Always use 'class-' + normalized classGroup for Firestore collection
-let classGroup = getClassGroupName ? getClassGroupName(className) : '';
-let classGroupFS;
-if (classGroup === "nursery-lkg-ukg") {
-  classGroupFS = "nursery-lkg-ukg";
-} else {
-  classGroupFS = "class-" + classGroup.toLowerCase();
-}
-await loadGradingDefaultFromFirestore();
-let examsSnap = await db.collection('years').doc(year)
-    .collection('exams').doc('classGroups')
-    .collection(classGroupFS).get();
+  const year = yearSel.value;
+  const classId = classSel.value;
+  const classObj = classes.find(c => c.id === classId);
+  const className = classObj ? classObj.name : '';
 
+  await loadGradingDefaultFromFirestore();
 
-if (examsSnap.empty) {
+  // ✅ Use effective exams (group + class overrides)
+  exams = await fetchEffectiveExams(year, classId, className);
+
+  // Populate main exam dropdown
   examChoices.clearStore();
-  examChoices.setChoices(
-    [{ value: '', label: 'No choices to choose from', selected: true }],
-    'value', 'label', false
-  );
+  if (!Array.isArray(exams) || exams.length === 0) {
+    examChoices.setChoices(
+      [{ value: '', label: 'No choices to choose from', selected: true }],
+      'value', 'label', false
+    );
 
-  // Choices.js version of disable + placeholder
-  backExamChoices.clearStore();
-  backExamChoices.setChoices(
-    [{ value: '', label: 'No exams', selected: true }],
-    'value', 'label', false
-  );
-  backExamChoices.disable();
+    // Back-page dropdown (disabled)
+    backExamChoices.clearStore();
+    backExamChoices.setChoices(
+      [{ value: '', label: 'No exams', selected: true }],
+      'value', 'label', false
+    );
+    backExamChoices.disable();
 
-  await loadStudents();
-  return;
-}
+    await loadStudents();
+    return;
+  }
 
-exams = examsSnap.docs.map(doc => ({id: doc.id, ...doc.data()}));
-examChoices.clearStore();
-if (exams.length === 0) {
-  examChoices.setChoices([{ value: '', label: 'No choices to choose from', selected: true }], 'value', 'label', false);
-} else {
   examChoices.setChoices(
     exams.map(e => ({ value: e.id, label: e.name, selected: false })),
     'value', 'label', false
   );
   examChoices.setChoiceByValue(exams[0]?.id || '');
-  // Mirror into the back-page dropdown, with a placeholder
-backExamChoices.enable();
-backExamChoices.clearStore();
-backExamChoices.setChoices(
-  [{ value: '', label: 'Select exam…', selected: true }].concat(
-    exams.map(e => ({ value: e.id, label: e.name }))
-  ),
-  'value', 'label', false
-);
 
-  // ⬇️ Populate the back-page exam dropdown
-if (backExamSelect) {
-  backExamSelect.disabled = false;
-  backExamSelect.innerHTML = '<option value="">Select exam…</option>' +
-    exams.map(e => `<option value="${e.id}">${e.name}</option>`).join('');
-}
-}
-
-
-/* Prune examCols that no longer exist (e.g., class/exam set changed) */
-{
-  const validIds = new Set(exams.map(e => e.id));
-  backPlan.examCols = (backPlan.examCols || []).filter(id => validIds.has(id));
-  renderBackCols();
-
-  // Refresh Choices list, preserve selection if still valid
-  const currentVal = backExamChoices.getValue(true);
+  // Mirror into back-page dropdown with a placeholder
+  backExamChoices.enable();
   backExamChoices.clearStore();
   backExamChoices.setChoices(
     [{ value: '', label: 'Select exam…', selected: true }].concat(
@@ -754,12 +772,34 @@ if (backExamSelect) {
     ),
     'value', 'label', false
   );
-  if (currentVal && validIds.has(currentVal)) {
-    backExamChoices.setChoiceByValue(currentVal);
-  }
-}
 
-await loadStudents();
+  if (backExamSelect) {
+    backExamSelect.disabled = false;
+    backExamSelect.innerHTML = '<option value="">Select exam…</option>' +
+      exams.map(e => `<option value="${e.id}">${e.name}</option>`).join('');
+  }
+
+  // Prune back-side selected exam columns that no longer exist
+  {
+    const validIds = new Set(exams.map(e => e.id));
+    backPlan.examCols = (backPlan.examCols || []).filter(id => validIds.has(id));
+    renderBackCols();
+
+    // Refresh Choices (preserve selection if still valid)
+    const currentVal = backExamChoices.getValue(true);
+    backExamChoices.clearStore();
+    backExamChoices.setChoices(
+      [{ value: '', label: 'Select exam…', selected: true }].concat(
+        exams.map(e => ({ value: e.id, label: e.name }))
+      ),
+      'value', 'label', false
+    );
+    if (currentVal && validIds.has(currentVal)) {
+      backExamChoices.setChoiceByValue(currentVal);
+    }
+  }
+
+  await loadStudents();
 }
 async function loadStudents() {
   let year = yearSel.value, classId = classSel.value, sectionId = sectionSel.value;
@@ -3446,6 +3486,7 @@ page.render({ canvasContext: ctx, viewport });
 </script>
 </body>
 </html>
+
 
 
 
