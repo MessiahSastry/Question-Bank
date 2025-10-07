@@ -1877,16 +1877,27 @@ let srcIds = [];
               return;
             }
             // If not duplicate, add (attach grading)
-            return db.collection('years').doc(academicYear)
-              .collection('exams').doc('classGroups')
-              .collection(classGroup)
-              .add({ 
-                name, 
-                nameKey, 
-                subjects, 
-                subtopics,
-                grading: { mode: 'custom', scale: gradingScale }
-              });
+           const isCustomize = (window.__sp_useGroupExams === false);
+
+if (isCustomize) {
+  // create class-only exam with its own id (stable for this class)
+  const ref = db.collection('years').doc(academicYear)
+    .collection('classes').doc(currentClassId)
+    .collection('examOverrides').doc(); // new id
+  return ref.set({
+    name, nameKey, subjects, subtopics,
+    grading: { mode: 'custom', scale: gradingScale },
+    origin: 'class-only'
+  });
+} else {
+  return db.collection('years').doc(academicYear)
+    .collection('exams').doc('classGroups')
+    .collection(classGroup)
+    .add({
+      name, nameKey, subjects, subtopics,
+      grading: { mode: 'custom', scale: gradingScale }
+    });
+}
           })
           .then(async (docRef) => {
             if (!docRef) return; // early-exit if duplicate branch above
@@ -1906,11 +1917,14 @@ let srcIds = [];
             alert('Error adding exam: ' + (err?.message || err));
           });
       });
-  // Temporary UI-only handler; real save in Step 4
+  // Persist the user's choice during this popup session
 const customizeTgl = popupContent.querySelector('#classCustomizeToggle');
 if (customizeTgl) {
+  // true  => use group exams
+  // false => customize for this class (use overrides)
+  window.__sp_useGroupExams = !!customizeTgl.checked;
   customizeTgl.addEventListener('change', () => {
-    alert('This switch is UI-only in Step 3.\nIn Step 4 we will persist class overrides (enable/disable) safely.');
+    window.__sp_useGroupExams = !!customizeTgl.checked;
   });
 }
     // --- Subtopic Fields Logic (manual rows) + Internal controls ---
@@ -2283,21 +2297,37 @@ let srcIds = [];
               }
             }
             // If not duplicate, update
-            db.collection('years').doc(academicYear)
-              .collection('exams').doc('classGroups')
-              .collection(classGroup).doc(examId)
-                           .update({ name, nameKey, subjects, subtopics, grading: { mode: 'custom', scale: gradingScale } })
-                           .then(async () => { 
-                if (setAsSchoolDefault) {
-                  try {
-                    await writeSchoolGradingDefault(gradingScale, { classGroup, examId, examName: name });
-                  } catch (e) {
-                    console.warn('writeSchoolGradingDefault failed:', e);
-                  }
-                }
-                closePopup(); 
-                showExamSettingsPopup(); 
-              });
+            const isCustomize = (window.__sp_useGroupExams === false);
+
+          // target refs
+          const groupRef = db.collection('years').doc(academicYear)
+            .collection('exams').doc('classGroups')
+            .collection(classGroup).doc(examId);
+          
+          const overrideRef = db.collection('years').doc(academicYear)
+            .collection('classes').doc(currentClassId)
+            .collection('examOverrides').doc(examId);
+          
+          // payload to write
+          const payload = { 
+            name, nameKey, subjects, subtopics,
+            grading: { mode: 'custom', scale: gradingScale }
+          };
+          
+          // write either to group (use group) or to class override (customize)
+          const writePromise = isCustomize
+            ? overrideRef.set({ ...payload, origin: 'overridden' }, { merge: true })
+            : groupRef.update(payload);
+          
+          writePromise.then(async () => {
+            if (!isCustomize && setAsSchoolDefault) {
+              try {
+                await writeSchoolGradingDefault(gradingScale, { classGroup, examId, examName: name });
+              } catch (e) { console.warn('writeSchoolGradingDefault failed:', e); }
+            }
+            closePopup();
+            showExamSettingsPopup();
+          });
           });
       });
 
@@ -4307,6 +4337,7 @@ if (marksFileInput) {
 </script>
 </body>
 </html>
+
 
 
 
