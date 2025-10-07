@@ -1196,34 +1196,59 @@ const MAX_TO_NEXT_EXTRA_GAP = 28;
 // ==== Exam-wide subtopic schema (names + header max) ====
 let __examSubtopicSchema = null;
 let __ranksByExam = null; 
+// Build schema strictly in the exact Firestore array order.
+// If multiple subjects define subtopics, prefer the longest list (still preserves that array's order).
 function getExamSubtopicSchema() {
   if (!__examStructure || !Array.isArray(__examStructure.subjects)) {
     __examSubtopicSchema = [];
     return __examSubtopicSchema;
   }
-  // use global nkey()
-  const order = [];
-  const seen  = new Set();
+
+  // 1) Pick the subject that carries the canonical Firestore array order
+  const withSubs = (__examStructure.subjects || []).filter(s => Array.isArray(s.subtopics) && s.subtopics.length);
+  const canonical = withSubs.length
+    ? withSubs.slice().sort((a,b) => b.subtopics.length - a.subtopics.length)[0]   // longest subtopic list wins
+    : null;
+
+  const orderNames = canonical
+    ? canonical.subtopics.map(t => String(t?.name || ''))
+    : [];
+
+  // 2) Build max map from the first occurrence of each name (do not reorder)
   const maxBy = {};
-  for (const subj of __examStructure.subjects) {
+  for (const subj of (__examStructure.subjects || [])) {
     const subs = Array.isArray(subj.subtopics) ? subj.subtopics : [];
     for (const st of subs) {
-      const name = st?.name || '';
-      const key  = nkey(name);
-      if (!key) continue;
-      if (!seen.has(key)) { seen.add(key); order.push(name); }
+      const key = nkey(st?.name || '');
       const m = (typeof st?.max === 'number' && !isNaN(st.max)) ? st.max : null;
-      if (m != null && maxBy[key] == null) maxBy[key] = m;
+      if (key && maxBy[key] == null && m != null) maxBy[key] = m;
     }
   }
-  __examSubtopicSchema = order.map(n => {
-    const key = nkey(n);
-    const m   = maxBy[key];
-    return { name: n, max: (m != null ? m : null) };
-  });
+
+  // 3) Emit schema in canonical order; if we didn't find any subject with subtopics,
+  //    fall back to the original union logic (but that should be rare when exams define subtopics).
+  if (orderNames.length) {
+    __examSubtopicSchema = orderNames.map(n => {
+      const m = maxBy[nkey(n)];
+      return { name: n, max: (m != null ? m : null) };
+    });
+  } else {
+    // fallback (old behavior)
+    const seen = new Set();
+    const order = [];
+    for (const subj of (__examStructure.subjects || [])) {
+      const subs = Array.isArray(subj.subtopics) ? subj.subtopics : [];
+      for (const st of subs) {
+        const nm = String(st?.name || '');
+        const k  = nkey(nm);
+        if (!seen.has(k)) { seen.add(k); order.push(nm); }
+      }
+    }
+    __examSubtopicSchema = order.map(n => ({ name: n, max: (maxBy[nkey(n)] ?? null) }));
+  }
+
   return __examSubtopicSchema;
 }
-
 // Columns cache for header + rows
 let __cols = []; // [{key,label,x}] including SUBJECT, MAX MARKS, each subtopic, TOTAL, GRADE
 
@@ -3541,6 +3566,7 @@ page.render({ canvasContext: ctx, viewport });
 </script>
 </body>
 </html>
+
 
 
 
