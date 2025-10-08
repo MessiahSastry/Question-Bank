@@ -935,9 +935,12 @@ await nextFrame();
       if(!x.isDeleted) students.push({id:d.id,...x,cls:className,sec:sectionName}); 
     });
 
-    // Fetch exam details (effective for this section)
-const examsEff = await fetchEffectiveExams(classId, className, sectionId, sectionName);
-const exam = (Array.isArray(examsEff) ? examsEff.find(e => e.id === examId) : null) || { subjects: [] };
+    // Fetch exam details
+    const classGroup = getClassGroupName(className);
+    const examDoc = await db.collection('years').doc(academicYear)
+      .collection('exams').doc('classGroups')
+      .collection(classGroup).doc(examId).get();
+    const exam = examDoc.exists ? examDoc.data() : { subjects: [] };
 
     // Fetch marks
     for(const stu of students){
@@ -1514,60 +1517,20 @@ function gradeFromPercent(pct, scale) {
 }
 
 // ===== EFFECTIVE EXAMS (group defaults + class overrides) =====
-async function fetchEffectiveExams(classId, className, sectionId, sectionName) {
+async function fetchEffectiveExams(classId, className) {
   const group = getClassGroupName(className);
-
-  // 0) Read section track/stream if present (e.g., "IIT_FOUNDATION", "GENERAL")
-  let track = null;
-  try {
-    if (classId && sectionId) {
-      const secSnap = await db.collection('years').doc(academicYear)
-        .collection('classes').doc(classId)
-        .collection('sections').doc(sectionId).get();
-      if (secSnap.exists) {
-        const sd = secSnap.data() || {};
-        track = (sd.track || sd.stream || null) || null;
-      }
-    }
-  } catch (e) {
-    console.warn('fetchEffectiveExams: track read failed', e);
-  }
 
   // 1) Load group exams (baseline)
   const groupSnap = await db.collection('years').doc(academicYear)
     .collection('exams').doc('classGroups')
     .collection(group).get();
 
-  const map = new Map(); // id -> merged exam
+  const map = new Map(); // id -> exam
   groupSnap.forEach(d => {
     map.set(d.id, { id: d.id, ...d.data(), __origin: 'group' });
   });
 
-  // 2) Load track exams (override/augment group)
-  if (track) {
-    const trackSnap = await db.collection('years').doc(academicYear)
-      .collection('exams').doc('tracks')
-      .collection(track).get();
-
-    trackSnap.forEach(d => {
-      const base = map.get(d.id);
-      const data = d.data() || {};
-      if (base) {
-        // Track overrides fields on top of group baseline
-        map.set(d.id, {
-          ...base,
-          ...data,
-          id: d.id,
-          __origin: 'track'
-        });
-      } else {
-        // Track-only exam
-        map.set(d.id, { id: d.id, ...data, __origin: 'track' });
-      }
-    });
-  }
-
-  // 3) Load class overrides
+  // 2) Load class overrides
   const overSnap = await db.collection('years').doc(academicYear)
     .collection('classes').doc(classId)
     .collection('examOverrides').get();
@@ -1575,8 +1538,8 @@ async function fetchEffectiveExams(classId, className, sectionId, sectionName) {
   overSnap.forEach(doc => {
     const o = doc.data() || {};
 
-    // Class-only exam: lives only for this class
-    if (o.origin === 'class-only' || o.__origin === 'class-only') {
+    // Class-only exam: doesn’t exist in group, lives only for this class
+    if (o.origin === 'class-only') {
       map.set(doc.id, { id: doc.id, ...o, __origin: 'class-only' });
       return;
     }
@@ -1587,7 +1550,7 @@ async function fetchEffectiveExams(classId, className, sectionId, sectionName) {
       return;
     }
 
-    // Field-level override over group/track exam
+    // Field-level override over a group exam
     if (map.has(doc.id)) {
       const base = map.get(doc.id);
       map.set(doc.id, {
@@ -1596,156 +1559,79 @@ async function fetchEffectiveExams(classId, className, sectionId, sectionName) {
         subjects:    (Array.isArray(o.subjects) && o.subjects.length ? o.subjects : base.subjects),
         subtopics:   (Array.isArray(o.subtopics) && o.subtopics.length ? o.subtopics : base.subtopics),
         grading:     (o.grading || base.grading),
-        __origin:    'overridden-class'
+        __origin:    'overridden'
       });
     } else {
-      // Unknown id at class level → treat as class-only
+      // If override points to an unknown id, treat as class-only to be safe
       map.set(doc.id, { id: doc.id, ...o, __origin: 'class-only' });
     }
   });
 
-  // 4) Load section overrides (most specific)
-  if (sectionId) {
-    const secOverSnap = await db.collection('years').doc(academicYear)
-      .collection('classes').doc(classId)
-      .collection('sections').doc(sectionId)
-      .collection('examOverrides').get();
-
-    secOverSnap.forEach(doc => {
-      const o = doc.data() || {};
-
-      // Section-only exam: lives only for this section
-      if (o.origin === 'section-only' || o.__origin === 'section-only') {
-        map.set(doc.id, { id: doc.id, ...o, __origin: 'section-only' });
-        return;
-      }
-
-      // Hide an inherited exam for this section
-      if (o.hidden === true) {
-        map.delete(doc.id);
-        return;
-      }
-
-      // Field-level override over group/track/class exam
-      if (map.has(doc.id)) {
-        const base = map.get(doc.id);
-        map.set(doc.id, {
-          ...base,
-          name:        (o.name ?? base.name),
-          subjects:    (Array.isArray(o.subjects) && o.subjects.length ? o.subjects : base.subjects),
-          subtopics:   (Array.isArray(o.subtopics) && o.subtopics.length ? o.subtopics : base.subtopics),
-          grading:     (o.grading || base.grading),
-          __origin:    'overridden-section'
-        });
-      } else {
-        // Unknown id at section level → treat as section-only
-        map.set(doc.id, { id: doc.id, ...o, __origin: 'section-only' });
-      }
-    });
-  }
-
-  // 5) Return a sorted list (by name)
+  // 3) Return a sorted list (by name)
   const list = Array.from(map.values());
   list.sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
   return list;
 }
-
 // --- shim: keep both names working safely ---
 if (typeof getExamsForCurrentClass !== 'function' && typeof fetchEffectiveExams === 'function') {
   // expose legacy name
   var getExamsForCurrentClass = function() {
-  return fetchEffectiveExams(currentClassId, currentClassName, currentSectionId, currentSectionName);
-};
+    return fetchEffectiveExams(currentClassId, currentClassName);
+  };
 }
 if (typeof fetchEffectiveExams !== 'function' && typeof getExamsForCurrentClass === 'function') {
   // expose new name
-  var fetchEffectiveExams = function(classId, className, sectionId, sectionName) {
-  return getExamsForCurrentClass();
-};
+  var fetchEffectiveExams = function(classId, className) {
+    return getExamsForCurrentClass();
+  };
 }
 // ========== EXAM SETTINGS ===========
 function showExamSettingsPopup() {
   const classGroup = getClassGroupName(currentClassName);
 
   Promise.all([
-  fetchEffectiveExams(currentClassId, currentClassName, currentSectionId, currentSectionName), // effective list
-  db.collection('years').doc(academicYear)
-    .collection('classes').doc(currentClassId)
-    .collection('examOverrides').limit(1).get(),         // class-level overrides
-  db.collection('years').doc(academicYear)
-    .collection('classes').doc(currentClassId)
-    .collection('sections').doc(currentSectionId)
-    .collection('examOverrides').limit(1).get(),         // section-level overrides
-  db.collection('years').doc(academicYear)
-    .collection('classes').doc(currentClassId)
-    .collection('sections').doc(currentSectionId).get(), // section doc (for track/stream)
-  readSchoolGradingDefault()
-]).then(([examsEff, classOverSnap, secOverSnap, secDoc, schoolDefault]) => {
-  const preloadScale = (schoolDefault && Array.isArray(schoolDefault.scale) && schoolDefault.scale.length)
-    ? schoolDefault.scale
-    : LEGACY_GRADING_SCALE;
+    fetchEffectiveExams(currentClassId, currentClassName), // effective list
+    db.collection('years').doc(academicYear)
+      .collection('classes').doc(currentClassId)
+      .collection('examOverrides').limit(1).get(),         // to infer “customized” state
+    readSchoolGradingDefault()
+  ]).then(([examsEff, overSnap, schoolDefault]) => {
+    const preloadScale = (schoolDefault && Array.isArray(schoolDefault.scale) && schoolDefault.scale.length)
+      ? schoolDefault.scale
+      : LEGACY_GRADING_SCALE;
 
-  const isCustomized = (!classOverSnap.empty || !secOverSnap.empty);
-const sourceChip = isCustomized ? 'Customized (class/section)' : 'Using inherited defaults';
-
-const secData = (secDoc && secDoc.exists) ? (secDoc.data() || {}) : {};
-const track = (secData.track || secData.stream || null);
-const hasTrack = !!track;
-
-// Pick a reasonable default scope based on existing overrides (track does not auto-select)
-const defaultScope = secOverSnap.empty
-  ? (classOverSnap.empty ? 'group' : 'class')
-  : 'section';
-
+    const isCustomized = !overSnap.empty; // any override/class-only/hide present?
+    const sourceChip = isCustomized ? 'Customized for this class' : 'Using group defaults';
 
     const exams = Array.isArray(examsEff) ? examsEff : [];
     let html = `
         <div class="popup-title">Exam Settings</div>
 
 <!-- Source strip -->
-<div style="margin:6px 0 10px 0;">
-  <div style="text-align:center;width:100%;padding:6px 10px;">
-    <span style="display:inline-block;font-size:.92em;padding:6px 12px;border-radius:999px;
-                 background:${isCustomized ? '#fff3e0' : '#e8f3ff'};
-                 color:${isCustomized ? '#b05300' : '#0f3d6b'};
-                 border:1px solid ${isCustomized ? '#ffd7a6' : '#c7d7ea'};">
-      ${sourceChip}
-    </span>
-  </div>
+<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin:6px 0 10px 0;">
+  <span style="font-size:.92em; padding:4px 10px; border-radius:999px;
+               background:${isCustomized ? '#fff3e0' : '#e8f3ff'};
+               color:${isCustomized ? '#b05300' : '#0f3d6b'};
+               border:1px solid ${isCustomized ? '#ffd7a6' : '#c7d7ea'};">
+    ${sourceChip}
+  </span>
 
-  <div style="display:flex;flex-direction:column;gap:10px;font-size:.95em;color:#444;">
-    <label style="display:flex;align-items:center;gap:8px;margin:0;">
-      <input type="radio" name="scopeRadios" value="group" id="scopeGroup" />
-      <span>Use Group</span>
-    </label>
-    <label style="display:flex;align-items:center;gap:8px;margin:0;">
-      <input type="radio" name="scopeRadios" value="class" id="scopeClass" />
-      <span>Customize for this Class</span>
-    </label>
-    <label style="display:flex;align-items:center;gap:8px;margin:0;">
-      <input type="radio" name="scopeRadios" value="section" id="scopeSection" />
-      <span>Customize for this Section</span>
-    </label>
-  </div>
+  <label style="display:flex;align-items:center;gap:8px;font-size:.95em;color:#444;">
+    <span>Use group exams</span>
+    <input type="checkbox" id="classCustomizeToggle" ${isCustomized ? '' : 'checked'} />
+    <span>Customize for this class</span>
+  </label>
 </div>
 
-<div id="examListArea" style="min-height:25vh;max-height:60vh;overflow-y:auto;margin-bottom:12px;">
+<div id="examListArea" style="max-height:240px;overflow-y:auto;margin-bottom:12px;">
           ${exams.length === 0 
   ? '<div style="color:#888;font-style:italic;">No exams found.</div>' 
   : exams.map((exam, idx) => {
-      const badge =
-  exam.__origin === 'class-only'
-    ? '<span style="margin-left:8px;font-size:.8em;padding:2px 8px;border-radius:999px;background:#eaf8ea;color:#207a2b;border:1px solid #9fddb1;">Class-only</span>'
-  : exam.__origin === 'section-only'
-    ? '<span style="margin-left:8px;font-size:.8em;padding:2px 8px;border-radius:999px;background:#e6f7ff;color:#005b99;border:1px solid #a3d4f7;">Section-only</span>'
-  : exam.__origin === 'overridden-class'
-    ? '<span style="margin-left:8px;font-size:.8em;padding:2px 8px;border-radius:999px;background:#fff7e6;color:#a26100;border:1px solid #ffd79a;">Overridden (Class)</span>'
-  : exam.__origin === 'overridden-section'
-    ? '<span style="margin-left:8px;font-size:.8em;padding:2px 8px;border-radius:999px;background:#fff0f6;color:#a1005b;border:1px solid #ffb3d1;">Overridden (Section)</span>'
-  : exam.__origin === 'track'
-    ? '<span style="margin-left:8px;font-size:.8em;padding:2px 8px;border-radius:999px;background:#f0f5ff;color:#1d3aa8;border:1px solid #bac7ff;">Inherited (Track)</span>'
-  : /* default (group) */ 
-    '<span style="margin-left:8px;font-size:.8em;padding:2px 8px;border-radius:999px;background:#e8f3ff;color:#0f3d6b;border:1px solid #c7d7ea;">Inherited (Group)</span>';
+      const badge = exam.__origin === 'class-only'
+        ? '<span style="margin-left:8px;font-size:.8em;padding:2px 8px;border-radius:999px;background:#eaf8ea;color:#207a2b;border:1px solid #9fddb1;">Class-only</span>'
+        : exam.__origin === 'overridden'
+          ? '<span style="margin-left:8px;font-size:.8em;padding:2px 8px;border-radius:999px;background:#fff7e6;color:#a26100;border:1px solid #ffd79a;">Overridden</span>'
+          : '<span style="margin-left:8px;font-size:.8em;padding:2px 8px;border-radius:999px;background:#e8f3ff;color:#0f3d6b;border:1px solid #c7d7ea;">Inherited</span>';
 
       return `
       <div style="border-bottom:1px solid #f1f1f1;margin-bottom:7px;padding-bottom:7px;">
@@ -1991,38 +1877,19 @@ let srcIds = [];
               return;
             }
             // If not duplicate, add (attach grading)
-           const scope = (window.__sp_scope || 'group');
+           const isCustomize = (window.__sp_useGroupExams === false);
 
-if (scope === 'track') {
-  if (!hasTrack) { alert('No track found for this section.'); return; }
-  return db.collection('years').doc(academicYear)
-    .collection('exams').doc('tracks')
-    .collection(track)
-    .add({
-      name, nameKey, subjects, subtopics,
-      grading: { mode: 'custom', scale: gradingScale }
-    });
-} else if (scope === 'class') {
+if (isCustomize) {
+  // create class-only exam with its own id (stable for this class)
   const ref = db.collection('years').doc(academicYear)
     .collection('classes').doc(currentClassId)
-    .collection('examOverrides').doc(); // class-only id
+    .collection('examOverrides').doc(); // new id
   return ref.set({
     name, nameKey, subjects, subtopics,
     grading: { mode: 'custom', scale: gradingScale },
     origin: 'class-only'
   });
-} else if (scope === 'section') {
-  const ref = db.collection('years').doc(academicYear)
-    .collection('classes').doc(currentClassId)
-    .collection('sections').doc(currentSectionId)
-    .collection('examOverrides').doc(); // section-only id
-  return ref.set({
-    name, nameKey, subjects, subtopics,
-    grading: { mode: 'custom', scale: gradingScale },
-    origin: 'section-only'
-  });
 } else {
-  // group
   return db.collection('years').doc(academicYear)
     .collection('exams').doc('classGroups')
     .collection(classGroup)
@@ -2033,137 +1900,33 @@ if (scope === 'track') {
 }
           })
           .then(async (docRef) => {
-  if (!docRef) return; // early-exit if duplicate branch above
-
-  // Persist school-wide default if requested
-  if (setAsSchoolDefault) {
-    try {
-      await writeSchoolGradingDefault(gradingScale, { classGroup, examId: docRef.id, examName: name });
-    } catch (e) {
-      console.warn('writeSchoolGradingDefault failed:', e);
-    }
-  }
-
-  // ✅ Success message
-  alert('Exam added');
-
-  // ✅ Reset the form fields
-  const form = document.getElementById('addExamForm');
-  if (form) form.reset();
-
-  // ✅ Clear Subjects and add one blank row
-  const subjectsContainer = popupContent.querySelector('#subjectsContainer');
-  if (subjectsContainer) {
-    subjectsContainer.innerHTML = '';
-    if (typeof addSubjectField === 'function') addSubjectField();
-  }
-
-  // ✅ Clear Subtopics (manual)
-  const subtopicsContainer = popupContent.querySelector('#subtopicsContainer');
-  if (subtopicsContainer) subtopicsContainer.innerHTML = '';
-
-  // ✅ Reset Internal (computed) UI
-  const useInternalToggle = popupContent.querySelector('#useInternalToggle');
-  const internalConfigBox = popupContent.querySelector('#internalConfig');
-  if (useInternalToggle) useInternalToggle.checked = false;
-  if (internalConfigBox) internalConfigBox.style.display = 'none';
-
-  // Reset Internal source dropdown selection text & values
-  const internalDDSel = popupContent.querySelector('#internalExamsSelected');
-  const internalDDList = popupContent.querySelector('#internalExamsList');
-  if (internalDDList) {
-    internalDDList.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
-  }
-  if (internalDDSel) {
-    internalDDSel.textContent = '--Select--';
-    internalDDSel.dataset.values = '';
-  }
-
-  // ✅ Refresh the exam list area in-place so the new exam appears immediately
-  try {
-    const examsEffNow = await fetchEffectiveExams(currentClassId, currentClassName, currentSectionId, currentSectionName);
-    const exams = Array.isArray(examsEffNow) ? examsEffNow : [];
-    const listEl = popupContent.querySelector('#examListArea');
-    if (listEl) {
-      listEl.innerHTML = (
-        exams.length === 0
-          ? '<div style="color:#888;font-style:italic;">No exams found.</div>'
-          : exams.map(exam => {
-              const badge =
-                exam.__origin === 'class-only'
-                  ? '<span style="margin-left:8px;font-size:.8em;padding:2px 8px;border-radius:999px;background:#eaf8ea;color:#207a2b;border:1px solid #9fddb1;">Class-only</span>'
-                : exam.__origin === 'section-only'
-                  ? '<span style="margin-left:8px;font-size:.8em;padding:2px 8px;border-radius:999px;background:#e6f7ff;color:#005b99;border:1px solid #a3d4f7;">Section-only</span>'
-                : exam.__origin === 'overridden-class'
-                  ? '<span style="margin-left:8px;font-size:.8em;padding:2px 8px;border-radius:999px;background:#fff7e6;color:#a26100;border:1px solid #ffd79a;">Overridden (Class)</span>'
-                : exam.__origin === 'overridden-section'
-                  ? '<span style="margin-left:8px;font-size:.8em;padding:2px 8px;border-radius:999px;background:#fff0f6;color:#a1005b;border:1px solid #ffb3d1;">Overridden (Section)</span>'
-                : exam.__origin === 'track'
-                  ? '<span style="margin-left:8px;font-size:.8em;padding:2px 8px;border-radius:999px;background:#f0f5ff;color:#1d3aa8;border:1px solid #bac7ff;">Inherited (Track)</span>'
-                : '<span style="margin-left:8px;font-size:.8em;padding:2px 8px;border-radius:999px;background:#e8f3ff;color:#0f3d6b;border:1px solid #c7d7ea;">Inherited (Group)</span>';
-
-              return `
-                <div style="border-bottom:1px solid #f1f1f1;margin-bottom:7px;padding-bottom:7px;">
-                  <strong>${exam.name}</strong>${badge}
-                  ${isAdmin ? `<button type="button" class="popup-action-btn" data-edit="${exam.id}" style="margin-left:10px;padding:2px 8px;font-size:0.9em;">Edit</button>` : ''}
-                  <div style="margin-top:6px;margin-left:8px;font-size:0.99em;">
-                    ${
-                      Array.isArray(exam.subjects) && exam.subjects.length > 0
-                        ? exam.subjects.map(subj => `${subj.name} <span style="color:#888;">(Max: ${subj.max})</span>`).join(', ')
-                        : '<span style="color:#aaa;">No subjects</span>'
-                    }
-                  </div>
-                  <div style="margin-top:4px;margin-left:8px;font-size:0.95em;color:#444;">
-                    ${
-                      Array.isArray(exam.subtopics) && exam.subtopics.length > 0
-                        ? 'Subtopics: ' + exam.subtopics.map(st => `${st.name} <span style="color:#888;">(${st.max})</span>`).join(', ')
-                        : ''
-                    }
-                  </div>
-                </div>
-              `;
-            }).join('')
-      );
-
-      // reattach Edit handlers for the refreshed buttons
-      setTimeout(() => {
-        popupContent.querySelectorAll('[data-edit]').forEach(btn => {
-          btn.onclick = function() {
-            const examId = btn.getAttribute('data-edit');
+            if (!docRef) return; // early-exit if duplicate branch above
+            // Persist school-wide default if requested
+            if (setAsSchoolDefault) {
+              try {
+                await writeSchoolGradingDefault(gradingScale, { classGroup, examId: docRef.id, examName: name });
+              } catch (e) {
+                console.warn('writeSchoolGradingDefault failed:', e);
+                // non-blocking: still close popup
+              }
+            }
             closePopup();
-            showEditExamPopup(examId);
-          };
-        });
-      }, 50);
-    }
-  } catch (err) {
-    console.warn('Failed to refresh exam list:', err);
-  }
-})
+            showExamSettingsPopup();
+          })
           .catch(err => {
             alert('Error adding exam: ' + (err?.message || err));
           });
       });
-  // Persist the user's scope choice during this popup session
-(function setupScopeRadios(){
-  const rGroup   = popupContent.querySelector('#scopeGroup');
-  const rTrack   = popupContent.querySelector('#scopeTrack');
-  const rClass   = popupContent.querySelector('#scopeClass');
-  const rSection = popupContent.querySelector('#scopeSection');
-  // set defaults
-  if (defaultScope === 'group' && rGroup) rGroup.checked = true;
-  if (defaultScope === 'class' && rClass) rClass.checked = true;
-  if (defaultScope === 'section' && rSection) rSection.checked = true;
-  // cache
-  function _readScope(){
-    const sel = popupContent.querySelector('input[name="scopeRadios"]:checked');
-    return sel ? sel.value : 'group';
-  }
-  window.__sp_scope = _readScope();
-  popupContent.querySelectorAll('input[name="scopeRadios"]').forEach(el => {
-    el.addEventListener('change', () => { window.__sp_scope = _readScope(); });
+  // Persist the user's choice during this popup session
+const customizeTgl = popupContent.querySelector('#classCustomizeToggle');
+if (customizeTgl) {
+  // true  => use group exams
+  // false => customize for this class (use overrides)
+  window.__sp_useGroupExams = !!customizeTgl.checked;
+  customizeTgl.addEventListener('change', () => {
+    window.__sp_useGroupExams = !!customizeTgl.checked;
   });
-})();
+}
     // --- Subtopic Fields Logic (manual rows) + Internal controls ---
 const subtopicsContainer  = popupContent.querySelector('#subtopicsContainer');
 const addSubtopicBtn      = popupContent.querySelector('#addSubtopicBtn');
@@ -2534,52 +2297,37 @@ let srcIds = [];
               }
             }
             // If not duplicate, update
-            const scope = (window.__sp_scope || 'group');
+            const isCustomize = (window.__sp_useGroupExams === false);
 
-// target refs
-const groupRef = db.collection('years').doc(academicYear)
-  .collection('exams').doc('classGroups')
-  .collection(classGroup).doc(examId);
-
-const classOverrideRef = db.collection('years').doc(academicYear)
-  .collection('classes').doc(currentClassId)
-  .collection('examOverrides').doc(examId);
-
-const sectionOverrideRef = db.collection('years').doc(academicYear)
-  .collection('classes').doc(currentClassId)
-  .collection('sections').doc(currentSectionId)
-  .collection('examOverrides').doc(examId);
-
-// payload to write
-const payload = { 
-  name, nameKey, subjects, subtopics,
-  grading: { mode: 'custom', scale: gradingScale }
-};
-
-let writePromise;
-if (scope === 'track') {
-  if (!hasTrack) { alert('No track found for this section.'); return; }
-  const trackRef = db.collection('years').doc(academicYear)
-    .collection('exams').doc('tracks')
-    .collection(track).doc(examId);
-  writePromise = trackRef.set(payload, { merge: true });
-} else if (scope === 'class') {
-  writePromise = classOverrideRef.set({ ...payload, origin: 'overridden-class' }, { merge: true });
-} else if (scope === 'section') {
-  writePromise = sectionOverrideRef.set({ ...payload, origin: 'overridden-section' }, { merge: true });
-} else {
-  writePromise = groupRef.update(payload);
-}
-
-writePromise.then(async () => {
-  if (scope === 'group' && setAsSchoolDefault) {
-    try {
-      await writeSchoolGradingDefault(gradingScale, { classGroup, examId, examName: name });
-    } catch (e) { console.warn('writeSchoolGradingDefault failed:', e); }
-  }
-  closePopup();
-  showExamSettingsPopup();
-});
+          // target refs
+          const groupRef = db.collection('years').doc(academicYear)
+            .collection('exams').doc('classGroups')
+            .collection(classGroup).doc(examId);
+          
+          const overrideRef = db.collection('years').doc(academicYear)
+            .collection('classes').doc(currentClassId)
+            .collection('examOverrides').doc(examId);
+          
+          // payload to write
+          const payload = { 
+            name, nameKey, subjects, subtopics,
+            grading: { mode: 'custom', scale: gradingScale }
+          };
+          
+          // write either to group (use group) or to class override (customize)
+          const writePromise = isCustomize
+            ? overrideRef.set({ ...payload, origin: 'overridden' }, { merge: true })
+            : groupRef.update(payload);
+          
+          writePromise.then(async () => {
+            if (!isCustomize && setAsSchoolDefault) {
+              try {
+                await writeSchoolGradingDefault(gradingScale, { classGroup, examId, examName: name });
+              } catch (e) { console.warn('writeSchoolGradingDefault failed:', e); }
+            }
+            closePopup();
+            showExamSettingsPopup();
+          });
           });
       });
 
@@ -2757,7 +2505,7 @@ if (editAddSubtopicBtn) {
 function showEnterMarksPopup() {
   console.log('showEnterMarksPopup called');
   console.log('academicYear:', academicYear);
- fetchEffectiveExams(currentClassId, currentClassName, currentSectionId, currentSectionName).then(exams => {
+ fetchEffectiveExams(currentClassId, currentClassName).then(exams => {
   if (!Array.isArray(exams) || exams.length === 0) {
     showPopup(`<div class="popup-title">Enter Marks</div>
       <div style="margin:16px 0;">No exams found! Please add exams first.</div>
@@ -4589,5 +4337,3 @@ if (marksFileInput) {
 </script>
 </body>
 </html>
-
-
