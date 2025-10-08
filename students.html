@@ -2033,19 +2033,113 @@ if (scope === 'track') {
 }
           })
           .then(async (docRef) => {
-            if (!docRef) return; // early-exit if duplicate branch above
-            // Persist school-wide default if requested
-            if (setAsSchoolDefault) {
-              try {
-                await writeSchoolGradingDefault(gradingScale, { classGroup, examId: docRef.id, examName: name });
-              } catch (e) {
-                console.warn('writeSchoolGradingDefault failed:', e);
-                // non-blocking: still close popup
-              }
-            }
+  if (!docRef) return; // early-exit if duplicate branch above
+
+  // Persist school-wide default if requested
+  if (setAsSchoolDefault) {
+    try {
+      await writeSchoolGradingDefault(gradingScale, { classGroup, examId: docRef.id, examName: name });
+    } catch (e) {
+      console.warn('writeSchoolGradingDefault failed:', e);
+    }
+  }
+
+  // ✅ Success message
+  alert('Exam added');
+
+  // ✅ Reset the form fields
+  const form = document.getElementById('addExamForm');
+  if (form) form.reset();
+
+  // ✅ Clear Subjects and add one blank row
+  const subjectsContainer = popupContent.querySelector('#subjectsContainer');
+  if (subjectsContainer) {
+    subjectsContainer.innerHTML = '';
+    if (typeof addSubjectField === 'function') addSubjectField();
+  }
+
+  // ✅ Clear Subtopics (manual)
+  const subtopicsContainer = popupContent.querySelector('#subtopicsContainer');
+  if (subtopicsContainer) subtopicsContainer.innerHTML = '';
+
+  // ✅ Reset Internal (computed) UI
+  const useInternalToggle = popupContent.querySelector('#useInternalToggle');
+  const internalConfigBox = popupContent.querySelector('#internalConfig');
+  if (useInternalToggle) useInternalToggle.checked = false;
+  if (internalConfigBox) internalConfigBox.style.display = 'none';
+
+  // Reset Internal source dropdown selection text & values
+  const internalDDSel = popupContent.querySelector('#internalExamsSelected');
+  const internalDDList = popupContent.querySelector('#internalExamsList');
+  if (internalDDList) {
+    internalDDList.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
+  }
+  if (internalDDSel) {
+    internalDDSel.textContent = '--Select--';
+    internalDDSel.dataset.values = '';
+  }
+
+  // ✅ Refresh the exam list area in-place so the new exam appears immediately
+  try {
+    const examsEffNow = await fetchEffectiveExams(currentClassId, currentClassName, currentSectionId, currentSectionName);
+    const exams = Array.isArray(examsEffNow) ? examsEffNow : [];
+    const listEl = popupContent.querySelector('#examListArea');
+    if (listEl) {
+      listEl.innerHTML = (
+        exams.length === 0
+          ? '<div style="color:#888;font-style:italic;">No exams found.</div>'
+          : exams.map(exam => {
+              const badge =
+                exam.__origin === 'class-only'
+                  ? '<span style="margin-left:8px;font-size:.8em;padding:2px 8px;border-radius:999px;background:#eaf8ea;color:#207a2b;border:1px solid #9fddb1;">Class-only</span>'
+                : exam.__origin === 'section-only'
+                  ? '<span style="margin-left:8px;font-size:.8em;padding:2px 8px;border-radius:999px;background:#e6f7ff;color:#005b99;border:1px solid #a3d4f7;">Section-only</span>'
+                : exam.__origin === 'overridden-class'
+                  ? '<span style="margin-left:8px;font-size:.8em;padding:2px 8px;border-radius:999px;background:#fff7e6;color:#a26100;border:1px solid #ffd79a;">Overridden (Class)</span>'
+                : exam.__origin === 'overridden-section'
+                  ? '<span style="margin-left:8px;font-size:.8em;padding:2px 8px;border-radius:999px;background:#fff0f6;color:#a1005b;border:1px solid #ffb3d1;">Overridden (Section)</span>'
+                : exam.__origin === 'track'
+                  ? '<span style="margin-left:8px;font-size:.8em;padding:2px 8px;border-radius:999px;background:#f0f5ff;color:#1d3aa8;border:1px solid #bac7ff;">Inherited (Track)</span>'
+                : '<span style="margin-left:8px;font-size:.8em;padding:2px 8px;border-radius:999px;background:#e8f3ff;color:#0f3d6b;border:1px solid #c7d7ea;">Inherited (Group)</span>';
+
+              return `
+                <div style="border-bottom:1px solid #f1f1f1;margin-bottom:7px;padding-bottom:7px;">
+                  <strong>${exam.name}</strong>${badge}
+                  ${isAdmin ? `<button type="button" class="popup-action-btn" data-edit="${exam.id}" style="margin-left:10px;padding:2px 8px;font-size:0.9em;">Edit</button>` : ''}
+                  <div style="margin-top:6px;margin-left:8px;font-size:0.99em;">
+                    ${
+                      Array.isArray(exam.subjects) && exam.subjects.length > 0
+                        ? exam.subjects.map(subj => `${subj.name} <span style="color:#888;">(Max: ${subj.max})</span>`).join(', ')
+                        : '<span style="color:#aaa;">No subjects</span>'
+                    }
+                  </div>
+                  <div style="margin-top:4px;margin-left:8px;font-size:0.95em;color:#444;">
+                    ${
+                      Array.isArray(exam.subtopics) && exam.subtopics.length > 0
+                        ? 'Subtopics: ' + exam.subtopics.map(st => `${st.name} <span style="color:#888;">(${st.max})</span>`).join(', ')
+                        : ''
+                    }
+                  </div>
+                </div>
+              `;
+            }).join('')
+      );
+
+      // reattach Edit handlers for the refreshed buttons
+      setTimeout(() => {
+        popupContent.querySelectorAll('[data-edit]').forEach(btn => {
+          btn.onclick = function() {
+            const examId = btn.getAttribute('data-edit');
             closePopup();
-            showExamSettingsPopup();
-          })
+            showEditExamPopup(examId);
+          };
+        });
+      }, 50);
+    }
+  } catch (err) {
+    console.warn('Failed to refresh exam list:', err);
+  }
+})
           .catch(err => {
             alert('Error adding exam: ' + (err?.message || err));
           });
@@ -4495,4 +4589,5 @@ if (marksFileInput) {
 </script>
 </body>
 </html>
+
 
