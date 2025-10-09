@@ -302,19 +302,11 @@ function getClassGroupName(className) {
   let className = classObj ? classObj.name : '';
   let classGroup = getClassGroupName(className);
 
-  let examDoc = await db.collection('years').doc(year)
-    .collection('exams').doc('classGroups')
-    .collection(classGroup).doc(examId).get();
-
-  let subjectsArr = [];
-  if (examDoc.exists) {
-    let data = examDoc.data();
-    if (data.subjects && Array.isArray(data.subjects)) {
-      subjectsArr = data.subjects.map(s => s.name);
-    }
-  }
+    // Use the effective exams already loaded (respects class-only/overrides/hides)
+  const ex = Array.isArray(exams) ? exams.find(e => e.id === examId) : null;
+  const subjectsArr = (ex && Array.isArray(ex.subjects)) ? ex.subjects.map(s => s.name) : [];
   if (!subjectsArr.length) {
-    alert('No subjects found for this exam in Firestore!');
+    alert('No subjects found for this exam!');
     return;
   }
 
@@ -470,7 +462,54 @@ function showToast(msg) {
 
   let years = [], classes = [], sections = [], exams = [];
 
-  // LOADERS (like memo.html)
+  // EFFECTIVE EXAMS (group + class overrides)
+async function fetchEffectiveExams(classId, className, year) {
+  const classGroup = getClassGroupName(className);
+
+  // 1) Load group exams (baseline)
+  const groupSnap = await db.collection('years').doc(year)
+    .collection('exams').doc('classGroups')
+    .collection(classGroup).get();
+  const map = new Map(); // id -> exam
+  groupSnap.forEach(d => map.set(d.id, { id: d.id, ...d.data(), __origin: 'group' }));
+
+  // 2) Load class overrides
+  const overSnap = await db.collection('years').doc(year)
+    .collection('classes').doc(classId)
+    .collection('examOverrides').get();
+
+  overSnap.forEach(doc => {
+    const o = doc.data() || {};
+    if (o.origin === 'class-only') {
+      map.set(doc.id, { id: doc.id, ...o, __origin: 'class-only' });
+      return;
+    }
+    if (o.hidden === true) {
+      map.delete(doc.id);
+      return;
+    }
+    if (map.has(doc.id)) {
+      const base = map.get(doc.id);
+      map.set(doc.id, {
+        ...base,
+        name:      (o.name ?? base.name),
+        subjects:  (Array.isArray(o.subjects) && o.subjects.length ? o.subjects : base.subjects),
+        subtopics: (Array.isArray(o.subtopics) && o.subtopics.length ? o.subtopics : base.subtopics),
+        grading:   (o.grading || base.grading),
+        __origin:  'overridden'
+      });
+    } else {
+      map.set(doc.id, { id: doc.id, ...o, __origin: 'class-only' });
+    }
+  });
+
+  // 3) Sorted list
+  const list = Array.from(map.values());
+  list.sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+  return list;
+}
+
+// LOADERS (like memo.html)
   async function loadYears() {
     let snap = await db.collection('years').orderBy('name', 'desc').get();
     years = snap.docs.map(doc => ({id: doc.id, ...doc.data()}));
@@ -500,26 +539,24 @@ function showToast(msg) {
     await renderStudentsList();
   }
   async function loadExams() {
-  let year = yearSel.value;
-  let classId = classSel.value;
-  let classObj = classes.find(c => c.id === classId);
-  let className = classObj ? classObj.name : '';
-  let classGroup = getClassGroupName ? getClassGroupName(className) : '';
-  if (!classGroup) {
+  const year = yearSel.value;
+  const classId = classSel.value;
+  const classObj = classes.find(c => c.id === classId);
+  const className = classObj ? classObj.name : '';
+
+  // Use EFFECTIVE exams (group + class overrides)
+  exams = await fetchEffectiveExams(classId, className, year);
+
   examChoices.clearStore();
-  examChoices.setChoices([{ value: '', label: 'No choices to choose from', selected: true }], 'value', 'label', false);
-  return;
-}
-  let snap = await db.collection('years').doc(year)
-    .collection('exams').doc('classGroups')
-    .collection(classGroup).get();
-  exams = snap.docs.map(doc => ({id: doc.id, ...doc.data()}));
-  examChoices.clearStore();
-  if (exams.length === 0) {
-    examChoices.setChoices([{ value: '', label: 'No choices to choose from', selected: true }], 'value', 'label', false);
+  if (!Array.isArray(exams) || exams.length === 0) {
+    examChoices.setChoices(
+      [{ value: '', label: 'No choices to choose from', selected: true }],
+      'value', 'label', false
+    );
   } else {
     examChoices.setChoices(
-      exams.map(e => ({ value: e.id, label: e.name, selected: false })), 'value', 'label', false
+      exams.map(e => ({ value: e.id, label: e.name, selected: false })),
+      'value', 'label', false
     );
     examChoices.setChoiceByValue(exams[0]?.id || '');
   }
@@ -933,6 +970,7 @@ showToast('Download completed');
   <div id="toast" aria-live="polite" aria-atomic="true"></div>
 </body>
 </html>
+
 
 
 
