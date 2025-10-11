@@ -1644,12 +1644,15 @@ function showExamSettingsPopup() {
         ${isAdmin ? `<button type="button" class="popup-action-btn" data-edit="${exam.id}" style="margin-left:10px;padding:2px 8px;font-size:0.9em;">Edit</button>` : ''}
         <div style="margin-top:6px;margin-left:8px;font-size:0.99em;">
         ${Array.isArray(exam.subjects) && exam.subjects.length > 0
-  ? exam.subjects.map(subj => {
-      const opt = subj && subj.excludeFromTotal ? ' <span style="color:#a15d00; font-weight:600;">[Optional]</span>' : '';
-      return `${subj.name} <span style="color:#888;">(Max: ${subj.max})</span>${opt}`;
-    }).join(', ')
-  : '<span style="color:#aaa;">No subjects</span>'
-}
+        ? exam.subjects.map(subj => {
+            const opt = subj && subj.excludeFromTotal ? ' <span style="color:#a15d00; font-weight:600;">[Optional]</span>' : '';
+            const subs = Array.isArray(subj.subtopics) && subj.subtopics.length
+              ? ` <span style="color:#1762a7;">[${subj.subtopics.map(st => `${st.name} (${st.max})`).join(', ')}]</span>`
+              : '';
+            return `${subj.name} <span style="color:#888;">(Max: ${subj.max})</span>${opt}${subs}`;
+          }).join(', ')
+        : '<span style="color:#aaa;">No subjects</span>'
+      }
       </div>
       <div style="margin-top:4px;margin-left:8px;font-size:0.95em;color:#444;">
         ${
@@ -1783,11 +1786,25 @@ function showExamSettingsPopup() {
   const subjInput = div.querySelector('input[type="text"]');
   const marksInput = div.querySelector('input[type="number"]');
   const optInput  = div.querySelector('.subject-opt');
+  const wrap = div.querySelector('[data-subtopics-wrap]');
   const subjName = subjInput ? subjInput.value.trim() : '';
   const maxMarks = marksInput ? parseInt(marksInput.value.trim()) : 0;
   const exclude  = !!(optInput && optInput.checked);
+
+  let subjSubs = [];
+  if (wrap) {
+    wrap.querySelectorAll('[data-subtopic-row]').forEach(r => {
+      const n = r.querySelector('input[data-subtopic-name]')?.value.trim();
+      const mRaw = r.querySelector('input[data-subtopic-max]')?.value;
+      const m = parseFloat(mRaw);
+      if (n && !Number.isNaN(m)) subjSubs.push({ name: n, max: m });
+    });
+  }
+
   if (subjName && maxMarks) {
-    subjects.push({ name: subjName, max: maxMarks, excludeFromTotal: exclude });
+    const payload = { name: subjName, max: maxMarks, excludeFromTotal: exclude };
+    if (subjSubs.length) payload.subtopics = subjSubs;
+    subjects.push(payload);
   }
 });
         }
@@ -2023,22 +2040,76 @@ if (addSubtopicBtn) {
       const subjectsContainer = popupContent.querySelector('#subjectsContainer');
       const addSubjectBtn = popupContent.querySelector('#addSubjectBtn');
 
-      function addSubjectField(name = '', max = '', exclude = false) {
+      function addSubjectField(name = '', max = '', exclude = false, subtopics = []) {
   const div = document.createElement('div');
   div.setAttribute('data-subject-row', '');
-  div.style = 'display:flex;align-items:center;gap:8px;margin-bottom:7px;flex-wrap:wrap;';
-  div.innerHTML = `
+  div.style = 'display:flex;flex-direction:column;gap:6px;margin-bottom:10px;border-bottom:1px solid #f1f1f1;padding-bottom:8px;';
+
+  // top row (name/max/optional toggle)
+  const top = document.createElement('div');
+  top.style = 'display:flex;align-items:center;gap:8px;flex-wrap:wrap;';
+  top.innerHTML = `
     <input type="text" placeholder="Subject Name" value="${name}"
            required style="flex:1 1 48%; min-width:220px; padding:8px; border-radius:6px; border:1px solid #c7d7ea; background:#f7fafd; margin-right:7px;" />
     <input type="number" placeholder="Max Marks" min="1" max="200" step="1"
            value="${max}" required style="width:120px; padding:8px; border-radius:6px; border:1px solid #c7d7ea; background:#f7fafd;" />
-    <label style="display:flex;align-items:center;gap:6px;font-size:.92em;color:#555; margin-left:6px;">
+    <label style="display:flex;align-items:center;gap:6px;font-size:.92em;color:#555;">
       <input type="checkbox" class="subject-opt" ${exclude ? 'checked' : ''} />
       Exclude from total
     </label>
-    ${isAdmin ? `<button type="button" class="option-btn" style="width:70px; padding:5px; margin-left:auto;" onclick="this.parentNode.remove()">Remove</button>` : ''}
+    <button type="button" class="option-btn toggle-subtopics" style="margin-left:auto; padding:6px 10px;">Subtopics</button>
+    ${isAdmin ? `<button type="button" class="option-btn" style="padding:6px 10px;" onclick="this.closest('[data-subject-row]').remove()">Remove</button>` : ''}
   `;
+
+  // subtopics panel (collapsible)
+  const panel = document.createElement('div');
+  panel.className = 'subject-subtopics';
+  panel.style = 'display:none; background:#f9fcff; border:1px solid #e0ecfb; border-radius:8px; padding:8px;';
+
+  panel.innerHTML = `
+    <div style="font-weight:600;color:#1762a7; margin-bottom:6px;">Subtopics for this subject</div>
+    <div data-subtopics-wrap style="display:flex;flex-direction:column;gap:6px;"></div>
+    <div>
+      <button type="button" class="option-btn add-subtopic" style="margin-top:6px;">+ Add Subtopic</button>
+    </div>
+    <div style="font-size:.85em;color:#666; margin-top:4px;">
+      If subtopics are added, this subject’s total will be derived from their sum.
+    </div>
+  `;
+
+  div.appendChild(top);
+  div.appendChild(panel);
   subjectsContainer.appendChild(div);
+
+  // wiring
+  const btnToggle = top.querySelector('.toggle-subtopics');
+  const wrap = panel.querySelector('[data-subtopics-wrap]');
+  const btnAdd = panel.querySelector('.add-subtopic');
+
+  function addSubtopicRow(stName = '', stMax = '') {
+    const row = document.createElement('div');
+    row.setAttribute('data-subtopic-row', '');
+    row.style = 'display:flex;align-items:center;gap:8px;';
+    row.innerHTML = `
+      <input type="text" data-subtopic-name placeholder="Subtopic Name" value="${stName}"
+             style="flex:1 1 60%; min-width:180px; padding:7px; border-radius:6px; border:1px solid #c7d7ea; background:#fff;" />
+      <input type="number" data-subtopic-max placeholder="Max" step="0.01" value="${stMax}"
+             style="width:100px; padding:7px; border-radius:6px; border:1px solid #c7d7ea; background:#fff;" />
+      <button type="button" class="option-btn" onclick="this.parentNode.remove()">Remove</button>
+    `;
+    wrap.appendChild(row);
+  }
+
+  btnToggle.onclick = () => {
+    panel.style.display = (panel.style.display === 'none' || panel.style.display === '') ? 'block' : 'none';
+  };
+  btnAdd.onclick = () => addSubtopicRow();
+
+  // prefill existing subtopics (if provided)
+  if (Array.isArray(subtopics) && subtopics.length) {
+    panel.style.display = 'block';
+    subtopics.forEach(st => addSubtopicRow(st?.name || '', (st?.max ?? '').toString()));
+  }
 }
     if (addSubjectBtn) {
   addSubjectBtn.onclick = () => addSubjectField();
@@ -2214,16 +2285,31 @@ function showEditExamPopup(examId) {
         if (container) {
           const subjectDivs = container.querySelectorAll('div[data-subject-row]');
           subjectDivs.forEach(div => {
-          const subjInput = div.querySelector('input[type="text"]');
-          const marksInput = div.querySelector('input[type="number"]');
-          const optInput  = div.querySelector('.subject-opt');
-          const subjName = subjInput ? subjInput.value.trim() : '';
-          const maxMarks = marksInput ? parseInt(marksInput.value.trim()) : 0;
-          const exclude  = !!(optInput && optInput.checked);
-          if (subjName && maxMarks) {
-            subjects.push({ name: subjName, max: maxMarks, excludeFromTotal: exclude });
-          }
-        });
+  const subjInput = div.querySelector('input[type="text"]');
+  const marksInput = div.querySelector('input[type="number"]');
+  const optInput  = div.querySelector('.subject-opt');
+  const wrap = div.querySelector('[data-subtopics-wrap]');
+  const subjName = subjInput ? subjInput.value.trim() : '';
+  const maxMarks = marksInput ? parseInt(marksInput.value.trim()) : 0;
+  const exclude  = !!(optInput && optInput.checked);
+
+  // collect subject-level subtopics (if any)
+  let subjSubs = [];
+  if (wrap) {
+    wrap.querySelectorAll('[data-subtopic-row]').forEach(r => {
+      const n = r.querySelector('input[data-subtopic-name]')?.value.trim();
+      const mRaw = r.querySelector('input[data-subtopic-max]')?.value;
+      const m = parseFloat(mRaw);
+      if (n && !Number.isNaN(m)) subjSubs.push({ name: n, max: m });
+    });
+  }
+
+  if (subjName && maxMarks) {
+    const payload = { name: subjName, max: maxMarks, excludeFromTotal: exclude };
+    if (subjSubs.length) payload.subtopics = subjSubs;
+    subjects.push(payload);
+  }
+});
         }
        if (!name || !subjects.length) {
   alert("Please enter exam name and at least one subject!");
@@ -2376,12 +2462,15 @@ let srcIds = [];
       // --- Subject Fields Logic for Edit ---
       const subjectsContainer = popupContent.querySelector('#editSubjectsContainer');
       const addSubjectBtn = popupContent.querySelector('#editAddSubjectBtn');
-      function addSubjectField(name = '', max = '', exclude = false) {
+      function addSubjectField(name = '', max = '', exclude = false, subtopics = []) {
   const idx = subjectsContainer.children.length;
   const div = document.createElement('div');
   div.setAttribute('data-subject-row', '');
-  div.style = 'display:flex;align-items:center;gap:8px;margin-bottom:7px;flex-wrap:wrap;';
-  div.innerHTML = `
+  div.style = 'display:flex;flex-direction:column;gap:6px;margin-bottom:10px;border-bottom:1px solid #f1f1f1;padding-bottom:8px;';
+
+  const top = document.createElement('div');
+  top.style = 'display:flex;align-items:center;gap:8px;flex-wrap:wrap;';
+  top.innerHTML = `
     <input type="text" name="subjectName_${idx}" placeholder="Subject Name" value="${name}" required
            style="flex:1 1 48%; min-width:220px; padding:8px; border-radius:6px; border:1px solid #c7d7ea; background:#f7fafd; margin-right:7px;" />
     <input type="number" name="maxMarks_${idx}" placeholder="Max Marks" min="1" max="200" value="${max}" required
@@ -2390,12 +2479,65 @@ let srcIds = [];
       <input type="checkbox" class="subject-opt" ${exclude ? 'checked' : ''} />
       Exclude from total
     </label>
-    ${isAdmin ? `<button type="button" class="option-btn" style="width:70px; padding:5px; margin-left:auto;" onclick="this.parentNode.remove()">Remove</button>` : ''}
+    <button type="button" class="option-btn toggle-subtopics" style="margin-left:auto; padding:6px 10px;">Subtopics</button>
+    ${isAdmin ? `<button type="button" class="option-btn" style="padding:6px 10px;" onclick="this.closest('[data-subject-row]').remove()">Remove</button>` : ''}
   `;
+
+  const panel = document.createElement('div');
+  panel.className = 'subject-subtopics';
+  panel.style = 'display:none; background:#f9fcff; border:1px solid #e0ecfb; border-radius:8px; padding:8px;';
+  panel.innerHTML = `
+    <div style="font-weight:600;color:#1762a7; margin-bottom:6px;">Subtopics for this subject</div>
+    <div data-subtopics-wrap style="display:flex;flex-direction:column;gap:6px;"></div>
+    <div>
+      <button type="button" class="option-btn add-subtopic" style="margin-top:6px;">+ Add Subtopic</button>
+    </div>
+    <div style="font-size:.85em;color:#666; margin-top:4px;">
+      If subtopics are added, this subject’s total will be derived from their sum.
+    </div>
+  `;
+
+  div.appendChild(top);
+  div.appendChild(panel);
   subjectsContainer.appendChild(div);
+
+  const btnToggle = top.querySelector('.toggle-subtopics');
+  const wrap = panel.querySelector('[data-subtopics-wrap]');
+  const btnAdd = panel.querySelector('.add-subtopic');
+
+  function addSubtopicRow(stName = '', stMax = '') {
+    const row = document.createElement('div');
+    row.setAttribute('data-subtopic-row', '');
+    row.style = 'display:flex;align-items:center;gap:8px;';
+    row.innerHTML = `
+      <input type="text" data-subtopic-name placeholder="Subtopic Name" value="${stName}"
+             style="flex:1 1 60%; min-width:180px; padding:7px; border-radius:6px; border:1px solid #c7d7ea; background:#fff;" />
+      <input type="number" data-subtopic-max placeholder="Max" step="0.01" value="${stMax}"
+             style="width:100px; padding:7px; border-radius:6px; border:1px solid #c7d7ea; background:#fff;" />
+      <button type="button" class="option-btn" onclick="this.parentNode.remove()">Remove</button>
+    `;
+    wrap.appendChild(row);
+  }
+
+  btnToggle.onclick = () => {
+    panel.style.display = (panel.style.display === 'none' || panel.style.display === '') ? 'block' : 'none';
+  };
+  btnAdd.onclick = () => addSubtopicRow();
+
+  // prefill
+  if (Array.isArray(subtopics) && subtopics.length) {
+    panel.style.display = 'block';
+    subtopics.forEach(st => addSubtopicRow(st?.name || '', (st?.max ?? '').toString()));
+  }
 }
+
      if (exam.subjects && Array.isArray(exam.subjects)) {
-  exam.subjects.forEach(subj => addSubjectField(subj.name, subj.max, !!subj.excludeFromTotal));
+  exam.subjects.forEach(subj => addSubjectField(
+    subj.name,
+    subj.max,
+    !!subj.excludeFromTotal,
+    Array.isArray(subj.subtopics) ? subj.subtopics : []
+  ));
 }
       addSubjectBtn.onclick = () => addSubjectField();
             // === Grading UI (Edit Exam) ===
@@ -4388,5 +4530,6 @@ if (marksFileInput) {
 </script>
 </body>
 </html>
+
 
 
