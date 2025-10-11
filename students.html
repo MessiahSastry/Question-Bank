@@ -1540,24 +1540,27 @@ async function fetchEffectiveExams(classId, className) {
     map.set(d.id, { id: d.id, ...d.data(), __origin: 'group' });
   });
 
-  // 2) Load class overrides (middle precedence)
-  const classSnap = await db.collection('years').doc(academicYear)
+  // 2) Load class overrides
+  const overSnap = await db.collection('years').doc(academicYear)
     .collection('classes').doc(classId)
     .collection('examOverrides').get();
 
-  classSnap.forEach(doc => {
+  overSnap.forEach(doc => {
     const o = doc.data() || {};
 
+    // Class-only exam: doesn’t exist in group, lives only for this class
     if (o.origin === 'class-only') {
       map.set(doc.id, { id: doc.id, ...o, __origin: 'class-only' });
       return;
     }
 
+    // Hide an inherited exam for this class
     if (o.hidden === true) {
       map.delete(doc.id);
       return;
     }
 
+    // Field-level override over a group exam
     if (map.has(doc.id)) {
       const base = map.get(doc.id);
       map.set(doc.id, {
@@ -1566,48 +1569,15 @@ async function fetchEffectiveExams(classId, className) {
         subjects:    (Array.isArray(o.subjects) && o.subjects.length ? o.subjects : base.subjects),
         subtopics:   (Array.isArray(o.subtopics) && o.subtopics.length ? o.subtopics : base.subtopics),
         grading:     (o.grading || base.grading),
-        __origin:    'class-overridden'
+        __origin:    'overridden'
       });
     } else {
+      // If override points to an unknown id, treat as class-only to be safe
       map.set(doc.id, { id: doc.id, ...o, __origin: 'class-only' });
     }
   });
 
-  // 3) Load section overrides (highest precedence)
-  const sectionSnap = await db.collection('years').doc(academicYear)
-    .collection('classes').doc(classId)
-    .collection('sections').doc(currentSectionId)
-    .collection('examOverrides').get();
-
-  sectionSnap.forEach(doc => {
-    const o = doc.data() || {};
-
-    if (o.origin === 'section-only') {
-      map.set(doc.id, { id: doc.id, ...o, __origin: 'section-only' });
-      return;
-    }
-
-    if (o.hidden === true) {
-      map.delete(doc.id);
-      return;
-    }
-
-    if (map.has(doc.id)) {
-      const base = map.get(doc.id);
-      map.set(doc.id, {
-        ...base,
-        name:        (o.name ?? base.name),
-        subjects:    (Array.isArray(o.subjects) && o.subjects.length ? o.subjects : base.subjects),
-        subtopics:   (Array.isArray(o.subtopics) && o.subtopics.length ? o.subtopics : base.subtopics),
-        grading:     (o.grading || base.grading),
-        __origin:    'section-overridden'
-      });
-    } else {
-      map.set(doc.id, { id: doc.id, ...o, __origin: 'section-only' });
-    }
-  });
-
-  // 4) Return a sorted list (by name)
+  // 3) Return a sorted list (by name)
   const list = Array.from(map.values());
   list.sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
   return list;
@@ -1629,163 +1599,187 @@ if (typeof fetchEffectiveExams !== 'function' && typeof getExamsForCurrentClass 
 function showExamSettingsPopup() {
   const classGroup = getClassGroupName(currentClassName);
 
- Promise.all([
-  fetchEffectiveExams(currentClassId, currentClassName), // effective list (now resolves section too)
-  db.collection('years').doc(academicYear)
-    .collection('classes').doc(currentClassId)
-    .collection('examOverrides').limit(1).get(),          // class overrides snapshot
-  db.collection('years').doc(academicYear)
-    .collection('classes').doc(currentClassId)
-    .collection('sections').doc(currentSectionId)
-    .collection('examOverrides').limit(1).get(),          // section overrides snapshot
-  readSchoolGradingDefault()
-]).then(([examsEff, classOverSnap, sectionOverSnap, schoolDefault]) => {
-  const preloadScale = (schoolDefault && Array.isArray(schoolDefault.scale) && schoolDefault.scale.length)
-    ? schoolDefault.scale
-    : LEGACY_GRADING_SCALE;
+  Promise.all([
+    fetchEffectiveExams(currentClassId, currentClassName), // effective list
+    db.collection('years').doc(academicYear)
+      .collection('classes').doc(currentClassId)
+      .collection('examOverrides').limit(1).get(),         // to infer “customized” state
+    readSchoolGradingDefault()
+  ]).then(([examsEff, overSnap, schoolDefault]) => {
+    const preloadScale = (schoolDefault && Array.isArray(schoolDefault.scale) && schoolDefault.scale.length)
+      ? schoolDefault.scale
+      : LEGACY_GRADING_SCALE;
 
-    const hasSection = !sectionOverSnap.empty;
-  const hasClass   = !classOverSnap.empty;
+    const isCustomized = !overSnap.empty; // any override/class-only/hide present?
+    const sourceChip = isCustomized ? 'Customized for this class' : 'Using group defaults';
 
-  // Real source for banner:
-  const activeScope = hasSection ? 'section' : (hasClass ? 'class' : 'group');
-
-  // UI default selection (checkboxes) — always default to 'group' unless user already picked a scope this session
-  const initialScope = (window.__sp_overrideScope && ['group','class','section'].includes(window.__sp_overrideScope))
-    ? window.__sp_overrideScope
-    : 'group';
-
-  const sourceChip =
-    activeScope === 'section'
-      ? 'Customized for this section'
-      : activeScope === 'class'
-        ? 'Customized for this class'
-        : 'Using inherited defaults';
-
-   const exams = Array.isArray(examsEff) ? examsEff : [];
-// Build the "Add Exam" section as a plain string (no nested template literals)
-const addSection = isAdmin
-  ? (
-      '<form id="addExamForm">'
-      + '<label>Exam Name</label>'
-      + '<input name="examName" required placeholder="e.g., FA1">'
-      + '<div class="popup-btn-row" style="margin-top:10px;">'
-      +   '<button type="button" class="popup-cancel-btn">Close</button>'
-      +   '<button type="submit" class="popup-action-btn">Add Exam</button>'
-      + '</div>'
-      + '</form>'
-    )
-  : (
-      '<div class="popup-btn-row" style="margin-top:10px;">'
-      + '<button type="button" class="popup-cancel-btn">Close</button>'
-      + '</div>'
-    );
-
-// Build exam list HTML safely (no nested back-ticks)
-const examsListHtml = (exams.length === 0)
-  ? '<div style="color:#888;font-style:italic;">No exams found.</div>'
-  : exams.map(function(exam){
-      var badge = (exam.__origin === 'class-only')
-  ? '<span style="margin-left:8px;font-size:.8em;padding:2px 8px;border-radius:999px;background:#eaf8ea;color:#207a2b;border:1px solid #9fddb1;">Class-only</span>'
-  : ((exam.__origin === 'class-overridden' || exam.__origin === 'section-overridden'))
-    ? '<span style="margin-left:8px;font-size:.8em;padding:2px 8px;border-radius:999px;background:#fff7e6;color:#a26100;border:1px solid #ffd79a;">Overridden</span>'
-    : '<span style="margin-left:8px;font-size:.8em;padding:2px 8px;border-radius:999px;background:#e8f3ff;color:#0f3d6b;border:1px solid #c7d7ea;">Inherited</span>';
-
-      var subjectsHtml;
-      if (Array.isArray(exam.subjects) && exam.subjects.length > 0) {
-        subjectsHtml = exam.subjects.map(function(subj){
-          var opt  = (subj && subj.excludeFromTotal) ? ' <span style="color:#a15d00; font-weight:600;">[Optional]</span>' : '';
-          var subs = (Array.isArray(subj.subtopics) && subj.subtopics.length)
-            ? ' <span style="color:#1762a7;">[' + subj.subtopics.map(function(st){ return st.name + ' (' + st.max + ')'; }).join(', ') + ']</span>'
-            : '';
-          return subj.name + ' <span style="color:#888;">(Max: ' + subj.max + ')</span>' + opt + subs;
-        }).join(', ');
-      } else {
-        subjectsHtml = '<span style="color:#aaa;">No subjects</span>';
-      }
-
-      var subtopicsHtml = (Array.isArray(exam.subtopics) && exam.subtopics.length > 0)
-        ? 'Subtopics: ' + exam.subtopics.map(function(st){ return st.name + ' <span style="color:#888;">(' + st.max + ')</span>'; }).join(', ')
-        : '';
-
-      return '' +
-        '<div style="border-bottom:1px solid #f1f1f1;margin-bottom:7px;padding-bottom:7px;">' +
-          '<strong>' + exam.name + '</strong>' + badge +
-          (isAdmin ? '<button type="button" class="popup-action-btn" data-edit="' + exam.id + '" style="margin-left:10px;padding:2px 8px;font-size:0.9em;">Edit</button>' : '') +
-          '<div style="margin-top:6px;margin-left:8px;font-size:0.99em;">' + subjectsHtml + '</div>' +
-          '<div style="margin-top:4px;margin-left:8px;font-size:0.95em;color:#444;">' + subtopicsHtml + '</div>' +
-        '</div>';
-    }).join('');
+    const exams = Array.isArray(examsEff) ? examsEff : [];
     let html = `
         <div class="popup-title">Exam Settings</div>
 
 <!-- Source banner + mode toggles (separate lines) -->
 <div style="text-align:center;width:100%;padding:8px 10px;margin:6px 0 12px 0;
-            border-radius:10px;border:1px solid ${activeScope === 'group' ? '#c7d7ea' : '#ffd7a6'};
-            background:${activeScope === 'group' ? '#e8f3ff' : '#fff3e0'};
-            color:${activeScope === 'group' ? '#0f3d6b' : '#b05300'};font-weight:600;">
-  ${activeScope === 'section'
-      ? 'Customized for this section'
-      : activeScope === 'class'
-        ? 'Customized for this class'
-        : 'Using inherited defaults'}
+            border-radius:10px;border:1px solid ${isCustomized ? '#ffd7a6' : '#c7d7ea'};
+            background:${isCustomized ? '#fff3e0' : '#e8f3ff'};
+            color:${isCustomized ? '#b05300' : '#0f3d6b'};font-weight:600;">
+  ${isCustomized ? 'Customized for this class' : 'Using inherited defaults'}
 </div>
 
-<!-- Three mutually exclusive options (group / class / section), one per line -->
+<!-- Two independent checkboxes, left-aligned, one per line -->
 <label style="display:flex;align-items:center;gap:8px;margin:4px 0;color:#444;">
-  <input type="checkbox" id="modeGroup"   ${initialScope === 'group'   ? 'checked' : ''} />
+  <input type="checkbox" id="classCustomizeToggle" ${isCustomized ? '' : 'checked'} />
   <span>Use group exams</span>
 </label>
-<label style="display:flex;align-items:center;gap:8px;margin:4px 0;color:#444;">
-  <input type="checkbox" id="modeClass"   ${initialScope === 'class'   ? 'checked' : ''} />
-  <span>Customize for this class</span>
-</label>
 <label style="display:flex;align-items:center;gap:8px;margin:4px 0 10px 0;color:#444;">
-  <input type="checkbox" id="modeSection" ${initialScope === 'section' ? 'checked' : ''} />
-  <span>Customize for this section</span>
+  <input type="checkbox" id="classCustomizeToggleCustom" ${isCustomized ? 'checked' : ''} />
+  <span>Customize for this class</span>
 </label>
 
 <div id="examListArea" style="min-height:25vh;max-height:45vh;overflow-y:auto;margin-bottom:12px;">
-${exams.length === 0 
+          ${exams.length === 0 
   ? '<div style="color:#888;font-style:italic;">No exams found.</div>' 
-  : (function(){
-      return exams.map(function(exam, idx) {
-       const badge = exam.__origin === 'class-only'
-  ? '<span style="margin-left:8px;font-size:.8em;padding:2px 8px;border-radius:999px;background:#eaf8ea;color:#207a2b;border:1px solid #9fddb1;">Class-only</span>'
-  : (exam.__origin === 'class-overridden' || exam.__origin === 'section-overridden')
-    ? '<span style="margin-left:8px;font-size:.8em;padding:2px 8px;border-radius:999px;background:#fff7e6;color:#a26100;border:1px solid #ffd79a;">Overridden</span>'
-    : '<span style="margin-left:8px;font-size:.8em;padding:2px 8px;border-radius:999px;background:#e8f3ff;color:#0f3d6b;border:1px solid #c7d7ea;">Inherited</span>';
+  : exams.map((exam, idx) => {
+      const badge = exam.__origin === 'class-only'
+        ? '<span style="margin-left:8px;font-size:.8em;padding:2px 8px;border-radius:999px;background:#eaf8ea;color:#207a2b;border:1px solid #9fddb1;">Class-only</span>'
+        : exam.__origin === 'overridden'
+          ? '<span style="margin-left:8px;font-size:.8em;padding:2px 8px;border-radius:999px;background:#fff7e6;color:#a26100;border:1px solid #ffd79a;">Overridden</span>'
+          : '<span style="margin-left:8px;font-size:.8em;padding:2px 8px;border-radius:999px;background:#e8f3ff;color:#0f3d6b;border:1px solid #c7d7ea;">Inherited</span>';
 
-        // subjects line
-        let subjectsHtml = '';
-        if (Array.isArray(exam.subjects) && exam.subjects.length > 0) {
-          subjectsHtml = exam.subjects.map(function(subj){
-            const opt  = (subj && subj.excludeFromTotal) ? ' <span style="color:#a15d00; font-weight:600;">[Optional]</span>' : '';
-            const subs = (Array.isArray(subj.subtopics) && subj.subtopics.length)
-              ? ' <span style="color:#1762a7;">[' + subj.subtopics.map(function(st){ return st.name + ' (' + st.max + ')'; }).join(', ') + ']</span>'
+      return `
+      <div style="border-bottom:1px solid #f1f1f1;margin-bottom:7px;padding-bottom:7px;">
+        <strong>${exam.name}</strong>${badge}
+        ${isAdmin ? `<button type="button" class="popup-action-btn" data-edit="${exam.id}" style="margin-left:10px;padding:2px 8px;font-size:0.9em;">Edit</button>` : ''}
+        <div style="margin-top:6px;margin-left:8px;font-size:0.99em;">
+        ${Array.isArray(exam.subjects) && exam.subjects.length > 0
+        ? exam.subjects.map(subj => {
+            const opt = subj && subj.excludeFromTotal ? ' <span style="color:#a15d00; font-weight:600;">[Optional]</span>' : '';
+            const subs = Array.isArray(subj.subtopics) && subj.subtopics.length
+              ? ` <span style="color:#1762a7;">[${subj.subtopics.map(st => `${st.name} (${st.max})`).join(', ')}]</span>`
               : '';
-            return subj.name + ' <span style="color:#888;">(Max: ' + subj.max + ')</span>' + opt + subs;
-          }).join(', ');
-        } else {
-          subjectsHtml = '<span style="color:#aaa;">No subjects</span>';
+            return `${subj.name} <span style="color:#888;">(Max: ${subj.max})</span>${opt}${subs}`;
+          }).join(', ')
+        : '<span style="color:#aaa;">No subjects</span>'
+      }
+      </div>
+      <div style="margin-top:4px;margin-left:8px;font-size:0.95em;color:#444;">
+        ${
+          Array.isArray(exam.subtopics) && exam.subtopics.length > 0
+            ? 'Subtopics: ' + exam.subtopics.map(st => `${st.name} <span style="color:#888;">(${st.max})</span>`).join(', ')
+            : ''
         }
+      </div>
+     </div>
+    `;
+    }).join('')}
+        </div>
+        ${isAdmin ? `
+      <form id="addExamForm" style="display:flex; flex-direction:column; max-height:58vh;">
+        <div style="flex:1; overflow-y:auto; padding-right:4px;">
+          <label>Exam Name</label>
+        <input name="examName" maxlength="30" required placeholder="e.g., FA1">
+        
+        <label>Subtopics <span style="color:#888;font-weight:500;">(optional)</span></label>
 
-        // exam-level subtopics line
-        const subtopicsHtml = (Array.isArray(exam.subtopics) && exam.subtopics.length > 0)
-          ? 'Subtopics: ' + exam.subtopics.map(function(st){ return st.name + ' <span style="color:#888;">(' + st.max + ')</span>'; }).join(', ')
-          : '';
-
-        return '' +
-          '<div style="border-bottom:1px solid #f1f1f1;margin-bottom:7px;padding-bottom:7px;">' +
-            '<strong>' + exam.name + '</strong>' + badge +
-            (isAdmin ? '<button type="button" class="popup-action-btn" data-edit="' + exam.id + '" style="margin-left:10px;padding:2px 8px;font-size:0.9em;">Edit</button>' : '') +
-            '<div style="margin-top:6px;margin-left:8px;font-size:0.99em;">' + subjectsHtml + '</div>' +
-            '<div style="margin-top:4px;margin-left:8px;font-size:0.95em;color:#444;">' + subtopicsHtml + '</div>' +
-          '</div>';
-      }).join('');
-    })()}
+<!-- Internal (simple row + collapsible config) -->
+<div style="display:flex; align-items:center; gap:8px; margin:6px 0 8px 0;">
+  <input type="checkbox" id="useInternalToggle" style="margin:0;" />
+  <label for="useInternalToggle" style="font-weight:600; margin:0;">Use Internal</label>
 </div>
-      ${addSection}
+
+<div id="internalConfig" style="display:none; margin:6px 0 12px 0;">
+  <div style="margin-bottom:8px;">
+    <div style="font-size:0.95em; color:#1762a7; font-weight:600; margin-bottom:6px;">Source Exams</div>
+    <div class="custom-dropdown" id="internalExamsDropdown" tabindex="0">
+      <div class="dropdown-selected" id="internalExamsSelected" data-values="">--Select--</div>
+      <div class="dropdown-list" id="internalExamsList" style="display:none; max-height:220px; overflow-y:auto;">
+        ${exams.map(ex => `
+          <label class="dropdown-option" style="display:flex; align-items:center; gap:10px; padding:10px 12px; cursor:pointer;">
+            <input type="checkbox" value="${ex.id}" data-name="${ex.name}" style="transform:scale(1.1);" />
+            <span>${ex.name}</span>
+          </label>
+        `).join('')}
+      </div>
+    </div>
+    <div style="font-size:0.85em; color:#666; margin-top:4px;">Pick one or more exams.</div>
+  </div>
+
+  <div style="display:flex; align-items:center; gap:10px;">
+    <label for="internalMax" style="min-width:140px;">Internal Max (marks)</label>
+    <input id="internalMax" type="number" min="1" max="200" step="1" placeholder="e.g., 20"
+           style="width:120px; padding:8px; border-radius:6px; border:1px solid #c7d7ea; background:#fff;" />
+  </div>
+  <div style="font-size:0.85em; color:#666; margin-top:6px;">
+    Student’s internal = average( score/max ) × Internal Max. (Written/External is added separately by you.)
+  </div>
+</div>
+
+<!-- Manual subtopics -->
+<div id="subtopicsContainer"></div>
+<div style="display:flex; gap:10px; margin-top:6px; margin-bottom:14px;">
+  <button type="button" id="addSubtopicBtn"
+          style="background:#1762a7;color:#fff; padding:7px 13px;border:none;border-radius:7px;font-weight:600;">
+    + Add Subtopic
+  </button>
+</div>
+        
+                <label>Subjects</label>
+        <div id="subjectsContainer"></div>
+        <button type="button" id="addSubjectBtn"
+            style="margin:6px 0 14px 0; background:#1762a7;color:#fff;
+                   padding:7px 13px;border:none;border-radius:7px;font-weight:600;">
+            + Add Subject
+          </button>
+
+        <!-- ===== Grading System (school-wide default prefilled) ===== -->
+        <div style="margin-top:6px; border-top:1px solid #eef3f9; padding-top:10px;">
+          <label style="display:flex; align-items:center; gap:10px;">
+            <span>Grading System</span>
+            <span style="font-size:0.85em; color:#666;">(Prefilled from School Default if set; otherwise legacy)</span>
+          </label>
+
+          <div style="display:flex; align-items:center; gap:12px; margin:8px 0 6px 0;">
+            <label style="display:flex; align-items:center; gap:8px; margin:0;">
+              <input type="checkbox" id="setAsSchoolDefault" checked />
+              <span>Set this as <strong>School Default</strong> for all classes</span>
+            </label>
+          </div>
+
+          <div id="gradingRows" style="display:grid; grid-template-columns:120px 1fr 1fr 70px; gap:8px; align-items:center;">
+            <div style="font-weight:700; color:#1762a7;">Grade</div>
+            <div style="font-weight:700; color:#1762a7;">Min %</div>
+            <div style="font-weight:700; color:#1762a7;">Max %</div>
+            <div></div>
+            ${
+              (preloadScale || []).map((r, i) => `
+                <input type="text" class="grade-name" value="${r.grade}" placeholder="A+" style="padding:8px; border:1px solid #c7d7ea; border-radius:6px; background:#f7fafd;">
+                <input type="number" class="grade-min" value="${r.min}" step="0.01" min="0" max="100" style="padding:8px; border:1px solid #c7d7ea; border-radius:6px; background:#f7fafd;">
+                <input type="number" class="grade-max" value="${r.max}" step="0.01" min="0" max="100" style="padding:8px; border:1px solid #c7d7ea; border-radius:6px; background:#f7fafd;">
+                ${isAdmin ? `<button type="button" class="option-btn remove-grade" style="width:70px; padding:5px;">Remove</button>` : `<div></div>`}
+              `).join('')
+            }
+          </div>
+
+          ${isAdmin ? `
+          <div style="margin-top:8px;">
+            <button type="button" id="addGradeRowBtn"
+              style="background:#1762a7;color:#fff;padding:7px 13px;border:none;border-radius:7px;font-weight:600;">
+              + Add Grade Row
+            </button>
+          </div>` : ''}
+        </div>
+        <!-- ===== /Grading System ===== -->
+
+        </div>
+        <div class="popup-btn-row" style="margin-top:10px;">
+          <button type="button" class="popup-cancel-btn">Close</button>
+          <button type="submit" class="popup-action-btn">Add Exam</button>
+        </div>
+      </form>
+      ` : `
+      <div class="popup-btn-row" style="margin-top:10px;">
+        <button type="button" class="popup-cancel-btn">Close</button>
+      </div>
+      `}
       `;
       showPopup(html, 'addExamForm', function (e) {
         e.preventDefault();
@@ -1926,36 +1920,27 @@ let srcIds = [];
               return;
             }
             // If not duplicate, add (attach grading)
-           const scope = window.__sp_overrideScope || (window.__sp_useGroupExams === false ? 'class' : 'group');
-        if (scope === 'group') {
-          return db.collection('years').doc(academicYear)
-            .collection('exams').doc('classGroups')
-            .collection(classGroup)
-            .add({
-              name, nameKey, subjects, subtopics,
-              grading: { mode: 'custom', scale: gradingScale }
-            });
-        } else if (scope === 'class') {
-          const ref = db.collection('years').doc(academicYear)
-            .collection('classes').doc(currentClassId)
-            .collection('examOverrides').doc(); // new id
-          return ref.set({
-            name, nameKey, subjects, subtopics,
-            grading: { mode: 'custom', scale: gradingScale },
-            origin: 'class-only'
-          });
-        } else { // section
-          const ref = db.collection('years').doc(academicYear)
-            .collection('classes').doc(currentClassId)
-            .collection('sections').doc(currentSectionId)
-            .collection('examOverrides').doc(); // new id
-          return ref.set({
-            name, nameKey, subjects, subtopics,
-            grading: { mode: 'custom', scale: gradingScale },
-            origin: 'section-only'
-          });
-        }
+           const isCustomize = (window.__sp_useGroupExams === false);
 
+if (isCustomize) {
+  // create class-only exam with its own id (stable for this class)
+  const ref = db.collection('years').doc(academicYear)
+    .collection('classes').doc(currentClassId)
+    .collection('examOverrides').doc(); // new id
+  return ref.set({
+    name, nameKey, subjects, subtopics,
+    grading: { mode: 'custom', scale: gradingScale },
+    origin: 'class-only'
+  });
+} else {
+  return db.collection('years').doc(academicYear)
+    .collection('exams').doc('classGroups')
+    .collection(classGroup)
+    .add({
+      name, nameKey, subjects, subtopics,
+      grading: { mode: 'custom', scale: gradingScale }
+    });
+}
           })
           .then(async (docRef) => {
             if (!docRef) return; // early-exit if duplicate branch above
@@ -1975,28 +1960,34 @@ let srcIds = [];
             alert('Error adding exam: ' + (err?.message || err));
           });
       });
-  // Persist the user's scope choice during this popup session (three options, mutually exclusive)
-const tGroup   = popupContent.querySelector('#modeGroup');
-const tClass   = popupContent.querySelector('#modeClass');
-const tSection = popupContent.querySelector('#modeSection');
+  // Persist the user's choice during this popup session (two checkboxes, mutually exclusive)
+const customizeTgl = popupContent.querySelector('#classCustomizeToggle');           // "Use group exams"
+const customizeTglCustom = popupContent.querySelector('#classCustomizeToggleCustom'); // "Customize for this class"
 
-function setScope(scope) {
-  // canonical scope used everywhere now
-  window.__sp_overrideScope = scope; // 'group' | 'class' | 'section'
-  // backward-compat flag (some old code still checks it)
-  window.__sp_useGroupExams = (scope === 'group');
-
-  if (tGroup)   tGroup.checked   = (scope === 'group');
-  if (tClass)   tClass.checked   = (scope === 'class');
-  if (tSection) tSection.checked = (scope === 'section');
+function syncModeFromUI() {
+  // Use-group is the canonical flag used elsewhere
+  window.__sp_useGroupExams = !!(customizeTgl && customizeTgl.checked);
+  // Keep them mutually exclusive
+  if (customizeTgl && customizeTglCustom) {
+    if (window.__sp_useGroupExams) {
+      customizeTglCustom.checked = false;
+    } else {
+      customizeTgl.checked = false;
+      customizeTglCustom.checked = true;
+    }
+  }
 }
-
-setScope(initialScope); // initialize with default 'group' (unless user picked in-session)
-
-if (tGroup)   tGroup.addEventListener('change',   () => setScope('group'));
-if (tClass)   tClass.addEventListener('change',   () => setScope('class'));
-if (tSection) tSection.addEventListener('change', () => setScope('section'));
-
+if (customizeTgl || customizeTglCustom) {
+  // Initialize
+  syncModeFromUI();
+  // Events
+  if (customizeTgl) customizeTgl.addEventListener('change', syncModeFromUI);
+  if (customizeTglCustom) customizeTglCustom.addEventListener('change', () => {
+    // Flip the canonical flag when "Customize" toggled
+    if (customizeTgl) customizeTgl.checked = !customizeTglCustom.checked;
+    syncModeFromUI();
+  });
+}
     // --- Subtopic Fields Logic (manual rows) + Internal controls ---
 const subtopicsContainer  = popupContent.querySelector('#subtopicsContainer');
 const addSubtopicBtn      = popupContent.querySelector('#addSubtopicBtn');
@@ -2096,9 +2087,10 @@ if (addSubtopicBtn) {
   // Row 3: Actions (right aligned)
   const row3 = document.createElement('div');
   row3.style = 'display:flex;align-items:center;justify-content:flex-end;gap:8px;';
-  row3.innerHTML =
-  '<button type="button" class="option-btn toggle-subtopics" style="padding:6px 10px;">Subtopics</button>'
-  + (isAdmin ? '<button type="button" class="option-btn" style="padding:6px 10px;" onclick="this.closest(\'[data-subject-row]\').remove()">Remove</button>' : '');
+  row3.innerHTML = `
+    <button type="button" class="option-btn toggle-subtopics" style="padding:6px 10px;">Subtopics</button>
+    ${isAdmin ? `<button type="button" class="option-btn" style="padding:6px 10px;" onclick="this.closest('[data-subject-row]').remove()">Remove</button>` : ''}
+  `;
 
      // Initialize mode → show panel only for "custom"
     setTimeout(() => {
@@ -2314,17 +2306,23 @@ function showEditExamPopup(examId) {
               <div style="font-weight:700; color:#1762a7;">Min %</div>
               <div style="font-weight:700; color:#1762a7;">Max %</div>
               <div></div>
-             ` + (preloadScale || []).map(function(r){
-                return '<input type="text" class="edit-grade-name" value="' + r.grade + '" placeholder="A+" style="padding:8px; border:1px solid #c7d7ea; border-radius:6px; background:#f7fafd;">'
-                  + '<input type="number" class="edit-grade-min" value="' + r.min + '" step="0.01" min="0" max="100" style="padding:8px; border:1px solid #c7d7ea; border-radius:6px; background:#f7fafd;">'
-                  + '<input type="number" class="edit-grade-max" value="' + r.max + '" step="0.01" min="0" max="100" style="padding:8px; border:1px solid #c7d7ea; border-radius:6px; background:#f7fafd;">'
-                  + (isAdmin
-                      ? '<button type="button" class="option-btn edit-remove-grade" style="width:70px; padding:5px;">Remove</button>'
-                      : '<div></div>');
-              }).join('') + `
+              ${
+                (preloadScale || []).map(r => `
+                  <input type="text" class="edit-grade-name" value="${r.grade}" placeholder="A+" style="padding:8px; border:1px solid #c7d7ea; border-radius:6px; background:#f7fafd;">
+                  <input type="number" class="edit-grade-min" value="${r.min}" step="0.01" min="0" max="100" style="padding:8px; border:1px solid #c7d7ea; border-radius:6px; background:#f7fafd;">
+                  <input type="number" class="edit-grade-max" value="${r.max}" step="0.01" min="0" max="100" style="padding:8px; border:1px solid #c7d7ea; border-radius:6px; background:#f7fafd;">
+                  ${isAdmin ? `<button type="button" class="option-btn edit-remove-grade" style="width:70px; padding:5px;">Remove</button>` : `<div></div>`}
+                `).join('')
+              }
             </div>
 
-           ` + (isAdmin ? '<div style="margin-top:8px;"><button type="button" id="editAddGradeRowBtn" style="background:#1762a7;color:#fff;padding:7px 13px;border:none;border-radius:7px;font-weight:600;">+ Add Grade Row</button></div>' : '') + `
+            ${isAdmin ? `
+            <div style="margin-top:8px;">
+              <button type="button" id="editAddGradeRowBtn"
+                style="background:#1762a7;color:#fff;padding:7px 13px;border:none;border-radius:7px;font-weight:600;">
+                + Add Grade Row
+              </button>
+            </div>` : ''}
           </div>
           <!-- ===== /Grading System ===== -->
 
@@ -2486,60 +2484,37 @@ let srcIds = [];
               }
             }
             // If not duplicate, update
-            const scope = window.__sp_overrideScope || (window.__sp_useGroupExams === false ? 'class' : 'group');
+            const isCustomize = (window.__sp_useGroupExams === false);
 
           // target refs
           const groupRef = db.collection('years').doc(academicYear)
-  .collection('exams').doc('classGroups')
-  .collection(classGroup).doc(examId);
-
-const classRef = db.collection('years').doc(academicYear)
-  .collection('classes').doc(currentClassId)
-  .collection('examOverrides').doc(examId);
-
-const sectionRef = db.collection('years').doc(academicYear)
-  .collection('classes').doc(currentClassId)
-  .collection('sections').doc(currentSectionId)
-  .collection('examOverrides').doc(examId);
-
-Promise.all([sectionRef.get(), classRef.get(), groupRef.get()])
-  .then(async ([secDoc, classDoc, grpDoc]) => {
-    const activeDoc = secDoc.exists ? secDoc : (classDoc.exists ? classDoc : grpDoc);
-    if (!activeDoc || !activeDoc.exists) { alert("Exam not found!"); return; }
-    const exam = activeDoc.data() || {};
-    // reflect the detected scope so the UI/banners and subsequent saves are consistent
-    const detectedScope = secDoc.exists ? 'section' : (classDoc.exists ? 'class' : 'group');
-    window.__sp_overrideScope = detectedScope;
+            .collection('exams').doc('classGroups')
+            .collection(classGroup).doc(examId);
           
-                    // payload to write
+          const overrideRef = db.collection('years').doc(academicYear)
+            .collection('classes').doc(currentClassId)
+            .collection('examOverrides').doc(examId);
+          
+          // payload to write
           const payload = { 
             name, nameKey, subjects, subtopics,
             grading: { mode: 'custom', scale: gradingScale }
           };
-
-          (async () => {
-            try {
-              if (scope === 'group') {
-                await groupRef.update(payload);
-                if (setAsSchoolDefault) {
-                  try {
-                    await writeSchoolGradingDefault(gradingScale, { classGroup, examId, examName: name });
-                  } catch (e) {
-                    console.warn('writeSchoolGradingDefault failed:', e);
-                  }
-                }
-              } else if (scope === 'class') {
-               await classRef.set({ ...payload, origin: 'class-overridden' }, { merge: true });
-              } else {
-                await sectionRef.set({ ...payload, origin: 'section-overridden' }, { merge: true });
-              }
-            } catch (err) {
-              alert('Error saving changes: ' + (err?.message || err));
-              return;
+          
+          // write either to group (use group) or to class override (customize)
+          const writePromise = isCustomize
+            ? overrideRef.set({ ...payload, origin: 'overridden' }, { merge: true })
+            : groupRef.update(payload);
+          
+          writePromise.then(async () => {
+            if (!isCustomize && setAsSchoolDefault) {
+              try {
+                await writeSchoolGradingDefault(gradingScale, { classGroup, examId, examName: name });
+              } catch (e) { console.warn('writeSchoolGradingDefault failed:', e); }
             }
             closePopup();
             showExamSettingsPopup();
-          })();
+          });
           });
       });
 
@@ -2582,9 +2557,10 @@ Promise.all([sectionRef.get(), classRef.get(), groupRef.get()])
   // Row 3
   const row3 = document.createElement('div');
   row3.style = 'display:flex;align-items:center;justify-content:flex-end;gap:8px;';
-  row3.innerHTML =
-  '<button type="button" class="option-btn toggle-subtopics" style="padding:6px 10px;">Subtopics</button>'
-  + (isAdmin ? '<button type="button" class="option-btn" style="padding:6px 10px;" onclick="this.closest(\'[data-subject-row]\').remove()">Remove</button>' : '');
+  row3.innerHTML = `
+    <button type="button" class="option-btn toggle-subtopics" style="padding:6px 10px;">Subtopics</button>
+    ${isAdmin ? `<button type="button" class="option-btn" style="padding:6px 10px;" onclick="this.closest('[data-subject-row]').remove()">Remove</button>` : ''}
+  `;
 
     // Initialize mode → show panel only for "custom"
     setTimeout(() => {
@@ -2719,12 +2695,13 @@ function editAddSubtopicField(name = '', max = '') {
   const div = document.createElement('div');
   div.setAttribute('data-subtopic-row', '');
   div.style = 'display:flex;align-items:center;gap:8px;margin-bottom:7px;';
-  div.innerHTML =
-  '<input type="text" data-subtopic-name placeholder="Subtopic Name" value="' + name + '"'
-  + ' style="width:80%; padding: 8px; border-radius: 6px; border: 1px solid #c7d7ea; background: #f7fafd; margin-right:7px;" />'
-  + '<input type="number" data-subtopic-max placeholder="Max Marks" step="0.01" value="' + max + '"'
-  + ' style="width:25%; padding: 8px; border-radius: 6px; border: 1px solid #c7d7ea; background: #f7fafd;" />'
-  + (isAdmin ? '<button type="button" class="option-btn" style="width: 70px; padding: 5px;" onclick="this.parentNode.remove()">Remove</button>' : '');
+  div.innerHTML = `
+    <input type="text" data-subtopic-name placeholder="Subtopic Name" value="${name}"
+       style="width:80%; padding: 8px; border-radius: 6px; border: 1px solid #c7d7ea; background: #f7fafd; margin-right:7px;" />
+    <input type="number" data-subtopic-max placeholder="Max Marks" step="0.01"
+       value="${max}" style="width:25%; padding: 8px; border-radius: 6px; border: 1px solid #c7d7ea; background: #f7fafd;" />
+    ${isAdmin ? `<button type="button" class="option-btn" style="width: 70px; padding: 5px;" onclick="this.parentNode.remove()">Remove</button>` : ''}
+  `;
   editSubtopicsContainer.appendChild(div);
 }
 
@@ -4669,29 +4646,3 @@ if (marksFileInput) {
 </script>
 </body>
 </html>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
