@@ -950,9 +950,12 @@ await nextFrame();
         .collection('students').doc(stu.id)
         .collection('marks').doc(examId).get();
       let marks = mDoc.exists ? mDoc.data() : {};
-      let total=0;
-      (exam.subjects||[]).forEach(s=>{ total += Number(marks[s.name]||0); });
-      stu.total=total;
+      let total = 0;
+(exam.subjects || []).forEach(s => {
+  if (!s || s.excludeFromTotal) return;
+  total += Number(marks[s.name] || 0);
+});
+stu.total = total;
     }
 
     // Rank
@@ -1641,9 +1644,12 @@ function showExamSettingsPopup() {
         ${isAdmin ? `<button type="button" class="popup-action-btn" data-edit="${exam.id}" style="margin-left:10px;padding:2px 8px;font-size:0.9em;">Edit</button>` : ''}
         <div style="margin-top:6px;margin-left:8px;font-size:0.99em;">
         ${Array.isArray(exam.subjects) && exam.subjects.length > 0
-          ? exam.subjects.map(subj => `${subj.name} <span style="color:#888;">(Max: ${subj.max})</span>`).join(', ')
-          : '<span style="color:#aaa;">No subjects</span>'
-        }
+  ? exam.subjects.map(subj => {
+      const opt = subj && subj.excludeFromTotal ? ' <span style="color:#a15d00; font-weight:600;">[Optional]</span>' : '';
+      return `${subj.name} <span style="color:#888;">(Max: ${subj.max})</span>${opt}`;
+    }).join(', ')
+  : '<span style="color:#aaa;">No subjects</span>'
+}
       </div>
       <div style="margin-top:4px;margin-left:8px;font-size:0.95em;color:#444;">
         ${
@@ -1774,19 +1780,25 @@ function showExamSettingsPopup() {
         if (container) {
           const subjectDivs = container.querySelectorAll('div[data-subject-row]');
           subjectDivs.forEach(div => {
-            const subjInput = div.querySelector('input[type="text"]');
-            const marksInput = div.querySelector('input[type="number"]');
-            const subjName = subjInput ? subjInput.value.trim() : '';
-            const maxMarks = marksInput ? parseInt(marksInput.value.trim()) : 0;
-            if (subjName && maxMarks) {
-              subjects.push({ name: subjName, max: maxMarks });
-            }
-          });
+  const subjInput = div.querySelector('input[type="text"]');
+  const marksInput = div.querySelector('input[type="number"]');
+  const optInput  = div.querySelector('.subject-opt');
+  const subjName = subjInput ? subjInput.value.trim() : '';
+  const maxMarks = marksInput ? parseInt(marksInput.value.trim()) : 0;
+  const exclude  = !!(optInput && optInput.checked);
+  if (subjName && maxMarks) {
+    subjects.push({ name: subjName, max: maxMarks, excludeFromTotal: exclude });
+  }
+});
         }
         if (!name || !subjects.length) {
-          alert("Please enter exam name and at least one subject!");
-          return;
-        }
+  alert("Please enter exam name and at least one subject!");
+  return;
+}
+if (!subjects.some(s => !s.excludeFromTotal)) {
+  alert("At least one subject must be included in total.");
+  return;
+}
         // --- Subtopics (collect manual) + optional Internal (computed) + dedupe ---
 let subtopics = [];
 {
@@ -2011,19 +2023,23 @@ if (addSubtopicBtn) {
       const subjectsContainer = popupContent.querySelector('#subjectsContainer');
       const addSubjectBtn = popupContent.querySelector('#addSubjectBtn');
 
-      function addSubjectField(name = '', max = '') {
-        const div = document.createElement('div');
-        div.setAttribute('data-subject-row', '');
-        div.style = 'display:flex;align-items:center;gap:8px;margin-bottom:7px;';
-        div.innerHTML = `
-          <input type="text" placeholder="Subject Name" value="${name}"
-                 required style="width:80%; padding: 8px; border-radius: 6px; border: 1px solid #c7d7ea; background: #f7fafd; margin-right:7px;" />
-          <input type="number" placeholder="Max Marks" min="1" max="200" step="1"
-                 value="${max}" required style="width:25%; padding: 8px; border-radius: 6px; border: 1px solid #c7d7ea; background: #f7fafd;" />
-          ${isAdmin ? `<button type="button" class="option-btn" style="width: 70px; padding: 5px;" onclick="this.parentNode.remove()">Remove</button>` : ''}
-        `;
-        subjectsContainer.appendChild(div);
-      }
+      function addSubjectField(name = '', max = '', exclude = false) {
+  const div = document.createElement('div');
+  div.setAttribute('data-subject-row', '');
+  div.style = 'display:flex;align-items:center;gap:8px;margin-bottom:7px;flex-wrap:wrap;';
+  div.innerHTML = `
+    <input type="text" placeholder="Subject Name" value="${name}"
+           required style="flex:1 1 48%; min-width:220px; padding:8px; border-radius:6px; border:1px solid #c7d7ea; background:#f7fafd; margin-right:7px;" />
+    <input type="number" placeholder="Max Marks" min="1" max="200" step="1"
+           value="${max}" required style="width:120px; padding:8px; border-radius:6px; border:1px solid #c7d7ea; background:#f7fafd;" />
+    <label style="display:flex;align-items:center;gap:6px;font-size:.92em;color:#555; margin-left:6px;">
+      <input type="checkbox" class="subject-opt" ${exclude ? 'checked' : ''} />
+      Exclude from total
+    </label>
+    ${isAdmin ? `<button type="button" class="option-btn" style="width:70px; padding:5px; margin-left:auto;" onclick="this.parentNode.remove()">Remove</button>` : ''}
+  `;
+  subjectsContainer.appendChild(div);
+}
     if (addSubjectBtn) {
   addSubjectBtn.onclick = () => addSubjectField();
   // start with one empty row
@@ -2198,19 +2214,25 @@ function showEditExamPopup(examId) {
         if (container) {
           const subjectDivs = container.querySelectorAll('div[data-subject-row]');
           subjectDivs.forEach(div => {
-            const subjInput = div.querySelector('input[type="text"]');
-            const marksInput = div.querySelector('input[type="number"]');
-            const subjName = subjInput ? subjInput.value.trim() : '';
-            const maxMarks = marksInput ? parseInt(marksInput.value.trim()) : 0;
-            if (subjName && maxMarks) {
-              subjects.push({ name: subjName, max: maxMarks });
-            }
-          });
+          const subjInput = div.querySelector('input[type="text"]');
+          const marksInput = div.querySelector('input[type="number"]');
+          const optInput  = div.querySelector('.subject-opt');
+          const subjName = subjInput ? subjInput.value.trim() : '';
+          const maxMarks = marksInput ? parseInt(marksInput.value.trim()) : 0;
+          const exclude  = !!(optInput && optInput.checked);
+          if (subjName && maxMarks) {
+            subjects.push({ name: subjName, max: maxMarks, excludeFromTotal: exclude });
+          }
+        });
         }
-        if (!name || !subjects.length) {
-          alert("Please enter exam name and at least one subject!");
-          return;
-        }
+       if (!name || !subjects.length) {
+  alert("Please enter exam name and at least one subject!");
+  return;
+}
+if (!subjects.some(s => !s.excludeFromTotal)) {
+  alert("At least one subject must be included in total.");
+  return;
+}
        // --- Subtopics (manual) + optional Internal (computed) + dedupe ---
 let subtopics = [];
 
@@ -2354,21 +2376,27 @@ let srcIds = [];
       // --- Subject Fields Logic for Edit ---
       const subjectsContainer = popupContent.querySelector('#editSubjectsContainer');
       const addSubjectBtn = popupContent.querySelector('#editAddSubjectBtn');
-      function addSubjectField(name = '', max = '') {
-        const idx = subjectsContainer.children.length;
-        const div = document.createElement('div');
-        div.setAttribute("data-subject-row", "");
-        div.style = "display:flex;align-items:center;gap:8px;margin-bottom:7px;";
-        div.innerHTML = `
-         <input type="text" name="subjectName_${idx}" placeholder="Subject Name" value="${name}" required style="width:80%; padding: 8px; border-radius: 6px; border: 1px solid #c7d7ea; background: #f7fafd; margin-right:7px;" />
-         <input type="number" name="maxMarks_${idx}" placeholder="Max Marks" min="1" max="200" value="${max}" required style="width:25%; padding: 8px; border-radius: 6px; border: 1px solid #c7d7ea; background: #f7fafd;" />
-         ${isAdmin ? `<button type="button" class="option-btn" style="width: 70px; padding: 5px;" onclick="this.parentNode.remove()">Remove</button>` : ''}
-        `;
-        subjectsContainer.appendChild(div);
-      }
-      if (exam.subjects && Array.isArray(exam.subjects)) {
-        exam.subjects.forEach(subj => addSubjectField(subj.name, subj.max));
-      }
+      function addSubjectField(name = '', max = '', exclude = false) {
+  const idx = subjectsContainer.children.length;
+  const div = document.createElement('div');
+  div.setAttribute('data-subject-row', '');
+  div.style = 'display:flex;align-items:center;gap:8px;margin-bottom:7px;flex-wrap:wrap;';
+  div.innerHTML = `
+    <input type="text" name="subjectName_${idx}" placeholder="Subject Name" value="${name}" required
+           style="flex:1 1 48%; min-width:220px; padding:8px; border-radius:6px; border:1px solid #c7d7ea; background:#f7fafd; margin-right:7px;" />
+    <input type="number" name="maxMarks_${idx}" placeholder="Max Marks" min="1" max="200" value="${max}" required
+           style="width:120px; padding:8px; border-radius:6px; border:1px solid #c7d7ea; background:#f7fafd;" />
+    <label style="display:flex;align-items:center;gap:6px;font-size:.92em;color:#555; margin-left:6px;">
+      <input type="checkbox" class="subject-opt" ${exclude ? 'checked' : ''} />
+      Exclude from total
+    </label>
+    ${isAdmin ? `<button type="button" class="option-btn" style="width:70px; padding:5px; margin-left:auto;" onclick="this.parentNode.remove()">Remove</button>` : ''}
+  `;
+  subjectsContainer.appendChild(div);
+}
+     if (exam.subjects && Array.isArray(exam.subjects)) {
+  exam.subjects.forEach(subj => addSubjectField(subj.name, subj.max, !!subj.excludeFromTotal));
+}
       addSubjectBtn.onclick = () => addSubjectField();
             // === Grading UI (Edit Exam) ===
       (function setupEditGradingUI(){
@@ -2720,7 +2748,10 @@ function _computeInternalFromArray(sourceItems, internalMax) {
              let html2 = `
 
                 <form id="marksEntryForm" style="max-height:77vh;overflow-y:auto;">
-                  <div class="popup-title">Marks: ${exam.name} – ${subjectName} (Max: ${max})</div>
+                  <div class="popup-title">
+                Marks: ${exam.name} – ${subjectName} (Max: ${max})
+                ${subj && subj.excludeFromTotal ? '<span style="color:#a15d00; font-weight:700; margin-left:6px;">[Optional – not in total]</span>' : ''}
+              </div>
                   <div style="display:flex;flex-direction:column;gap:8px;">
               
                     ${
@@ -4357,4 +4388,5 @@ if (marksFileInput) {
 </script>
 </body>
 </html>
+
 
