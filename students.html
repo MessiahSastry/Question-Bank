@@ -2561,30 +2561,35 @@ let srcIds = [];
             .collection('sections').doc(currentSectionId)
             .collection('examOverrides').doc(examId);
           
-          // payload to write
+                    // payload to write
           const payload = { 
             name, nameKey, subjects, subtopics,
             grading: { mode: 'custom', scale: gradingScale }
           };
-          
-          let writePromise;
-          if (scope === 'group') {
-            writePromise = groupRef.update(payload);
-          } else if (scope === 'class') {
-            writePromise = classOverrideRef.set({ ...payload, origin: 'overridden' }, { merge: true });
-          } else { // section
-            writePromise = sectionOverrideRef.set({ ...payload, origin: 'overridden' }, { merge: true });
-          }
-         
-          writePromise.then(async () => {
-            if (!isCustomize && setAsSchoolDefault) {
-              try {
-                await writeSchoolGradingDefault(gradingScale, { classGroup, examId, examName: name });
-              } catch (e) { console.warn('writeSchoolGradingDefault failed:', e); }
+
+          (async () => {
+            try {
+              if (scope === 'group') {
+                await groupRef.update(payload);
+                if (setAsSchoolDefault) {
+                  try {
+                    await writeSchoolGradingDefault(gradingScale, { classGroup, examId, examName: name });
+                  } catch (e) {
+                    console.warn('writeSchoolGradingDefault failed:', e);
+                  }
+                }
+              } else if (scope === 'class') {
+                await classOverrideRef.set({ ...payload, origin: 'overridden' }, { merge: true });
+              } else {
+                await sectionOverrideRef.set({ ...payload, origin: 'overridden' }, { merge: true });
+              }
+            } catch (err) {
+              alert('Error saving changes: ' + (err?.message || err));
+              return;
             }
             closePopup();
             showExamSettingsPopup();
-          });
+          })();
           });
       });
 
@@ -4716,6 +4721,7 @@ if (marksFileInput) {
 </script>
 </body>
 </html>
+
 
 
 
