@@ -1791,8 +1791,13 @@ function showExamSettingsPopup() {
   const maxMarks = marksInput ? parseInt(marksInput.value.trim()) : 0;
   const exclude  = !!(optInput && optInput.checked);
 
+    // read subtopics mode
+  const modeSel = div.querySelector('.subject-subtopics-mode');
+  const subtopicsMode = modeSel ? modeSel.value : (Array.isArray(subjSubs)&&subjSubs.length ? 'custom' : 'common');
+
+  // collect subtopics (only if "custom")
   let subjSubs = [];
-  if (wrap) {
+  if (subtopicsMode === 'custom' && wrap) {
     wrap.querySelectorAll('[data-subtopic-row]').forEach(r => {
       const n = r.querySelector('input[data-subtopic-name]')?.value.trim();
       const mRaw = r.querySelector('input[data-subtopic-max]')?.value;
@@ -1802,8 +1807,8 @@ function showExamSettingsPopup() {
   }
 
   if (subjName && maxMarks) {
-    const payload = { name: subjName, max: maxMarks, excludeFromTotal: exclude };
-    if (subjSubs.length) payload.subtopics = subjSubs;
+    const payload = { name: subjName, max: maxMarks, excludeFromTotal: exclude, subtopicsMode };
+    if (subtopicsMode === 'custom' && subjSubs.length) payload.subtopics = subjSubs;
     subjects.push(payload);
   }
 });
@@ -2040,7 +2045,7 @@ if (addSubtopicBtn) {
       const subjectsContainer = popupContent.querySelector('#subjectsContainer');
       const addSubjectBtn = popupContent.querySelector('#addSubjectBtn');
 
-     function addSubjectField(name = '', max = '', exclude = false, subtopics = []) {
+    function addSubjectField(name = '', max = '', exclude = false, subtopics = [], subtopicsMode = 'common') {
   const div = document.createElement('div');
   div.setAttribute('data-subject-row', '');
   div.style = 'display:flex;flex-direction:column;gap:6px;margin-bottom:12px;border-bottom:1px solid #f1f1f1;padding-bottom:10px;';
@@ -2055,10 +2060,18 @@ if (addSubtopicBtn) {
            value="${max}" required style="flex:0 0 110px; width:110px; padding:8px; text-align:right; border-radius:6px; border:1px solid #c7d7ea; background:#f7fafd;" />
   `;
 
-  // Row 2: Exclude checkbox (left aligned)
+   // Row 2: Subtopics mode + Exclude checkbox
   const row2 = document.createElement('div');
-  row2.style = 'display:flex;align-items:center;justify-content:flex-start;';
+  row2.style = 'display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;';
   row2.innerHTML = `
+    <label style="display:flex;align-items:center;gap:8px;font-size:.95em;color:#555;">
+      <span style="min-width:120px;">Subtopics mode</span>
+      <select class="subject-subtopics-mode" style="padding:6px 8px;border:1px solid #c7d7ea;border-radius:6px;background:#fff;">
+        <option value="common" ${subtopics?.length ? '' : 'selected'}>Common</option>
+        <option value="custom" ${subtopics?.length ? 'selected' : ''}>Custom</option>
+        <option value="none">None</option>
+      </select>
+    </label>
     <label style="display:flex;align-items:center;gap:8px;font-size:.95em;color:#555;">
       <input type="checkbox" class="subject-opt" ${exclude ? 'checked' : ''} />
       Exclude from total
@@ -2072,6 +2085,17 @@ if (addSubtopicBtn) {
     <button type="button" class="option-btn toggle-subtopics" style="padding:6px 10px;">Subtopics</button>
     ${isAdmin ? `<button type="button" class="option-btn" style="padding:6px 10px;" onclick="this.closest('[data-subject-row]').remove()">Remove</button>` : ''}
   `;
+
+     // Initialize mode → show panel only for "custom"
+  setTimeout(() => {
+    const modeSel = row2.querySelector('.subject-subtopics-mode');
+    const sync = () => { panel.style.display = (modeSel.value === 'custom') ? 'block' : 'none'; };
+    if (modeSel) {
+      modeSel.value = subtopicsMode || (Array.isArray(subtopics)&&subtopics.length ? 'custom' : 'common');
+      sync();
+      modeSel.addEventListener('change', sync);
+    }
+  }, 0);
 
   // Subtopics panel (collapsed by default)
   const panel = document.createElement('div');
@@ -2120,9 +2144,9 @@ if (addSubtopicBtn) {
 }
 
     if (addSubjectBtn) {
-  addSubjectBtn.onclick = () => addSubjectField();
+  addSubjectBtn.onclick = () => addSubjectField('', '', false, [], 'common');
   // start with one empty row
-  addSubjectField();
+  addSubjectField('', '', false, [], 'common');
 }
      // === Grading UI (Add Exam) ===
 (function setupGradingUI(){
@@ -2301,9 +2325,13 @@ function showEditExamPopup(examId) {
   const maxMarks = marksInput ? parseInt(marksInput.value.trim()) : 0;
   const exclude  = !!(optInput && optInput.checked);
 
-  // collect subject-level subtopics (if any)
+    // read subtopics mode
+  const modeSel = div.querySelector('.subject-subtopics-mode');
+  const subtopicsMode = modeSel ? modeSel.value : 'common';
+
+  // collect subtopics (only if "custom")
   let subjSubs = [];
-  if (wrap) {
+  if (subtopicsMode === 'custom' && wrap) {
     wrap.querySelectorAll('[data-subtopic-row]').forEach(r => {
       const n = r.querySelector('input[data-subtopic-name]')?.value.trim();
       const mRaw = r.querySelector('input[data-subtopic-max]')?.value;
@@ -2313,8 +2341,8 @@ function showEditExamPopup(examId) {
   }
 
   if (subjName && maxMarks) {
-    const payload = { name: subjName, max: maxMarks, excludeFromTotal: exclude };
-    if (subjSubs.length) payload.subtopics = subjSubs;
+    const payload = { name: subjName, max: maxMarks, excludeFromTotal: exclude, subtopicsMode };
+    if (subtopicsMode === 'custom' && subjSubs.length) payload.subtopics = subjSubs;
     subjects.push(payload);
   }
 });
@@ -2470,7 +2498,7 @@ let srcIds = [];
       // --- Subject Fields Logic for Edit ---
       const subjectsContainer = popupContent.querySelector('#editSubjectsContainer');
       const addSubjectBtn = popupContent.querySelector('#editAddSubjectBtn');
-      function addSubjectField(name = '', max = '', exclude = false, subtopics = []) {
+     function addSubjectField(name = '', max = '', exclude = false, subtopics = [], subtopicsMode = 'common') {
   const idx = subjectsContainer.children.length;
   const div = document.createElement('div');
   div.setAttribute('data-subject-row', '');
@@ -2486,10 +2514,18 @@ let srcIds = [];
            style="flex:0 0 110px; width:110px; padding:8px; text-align:right; border-radius:6px; border:1px solid #c7d7ea; background:#f7fafd;" />
   `;
 
-  // Row 2
+   // Row 2: Subtopics mode + Exclude checkbox
   const row2 = document.createElement('div');
-  row2.style = 'display:flex;align-items:center;justify-content:flex-start;';
+  row2.style = 'display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;';
   row2.innerHTML = `
+    <label style="display:flex;align-items:center;gap:8px;font-size:.95em;color:#555;">
+      <span style="min-width:120px;">Subtopics mode</span>
+      <select class="subject-subtopics-mode" style="padding:6px 8px;border:1px solid #c7d7ea;border-radius:6px;background:#fff;">
+        <option value="common">Common</option>
+        <option value="custom" ${Array.isArray(subtopics)&&subtopics.length ? 'selected' : ''}>Custom</option>
+        <option value="none" ${(!subtopics||!subtopics.length) ? '' : ''}>None</option>
+      </select>
+    </label>
     <label style="display:flex;align-items:center;gap:8px;font-size:.95em;color:#555;">
       <input type="checkbox" class="subject-opt" ${exclude ? 'checked' : ''} />
       Exclude from total
@@ -2504,6 +2540,18 @@ let srcIds = [];
     ${isAdmin ? `<button type="button" class="option-btn" style="padding:6px 10px;" onclick="this.closest('[data-subject-row]').remove()">Remove</button>` : ''}
   `;
 
+    // Initialize mode → show panel only for "custom"
+  setTimeout(() => {
+    const modeSel = row2.querySelector('.subject-subtopics-mode');
+    const sync = () => { panel.style.display = (modeSel.value === 'custom') ? 'block' : 'none'; };
+    if (modeSel) {
+      modeSel.value = subtopicsMode || (Array.isArray(subtopics)&&subtopics.length ? 'custom' : 'common');
+      sync();
+      modeSel.addEventListener('change', sync);
+    }
+  }, 0);
+
+  // Subtopics panel (collapsed by default)
   const panel = document.createElement('div');
   panel.className = 'subject-subtopics';
   panel.style = 'display:none; background:#f9fcff; border:1px solid #e0ecfb; border-radius:8px; padding:8px;';
@@ -2551,7 +2599,8 @@ let srcIds = [];
     subj.name,
     subj.max,
     !!subj.excludeFromTotal,
-    Array.isArray(subj.subtopics) ? subj.subtopics : []
+    Array.isArray(subj.subtopics) ? subj.subtopics : [],
+    subj.subtopicsMode || (Array.isArray(subj.subtopics) && subj.subtopics.length ? 'custom' : 'common')
   ));
 }
       addSubjectBtn.onclick = () => addSubjectField();
@@ -4545,6 +4594,7 @@ if (marksFileInput) {
 </script>
 </body>
 </html>
+
 
 
 
