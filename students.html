@@ -2043,23 +2043,81 @@ if (addSubtopicBtn) {
      function addSubjectField(name = '', max = '', exclude = false, subtopics = []) {
   const div = document.createElement('div');
   div.setAttribute('data-subject-row', '');
-  div.style = 'display:flex;flex-direction:column;gap:6px;margin-bottom:10px;border-bottom:1px solid #f1f1f1;padding-bottom:8px;';
+  div.style = 'display:flex;flex-direction:column;gap:6px;margin-bottom:12px;border-bottom:1px solid #f1f1f1;padding-bottom:10px;';
 
-  // top row (name left ≈75%, max box right)
-  const top = document.createElement('div');
-  top.style = 'display:flex;align-items:center;gap:10px;flex-wrap:nowrap;';
-  top.innerHTML = `
+  // Row 1: name (left) + max (right)
+  const row1 = document.createElement('div');
+  row1.style = 'display:flex;align-items:center;gap:10px;';
+  row1.innerHTML = `
     <input type="text" placeholder="Subject Name" value="${name}"
            required style="flex:1 1 75%; min-width:0; padding:8px; border-radius:6px; border:1px solid #c7d7ea; background:#f7fafd;" />
     <input type="number" placeholder="Max" min="1" max="200" step="1"
-           value="${max}" required style="flex:0 0 110px; width:110px; padding:8px; text-align:right; border-radius:6px; border:1px solid #c7d7ea; background:#f7fafd; margin-left:auto;" />
-    <label style="display:flex;align-items:center;gap:6px;font-size:.92em;color:#555; white-space:nowrap;">
-      <input type="checkbox" class="subject-opt" ${exclude ? 'checked' : ''} />
-      Exclude
-    </label>
-    <button type="button" class="option-btn toggle-subtopics" style="padding:6px 10px; white-space:nowrap;">Subtopics</button>
-    ${isAdmin ? `<button type="button" class="option-btn" style="padding:6px 10px; white-space:nowrap;" onclick="this.closest('[data-subject-row]').remove()">Remove</button>` : ''}
+           value="${max}" required style="flex:0 0 110px; width:110px; padding:8px; text-align:right; border-radius:6px; border:1px solid #c7d7ea; background:#f7fafd;" />
   `;
+
+  // Row 2: Exclude checkbox (left aligned)
+  const row2 = document.createElement('div');
+  row2.style = 'display:flex;align-items:center;justify-content:flex-start;';
+  row2.innerHTML = `
+    <label style="display:flex;align-items:center;gap:8px;font-size:.95em;color:#555;">
+      <input type="checkbox" class="subject-opt" ${exclude ? 'checked' : ''} />
+      Exclude from total
+    </label>
+  `;
+
+  // Row 3: Actions (right aligned)
+  const row3 = document.createElement('div');
+  row3.style = 'display:flex;align-items:center;justify-content:flex-end;gap:8px;';
+  row3.innerHTML = `
+    <button type="button" class="option-btn toggle-subtopics" style="padding:6px 10px;">Subtopics</button>
+    ${isAdmin ? `<button type="button" class="option-btn" style="padding:6px 10px;" onclick="this.closest('[data-subject-row]').remove()">Remove</button>` : ''}
+  `;
+
+  // Subtopics panel (collapsed by default)
+  const panel = document.createElement('div');
+  panel.className = 'subject-subtopics';
+  panel.style = 'display:none; background:#f9fcff; border:1px solid #e0ecfb; border-radius:8px; padding:8px;';
+  panel.innerHTML = `
+    <div style="font-weight:600;color:#1762a7; margin-bottom:6px;">Subtopics for this subject</div>
+    <div data-subtopics-wrap style="display:flex;flex-direction:column;gap:6px;"></div>
+    <div><button type="button" class="option-btn add-subtopic" style="margin-top:6px;">+ Add Subtopic</button></div>
+    <div style="font-size:.85em;color:#666; margin-top:4px;">If subtopics are added, this subject’s total is derived from their sum.</div>
+  `;
+
+  // Assemble
+  div.appendChild(row1);
+  div.appendChild(row2);
+  div.appendChild(row3);
+  div.appendChild(panel);
+  subjectsContainer.appendChild(div);
+
+  // Wiring
+  const wrap   = panel.querySelector('[data-subtopics-wrap]');
+  const btnTgl = row3.querySelector('.toggle-subtopics');
+  const btnAdd = panel.querySelector('.add-subtopic');
+
+  function addSubtopicRow(stName = '', stMax = '') {
+    const row = document.createElement('div');
+    row.setAttribute('data-subtopic-row', '');
+    row.style = 'display:flex;align-items:center;gap:8px;';
+    row.innerHTML = `
+      <input type="text" data-subtopic-name placeholder="Subtopic Name" value="${stName}"
+             style="flex:1 1 60%; min-width:180px; padding:7px; border-radius:6px; border:1px solid #c7d7ea; background:#fff;" />
+      <input type="number" data-subtopic-max placeholder="Max" step="0.01" value="${stMax}"
+             style="width:100px; padding:7px; text-align:right; border-radius:6px; border:1px solid #c7d7ea; background:#fff;" />
+      <button type="button" class="option-btn" onclick="this.parentNode.remove()">Remove</button>
+    `;
+    wrap.appendChild(row);
+  }
+
+  btnTgl.onclick = () => { panel.style.display = (panel.style.display === 'none' || panel.style.display === '') ? 'block' : 'none'; };
+  btnAdd.onclick = () => addSubtopicRow();
+
+  if (Array.isArray(subtopics) && subtopics.length) {
+    panel.style.display = 'block';
+    subtopics.forEach(st => addSubtopicRow(st?.name || '', (st?.max ?? '').toString()));
+  }
+}
 
   // subtopics panel (collapsible)
   const panel = document.createElement('div');
@@ -2466,22 +2524,78 @@ let srcIds = [];
   const idx = subjectsContainer.children.length;
   const div = document.createElement('div');
   div.setAttribute('data-subject-row', '');
-  div.style = 'display:flex;flex-direction:column;gap:6px;margin-bottom:10px;border-bottom:1px solid #f1f1f1;padding-bottom:8px;';
+  div.style = 'display:flex;flex-direction:column;gap:6px;margin-bottom:12px;border-bottom:1px solid #f1f1f1;padding-bottom:10px;';
 
-  const top = document.createElement('div');
-  top.style = 'display:flex;align-items:center;gap:10px;flex-wrap:nowrap;';
-  top.innerHTML = `
+  // Row 1
+  const row1 = document.createElement('div');
+  row1.style = 'display:flex;align-items:center;gap:10px;';
+  row1.innerHTML = `
     <input type="text" name="subjectName_${idx}" placeholder="Subject Name" value="${name}" required
            style="flex:1 1 75%; min-width:0; padding:8px; border-radius:6px; border:1px solid #c7d7ea; background:#f7fafd;" />
     <input type="number" name="maxMarks_${idx}" placeholder="Max" min="1" max="200" value="${max}" required
-           style="flex:0 0 110px; width:110px; padding:8px; text-align:right; border-radius:6px; border:1px solid #c7d7ea; background:#f7fafd; margin-left:auto;" />
-    <label style="display:flex;align-items:center;gap:6px;font-size:.92em;color:#555; white-space:nowrap;">
-      <input type="checkbox" class="subject-opt" ${exclude ? 'checked' : ''} />
-      Exclude
-    </label>
-    <button type="button" class="option-btn toggle-subtopics" style="padding:6px 10px; white-space:nowrap;">Subtopics</button>
-    ${isAdmin ? `<button type="button" class="option-btn" style="padding:6px 10px; white-space:nowrap;" onclick="this.closest('[data-subject-row]').remove()">Remove</button>` : ''}
+           style="flex:0 0 110px; width:110px; padding:8px; text-align:right; border-radius:6px; border:1px solid #c7d7ea; background:#f7fafd;" />
   `;
+
+  // Row 2
+  const row2 = document.createElement('div');
+  row2.style = 'display:flex;align-items:center;justify-content:flex-start;';
+  row2.innerHTML = `
+    <label style="display:flex;align-items:center;gap:8px;font-size:.95em;color:#555;">
+      <input type="checkbox" class="subject-opt" ${exclude ? 'checked' : ''} />
+      Exclude from total
+    </label>
+  `;
+
+  // Row 3
+  const row3 = document.createElement('div');
+  row3.style = 'display:flex;align-items:center;justify-content:flex-end;gap:8px;';
+  row3.innerHTML = `
+    <button type="button" class="option-btn toggle-subtopics" style="padding:6px 10px;">Subtopics</button>
+    ${isAdmin ? `<button type="button" class="option-btn" style="padding:6px 10px;" onclick="this.closest('[data-subject-row]').remove()">Remove</button>` : ''}
+  `;
+
+  const panel = document.createElement('div');
+  panel.className = 'subject-subtopics';
+  panel.style = 'display:none; background:#f9fcff; border:1px solid #e0ecfb; border-radius:8px; padding:8px;';
+  panel.innerHTML = `
+    <div style="font-weight:600;color:#1762a7; margin-bottom:6px;">Subtopics for this subject</div>
+    <div data-subtopics-wrap style="display:flex;flex-direction:column;gap:6px;"></div>
+    <div><button type="button" class="option-btn add-subtopic" style="margin-top:6px;">+ Add Subtopic</button></div>
+    <div style="font-size:.85em;color:#666; margin-top:4px;">If subtopics are added, this subject’s total is derived from their sum.</div>
+  `;
+
+  div.appendChild(row1);
+  div.appendChild(row2);
+  div.appendChild(row3);
+  div.appendChild(panel);
+  subjectsContainer.appendChild(div);
+
+  const wrap   = panel.querySelector('[data-subtopics-wrap]');
+  const btnTgl = row3.querySelector('.toggle-subtopics');
+  const btnAdd = panel.querySelector('.add-subtopic');
+
+  function addSubtopicRow(stName = '', stMax = '') {
+    const r = document.createElement('div');
+    r.setAttribute('data-subtopic-row', '');
+    r.style = 'display:flex;align-items:center;gap:8px;';
+    r.innerHTML = `
+      <input type="text" data-subtopic-name placeholder="Subtopic Name" value="${stName}"
+             style="flex:1 1 60%; min-width:180px; padding:7px; border-radius:6px; border:1px solid #c7d7ea; background:#fff;" />
+      <input type="number" data-subtopic-max placeholder="Max" step="0.01" value="${stMax}"
+             style="width:100px; padding:7px; text-align:right; border-radius:6px; border:1px solid #c7d7ea; background:#fff;" />
+      <button type="button" class="option-btn" onclick="this.parentNode.remove()">Remove</button>
+    `;
+    wrap.appendChild(r);
+  }
+
+  btnTgl.onclick = () => { panel.style.display = (panel.style.display === 'none' || panel.style.display === '') ? 'block' : 'none'; };
+  btnAdd.onclick = () => addSubtopicRow();
+
+  if (Array.isArray(subtopics) && subtopics.length) {
+    panel.style.display = 'block';
+    subtopics.forEach(st => addSubtopicRow(st?.name || '', (st?.max ?? '').toString()));
+  }
+}
 
   const panel = document.createElement('div');
   panel.className = 'subject-subtopics';
@@ -4530,6 +4644,7 @@ if (marksFileInput) {
 </script>
 </body>
 </html>
+
 
 
 
