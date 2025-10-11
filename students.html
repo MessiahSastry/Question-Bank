@@ -1540,27 +1540,24 @@ async function fetchEffectiveExams(classId, className) {
     map.set(d.id, { id: d.id, ...d.data(), __origin: 'group' });
   });
 
-  // 2) Load class overrides
-  const overSnap = await db.collection('years').doc(academicYear)
+  // 2) Load class overrides (middle precedence)
+  const classSnap = await db.collection('years').doc(academicYear)
     .collection('classes').doc(classId)
     .collection('examOverrides').get();
 
-  overSnap.forEach(doc => {
+  classSnap.forEach(doc => {
     const o = doc.data() || {};
 
-    // Class-only exam: doesn’t exist in group, lives only for this class
     if (o.origin === 'class-only') {
       map.set(doc.id, { id: doc.id, ...o, __origin: 'class-only' });
       return;
     }
 
-    // Hide an inherited exam for this class
     if (o.hidden === true) {
       map.delete(doc.id);
       return;
     }
 
-    // Field-level override over a group exam
     if (map.has(doc.id)) {
       const base = map.get(doc.id);
       map.set(doc.id, {
@@ -1569,19 +1566,53 @@ async function fetchEffectiveExams(classId, className) {
         subjects:    (Array.isArray(o.subjects) && o.subjects.length ? o.subjects : base.subjects),
         subtopics:   (Array.isArray(o.subtopics) && o.subtopics.length ? o.subtopics : base.subtopics),
         grading:     (o.grading || base.grading),
-        __origin:    'overridden'
+        __origin:    'class-overridden'
       });
     } else {
-      // If override points to an unknown id, treat as class-only to be safe
       map.set(doc.id, { id: doc.id, ...o, __origin: 'class-only' });
     }
   });
 
-  // 3) Return a sorted list (by name)
+  // 3) Load section overrides (highest precedence)
+  const sectionSnap = await db.collection('years').doc(academicYear)
+    .collection('classes').doc(classId)
+    .collection('sections').doc(currentSectionId)
+    .collection('examOverrides').get();
+
+  sectionSnap.forEach(doc => {
+    const o = doc.data() || {};
+
+    if (o.origin === 'section-only') {
+      map.set(doc.id, { id: doc.id, ...o, __origin: 'section-only' });
+      return;
+    }
+
+    if (o.hidden === true) {
+      map.delete(doc.id);
+      return;
+    }
+
+    if (map.has(doc.id)) {
+      const base = map.get(doc.id);
+      map.set(doc.id, {
+        ...base,
+        name:        (o.name ?? base.name),
+        subjects:    (Array.isArray(o.subjects) && o.subjects.length ? o.subjects : base.subjects),
+        subtopics:   (Array.isArray(o.subtopics) && o.subtopics.length ? o.subtopics : base.subtopics),
+        grading:     (o.grading || base.grading),
+        __origin:    'section-overridden'
+      });
+    } else {
+      map.set(doc.id, { id: doc.id, ...o, __origin: 'section-only' });
+    }
+  });
+
+  // 4) Return a sorted list (by name)
   const list = Array.from(map.values());
   list.sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
   return list;
 }
+
 // --- shim: keep both names working safely ---
 if (typeof getExamsForCurrentClass !== 'function' && typeof fetchEffectiveExams === 'function') {
   // expose legacy name
@@ -1600,18 +1631,30 @@ function showExamSettingsPopup() {
   const classGroup = getClassGroupName(currentClassName);
 
   Promise.all([
-    fetchEffectiveExams(currentClassId, currentClassName), // effective list
-    db.collection('years').doc(academicYear)
-      .collection('classes').doc(currentClassId)
-      .collection('examOverrides').limit(1).get(),         // to infer “customized” state
-    readSchoolGradingDefault()
-  ]).then(([examsEff, overSnap, schoolDefault]) => {
-    const preloadScale = (schoolDefault && Array.isArray(schoolDefault.scale) && schoolDefault.scale.length)
-      ? schoolDefault.scale
-      : LEGACY_GRADING_SCALE;
+  fetchEffectiveExams(currentClassId, currentClassName), // effective list (now resolves section too)
+  db.collection('years').doc(academicYear)
+    .collection('classes').doc(currentClassId)
+    .collection('examOverrides').limit(1).get(),          // class overrides snapshot
+  db.collection('years').doc(academicYear)
+    .collection('classes').doc(currentClassId)
+    .collection('sections').doc(currentSectionId)
+    .collection('examOverrides').limit(1).get(),          // section overrides snapshot
+  readSchoolGradingDefault()
+]).then(([examsEff, classOverSnap, sectionOverSnap, schoolDefault]) => {
+  const preloadScale = (schoolDefault && Array.isArray(schoolDefault.scale) && schoolDefault.scale.length)
+    ? schoolDefault.scale
+    : LEGACY_GRADING_SCALE;
 
-    const isCustomized = !overSnap.empty; // any override/class-only/hide present?
-    const sourceChip = isCustomized ? 'Customized for this class' : 'Using group defaults';
+  const hasSection = !sectionOverSnap.empty;
+  const hasClass   = !classOverSnap.empty;
+  const activeScope = hasSection ? 'section' : (hasClass ? 'class' : 'group');
+
+  const sourceChip =
+    activeScope === 'section'
+      ? 'Customized for this section'
+      : activeScope === 'class'
+        ? 'Customized for this class'
+        : 'Using inherited defaults';
 
     const exams = Array.isArray(examsEff) ? examsEff : [];
     let html = `
@@ -1619,20 +1662,28 @@ function showExamSettingsPopup() {
 
 <!-- Source banner + mode toggles (separate lines) -->
 <div style="text-align:center;width:100%;padding:8px 10px;margin:6px 0 12px 0;
-            border-radius:10px;border:1px solid ${isCustomized ? '#ffd7a6' : '#c7d7ea'};
-            background:${isCustomized ? '#fff3e0' : '#e8f3ff'};
-            color:${isCustomized ? '#b05300' : '#0f3d6b'};font-weight:600;">
-  ${isCustomized ? 'Customized for this class' : 'Using inherited defaults'}
+            border-radius:10px;border:1px solid ${activeScope === 'group' ? '#c7d7ea' : '#ffd7a6'};
+            background:${activeScope === 'group' ? '#e8f3ff' : '#fff3e0'};
+            color:${activeScope === 'group' ? '#0f3d6b' : '#b05300'};font-weight:600;">
+  ${activeScope === 'section'
+      ? 'Customized for this section'
+      : activeScope === 'class'
+        ? 'Customized for this class'
+        : 'Using inherited defaults'}
 </div>
 
-<!-- Two independent checkboxes, left-aligned, one per line -->
+<!-- Three mutually exclusive options (group / class / section), one per line -->
 <label style="display:flex;align-items:center;gap:8px;margin:4px 0;color:#444;">
-  <input type="checkbox" id="classCustomizeToggle" ${isCustomized ? '' : 'checked'} />
+  <input type="checkbox" id="modeGroup"   ${activeScope === 'group'   ? 'checked' : ''} />
   <span>Use group exams</span>
 </label>
-<label style="display:flex;align-items:center;gap:8px;margin:4px 0 10px 0;color:#444;">
-  <input type="checkbox" id="classCustomizeToggleCustom" ${isCustomized ? 'checked' : ''} />
+<label style="display:flex;align-items:center;gap:8px;margin:4px 0;color:#444;">
+  <input type="checkbox" id="modeClass"   ${activeScope === 'class'   ? 'checked' : ''} />
   <span>Customize for this class</span>
+</label>
+<label style="display:flex;align-items:center;gap:8px;margin:4px 0 10px 0;color:#444;">
+  <input type="checkbox" id="modeSection" ${activeScope === 'section' ? 'checked' : ''} />
+  <span>Customize for this section</span>
 </label>
 
 <div id="examListArea" style="min-height:25vh;max-height:45vh;overflow-y:auto;margin-bottom:12px;">
@@ -1920,10 +1971,17 @@ let srcIds = [];
               return;
             }
             // If not duplicate, add (attach grading)
-           const isCustomize = (window.__sp_useGroupExams === false);
+          const scope = window.__sp_overrideScope || (window.__sp_useGroupExams === false ? 'class' : 'group');
 
-if (isCustomize) {
-  // create class-only exam with its own id (stable for this class)
+if (scope === 'group') {
+  return db.collection('years').doc(academicYear)
+    .collection('exams').doc('classGroups')
+    .collection(classGroup)
+    .add({
+      name, nameKey, subjects, subtopics,
+      grading: { mode: 'custom', scale: gradingScale }
+    });
+} else if (scope === 'class') {
   const ref = db.collection('years').doc(academicYear)
     .collection('classes').doc(currentClassId)
     .collection('examOverrides').doc(); // new id
@@ -1932,14 +1990,16 @@ if (isCustomize) {
     grading: { mode: 'custom', scale: gradingScale },
     origin: 'class-only'
   });
-} else {
-  return db.collection('years').doc(academicYear)
-    .collection('exams').doc('classGroups')
-    .collection(classGroup)
-    .add({
-      name, nameKey, subjects, subtopics,
-      grading: { mode: 'custom', scale: gradingScale }
-    });
+} else { // section
+  const ref = db.collection('years').doc(academicYear)
+    .collection('classes').doc(currentClassId)
+    .collection('sections').doc(currentSectionId)
+    .collection('examOverrides').doc(); // new id
+  return ref.set({
+    name, nameKey, subjects, subtopics,
+    grading: { mode: 'custom', scale: gradingScale },
+    origin: 'section-only'
+  });
 }
           })
           .then(async (docRef) => {
@@ -1960,34 +2020,28 @@ if (isCustomize) {
             alert('Error adding exam: ' + (err?.message || err));
           });
       });
-  // Persist the user's choice during this popup session (two checkboxes, mutually exclusive)
-const customizeTgl = popupContent.querySelector('#classCustomizeToggle');           // "Use group exams"
-const customizeTglCustom = popupContent.querySelector('#classCustomizeToggleCustom'); // "Customize for this class"
+  // Persist the user's scope choice during this popup session (three options, mutually exclusive)
+const tGroup   = popupContent.querySelector('#modeGroup');
+const tClass   = popupContent.querySelector('#modeClass');
+const tSection = popupContent.querySelector('#modeSection');
 
-function syncModeFromUI() {
-  // Use-group is the canonical flag used elsewhere
-  window.__sp_useGroupExams = !!(customizeTgl && customizeTgl.checked);
-  // Keep them mutually exclusive
-  if (customizeTgl && customizeTglCustom) {
-    if (window.__sp_useGroupExams) {
-      customizeTglCustom.checked = false;
-    } else {
-      customizeTgl.checked = false;
-      customizeTglCustom.checked = true;
-    }
-  }
+function setScope(scope) {
+  // canonical scope used everywhere now
+  window.__sp_overrideScope = scope; // 'group' | 'class' | 'section'
+  // backward-compat flag (some old code still checks it)
+  window.__sp_useGroupExams = (scope === 'group');
+
+  if (tGroup)   tGroup.checked   = (scope === 'group');
+  if (tClass)   tClass.checked   = (scope === 'class');
+  if (tSection) tSection.checked = (scope === 'section');
 }
-if (customizeTgl || customizeTglCustom) {
-  // Initialize
-  syncModeFromUI();
-  // Events
-  if (customizeTgl) customizeTgl.addEventListener('change', syncModeFromUI);
-  if (customizeTglCustom) customizeTglCustom.addEventListener('change', () => {
-    // Flip the canonical flag when "Customize" toggled
-    if (customizeTgl) customizeTgl.checked = !customizeTglCustom.checked;
-    syncModeFromUI();
-  });
-}
+
+setScope(activeScope); // initialize
+
+if (tGroup)   tGroup.addEventListener('change',   () => setScope('group'));
+if (tClass)   tClass.addEventListener('change',   () => setScope('class'));
+if (tSection) tSection.addEventListener('change', () => setScope('section'));
+
     // --- Subtopic Fields Logic (manual rows) + Internal controls ---
 const subtopicsContainer  = popupContent.querySelector('#subtopicsContainer');
 const addSubtopicBtn      = popupContent.querySelector('#addSubtopicBtn');
@@ -2484,27 +2538,36 @@ let srcIds = [];
               }
             }
             // If not duplicate, update
-            const isCustomize = (window.__sp_useGroupExams === false);
+            const scope = window.__sp_overrideScope || (window.__sp_useGroupExams === false ? 'class' : 'group');
 
-          // target refs
-          const groupRef = db.collection('years').doc(academicYear)
-            .collection('exams').doc('classGroups')
-            .collection(classGroup).doc(examId);
-          
-          const overrideRef = db.collection('years').doc(academicYear)
-            .collection('classes').doc(currentClassId)
-            .collection('examOverrides').doc(examId);
-          
-          // payload to write
-          const payload = { 
-            name, nameKey, subjects, subtopics,
-            grading: { mode: 'custom', scale: gradingScale }
-          };
-          
-          // write either to group (use group) or to class override (customize)
-          const writePromise = isCustomize
-            ? overrideRef.set({ ...payload, origin: 'overridden' }, { merge: true })
-            : groupRef.update(payload);
+// target refs
+const groupRef = db.collection('years').doc(academicYear)
+  .collection('exams').doc('classGroups')
+  .collection(classGroup).doc(examId);
+
+const classOverrideRef = db.collection('years').doc(academicYear)
+  .collection('classes').doc(currentClassId)
+  .collection('examOverrides').doc(examId);
+
+const sectionOverrideRef = db.collection('years').doc(academicYear)
+  .collection('classes').doc(currentClassId)
+  .collection('sections').doc(currentSectionId)
+  .collection('examOverrides').doc(examId);
+
+// payload to write
+const payload = { 
+  name, nameKey, subjects, subtopics,
+  grading: { mode: 'custom', scale: gradingScale }
+};
+
+let writePromise;
+if (scope === 'group') {
+  writePromise = groupRef.update(payload);
+} else if (scope === 'class') {
+  writePromise = classOverrideRef.set({ ...payload, origin: 'overridden' }, { merge: true });
+} else { // section
+  writePromise = sectionOverrideRef.set({ ...payload, origin: 'overridden' }, { merge: true });
+}
           
           writePromise.then(async () => {
             if (!isCustomize && setAsSchoolDefault) {
@@ -4646,3 +4709,4 @@ if (marksFileInput) {
 </script>
 </body>
 </html>
+
