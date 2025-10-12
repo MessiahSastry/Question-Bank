@@ -6,6 +6,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
   <script src="https://unpkg.com/pdf-lib/dist/pdf-lib.min.js"></script>
+<!-- Added for Word (.docx) conversion -->
+<script src="https://unpkg.com/mammoth@1.7.0/dist/mammoth.browser.min.js"></script>
+
   <style>
     :root {
       --primary-blue: #0f3d6b;
@@ -146,7 +149,7 @@
         <h2>Upload & Brand Question Paper</h2>
         <div class="form-group">
           <label>Question Paper PDF (from Examin8):</label>
-          <input type="file" id="pdfFile" accept="application/pdf">
+          <input type="file" id="pdfFile" accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document">
         </div>
         <div class="form-group">
           <label>Exam Name:</label>
@@ -242,15 +245,44 @@ document.getElementById('processBtn').onclick = async function () {
 
   showSpinner();
   try {
-    const pdfFile = document.getElementById('pdfFile').files[0];
-    const schoolName = "St. Patrick's School";
-    const examName = document.getElementById('examName').value.trim();
-    const className = document.getElementById('class-dropdown').dataset.value;
-    const subject = document.getElementById('subject-dropdown').dataset.value;
-    const date = document.getElementById('date').value;
-    const time = document.getElementById('time').value.trim();
-    const maxMarks = document.getElementById('maxMarks').value.trim();
-    if (!pdfFile) { hideSpinner(); return alert("Please select a PDF to brand!"); }
+    const uploadFile = document.getElementById('pdfFile').files[0];
+if (!uploadFile) { 
+  hideSpinner(); 
+  return alert("Please select a file to upload!"); 
+}
+
+const ext = uploadFile.name.split('.').pop().toLowerCase();
+const examData = {
+  examName: document.getElementById('examName').value.trim(),
+  class: document.getElementById('class-dropdown').dataset.value,
+  subject: document.getElementById('subject-dropdown').dataset.value,
+  date: document.getElementById('date').value,
+  time: document.getElementById('time').value.trim(),
+  maxMarks: document.getElementById('maxMarks').value.trim()
+};
+
+// ===== If the uploaded file is a Word document (.docx) =====
+if (ext === 'docx') {
+  try {
+    const arrayBuffer = await uploadFile.arrayBuffer();
+    const result = await mammoth.convertToHtml({ arrayBuffer });
+    const cleanHTML = result.value;
+    // Store HTML content and exam metadata temporarily
+    sessionStorage.setItem('uploadedWordHTML', cleanHTML);
+    sessionStorage.setItem('uploadedExamMeta', JSON.stringify(examData));
+    hideSpinner();
+    // Redirect to print preview page (same layout as AI papers)
+    window.location.href = 'exam-print-preview.html';
+    return; // stop here; don't run PDF logic
+  } catch (err) {
+    hideSpinner();
+    alert("Error reading Word file: " + err.message);
+    return;
+  }
+}
+
+// ===== If the uploaded file is a PDF, continue existing branding =====
+const pdfFile = uploadFile;
 
     const pdfBytes = await pdfFile.arrayBuffer();
     const pdfDoc = await PDFLib.PDFDocument.load(pdfBytes);
@@ -362,6 +394,7 @@ document.getElementById('class-dropdown').addEventListener('change', () => {
 </div>
 </body>
 </html>
+
 
 
 
