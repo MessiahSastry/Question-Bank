@@ -1972,7 +1972,7 @@ let srcIds = [];
               return;
             }
             // If not duplicate, add (attach grading)
-          const scope = window.__sp_overrideScope || (window.__sp_useGroupExams === false ? 'class' : 'group');
+          const _scope = window.__sp_overrideScope || (window.__sp_useGroupExams === false ? 'class' : 'group');
 
 if (scope === 'group') {
   return db.collection('years').doc(academicYear)
@@ -2302,7 +2302,7 @@ const sectionOverrideRef = db.collection('years').doc(academicYear)
 // Start from the group snapshot we already have ("doc") and override if needed
 let docSnap = doc;
 try {
-  if (scope === 'section') {
+  if (_scope === 'section') {
     const s = await sectionOverrideRef.get();
     if (s.exists) {
       docSnap = s;
@@ -2310,7 +2310,7 @@ try {
       const c = await classOverrideRef.get();
       if (c.exists) docSnap = c;
     }
-  } else if (scope === 'class') {
+  } else if (_scope === 'class') {
     const c = await classOverrideRef.get();
     if (c.exists) docSnap = c;
   }
@@ -2325,7 +2325,7 @@ const exam = docSnap.data();
       showPopup(`
         <form id="editExamForm" style="display:flex; flex-direction:column; max-height:75vh;">
       <div style="flex:1; overflow-y:auto; padding-right:4px;">
-          <div class="popup-title">Edit Exam ${scope === 'group' ? '(Group)' : scope === 'class' ? '(Class Override)' : '(Section Override)'}</div>
+          <div class="popup-title">Edit Exam ${_scope === 'group' ? '(Group)' : _scope === 'class' ? '(Class Override)' : '(Section Override)'}</div>
           <label>Exam Name</label>
           <input name="examName" maxlength="30" required value="${exam.name}">
           
@@ -2383,12 +2383,13 @@ const exam = docSnap.data();
               <span style="font-size:0.85em; color:#666;">(Prefilled; you can edit below)</span>
             </label>
 
+            ${(_scope === 'group' && isAdmin) ? `
             <div style="display:flex; align-items:center; gap:12px; margin:8px 0 6px 0;">
               <label style="display:flex; align-items:center; gap:8px; margin:0;">
                 <input type="checkbox" id="editSetAsSchoolDefault" checked />
                 <span>Set this as <strong>School Default</strong> for all classes</span>
               </label>
-            </div>
+            </div>` : ``}
 
             <div id="editGradingRows" style="display:grid; grid-template-columns:120px 1fr 1fr 70px; gap:8px; align-items:center;">
               <div style="font-weight:700; color:#1762a7;">Grade</div>
@@ -2557,12 +2558,12 @@ let srcIds = [];
 
         // Check for duplicates within the active scope (exclude this examId itself)
 let dupQuery;
-if (scope === 'group') {
+if (_scope === 'group') {
   dupQuery = db.collection('years').doc(academicYear)
     .collection('exams').doc('classGroups')
     .collection(classGroup)
     .where('nameKey', '==', nameKey);
-} else if (scope === 'class') {
+} else if (_scope === 'class') {
   dupQuery = db.collection('years').doc(academicYear)
     .collection('classes').doc(currentClassId)
     .collection('examOverrides')
@@ -2586,8 +2587,7 @@ dupQuery.get().then(dupSnap => {
                 return;
               }
             }
-            // If not duplicate, update
-            const scope = window.__sp_overrideScope || (window.__sp_useGroupExams === false ? 'class' : 'group');
+            // If not duplicate, update (use _scope defined above)
 
 // target refs (already defined above)
 
@@ -2599,7 +2599,7 @@ dupQuery.get().then(dupSnap => {
 
           (async () => {
             try {
-              if (scope === 'group') {
+              if (_scope === 'group') {
                 await groupRef.update(payload);
                 if (setAsSchoolDefault) {
                   try {
@@ -2608,7 +2608,7 @@ dupQuery.get().then(dupSnap => {
                     console.warn('writeSchoolGradingDefault failed:', e);
                   }
                 }
-              } else if (scope === 'class') {
+              } else if (_scope === 'class') {
                 await classOverrideRef.set({ ...payload, origin: 'overridden' }, { merge: true });
               } else {
                 await sectionOverrideRef.set({ ...payload, origin: 'overridden' }, { merge: true });
@@ -4751,6 +4751,7 @@ if (marksFileInput) {
 </script>
 </body>
 </html>
+
 
 
 
