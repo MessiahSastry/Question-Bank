@@ -418,14 +418,43 @@ function splitCounts(total, percents) {
     return result;
 }
 // NEW: turn a pasted or extracted text into an ordered pool of question strings
+// REPLACE your current parsePastedQuestionsToPool with this:
 function parsePastedQuestionsToPool(raw) {
-  const t = String(raw || '').replace(/\r/g,'').trim();
+  const t = String(raw || '').replace(/\r/g, '').trim();
   if (!t) return [];
-  // split on blank lines OR numbered prefixes (1. ... / 1) ... / Q1: ...)
-  const blocks = t.split(/\n{2,}|\n(?=\d+\s*[\.\)]\s)|(?=^Q\s*\d+\s*[:\.\)]\s*)/gmi)
-                  .map(s => s.trim())
-                  .filter(Boolean);
-  return blocks;
+
+  // 1) Pre-normalize lines: attach lonely number lines to the next line.
+  const lines = t.split('\n');
+  const merged = [];
+  for (let i = 0; i < lines.length; i++) {
+    const cur = lines[i].trim();
+    if (/^\d+$/.test(cur) && i + 1 < lines.length) {
+      // Turn:
+      //   1
+      //   An object is thrown ...
+      // into:
+      //   1. An object is thrown ...
+      lines[i + 1] = `${cur}. ${lines[i + 1]}`;
+      continue; // skip pushing this numeric line
+    }
+    merged.push(lines[i]);
+  }
+  const norm = merged.join('\n');
+
+  // 2) Split by numbered headers at the START of a line:
+  //    Q1 / 1. / 1)  … up to the next header or a double-blank
+  const headerBlockRegex =
+    /^(?:\s*(?:Q?\s*\d+[\.\)]\s+)[\s\S]*?)(?=(?:^\s*Q?\s*\d+[\.\)]\s+)|\n{2,}|$)/gmi;
+
+  let blocks = norm.match(headerBlockRegex) || [];
+
+  // 3) Fallback: if no numbered headers were found, split by blank-blank only.
+  if (!blocks.length) {
+    blocks = norm.split(/\n{2,}/g);
+  }
+
+  // 4) Clean and keep non-empty blocks
+  return blocks.map(s => s.trim()).filter(Boolean);
 }
 
 // NEW: allocate sequentially across sections with given counts & marks
@@ -1659,6 +1688,7 @@ window.location.href = 'exam-review.html';
 </script>
 </body>
 </html>
+
 
 
 
