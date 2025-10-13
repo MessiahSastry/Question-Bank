@@ -229,7 +229,62 @@ function parseAIBlocks(text, expectedCount) {
   if (blocks.length > expectedCount) return blocks.slice(0, expectedCount);
   return blocks;
 }
-  function renderExam() {
+  // --- NEW: parse pasted questions (order preserved) ---
+function parsePastedQuestions(rawText) {
+  if (!rawText) return [];
+  const text = String(rawText).replace(/\r/g, '').trim();
+
+  // Split into blocks by: blank lines OR numbered/Q-lines
+  const blocks = text.split(/\n{2,}|\n(?=\d+\s*[\.\)]\s)|\n(?=Q\s*\d+[:\.])/i)
+                     .map(b => b.trim())
+                     .filter(Boolean);
+
+  const items = [];
+  for (const block of blocks) {
+    // Extract MCQ options A/B/C/D and optional Ans:
+    const lines = block.split('\n').map(s => s.trim()).filter(Boolean);
+
+    // Detect options
+    const opts = [];
+    const optRegex = /^[A-D][\)\.\:]?\s+(.+)$/i;
+    lines.forEach(l => {
+      const m = l.match(optRegex);
+      if (m) opts.push(m[1].trim());
+    });
+
+    // Extract answer letters if present anywhere
+    let ans = '';
+    const am = block.match(/Ans?\s*:\s*([A-D](?:\s*,\s*[A-D])*)/i);
+    if (am) {
+      const seen = new Set();
+      ans = am[1]
+        .toUpperCase()
+        .split(',')
+        .map(s => s.trim())
+        .filter(L => /^[A-D]$/.test(L) && !seen.has(L) && (seen.add(L), true))
+        .join(seen.size > 1 ? ',' : '');
+    }
+
+    // Stem: remove leading "Qx:" or "1)." etc and strip option/answer lines
+    let stem = block
+      .replace(/^Q\s*\d+\s*[:\.\)]\s*/i, '')
+      .replace(/^\d+\s*[\.\)]\s*/, '')
+      .replace(/\n?Ans?\s*:.+$/i, '')
+      .replace(/\n?[A-D][\)\.\:]?\s+.+$/gmi, '')
+      .trim();
+
+    // Keep LaTeX intact in stem
+    if (opts.length === 4) {
+      items.push({ text: stem, options: opts, answer: ans });
+    } else {
+      items.push({ text: stem });
+    }
+  }
+  return items;
+}
+
+function renderExam() {
+
     const paper = getExamPaper();
     const area = document.getElementById('exam-review-area');
          if (!paper) {
@@ -239,7 +294,39 @@ function parseAIBlocks(text, expectedCount) {
       return;
     }
 
-    let html = '';
+    // --- NEW: build questions for sections sourced from Paste (order preserved) ---
+(paper.subjects || []).forEach((subjectBlock) => {
+  (subjectBlock.sections || []).forEach((sec) => {
+    if (sec && sec.sourceType === 'Paste') {
+      // If already populated (e.g., user edited earlier), do nothing
+      const already = Array.isArray(sec.questions) && sec.questions.length;
+      const want = (sec.type === 'internal') ? (sec.numPairs || 0) : (sec.numQuestions || 0);
+      if (!already && sec.pastedText) {
+        const parsed = parsePastedQuestions(sec.pastedText);
+        const take = parsed.slice(0, Math.max(0, want));
+
+        // Map into your question shape
+        sec.questions = take.map((q, i) => ({
+          number: i + 1,
+          text: q.text,
+          options: Array.isArray(q.options) ? q.options : undefined,
+          answer: q.answer || '',
+          marks: sec.marksPerQuestion || ''
+        }));
+
+        // If fewer than needed, add a simple notice in instructions
+        if (sec.questions.length < want) {
+          const miss = want - sec.questions.length;
+          sec.instructions = (sec.instructions ? (sec.instructions + ' ') : '') +
+            `(Only ${sec.questions.length} available from pasted content; ${miss} missing)`;
+        }
+      }
+    }
+  });
+});
+
+let html = '';
+
 let qCounter = 0;
 (paper.subjects || []).forEach((subjectBlock, subjIdx) => {
       if (paper.instructions) {
@@ -352,7 +439,45 @@ area.querySelectorAll('.num-questions, .marks-per-question').forEach(el => {
     }
   });
 });
-    MathJax.typesetPromise();
+    // Enable MathJax preview for questions/options with click-to-edit
+(function () {
+  if (!window.__makeEditable) {
+    window.__makeEditable = function (el) {
+      const raw = el.dataset.raw ?? el.innerText ?? '';
+      el.dataset.raw = raw;
+      el.innerText = raw;
+      el.setAttribute('contenteditable', 'plaintext-only');
+      el.classList.add('no-mjx');
+      el.focus();
+    };
+  }
+  if (!window.__makePreview) {
+    window.__makePreview = function (el) {
+      const raw = (el.innerText || el.dataset.raw || '').trim();
+      el.dataset.raw = raw;
+      el.classList.remove('no-mjx');
+      el.setAttribute('contenteditable', 'false');
+      el.innerText = raw;
+      MathJax.typesetPromise([el]);
+    };
+  }
+  if (!window.__attachMathEditors) {
+    window.__attachMathEditors = function (root) {
+      const targets = root.querySelectorAll('.question-text, .mcq-opt');
+      targets.forEach(el => {
+        window.__makePreview(el);
+        el.addEventListener('click', () => {
+          if (el.getAttribute('contenteditable') === 'false') window.__makeEditable(el);
+        });
+        el.addEventListener('blur', () => {
+          if (el.getAttribute('contenteditable') !== 'false') window.__makePreview(el);
+        });
+      });
+    };
+  }
+  window.__attachMathEditors(area);
+  MathJax.typesetPromise();
+})();
 
    // Inline editing indicators for all [contenteditable]
 area.querySelectorAll('[contenteditable]').forEach(el => {
@@ -413,23 +538,24 @@ function saveEdits() {
     const newMarks = qr.querySelector('.marks-box')?.innerText?.trim() ?? '';
     paper.subjects[subjIdx].sections[secIdx].questions[qIdx].marks = newMarks;
 
-    // Text
-    const qt = qr.querySelector('.question-text');
+   // Text (prefer stored raw TeX/plain text)
+const qt = qr.querySelector('.question-text');
 let newText = '';
 if (qt) {
-  // Prefer innerHTML to preserve TeX delimiters and line breaks;
-  // fall back to textContent only if HTML is empty.
-  newText = (qt.innerHTML || '').trim();
-  if (!newText) newText = (qt.textContent || '').trim();
+  newText = (qt.dataset?.raw || '').trim() || (qt.textContent || '').trim();
 }
-if (newText) paper.subjects[subjIdx].sections[secIdx].questions[qIdx].text = newText;
+if (newText) {
+  paper.subjects[subjIdx].sections[secIdx].questions[qIdx].text = newText;
+}
 
-    // Options (if present)
     const optNodes = qr.querySelectorAll('.mcq-opt');
-    if (optNodes && optNodes.length === 4) {
-      const updatedOpts = Array.from(optNodes).map(n => (n.innerText || '').trim());
-      paper.subjects[subjIdx].sections[secIdx].questions[qIdx].options = updatedOpts;
-    }
+if (optNodes && optNodes.length === 4) {
+  const updatedOpts = Array.from(optNodes).map(n =>
+    ((n.dataset && n.dataset.raw) ? n.dataset.raw : (n.innerText || '')).trim()
+  );
+  paper.subjects[subjIdx].sections[secIdx].questions[qIdx].options = updatedOpts;
+}
+
 
     // Answer key (letters like A or A,C)
     const ansNode = qr.querySelector('.answer-box');
@@ -716,6 +842,7 @@ document.getElementById('apply-json-btn').onclick = async function() {
 </script>
 </body>
 </html>
+
 
 
 
