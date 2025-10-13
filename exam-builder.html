@@ -1363,6 +1363,7 @@ createDropdown('exam-source-dropdown', ["Question Bank","Paste","Upload .docx"],
     uploadWrap.style.display = (v === 'Upload .docx') ? 'block' : 'none';
   }
   dd.addEventListener('change', toggle);
+  dd.addEventListener('click', toggle);
   toggle();
 
   pasteArea?.addEventListener('input', () => {
@@ -1588,33 +1589,46 @@ if (sourceTypeGlobal === 'Question Bank') {
 
 } else {
   // ===== PASTE or WORD flow =====
-  let rawText = '';
-  if (sourceTypeGlobal === 'Paste') {
-    rawText = (document.getElementById('global-paste-area')?.value || '').trim();
+let rawText = '';
+
+const pasteText = (document.getElementById('global-paste-area')?.value || '').trim();
+const hasPaste  = pasteText.length > 0;
+const hasDocx   = !!window._globalDocxArrayBuffer;
+const requested = (document.getElementById('exam-source-dropdown')?.dataset?.value) || 'Question Bank';
+
+// Pick effective mode using availability too
+let effective = requested;
+if (requested === 'Upload .docx' && !hasDocx && hasPaste) effective = 'Paste';
+if (requested === 'Paste' && !hasPaste && hasDocx)       effective = 'Upload .docx';
+
+console.log('[SOURCE]', { requested, effective, hasPaste, hasDocx });
+
+if (effective === 'Paste') {
+  rawText = pasteText;
+} else if (effective === 'Upload .docx') {
+  if (!hasDocx) {
+    allSectionErrors.push('No .docx file selected.');
   } else {
-    // Upload .docx → extract text via mammoth
-    if (!window._globalDocxArrayBuffer) {
-      allSectionErrors.push('No .docx file selected.');
-    } else {
-     try {
-  if (!window.mammoth || !window.mammoth.extractRawText) {
-    allSectionErrors.push('DOCX reader not available. Check internet and the Mammoth script tag.');
-  } else {
-    const result = await window.mammoth.extractRawText({
-      arrayBuffer: window._globalDocxArrayBuffer
-    });
-    rawText = (result?.value || '').trim();
-  }
-} catch (e) {
-  allSectionErrors.push('Failed to read .docx file.');
-}
+    try {
+      if (!window.mammoth || !window.mammoth.extractRawText) {
+        allSectionErrors.push('DOCX reader not available. Check internet and the Mammoth script tag.');
+      } else {
+        const result = await window.mammoth.extractRawText({ arrayBuffer: window._globalDocxArrayBuffer });
+        rawText = (result?.value || '').trim();
+      }
+    } catch (e) {
+      allSectionErrors.push('Failed to read .docx file.');
     }
   }
+}
 
-  const pool = parsePastedQuestionsToPool(rawText);
-  if (!pool.length) {
-    allSectionErrors.push('No questions detected in the provided source.');
-  }
+// Only complain when this path was actually used
+if ((effective === 'Paste' || effective === 'Upload .docx') && !rawText) {
+  allSectionErrors.push('No questions detected in the provided source.');
+}
+
+const pool = parsePastedQuestionsToPool(rawText);
+
 
   // Allocate sequentially across ALL subjects/sections
   const { errors: allocErrors } = allocateSequentiallyAcrossSections(subjectsData, pool);
@@ -1688,6 +1702,7 @@ window.location.href = 'exam-review.html';
 </script>
 </body>
 </html>
+
 
 
 
