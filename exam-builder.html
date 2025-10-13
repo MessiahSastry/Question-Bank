@@ -418,7 +418,7 @@ function splitCounts(total, percents) {
     return result;
 }
 // NEW: turn a pasted or extracted text into an ordered pool of question strings
-// REPLACE your current parsePastedQuestionsToPool with this:
+// NEW: turn a pasted or extracted text into an ordered pool of question strings
 function parsePastedQuestionsToPool(raw) {
   const t = String(raw || '').replace(/\r/g, '').trim();
   if (!t) return [];
@@ -429,43 +429,38 @@ function parsePastedQuestionsToPool(raw) {
   for (let i = 0; i < lines.length; i++) {
     const cur = lines[i].trim();
     if (/^\d+$/.test(cur) && i + 1 < lines.length) {
-      // Turn:
-      //   1
-      //   An object is thrown ...
-      // into:
-      //   1. An object is thrown ...
       lines[i + 1] = `${cur}. ${lines[i + 1]}`;
-      continue; // skip pushing this numeric line
+      continue; // skip the standalone number line
     }
     merged.push(lines[i]);
   }
   const norm = merged.join('\n');
 
-  // 2) Split by numbered headers at the START of a line:
-  //    Q1 / 1. / 1)  … up to the next header or a double-blank
+  // 2) Split by numbered headers at line start (Q1:, 1., 1) …)
   const headerBlockRegex =
     /^(?:\s*(?:Q?\s*\d+[\.\)]\s+)[\s\S]*?)(?=(?:^\s*Q?\s*\d+[\.\)]\s+)|\n{2,}|$)/gmi;
 
   let blocks = norm.match(headerBlockRegex) || [];
-
-  // 3) Fallback: if no numbered headers were found, split by blank-blank only.
   if (!blocks.length) {
     blocks = norm.split(/\n{2,}/g);
   }
 
-  // 4) Clean and keep non-empty blocks
-  return blocks.map(s => s.trim()).filter(Boolean);
+  // 3) Strip any leading numbering from each block so only question text remains
+  const stripLead = s => s
+    .replace(/^\s*(?:Q?\s*\d+[\.\)]\s*)/, '')  // drop "Q1:" / "1." / "1)"
+    .trim();
+
+  return blocks.map(stripLead).filter(Boolean);
 }
 
-// NEW: allocate sequentially across sections with given counts & marks
 function allocateSequentiallyAcrossSections(subjectsData, pool) {
   const errors = [];
   let index = 0;
+  const stripLead = s => String(s || '').replace(/^\s*(?:Q?\s*\d+[\.\)]\s*)/, '').trim();
 
   for (const subj of subjectsData) {
     for (const sec of subj.sections) {
       if (sec.type === 'internal') {
-        // paste/word: skip or warn — cannot auto-create internal-choice pairs
         errors.push(`${subj.subject} - ${sec.label}: Internal choice not supported with Paste/Word mode.`);
         sec.questions = [];
         continue;
@@ -477,7 +472,7 @@ function allocateSequentiallyAcrossSections(subjectsData, pool) {
         if (index >= pool.length) break;
         pick.push({
           number: i + 1,
-          text: pool[index++],
+          text: stripLead(pool[index++]),   // ensure no numbering slips through
           marks: marks,
           options: [],
           answer: ""
@@ -491,6 +486,7 @@ function allocateSequentiallyAcrossSections(subjectsData, pool) {
   }
   return { errors };
 }
+
 
 // --- DEDUPE HELPERS (new) ---
 function normalizeText(s) {
@@ -1358,13 +1354,27 @@ createDropdown('exam-source-dropdown', ["Question Bank","Paste","Upload .docx"],
   window._globalDocxArrayBuffer = null;
 
   function toggle() {
-    const v = dd.dataset.value || 'Question Bank';
-    pasteWrap.style.display  = (v === 'Paste') ? 'block' : 'none';
-    uploadWrap.style.display = (v === 'Upload .docx') ? 'block' : 'none';
-  }
-  dd.addEventListener('change', toggle);
-  dd.addEventListener('click', toggle);
-  toggle();
+  const v = dd.dataset.value || 'Question Bank';
+  const isBank  = v === 'Question Bank';
+  const isPaste = v === 'Paste';
+  const isWord  = v === 'Upload .docx';
+
+  // show paste/word areas
+  pasteWrap.style.display  = isPaste ? 'block' : 'none';
+  uploadWrap.style.display = isWord  ? 'block' : 'none';
+
+  // hide/show Difficulty (its enclosing .form-group)
+  const diffGroup = document.getElementById('difficulty-dropdown')?.closest('.form-group');
+  if (diffGroup) diffGroup.style.display = isBank ? '' : 'none';
+
+  // hide/show Chapters group for every subject (its enclosing .form-group)
+  document.querySelectorAll('[id^="chapters-multiselect-"]').forEach(el => {
+    const grp = el.closest('.form-group');
+    if (grp) grp.style.display = isBank ? '' : 'none';
+  });
+}
+dd.addEventListener('change', toggle);
+toggle();
 
   pasteArea?.addEventListener('input', () => {
     const t = (pasteArea.value || '').trim();
@@ -1405,6 +1415,10 @@ document.getElementById('date-input').valueAsDate = new Date();
                 return;
             }
             renderSubjectsSectionsArea(selectedSubjects, selectedClass);
+        // re-apply source-based visibility after new chapter widgets were created
+        document.getElementById('exam-source-dropdown')
+          ?.dispatchEvent(new Event('change'));
+
         }
         // Form submit
         document.getElementById('exam-setup-form').addEventListener('submit', async function(event) {
@@ -1702,6 +1716,7 @@ window.location.href = 'exam-review.html';
 </script>
 </body>
 </html>
+
 
 
 
