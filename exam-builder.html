@@ -1102,9 +1102,66 @@ function addSectionForSubject(sIdx) {
     sectionTypeDropdown.classList.add('section-type-dropdown');
     sectionTypeDropdown.style.width = "140px";
     sectionTypeDropdown.style.marginRight = "10px";
-    // Logic fields placeholder
-    const logicFields = document.createElement('span');
-    logicFields.className = "section-logic-fields";
+    // Logic fields placeholder + SOURCE UI
+// Source dropdown: Question Bank (default) | Paste | Upload .docx
+const sourceDropdown = createSectionDropdown(
+  ["Question Bank", "Paste", "Upload .docx"],
+  "Source",
+  "Question Bank",
+  (val) => {
+    pasteWrap.style.display  = (val === "Paste") ? "block" : "none";
+    uploadWrap.style.display = (val === "Upload .docx") ? "block" : "none";
+  }
+);
+sourceDropdown.classList.add('source-type-dropdown');
+sourceDropdown.style.width = "160px";
+sourceDropdown.style.marginRight = "10px";
+
+// PASTE wrapper (hidden by default)
+const pasteWrap = document.createElement('div');
+pasteWrap.style.cssText = "display:none;width:100%;";
+pasteWrap.innerHTML = `
+  <label style="font-size:.95em;color:#185496;font-weight:600;display:block;margin-top:6px;">Paste questions (keep order)</label>
+  <textarea class="paste-area" placeholder="Paste the questions exactly as you want them to appear..."
+    style="width:100%;min-height:120px;border:1.3px solid #bcd6ef;border-radius:8px;padding:10px;background:#f7fafd;"></textarea>
+  <div class="paste-count" style="color:#54656f;font-size:.9em;margin-top:6px;"></div>
+`;
+pasteWrap.querySelector('.paste-area').addEventListener('input', (e) => {
+  const val = (e.target.value || "").trim();
+  const lines = val ? val.split(/\n{2,}|\n(?=\d+[\.\)]\s)|\n(?=Q\s*\d+[:\.])/i).length : 0;
+  pasteWrap.querySelector('.paste-count').textContent =
+    lines ? `Detected ~${lines} question blocks (rough)` : '';
+});
+
+// UPLOAD wrapper (hidden by default)
+const uploadWrap = document.createElement('div');
+uploadWrap.style.cssText = "display:none;width:100%;";
+uploadWrap.innerHTML = `
+  <label style="font-size:.95em;color:#185496;font-weight:600;display:block;margin-top:6px;">Upload .docx</label>
+  <input type="file" accept=".docx" class="docx-input" style="display:block;margin-top:6px;">
+  <div class="docx-status" style="color:#54656f;font-size:.9em;margin-top:6px;">No file chosen</div>
+`;
+uploadWrap.querySelector('.docx-input').addEventListener('change', async (e) => {
+  const file = e.target.files && e.target.files[0];
+  const st = uploadWrap.querySelector('.docx-status');
+  if (!file) { st.textContent = 'No file chosen'; newItem.dataset.docxName = ""; newItem.dataset.docxData = ""; return; }
+  st.textContent = `Reading ${file.name}...`;
+  try {
+    const buf = await file.arrayBuffer();
+    const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+    newItem.dataset.docxName = file.name;
+    newItem.dataset.docxData = `data:application/vnd.openxmlformats-officedocument.wordprocessingml.document;base64,${b64}`;
+    st.textContent = `Ready: ${file.name}`;
+  } catch (err) {
+    st.textContent = `Read failed: ${err}`;
+    newItem.dataset.docxName = "";
+    newItem.dataset.docxData = "";
+  }
+});
+
+const logicFields = document.createElement('span');
+logicFields.className = "section-logic-fields";
+
     // Remove button
     const removeBtn = document.createElement('button');
     removeBtn.type = "button";
@@ -1118,11 +1175,14 @@ function addSectionForSubject(sIdx) {
     dragHandle.innerHTML = '<i class="fas fa-grip-vertical"></i>';
     // Build
     newItem.appendChild(dragHandle);
-    newItem.appendChild(sectionLabelDropdown);
-    newItem.appendChild(mcqTypeDropdown);
-    newItem.appendChild(sectionTypeDropdown);
-    newItem.appendChild(logicFields);
-    newItem.appendChild(removeBtn);
+newItem.appendChild(sectionLabelDropdown);
+newItem.appendChild(mcqTypeDropdown);
+newItem.appendChild(sectionTypeDropdown);
+newItem.appendChild(sourceDropdown);
+newItem.appendChild(pasteWrap);
+newItem.appendChild(uploadWrap);
+newItem.appendChild(logicFields);
+newItem.appendChild(removeBtn);
     // Init logic fields
     updateSectionLogicFields(newItem, config.sectionTypeKeys[0]);
     list.appendChild(newItem);
@@ -1301,6 +1361,32 @@ document.addEventListener('DOMContentLoaded', () => {
                             sec.attemptAny = parseInt(section.querySelector('.attempt-any-input').value);
                             sec.marksPerQuestion = parseInt(section.querySelector('.marks-per-question-input').value);
                         } else if (type === "internal") {
+                              sec.numPairs = parseInt(section.querySelector('.num-pairs-input').value);
+                              sec.marksPerQuestion = parseInt(section.querySelector('.marks-per-question-input').value);
+                              sec.pairs = [];
+                              const pairDivs = section.querySelectorAll('.internal-choice-pairs > div');
+                              pairDivs.forEach(div => {
+                                const chapterA = div.querySelector('.pair-chapter-a').value;
+                                const chapterB = div.querySelector('.pair-chapter-b').value;
+                                sec.pairs.push({ chapterA, chapterB });
+                              });
+                            }
+                            
+                            // ----- NEW: Source capture (Question Bank | Paste | Upload .docx)
+                            const sourceType = (section.querySelector('.source-type-dropdown')?.dataset?.value) || 'Question Bank';
+                            sec.sourceType = sourceType;
+                            
+                            if (sourceType === 'Paste') {
+                              const pasted = section.querySelector('.paste-area')?.value || '';
+                              sec.pastedText = pasted;
+                            } else if (sourceType === 'Upload .docx') {
+                              const docxName = section.closest('.section-item')?.dataset?.docxName || '';
+                              const docxData = section.closest('.section-item')?.dataset?.docxData || '';
+                              sec.docx = { name: docxName, dataUrl: docxData };
+                            }
+                            
+                            sections.push(sec);
+
                             sec.numPairs = parseInt(section.querySelector('.num-pairs-input').value);
                             sec.marksPerQuestion = parseInt(section.querySelector('.marks-per-question-input').value);
                             sec.pairs = [];
@@ -1640,6 +1726,7 @@ window.location.href = 'exam-review.html';
 </script>
 </body>
 </html>
+
 
 
 
