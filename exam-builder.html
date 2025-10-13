@@ -418,39 +418,26 @@ function splitCounts(total, percents) {
     return result;
 }
 // NEW: turn a pasted or extracted text into an ordered pool of question strings
-// NEW: turn a pasted or extracted text into an ordered pool of question strings
 function parsePastedQuestionsToPool(raw) {
   const t = String(raw || '').replace(/\r/g, '').trim();
   if (!t) return [];
 
-  // 1) Pre-normalize lines: attach lonely number lines to the next line.
-  const lines = t.split('\n');
-  const merged = [];
-  for (let i = 0; i < lines.length; i++) {
-    const cur = lines[i].trim();
-    if (/^\d+$/.test(cur) && i + 1 < lines.length) {
-      lines[i + 1] = `${cur}. ${lines[i + 1]}`;
-      continue; // skip the standalone number line
-    }
-    merged.push(lines[i]);
-  }
-  const norm = merged.join('\n');
+  // 1) Join lines but DO NOT treat blank lines as block boundaries.
+  const norm = t.split('\n').join('\n');
 
-  // 2) Split by numbered headers at line start (Q1:, 1., 1) …)
+  // 2) Take everything from a top-level header (Q8:, 8., 8)) up to the next header or end.
   const headerBlockRegex =
-    /^(?:\s*(?:Q?\s*\d+[\.\)]\s+)[\s\S]*?)(?=(?:^\s*Q?\s*\d+[\.\)]\s+)|\n{2,}|$)/gmi;
+    /^\s*(?:Q?\s*\d+[\.\)]\s+)[\s\S]*?(?=(?:^\s*Q?\s*\d+[\.\)]\s+)|$)/gmi;
 
-  let blocks = norm.match(headerBlockRegex) || [];
-  if (!blocks.length) {
-    blocks = norm.split(/\n{2,}/g);
-  }
+  const rawBlocks = norm.match(headerBlockRegex) || [norm];
 
-  // 3) Strip any leading numbering from each block so only question text remains
-  const stripLead = s => s
-    .replace(/^\s*(?:Q?\s*\d+[\.\)]\s*)/, '')  // drop "Q1:" / "1." / "1)"
+  // 3) Strip ONLY the main question number; keep inner sub-items (1., a., i., …)
+  const stripLead = s => String(s || '')
+    .replace(/^\s*(?:Q?\s*\d+[\.\)]\s*)/, '')
     .trim();
 
-  return blocks.map(stripLead).filter(Boolean);
+  // 4) Return blocks with internal line breaks preserved (sub-questions kept inside).
+  return rawBlocks.map(stripLead).filter(Boolean);
 }
 
 function allocateSequentiallyAcrossSections(subjectsData, pool) {
@@ -1378,7 +1365,7 @@ toggle();
 
   pasteArea?.addEventListener('input', () => {
     const t = (pasteArea.value || '').trim();
-    const approx = t ? t.split(/\n{2,}|\n(?=\d+\s*[\.\)]\s)|\n(?=Q\s*\d+[:\.])/i).length : 0;
+    const approx = t ? ((t.match(/^\s*(?:Q?\s*\d+[\.\)])/gmi) || []).length || 1) : 0;
     pasteCount.textContent = approx ? `~${approx} question blocks detected` : '';
   });
 
@@ -1716,6 +1703,7 @@ window.location.href = 'exam-review.html';
 </script>
 </body>
 </html>
+
 
 
 
