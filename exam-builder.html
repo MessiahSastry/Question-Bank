@@ -1221,17 +1221,21 @@ function updateSelectedChaptersDisplay(chapterDropdown) {
     }
 }
 function buildSectionInstructions(sec) {
-    if (sec.type === "all") {
-        return `Answer all the questions`;
-    }
-    if (sec.type === "any") {
-        return `Answer any ${sec.attemptAny} questions`;
-    }
-    if (sec.type === "internal") {
-        return `Answer any (${sec.numPairs} question pairs)`;
-    }
-    return "";
+  if (sec.type === "all") {
+    const n = Number(sec.numQuestions) || 0;
+    return n ? `Answer all ${n} questions` : `Answer all the questions`;
+  }
+  if (sec.type === "any") {
+    const anyN = Number(sec.attemptAny) || 0;
+    return anyN ? `Answer any ${anyN} questions` : `Answer any questions`;
+  }
+  if (sec.type === "internal") {
+    const p = Number(sec.numPairs) || 0;
+    return p ? `Answer any (${p} question pairs)` : `Answer any (question pairs)`;
+  }
+  return "";
 }
+
 // --- MAIN EVENT HANDLERS ---
 document.addEventListener('DOMContentLoaded', () => {
     firebase.auth().onAuthStateChanged(function(user) {
@@ -1423,31 +1427,92 @@ console.groupEnd();
   }
 
     // Helper: map raw Firestore doc -> section item (applies MCQ shuffle if needed)
-   const mapped = chosen.map((q) => {
-    let optionsArr = extractMCQOptions(q);
-    let stem = q.question || q.text || '';
-    if ((sec.mcqType === "MCQ (Single)" || sec.mcqType === "MCQ (Multiple)") && Array.isArray(optionsArr) && optionsArr.length === 4) {
-      const cleanOptionsArr = optionsArr.map(opt => opt.replace(/^[A-D][).]?\s*/, '').trim());
-      const shuffled = shuffleMCQQuestion({ ...q, options: cleanOptionsArr, question: stem, answer: q.answer });
-      return {
-        number: 0,
-        text: shuffled.question || shuffled.text || "",
-        marks: sec.marksPerQuestion,
-        options: shuffled.options || [],
-        answer: shuffled.answer || "",
-        srcId: q.id || null
-      };
-    } else {
-      return {
-        number: 0,
-        text: stem,
-        marks: sec.marksPerQuestion,
-        options: Array.isArray(optionsArr) ? optionsArr : [],
-        answer: q.answer || "",
-        srcId: q.id || null
-      };
+      // ---- TOP-UP SHORTAGES (relax filters progressively) ----
+    async function _isDupCandidate(cand, existingList, seenBySubject) {
+      const id  = cand?.id || '';
+      const key = makeDeDupeKey(cand);
+      if (id && existingList.some(x => x?.id === id)) return true;
+      if (key && existingList.some(x => makeDeDupeKey(x) === key)) return true;
+      if (key && seenBySubject.has(key)) return true;
+      return false;
     }
-  });
+    async function _borrowMore(need, { chaptersScope, diffScope }) {
+      if (need <= 0) return [];
+      const pool = await fetchQuestionsWithMarksFallback({
+        selectedClass,
+        selectedSubject: subjData.subject,
+        chapters: chaptersScope,              // array or undefined
+        marksPerQuestion: sec.marksPerQuestion,
+        mcqType: sec.mcqType,
+        count: Math.max(need * 2, need + 2),  // small buffer
+        forceDifficulty: diffScope || undefined
+      });
+      const picked = [];
+      for (const cand of pool) {
+        if (!(await _isDupCandidate(cand, chosen, subjectSeenKeys))) {
+          picked.push(cand);
+          if (picked.length >= need) break;
+        }
+      }
+      return picked;
+    }
+
+    // If we have fewer than requested, borrow in 4 phases:
+    // 1) same chapters + same difficulty
+    // 2) same chapters + any difficulty
+    // 3) any chapters  + same difficulty
+    // 4) any chapters  + any difficulty
+    let need = Math.max(0, requestedCount - chosen.length);
+    if (need > 0) {
+      const phase1 = await _borrowMore(need, { chaptersScope: subjData.chapters, diffScope: difficultyValue });
+      chosen = chosen.concat(phase1);
+      need = Math.max(0, requestedCount - chosen.length);
+    }
+    if (need > 0) {
+      const phase2 = await _borrowMore(need, { chaptersScope: subjData.chapters, diffScope: null });
+      chosen = chosen.concat(phase2);
+      need = Math.max(0, requestedCount - chosen.length);
+    }
+    if (need > 0) {
+      const phase3 = await _borrowMore(need, { chaptersScope: undefined, diffScope: difficultyValue });
+      chosen = chosen.concat(phase3);
+      need = Math.max(0, requestedCount - chosen.length);
+    }
+    if (need > 0) {
+      const phase4 = await _borrowMore(need, { chaptersScope: undefined, diffScope: null });
+      chosen = chosen.concat(phase4);
+    }
+    // ---------------------------------------------------------
+
+    // Helper: map raw Firestore doc -> section item (applies MCQ shuffle if needed)
+    const mapped = chosen.slice(0, requestedCount).map((q) => {
+      let optionsArr = extractMCQOptions(q);
+      let stem = q.question || q.text || '';
+      if ((sec.mcqType === "MCQ (Single)" || sec.mcqType === "MCQ (Multiple)") && Array.isArray(optionsArr) && optionsArr.length === 4) {
+        const cleanOptionsArr = optionsArr.map(opt => opt.replace(/^[A-D][).]?\s*/, '').trim());
+        const shuffled = shuffleMCQQuestion({ ...q, options: cleanOptionsArr, question: stem, answer: q.answer });
+        // Normalize to "A" or "A,C"
+        const letterAns = (String(shuffled.answer || '').toUpperCase().match(/[A-D]/g) || []).join(',');
+        return {
+          number: 0,
+          text: shuffled.question || shuffled.text || "",
+          marks: sec.marksPerQuestion,
+          options: shuffled.options || [],
+          answer: letterAns,
+          srcId: q.id || null
+        };
+      } else {
+        return {
+          number: 0,
+          text: stem,
+          marks: sec.marksPerQuestion,
+          options: Array.isArray(optionsArr) ? optionsArr : [],
+          answer: (String(q.answer || '').toUpperCase().match(/[A-D]/g) || []).join(','), // normalize if present
+          srcId: q.id || null
+        };
+      }
+    });
+
 
  // Subject-level de-dupe across sections
 const filtered = [];
@@ -1502,16 +1567,22 @@ questions = filtered.map((it, i) => ({ ...it, number: i + 1 }));
                 continue; // skip this section
             }
         }
-        // Only push if NO sectionErrors for this section
-        if (sectionErrors.length === 0) {
-            subjectBlock.sections.push({ 
-            ...sec, 
-            questions, 
-            instructions: buildSectionInstructions(sec) 
-        });
-        } else {
-            allSectionErrors = allSectionErrors.concat(sectionErrors);
-        }
+        const actualCount = Array.isArray(questions) ? questions.length : 0;
+const patchedSec = { ...sec };
+if (sec.type === "all" || sec.type === "any") {
+  patchedSec.numQuestions = actualCount;
+}
+if (sec.type === "internal") {
+  patchedSec.numPairs = actualCount;
+}
+subjectBlock.sections.push({
+  ...patchedSec,
+  questions,
+  instructions: buildSectionInstructions(patchedSec)
+});
+if (sectionErrors.length) {
+  allSectionErrors = allSectionErrors.concat(sectionErrors);
+}
     }
     finalPaper.subjects.push(subjectBlock);
 }
@@ -1569,6 +1640,7 @@ window.location.href = 'exam-review.html';
 </script>
 </body>
 </html>
+
 
 
 
