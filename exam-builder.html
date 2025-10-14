@@ -1607,7 +1607,11 @@ if (difficultyValue === "Mixed") {
   // Strict 40/30/30 by MARKS (round down + remainder goes L1→L2→L3)
   const parts = splitCounts(totalMarksAll, [40, 30, 30]);
   _mixBudget = { L1: parts[0], L2: parts[1], L3: parts[2] };
-  console.log('[MIXED STRICT MARKS] global budget:', _mixBudget, 'of', totalMarksAll);
+console.log('[MIXED STRICT MARKS] global budget:', _mixBudget, 'of', totalMarksAll);
+window._isMixedStrictMarks = true; // <— NEW FLAG
+}
+else {
+  window._isMixedStrictMarks = false;
 }
 
   // ===== Old BANK flow (unchanged) =====
@@ -1638,39 +1642,46 @@ if (difficultyValue === "Mixed") {
 
         // Prefer distinct chapters / then top up
         let pool = Array.isArray(rawItems) ? rawItems.slice() : [];
-        let chosen = [];
-        const selectedChs = Array.isArray(subjData.chapters) ? subjData.chapters.filter(Boolean) : [];
-        if (selectedChs.length && requestedCount <= selectedChs.length) {
-          const firstByChapter = new Map();
-          for (const q of pool) {
-            const ch = (q.chapter || "").trim();
-            if (ch && !firstByChapter.has(ch)) firstByChapter.set(ch, q);
-          }
-          for (const ch of selectedChs) {
-            const q = firstByChapter.get((ch || "").trim());
-            if (q) chosen.push(q);
-            if (chosen.length >= requestedCount) break;
-          }
-          if (chosen.length < requestedCount) {
-            sectionErrors.push(`${subjData.subject} - ${sec.label}: Missing questions for some selected chapters.`);
-          }
-        } else {
-          const uniqueByChapter = [];
-          const seenCh = new Set();
-          for (const q of pool) {
-            const ch = (q.chapter || "").trim();
-            if (ch && !seenCh.has(ch)) { uniqueByChapter.push(q); seenCh.add(ch); }
-            if (uniqueByChapter.length >= requestedCount) break;
-          }
-          if (uniqueByChapter.length < requestedCount) {
-            for (const q of pool) {
-              if (uniqueByChapter.includes(q)) continue;
-              uniqueByChapter.push(q);
-              if (uniqueByChapter.length >= requestedCount) break;
-            }
-          }
-          chosen = uniqueByChapter.slice(0, requestedCount);
-        }
+let chosen = [];
+
+// When Mixed STRICT by marks is active, DO NOT reshuffle by chapters.
+// The 'items' returned by fetchBalancedAcrossChapters already match exact L1/L2/L3 quotas.
+if (window._isMixedStrictMarks) {
+  chosen = pool.slice(0, requestedCount);
+} else {
+  const selectedChs = Array.isArray(subjData.chapters) ? subjData.chapters.filter(Boolean) : [];
+  if (selectedChs.length && requestedCount <= selectedChs.length) {
+    const firstByChapter = new Map();
+    for (const q of pool) {
+      const ch = (q.chapter || "").trim();
+      if (ch && !firstByChapter.has(ch)) firstByChapter.set(ch, q);
+    }
+    for (const ch of selectedChs) {
+      const q = firstByChapter.get((ch || "").trim());
+      if (q) chosen.push(q);
+      if (chosen.length >= requestedCount) break;
+    }
+    if (chosen.length < requestedCount) {
+      sectionErrors.push(`${subjData.subject} - ${sec.label}: Missing questions for some selected chapters.`);
+    }
+  } else {
+    const uniqueByChapter = [];
+    const seenCh = new Set();
+    for (const q of pool) {
+      const ch = (q.chapter || "").trim();
+      if (ch && !seenCh.has(ch)) { uniqueByChapter.push(q); seenCh.add(ch); }
+      if (uniqueByChapter.length >= requestedCount) break;
+    }
+    if (uniqueByChapter.length < requestedCount) {
+      for (const q of pool) {
+        if (uniqueByChapter.includes(q)) continue;
+        uniqueByChapter.push(q);
+        if (uniqueByChapter.length >= requestedCount) break;
+      }
+    }
+    chosen = uniqueByChapter.slice(0, requestedCount);
+  }
+}
 
         const mapped = chosen.slice(0, requestedCount).map((q) => {
           let optionsArr = extractMCQOptions(q);
@@ -1842,6 +1853,7 @@ window.location.href = 'exam-review.html';
 </script>
 </body>
 </html>
+
 
 
 
