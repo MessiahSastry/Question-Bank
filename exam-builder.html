@@ -924,7 +924,8 @@ async function fetchBalancedAcrossChapters({
   mcqType,               // "MCQ (Single)" | "MCQ (Multiple)" | "Descriptive"
   requestedCount,        // number
   difficultyValue,       // "Level 1" | "Level 2" | "Level 3" | "Mixed" | undefined
-  subjectSeenKeys        // Set passed from caller to avoid repeats across sections of the same subject
+  subjectSeenKeys,       // Set to avoid repeats across sections of the same subject
+  globalMixBudget        // NEW: { L1, L2, L3 } in MARKS, or null
 }) {
   const errors = [];
   const items  = [];
@@ -1039,44 +1040,95 @@ if (strictOneEach) {
 
     // Mixed difficulty: first ensure per-chapter coverage when possible, then fall back.
 async function fillMixed(totalNeed) {
+  // totalNeed here is number of QUESTIONS for THIS section
+  // We enforce 40/30/30 by MARKS across the WHOLE paper via globalMixBudget.
   const diffs = ["Level 1", "Level 2", "Level 3"];
-  const wantGlobal = splitCounts(totalNeed, [40, 30, 30]); // strict 40/30/30
+  const mPerQ = Number(marksPerQuestion || 0);
+  const sectionMarks = (Number(totalNeed || 0) * mPerQ);
 
-  // No chapters selected → enforce global 40/30/30 strictly (no relax/top-ups)
-  if (!chs.length) {
-    for (let d = 0; d < diffs.length; d++) {
-      const want = wantGlobal[d];
-      if (!want) continue;
-      const pool = await fetchFor(null, want, diffs[d]); // strict: fixed level only
-      const picked = takeUniqueFromPool(pool, want, usedIds, usedKeys, subjectSeenKeys);
-      items.push(...picked);
-      if (picked.length < want) {
-        errors.push(`${subject}: Mixed (strict) needs ${want} at ${diffs[d]}, found ${picked.length}.`);
-      }
+  // Desired marks for this SECTION (local target) using 40/30/30
+  const desiredByMarks = splitCounts(sectionMarks, [40, 30, 30]); // [L1, L2, L3] in MARKS
+
+  // Helper to consume from global budget strictly (no relax).
+  function takeFromBudget(level, wantedMarks) {
+    if (!globalMixBudget) return wantedMarks; // if no budget set, behave as pre-budget (but still strict by level)
+    const key = (level === "Level 1") ? "L1" : (level === "Level 2") ? "L2" : "L3";
+    const canGive = Math.max(0, Math.min(globalMixBudget[key] || 0, wantedMarks));
+    // convert to integer multiple of marks-per-question
+    const qCount = Math.floor(canGive / Math.max(1, mPerQ));
+    const givenMarks = qCount * mPerQ;
+    globalMixBudget[key] = (globalMixBudget[key] || 0) - givenMarks;
+    return givenMarks;
+  }
+
+  // Compute strict marks-per-level we will try to pick for THIS section
+  const wantL1m = takeFromBudget("Level 1", desiredByMarks[0]);
+  const wantL2m = takeFromBudget("Level 2", desiredByMarks[1]);
+  const wantL3m = takeFromBudget("Level 3", desiredByMarks[2]);
+
+  // Convert marks → question counts for this section (strict)
+  let wantL1q = Math.floor(wantL1m / Math.max(1, mPerQ));
+  let wantL2q = Math.floor(wantL2m / Math.max(1, mPerQ));
+  let wantL3q = Math.floor(wantL3m / Math.max(1, mPerQ));
+
+  // Ensure total does not exceed totalNeed
+  const capTotal = Math.min(totalNeed, wantL1q + wantL2q + wantL3q);
+  const scaleDown = (wantL1q + wantL2q + wantL3q) > 0 ? capTotal / (wantL1q + wantL2q + wantL3q) : 0;
+  if (scaleDown > 0 && scaleDown < 1) {
+    wantL1q = Math.floor(wantL1q * scaleDown);
+    wantL2q = Math.floor(wantL2q * scaleDown);
+    wantL3q = Math.floor(wantL3q * scaleDown);
+    // distribute remainder by L1→L2→L3
+    let rem = capTotal - (wantL1q + wantL2q + wantL3q);
+    const order = ["L1","L2","L3"];
+    for (const k of order) {
+      if (!rem) break;
+      if (k === "L1") wantL1q++;
+      else if (k === "L2") wantL2q++;
+      else wantL3q++;
+      rem--;
     }
+  }
+
+  // Fetch strictly per level (no difficulty relax, no borrow)
+  async function pickStrict(count, level, chapterList) {
+    if (count <= 0) return [];
+    const pool = await fetchFor(chapterList || null, count, level);
+    return takeUniqueFromPool(pool, count, usedIds, usedKeys, subjectSeenKeys);
+  }
+
+  if (!chs.length) {
+    const p1 = await pickStrict(wantL1q, "Level 1", null);
+    const p2 = await pickStrict(wantL2q, "Level 2", null);
+    const p3 = await pickStrict(wantL3q, "Level 3", null);
+    items.push(...p1, ...p2, ...p3);
+
+    if (p1.length < wantL1q) errors.push(`${subject}: Mixed(strict, marks) needs ${wantL1q} L1, got ${p1.length}.`);
+    if (p2.length < wantL2q) errors.push(`${subject}: Mixed(strict, marks) needs ${wantL2q} L2, got ${p2.length}.`);
+    if (p3.length < wantL3q) errors.push(`${subject}: Mixed(strict, marks) needs ${wantL3q} L3, got ${p3.length}.`);
     return;
   }
 
-  // Chapters selected → split evenly across chapters, then enforce 40/30/30 inside each chapter strictly
-  const quotaPerChapter = splitEvenAcrossChapters(totalNeed, chs);
+  // With chapters: split each level’s question count evenly across chapters (strict, no cross-borrow)
+  function splitEven(count) { return splitEvenAcrossChapters(count, chs); }
+
+  const L1PerCh = splitEven(wantL1q);
+  const L2PerCh = splitEven(wantL2q);
+  const L3PerCh = splitEven(wantL3q);
+
   for (let i = 0; i < chs.length; i++) {
     const ch = chs[i];
-    const need = quotaPerChapter[i];
-    if (!need) continue;
+    const c1 = await pickStrict(L1PerCh[i], "Level 1", [ch]);
+    const c2 = await pickStrict(L2PerCh[i], "Level 2", [ch]);
+    const c3 = await pickStrict(L3PerCh[i], "Level 3", [ch]);
+    items.push(...c1, ...c2, ...c3);
 
-    const parts = splitCounts(need, [40, 30, 30]); // per-chapter strict 40/30/30
-    for (let d = 0; d < diffs.length; d++) {
-      const want = parts[d];
-      if (!want) continue;
-      const pool = await fetchFor([ch], want, diffs[d]); // strict: fixed level only
-      const picked = takeUniqueFromPool(pool, want, usedIds, usedKeys, subjectSeenKeys);
-      items.push(...picked);
-      if (picked.length < want) {
-        errors.push(`${subject} / ${ch}: Mixed (strict) needs ${want} at ${diffs[d]}, found ${picked.length}.`);
-      }
-    }
+    if (c1.length < L1PerCh[i]) errors.push(`${subject} / ${ch}: Mixed(strict, marks) needs ${L1PerCh[i]} L1, got ${c1.length}.`);
+    if (c2.length < L2PerCh[i]) errors.push(`${subject} / ${ch}: Mixed(strict, marks) needs ${L2PerCh[i]} L2, got ${c2.length}.`);
+    if (c3.length < L3PerCh[i]) errors.push(`${subject} / ${ch}: Mixed(strict, marks) needs ${L3PerCh[i]} L3, got ${c3.length}.`);
   }
 }
+
   if (difficultyValue === "Mixed") {
     await fillMixed(requestedCount);
   } else if (difficultyValue && difficultyValue !== "Mixed") {
@@ -1534,6 +1586,30 @@ let allSectionErrors = [];
 const sourceTypeGlobal = (document.getElementById('exam-source-dropdown')?.dataset?.value) || 'Question Bank';
 
 if (sourceTypeGlobal === 'Question Bank') {
+    // ---- GLOBAL MIXED MARKS BUDGET (strict by marks) ----
+let _mixBudget = null;
+if (difficultyValue === "Mixed") {
+  // Sum total MARKS across all Mixed sections (ALL subjects)
+  let totalMarksAll = 0;
+  for (const sd of subjectsData) {
+    for (const sec of sd.sections) {
+      if (sec.type === "all" || sec.type === "any") {
+        const n = Number(sec.numQuestions || 0);
+        const m = Number(sec.marksPerQuestion || 0);
+        totalMarksAll += n * m;
+      } else if (sec.type === "internal") {
+        const p = Number(sec.numPairs || 0);
+        const m = Number(sec.marksPerQuestion || 0);
+        totalMarksAll += p * m;
+      }
+    }
+  }
+  // Strict 40/30/30 by MARKS (round down + remainder goes L1→L2→L3)
+  const parts = splitCounts(totalMarksAll, [40, 30, 30]);
+  _mixBudget = { L1: parts[0], L2: parts[1], L3: parts[2] };
+  console.log('[MIXED STRICT MARKS] global budget:', _mixBudget, 'of', totalMarksAll);
+}
+
   // ===== Old BANK flow (unchanged) =====
   for (let subjData of subjectsData) {
     let subjectBlock = { subject: subjData.subject, chapters: subjData.chapters, sections: [] };
@@ -1554,8 +1630,10 @@ if (sourceTypeGlobal === 'Question Bank') {
           mcqType: sec.mcqType,
           requestedCount,
           difficultyValue,
-          subjectSeenKeys
+          subjectSeenKeys,
+          globalMixBudget: _mixBudget  // <— NEW: marks-based global budget (may be null)
         });
+
         if (balanceErrors?.length) sectionErrors = sectionErrors.concat(balanceErrors);
 
         // Prefer distinct chapters / then top up
@@ -1764,6 +1842,7 @@ window.location.href = 'exam-review.html';
 </script>
 </body>
 </html>
+
 
 
 
