@@ -422,21 +422,35 @@ function parsePastedQuestionsToPool(raw) {
   const t = String(raw || '').replace(/\r/g, '').trim();
   if (!t) return [];
 
-  // 1) Join lines but DO NOT treat blank lines as block boundaries.
-  const norm = t.split('\n').join('\n');
+  // 1) Pre-normalize lines: if a line is only a number like "8." or "8)" attach the next line.
+  const lines = t.split('\n');
+  const merged = [];
+  for (let i = 0; i < lines.length; i++) {
+    const cur = lines[i].trim();
+    if (/^(?:Q?\s*\d+[\.\)]?)$/.test(cur) && i + 1 < lines.length) {
+      lines[i + 1] = `${cur} ${lines[i + 1]}`;
+      continue; // skip standalone number line
+    }
+    merged.push(lines[i]);
+  }
+  const norm = merged.join('\n');
 
-  // 2) Take everything from a top-level header (Q8:, 8., 8)) up to the next header or end.
+  // 2) Capture each top-level question from its header to just before the next header.
+  //    Tolerate optional space after "." or ")", and varying indentation.
   const headerBlockRegex =
-    /^\s*(?:Q?\s*\d+[\.\)]\s+)[\s\S]*?(?=(?:^\s*Q?\s*\d+[\.\)]\s+)|$)/gmi;
+    /^\s*(?:Q?\s*\d+[\.\)]\s*)[\s\S]*?(?=(?:^\s*Q?\s*\d+[\.\)]\s*)|$)/gmi;
 
-  const rawBlocks = norm.match(headerBlockRegex) || [norm];
+  let rawBlocks = norm.match(headerBlockRegex) || [];
 
-  // 3) Strip ONLY the main question number; keep inner sub-items (1., a., i., …)
+  // Fallback: if nothing matched, keep the whole text as one block.
+  if (!rawBlocks.length) rawBlocks = [norm];
+
+  // 3) Strip ONLY the main question number; keep inner sub-items like 1., a), (i), etc.
   const stripLead = s => String(s || '')
     .replace(/^\s*(?:Q?\s*\d+[\.\)]\s*)/, '')
     .trim();
 
-  // 4) Return blocks with internal line breaks preserved (sub-questions kept inside).
+  // 4) Preserve internal line breaks so sub-questions remain inside the same block.
   return rawBlocks.map(stripLead).filter(Boolean);
 }
 
@@ -1365,7 +1379,7 @@ toggle();
 
   pasteArea?.addEventListener('input', () => {
     const t = (pasteArea.value || '').trim();
-    const approx = t ? ((t.match(/^\s*(?:Q?\s*\d+[\.\)])/gmi) || []).length || 1) : 0;
+    const approx = t ? ((t.match(/^\s*(?:Q?\s*\d+[\.\)]\s*)/gmi) || []).length || 1) : 0;
     pasteCount.textContent = approx ? `~${approx} question blocks detected` : '';
   });
 
@@ -1703,6 +1717,7 @@ window.location.href = 'exam-review.html';
 </script>
 </body>
 </html>
+
 
 
 
