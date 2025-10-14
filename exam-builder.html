@@ -417,6 +417,86 @@ function splitCounts(total, percents) {
     for (let i = 0; diff > 0; i++, diff--) result[i % result.length]++;
     return result;
 }
+    // NEW: HTML → plain text (handles <p>, <br>, lists, entities)
+function htmlToPlainText(html) {
+  if (!html) return '';
+  let s = String(html);
+
+  // normalize line breaks for block-ish tags
+  s = s.replace(/<\/p\s*>/gi, '\n')
+       .replace(/<br\s*\/?>/gi, '\n')
+       .replace(/<\/li\s*>/gi, '\n')
+       .replace(/<\/h[1-6]\s*>/gi, '\n');
+
+  // strip remaining tags
+  s = s.replace(/<[^>]+>/g, ' ');
+
+  // decode basic entities & nbsp
+  s = s.replace(/&nbsp;/gi, ' ')
+       .replace(/&amp;/gi, '&')
+       .replace(/&lt;/gi, '<')
+       .replace(/&gt;/gi, '>')
+       .replace(/&#39;/gi, "'")
+       .replace(/&quot;/gi, '"');
+
+  // collapse whitespace
+  s = s.replace(/\r/g, '').replace(/\u00A0/g, ' ').replace(/[ \t]+\n/g, '\n').replace(/\s+/g, ' ').replace(/\n{2,}/g, '\n').trim();
+
+  // restore paragraph-ish breaks a little
+  s = s.replace(/\n/g, '\n');
+  return s;
+}
+
+// NEW: turn a pasted or extracted text into an ordered pool of question strings
+function parsePastedQuestionsToPool(raw) {
+  if (!raw) return [];
+  let text = String(raw);
+
+  // If it looks like HTML, flatten it first
+  if (/<[a-z][\s\S]*>/i.test(text)) {
+    text = htmlToPlainText(text);
+  } else {
+    text = text.replace(/\r/g, '').trim();
+  }
+  if (!text) return [];
+
+  // Merge lonely number lines like "8." / "8)" into the next line
+  const lines = text.split('\n');
+  const merged = [];
+  for (let i = 0; i < lines.length; i++) {
+    const cur = lines[i].trim();
+    if (/^(?:Q\.?\s*)?\d+\s*[\.\)]?$/.test(cur) && i + 1 < lines.length) {
+      lines[i + 1] = `${cur} ${lines[i + 1]}`;
+      continue;
+    }
+    merged.push(lines[i]);
+  }
+  const norm = merged.join('\n');
+
+  // Header at start of line:
+  //   Q1. / Q.1) / 1) / 1.  (with at least one space after)
+  const headerRe = /^[ \t]*(?:Q\.?\s*)?(\d+)\s*[\.\)]\s+/gmi;
+
+  // Collect all starts (no monotonic filtering; many docs restart numbering per section)
+  const starts = [];
+  let m;
+  while ((m = headerRe.exec(norm)) !== null) {
+    starts.push(m.index);
+  }
+  if (!starts.length) return [norm.trim()].filter(Boolean);
+
+  // Build blocks from each header to the next
+  const blocks = [];
+  for (let i = 0; i < starts.length; i++) {
+    const start = starts[i];
+    const end = i + 1 < starts.length ? starts[i + 1] : norm.length;
+    const slice = norm.slice(start, end);
+    // strip leading header only
+    const cleaned = slice.replace(/^[ \t]*(?:Q\.?\s*)?\d+\s*[\.\)]\s+/, '').trim();
+    if (cleaned) blocks.push(cleaned);
+  }
+  return blocks;
+}
 // NEW: turn a pasted or extracted text into an ordered pool of question strings
 function parsePastedQuestionsToPool(raw) {
   const t = String(raw || '').replace(/\r/g, '').trim();
@@ -1664,7 +1744,7 @@ const result = await window.mammoth.convertToHtml(
     )
   }
 );
-rawText = (result?.value || '').trim();   // keep variable name the same
+rawText = htmlToPlainText(result?.value || '');
       }
     } catch (e) {
       allSectionErrors.push('Failed to read .docx file.');
@@ -1752,6 +1832,7 @@ window.location.href = 'exam-review.html';
 </script>
 </body>
 </html>
+
 
 
 
