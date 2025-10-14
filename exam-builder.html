@@ -1859,17 +1859,46 @@ if (sourceTypeGlobal === 'Question Bank' && difficultyValue === "Mixed") {
   }
 })();
 // Optional cleanup: remove debug-only srcId from questions before saving
+// Final cleanup: remove srcId, de-dupe by STEM+marks, and renumber
 try {
-  (finalPaper.subjects || []).forEach(s =>
-    (s.sections || []).forEach(sec =>
-      (sec.questions || []).forEach(q => { if ('srcId' in q) delete q.srcId; })
-    )
-  );
+  let globalN = 1;
+  (finalPaper.subjects || []).forEach(s => {
+    const subjectSeen = new Set();
+    (s.sections || []).forEach(sec => {
+      // 1) strip debug-only fields
+      (sec.questions || []).forEach(q => { if ('srcId' in q) delete q.srcId; });
+
+      // 2) de-dupe within section using STEM + marks (use existing makeStemKey)
+      const seen = new Set();
+      const filtered = [];
+      for (const q of (sec.questions || [])) {
+        const key = makeStemKey({ 
+          text: q.text || q.question || '', 
+          marks: q.marks ?? sec.marksPerQuestion 
+        });
+        if (!key) { filtered.push(q); continue; }
+        if (seen.has(key) || subjectSeen.has(key)) continue;
+        seen.add(key);
+        subjectSeen.add(key);
+        filtered.push(q);
+      }
+
+      // 3) write back, fix counts, renumber globally
+      sec.questions = filtered.map(q => ({ ...q, number: globalN++ }));
+      if (sec.type === "internal") {
+        sec.numPairs = sec.questions.length;
+      } else {
+        sec.numQuestions = sec.questions.length;
+      }
+    });
+  });
 } catch (e) {
-  console.warn('srcId cleanup error:', e);
+  console.warn('final cleanup error:', e);
 }
+
 sessionStorage.setItem('examPaper', JSON.stringify(finalPaper));
 window.location.href = 'exam-review.html';
+
 
             } catch (err) {
                 showToast("Error building exam: " + (err.message || err), "error");
@@ -1882,6 +1911,7 @@ window.location.href = 'exam-review.html';
 </script>
 </body>
 </html>
+
 
 
 
