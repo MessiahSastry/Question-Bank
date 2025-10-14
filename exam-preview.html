@@ -450,6 +450,69 @@ function fitsInLine(option1, option2, maxWidth = 700) {
     document.body.removeChild(dummy);
     return fits;
 }
+   // NEW: unified renderer for MCQ option blocks (4 inline → 2x2 → stacked)
+function renderOptionsLayout(optionLines) {
+  if (!Array.isArray(optionLines) || optionLines.length === 0) return '';
+  if (optionLines.length !== 4) {
+    // Non-4 options → simple stacked
+    return optionLines.map(opt =>
+      `<div style="margin-bottom:2px;margin-left:2px;">${String(opt).trim().replace(/\n/g,'<br>')}</div>`
+    ).join('');
+  }
+
+  const containsMath = optionLines.some(opt =>
+    String(opt).includes('mjx-container') ||
+    /\$[^$]+\$|\\\(|\\\[/.test(String(opt))
+  );
+
+  // Try one-line fit for all four
+  let dummy = document.createElement('span');
+  dummy.style.cssText = 'visibility:hidden;position:absolute;white-space:nowrap;padding:0;margin:0;border:none;font-family:Times New Roman,Times,serif;font-size:1.11em;';
+  dummy.innerText = optionLines.join('    ');
+  document.body.appendChild(dummy);
+  const fitsFour = dummy.offsetWidth < 700;
+  document.body.removeChild(dummy);
+
+  const abFits = fitsInLine(optionLines[0], optionLines[1]);
+  const cdFits = fitsInLine(optionLines[2], optionLines[3]);
+
+  // 1) Math present → use flex wrap (keeps formulas readable)
+  if (containsMath) {
+    return `<div style="display:flex;gap:32px;flex-wrap:wrap;margin-bottom:3px;margin-left:2px;">
+      ${optionLines.map(opt => `<span style="min-width:70px;display:inline-block;vertical-align:top;">${String(opt).trim()}</span>`).join('')}
+    </div>`;
+  }
+
+  // 2) All four fit in one line
+  if (fitsFour) {
+    return `<div style="display:flex;gap:32px;flex-wrap:wrap;margin-bottom:3px;margin-left:2px;">
+      ${optionLines.map(opt => `<span style="min-width:70px;display:inline-block;vertical-align:top;">${String(opt).trim()}</span>`).join('')}
+    </div>`;
+  }
+
+  // 3) 2×2 grid if (A,B) and (C,D) pairs fit side by side
+  if (abFits && cdFits) {
+    return `
+      <div style="display:grid;grid-template-columns:1fr 1fr;column-gap:32px;row-gap:0;margin-bottom:0;margin-left:2px;width:max-content;">
+        <span style="min-width:70px;display:inline-block;">${optionLines[0]}</span>
+        <span style="min-width:70px;display:inline-block;">${optionLines[1]}</span>
+        <span style="min-width:70px;display:inline-block;">${optionLines[2]}</span>
+        <span style="min-width:70px;display:inline-block;">${optionLines[3]}</span>
+      </div>
+    `;
+  }
+
+  // 4) Fallback: stacked
+  return `
+    <div>
+      <div style="margin-bottom:2px;margin-left:2px;">${String(optionLines[0]).trim().replace(/\n/g,'<br>')}</div>
+      <div style="margin-bottom:2px;margin-left:2px;">${String(optionLines[1]).trim().replace(/\n/g,'<br>')}</div>
+      <div style="margin-bottom:2px;margin-left:2px;">${String(optionLines[2]).trim().replace(/\n/g,'<br>')}</div>
+      <div style="margin-bottom:2px;margin-left:2px;">${String(optionLines[3]).trim().replace(/\n/g,'<br>')}</div>
+    </div>
+  `;
+}
+
 function formatQuestionText(text) {
     text = text.replace(/^\d+\.\s*/, '');
     text = text.replace(/^.*?,\s*\d+\s+Marks?\s*/i, '');
@@ -594,55 +657,7 @@ if (exam.subjects && exam.subjects.length > 1) {
             }
           }
 
-          if (optionLines.length === 4) {
-            // Check for MathJax/LaTeX or force four in a row for complex options
-            const containsMath = optionLines.some(opt =>
-              opt.includes('mjx-container') || opt.includes('$') || opt.includes('\\(') || opt.includes('\\[')
-            );
-            if (containsMath) {
-              optionsHTML = `<div style="display:flex;gap:32px;flex-wrap:wrap;margin-bottom:3px;margin-left:2px;">
-                ${optionLines.map(opt => `<span style="min-width:70px;display:inline-block;vertical-align:top;">${opt.trim()}</span>`).join('')}
-              </div>`;
-            } else {
-              let dummy = document.createElement('span');
-              dummy.style.cssText = 'visibility:hidden;position:absolute;white-space:nowrap;padding:0;margin:0;border:none;font-family:Times New Roman,Times,serif;font-size:1.11em;';
-              dummy.innerText = optionLines.join('    ');
-              document.body.appendChild(dummy);
-              let fitsFour = dummy.offsetWidth < 700;
-              document.body.removeChild(dummy);
-
-              let abFits = fitsInLine(optionLines[0], optionLines[1]);
-              let cdFits = fitsInLine(optionLines[2], optionLines[3]);
-
-              if (fitsFour) {
-                optionsHTML = `<div style="display:flex;gap:32px;flex-wrap:wrap;margin-bottom:3px;margin-left:2px;">
-                  ${optionLines.map(opt => `<span style="min-width:70px;display:inline-block;vertical-align:top;">${opt.trim()}</span>`).join('')}
-                </div>`;
-              } else if (abFits && cdFits) {
-                optionsHTML = `
-                  <div style="display:grid;grid-template-columns:1fr 1fr;column-gap:32px;row-gap:0;margin-bottom:0;margin-left:2px;width:max-content;">
-                    <span style="min-width:70px;display:inline-block;">${optionLines[0]}</span>
-                    <span style="min-width:70px;display:inline-block;">${optionLines[1]}</span>
-                    <span style="min-width:70px;display:inline-block;">${optionLines[2]}</span>
-                    <span style="min-width:70px;display:inline-block;">${optionLines[3]}</span>
-                  </div>
-                `;
-              } else {
-                optionsHTML = `
-                  <div>
-                    <div style="margin-bottom:2px;margin-left:2px;">${optionLines[0].trim().replace(/\n/g, '<br>')}</div>
-                    <div style="margin-bottom:2px;margin-left:2px;">${optionLines[1].trim().replace(/\n/g, '<br>')}</div>
-                    <div style="margin-bottom:2px;margin-left:2px;">${optionLines[2].trim().replace(/\n/g, '<br>')}</div>
-                    <div style="margin-bottom:2px;margin-left:2px;">${optionLines[3].trim().replace(/\n/g, '<br>')}</div>
-                  </div>
-                `;
-              }
-            }
-          } else if (optionLines.length > 0) {
-            optionsHTML = optionLines.map(opt =>
-              `<div style="margin-bottom:2px;margin-left:2px;">${opt.trim().replace(/\n/g, '<br>')}</div>`
-            ).join('');
-          }
+          optionsHTML = renderOptionsLayout(optionLines);
 
           const imageHTML = q.image ? `<div class="question-img-block"><img class="question-img" src="${q.image}" alt="Question Image" /></div>` : '';
           return `
@@ -755,55 +770,7 @@ if (exam.subjects && exam.subjects.length > 1) {
             }
           }
 
-          if (optionLines.length === 4) {
-            // Check for MathJax/LaTeX or force four in a row for complex options
-            const containsMath = optionLines.some(opt =>
-              opt.includes('mjx-container') || opt.includes('$') || opt.includes('\\(') || opt.includes('\\[')
-            );
-            if (containsMath) {
-              optionsHTML = `<div style="display:flex;gap:32px;flex-wrap:wrap;margin-bottom:3px;margin-left:2px;">
-                ${optionLines.map(opt => `<span style="min-width:70px;display:inline-block;vertical-align:top;">${opt.trim()}</span>`).join('')}
-              </div>`;
-            } else {
-              let dummy = document.createElement('span');
-              dummy.style.cssText = 'visibility:hidden;position:absolute;white-space:nowrap;padding:0;margin:0;border:none;font-family:Times New Roman,Times,serif;font-size:1.11em;';
-              dummy.innerText = optionLines.join('    ');
-              document.body.appendChild(dummy);
-              let fitsFour = dummy.offsetWidth < 700;
-              document.body.removeChild(dummy);
-
-              let abFits = fitsInLine(optionLines[0], optionLines[1]);
-              let cdFits = fitsInLine(optionLines[2], optionLines[3]);
-
-              if (fitsFour) {
-                optionsHTML = `<div style="display:flex;gap:32px;flex-wrap:wrap;margin-bottom:3px;margin-left:2px;">
-                  ${optionLines.map(opt => `<span style="min-width:70px;display:inline-block;vertical-align:top;">${opt.trim()}</span>`).join('')}
-                </div>`;
-              } else if (abFits && cdFits) {
-                optionsHTML = `
-                  <div style="display:grid;grid-template-columns:1fr 1fr;column-gap:32px;row-gap:0;margin-bottom:0;margin-left:2px;width:max-content;">
-                    <span style="min-width:70px;display:inline-block;">${optionLines[0]}</span>
-                    <span style="min-width:70px;display:inline-block;">${optionLines[1]}</span>
-                    <span style="min-width:70px;display:inline-block;">${optionLines[2]}</span>
-                    <span style="min-width:70px;display:inline-block;">${optionLines[3]}</span>
-                  </div>
-                `;
-              } else {
-                optionsHTML = `
-                  <div>
-                    <div style="margin-bottom:2px;margin-left:2px;">${optionLines[0].trim().replace(/\n/g, '<br>')}</div>
-                    <div style="margin-bottom:2px;margin-left:2px;">${optionLines[1].trim().replace(/\n/g, '<br>')}</div>
-                    <div style="margin-bottom:2px;margin-left:2px;">${optionLines[2].trim().replace(/\n/g, '<br>')}</div>
-                    <div style="margin-bottom:2px;margin-left:2px;">${optionLines[3].trim().replace(/\n/g, '<br>')}</div>
-                  </div>
-                `;
-              }
-            }
-          } else if (optionLines.length > 0) {
-            optionsHTML = optionLines.map(opt =>
-              `<div style="margin-bottom:2px;margin-left:2px;">${opt.trim().replace(/\n/g, '<br>')}</div>`
-            ).join('');
-          }
+         optionsHTML = renderOptionsLayout(optionLines);
 
           const imageHTML = q.image ? `<div class="question-img-block"><img class="question-img" src="${q.image}" alt="Question Image" /></div>` : '';
           return `
@@ -996,6 +963,7 @@ window.addEventListener('DOMContentLoaded', () => {
 </script>
  </body>
 </html>
+
 
 
 
