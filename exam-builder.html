@@ -497,61 +497,6 @@ function parsePastedQuestionsToPool(raw) {
   }
   return blocks;
 }
-// NEW: turn a pasted or extracted text into an ordered pool of question strings
-function parsePastedQuestionsToPool(raw) {
-  const t = String(raw || '').replace(/\r/g, '').trim();
-  if (!t) return [];
-
-  // Attach "lonely" number lines like "8." / "8)" to the next line
-  const lines = t.split('\n');
-  const merged = [];
-  for (let i = 0; i < lines.length; i++) {
-    const cur = lines[i].trim();
-    if (/^(?:Q?\s*\d+[\.\)]?)$/.test(cur) && i + 1 < lines.length) {
-      lines[i + 1] = `${cur} ${lines[i + 1]}`;
-      continue;
-    }
-    merged.push(lines[i]);
-  }
-  const norm = merged.join('\n');
-
-  // Candidate headers anywhere a line starts with "Q?\d+.", "Q?\d+)", or "Q?\d+" + TAB/space
-  const headerRe = /^[ \t]{0,2}Q?\s*(\d+)(?:[\.\)]|\s)\s*/gmi;
-
-  // Collect candidates, but only keep those that form a non-decreasing sequence
-  // (e.g., 7,8,9,10). This filters out inner "1)/a)" sub-items.
-  const candidates = [];
-  let m;
-  while ((m = headerRe.exec(norm)) !== null) {
-    const num = parseInt(m[1], 10);
-    const index = m.index;
-    candidates.push({ num, index });
-  }
-  if (!candidates.length) return [norm]; // one big block as last resort
-
-  // Keep only those whose number is >= last kept number (monotonic sequence)
-  const kept = [];
-  let last = -Infinity;
-  for (const c of candidates) {
-    if (c.num >= last + 1) { kept.push(c); last = c.num; }
-  }
-  // If everything got filtered (rare), fall back to all candidates
-  const starts = (kept.length ? kept : candidates).map(c => c.index).sort((a,b)=>a-b);
-
-  // Build blocks from starts→nextStart (or end)
-  const blocks = [];
-  for (let i = 0; i < starts.length; i++) {
-    const start = starts[i];
-    const end = i + 1 < starts.length ? starts[i + 1] : norm.length;
-    const slice = norm.slice(start, end);
-    blocks.push(slice);
-  }
-
-  // Strip ONLY the main number; keep sub-questions intact
-  return blocks.map(s =>
-    String(s || '').replace(/^[ \t]{0,2}Q?\s*\d+(?:[\.\)]|\s)\s*/i, '').trim()
-  ).filter(Boolean);
-}
 
 function allocateSequentiallyAcrossSections(subjectsData, pool) {
   const errors = [];
@@ -1478,7 +1423,7 @@ toggle();
 
   pasteArea?.addEventListener('input', () => {
     const t = (pasteArea.value || '').trim();
-    const headerRe = /^[ \t]{0,2}Q?\s*(\d+)(?:[\.\)]|\s)\s*/gmi;
+    const headerRe = /^[ \t]*(?:Q\.?\s*)?(\d+)\s*[\.\)]\s+/gmi;
 const nums = [];
 let m;
 while ((m = headerRe.exec(t)) !== null) nums.push(parseInt(m[1], 10));
@@ -1758,7 +1703,7 @@ if ((effective === 'Paste' || effective === 'Upload .docx') && !rawText) {
 }
 
 const pool = parsePastedQuestionsToPool(rawText);
-
+console.log('DOC SOURCE → detected blocks:', pool.length);
 
   // Allocate sequentially across ALL subjects/sections
   const { errors: allocErrors } = allocateSequentiallyAcrossSections(subjectsData, pool);
@@ -1832,6 +1777,7 @@ window.location.href = 'exam-review.html';
 </script>
 </body>
 </html>
+
 
 
 
