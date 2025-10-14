@@ -422,36 +422,55 @@ function parsePastedQuestionsToPool(raw) {
   const t = String(raw || '').replace(/\r/g, '').trim();
   if (!t) return [];
 
-  // 1) Pre-normalize lines: if a line is only a number like "8." or "8)" attach the next line.
+  // Attach "lonely" number lines like "8." / "8)" to the next line
   const lines = t.split('\n');
   const merged = [];
   for (let i = 0; i < lines.length; i++) {
     const cur = lines[i].trim();
     if (/^(?:Q?\s*\d+[\.\)]?)$/.test(cur) && i + 1 < lines.length) {
       lines[i + 1] = `${cur} ${lines[i + 1]}`;
-      continue; // skip standalone number line
+      continue;
     }
     merged.push(lines[i]);
   }
   const norm = merged.join('\n');
 
-  // 2) Capture each top-level question from its header to just before the next header.
-  //    Tolerate optional space after "." or ")", and varying indentation.
-  const headerBlockRegex =
-    /^\s*(?:Q?\s*\d+[\.\)]\s*)[\s\S]*?(?=(?:^\s*Q?\s*\d+[\.\)]\s*)|$)/gmi;
+  // Candidate headers anywhere a line starts with "Q?\d+.", "Q?\d+)", or "Q?\d+" + TAB/space
+  const headerRe = /^[ \t]{0,2}Q?\s*(\d+)(?:[\.\)]|\s)\s*/gmi;
 
-  let rawBlocks = norm.match(headerBlockRegex) || [];
+  // Collect candidates, but only keep those that form a non-decreasing sequence
+  // (e.g., 7,8,9,10). This filters out inner "1)/a)" sub-items.
+  const candidates = [];
+  let m;
+  while ((m = headerRe.exec(norm)) !== null) {
+    const num = parseInt(m[1], 10);
+    const index = m.index;
+    candidates.push({ num, index });
+  }
+  if (!candidates.length) return [norm]; // one big block as last resort
 
-  // Fallback: if nothing matched, keep the whole text as one block.
-  if (!rawBlocks.length) rawBlocks = [norm];
+  // Keep only those whose number is >= last kept number (monotonic sequence)
+  const kept = [];
+  let last = -Infinity;
+  for (const c of candidates) {
+    if (c.num >= last + 1) { kept.push(c); last = c.num; }
+  }
+  // If everything got filtered (rare), fall back to all candidates
+  const starts = (kept.length ? kept : candidates).map(c => c.index).sort((a,b)=>a-b);
 
-  // 3) Strip ONLY the main question number; keep inner sub-items like 1., a), (i), etc.
-  const stripLead = s => String(s || '')
-    .replace(/^\s*(?:Q?\s*\d+[\.\)]\s*)/, '')
-    .trim();
+  // Build blocks from starts→nextStart (or end)
+  const blocks = [];
+  for (let i = 0; i < starts.length; i++) {
+    const start = starts[i];
+    const end = i + 1 < starts.length ? starts[i + 1] : norm.length;
+    const slice = norm.slice(start, end);
+    blocks.push(slice);
+  }
 
-  // 4) Preserve internal line breaks so sub-questions remain inside the same block.
-  return rawBlocks.map(stripLead).filter(Boolean);
+  // Strip ONLY the main number; keep sub-questions intact
+  return blocks.map(s =>
+    String(s || '').replace(/^[ \t]{0,2}Q?\s*\d+(?:[\.\)]|\s)\s*/i, '').trim()
+  ).filter(Boolean);
 }
 
 function allocateSequentiallyAcrossSections(subjectsData, pool) {
@@ -1379,7 +1398,15 @@ toggle();
 
   pasteArea?.addEventListener('input', () => {
     const t = (pasteArea.value || '').trim();
-    const approx = t ? ((t.match(/^\s*(?:Q?\s*\d+[\.\)]\s*)/gmi) || []).length || 1) : 0;
+    const headerRe = /^[ \t]{0,2}Q?\s*(\d+)(?:[\.\)]|\s)\s*/gmi;
+const nums = [];
+let m;
+while ((m = headerRe.exec(t)) !== null) nums.push(parseInt(m[1], 10));
+let approx = 0, last = -Infinity;
+for (const n of nums) { if (n >= last + 1) { approx++; last = n; } }
+if (!approx && nums.length) approx = nums.length;
+document.getElementById('global-paste-count').textContent =
+  approx ? `~${approx} question blocks detected` : '';
     pasteCount.textContent = approx ? `~${approx} question blocks detected` : '';
   });
 
@@ -1717,6 +1744,7 @@ window.location.href = 'exam-review.html';
 </script>
 </body>
 </html>
+
 
 
 
