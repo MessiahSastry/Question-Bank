@@ -911,11 +911,12 @@ function splitEvenAcrossChapters(total, chapters) {
   return out;
 }
 
-function takeUniqueFromPool(pool, need, usedIds, usedKeys, subjectSeenKeys) {
+function takeUniqueFromPool(pool, need, usedIds, usedKeys, subjectSeenKeys, secMarks) {
   const out = [];
+  const mPerQ = Number(secMarks ?? 0);
   for (const d of (pool || [])) {
     const id  = d && d.id;
-    const key = makeStemKey(d); // STEM + marks
+    const key = makeStemKey({ text: d.question || d.text || '', marks: mPerQ });
     if ((id && usedIds.has(id)) || (key && usedKeys.has(key)) || (key && subjectSeenKeys.has(key))) continue;
     if (id)  usedIds.add(id);
     if (key) usedKeys.add(key);
@@ -972,18 +973,18 @@ async function fetchBalancedAcrossChapters({
     // Try same difficulty across all chapters
     if (sameDifficulty) {
       pool = await fetchFor(chs, need, sameDifficulty);
-      let picked = takeUniqueFromPool(pool, need, usedIds, usedKeys, subjectSeenKeys);
+      let picked = takeUniqueFromPool(pool, need, usedIds, usedKeys, subjectSeenKeys, marksPerQuestion);
       need -= picked.length;
       if (need <= 0) return picked;
 
       // Try ANY difficulty across all chapters
       const pool2 = await fetchFor(chs, need, null);
-      picked = picked.concat(takeUniqueFromPool(pool2, need, usedIds, usedKeys, subjectSeenKeys));
+      picked = picked.concat(takeUniqueFromPool(pool2, need, usedIds, usedKeys, subjectSeenKeys, marksPerQuestion));
       return picked;
     } else {
       // Any difficulty directly
       pool = await fetchFor(chs, need, null);
-      return takeUniqueFromPool(pool, need, usedIds, usedKeys, subjectSeenKeys);
+      return takeUniqueFromPool(pool, need, usedIds, usedKeys, subjectSeenKeys, marksPerQuestion);
     }
   }
 
@@ -992,7 +993,7 @@ async function fetchBalancedAcrossChapters({
   // No chapter filter → old behavior
   if (!chs.length) {
     const pool = await fetchFor(null, totalNeed, forceDiff);
-    items.push(...takeUniqueFromPool(pool, totalNeed, usedIds, usedKeys, subjectSeenKeys));
+    items.push(...takeUniqueFromPool(pool, totalNeed, usedIds, usedKeys, subjectSeenKeys, marksPerQuestion));
     return;
   }
 
@@ -1001,11 +1002,11 @@ async function fetchBalancedAcrossChapters({
 if (strictOneEach) {
   for (let i = 0; i < chs.length && items.length < totalNeed; i++) {
     let pool = await fetchFor([chs[i]], 1, forceDiff);
-    let picked = takeUniqueFromPool(pool, 1, usedIds, usedKeys, subjectSeenKeys);
+    let picked = takeUniqueFromPool(pool, 1, usedIds, usedKeys, subjectSeenKeys, marksPerQuestion);
     if (!picked.length) {
       // same chapter, any difficulty
       pool = await fetchFor([chs[i]], 1, null);
-      picked = takeUniqueFromPool(pool, 1, usedIds, usedKeys, subjectSeenKeys);
+      picked = takeUniqueFromPool(pool, 1, usedIds, usedKeys, subjectSeenKeys, marksPerQuestion);
     }
     if (picked.length) items.push(...picked);
   }
@@ -1032,7 +1033,7 @@ if (strictOneEach) {
     const need = perChapter[i];
     if (!need) continue;
     const pool = await fetchFor([chs[i]], need, forceDiff);
-    const picked = takeUniqueFromPool(pool, need, usedIds, usedKeys, subjectSeenKeys);
+    const picked = takeUniqueFromPool(pool, need, usedIds, usedKeys, subjectSeenKeys, marksPerQuestion);
     items.push(...picked);
     perChapter[i] -= picked.length;
   }
@@ -1110,7 +1111,7 @@ async function fillMixed(totalNeed) {
   async function pickStrict(count, level, chapterList) {
     if (count <= 0) return [];
     const pool = await fetchFor(chapterList || null, count, level);
-    return takeUniqueFromPool(pool, count, usedIds, usedKeys, subjectSeenKeys);
+    return takeUniqueFromPool(pool, count, usedIds, usedKeys, subjectSeenKeys, marksPerQuestion);
   }
 
   if (!chs.length) {
@@ -1938,6 +1939,7 @@ window.location.href = 'exam-review.html';
 </script>
 </body>
 </html>
+
 
 
 
