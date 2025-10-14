@@ -65,6 +65,7 @@
   min-height: 297mm;
   margin: 0 auto;
   padding: 2.1cm 1.5cm 1.5cm 1.5cm;
+  max-width: 210mm;
   box-sizing: border-box;
   background: #fff;
   /* Add this for smoother mobile scaling */
@@ -443,8 +444,8 @@ function formatExamTime(mins) {
 
 function fitsInLine(option1, option2, maxWidth = 700) {
     let dummy = document.createElement('span');
-    dummy.style.cssText = 'visibility:hidden;position:absolute;white-space:nowrap;padding:0;margin:0;border:none;font-family:Times New Roman,Times,serif;font-size:1.11em;';
-    dummy.innerText = option1 + "    " + option2;
+    dummy.style.cssText = 'visibility:hidden;position:absolute;white-space:nowrap;padding:0;margin:0;border:none;font-family:Times New Roman, Times, serif;font-size:1.15em;';
+    dummy.textContent = option1 + " " + option2;
     document.body.appendChild(dummy);
     let fits = dummy.offsetWidth < maxWidth;
     document.body.removeChild(dummy);
@@ -468,7 +469,7 @@ function renderOptionsLayout(optionLines) {
   // Try one-line fit for all four
   let dummy = document.createElement('span');
   dummy.style.cssText = 'visibility:hidden;position:absolute;white-space:nowrap;padding:0;margin:0;border:none;font-family:Times New Roman,Times,serif;font-size:1.11em;';
-  dummy.innerText = optionLines.join('    ');
+  dummy.textContent = optionLines.join('    ');
   document.body.appendChild(dummy);
   const fitsFour = dummy.offsetWidth < 700;
   document.body.removeChild(dummy);
@@ -595,7 +596,7 @@ if (exam.subjects && exam.subjects.length > 1) {
             : ""
     }
   </span>
-        <span style="flex:0 0 auto; text-align:right; margin-left:30px; color:#0f3d6b;">
+        <span style="flex:0 0 auto; text-align:right; margin-left:30px;">
         ${
           section.type === "all"
             ? `${section.numQuestions} x ${section.marksPerQuestion} = ${section.numQuestions * section.marksPerQuestion} Marks`
@@ -632,8 +633,16 @@ if (exam.subjects && exam.subjects.length > 1) {
             });
             isMCQ = true;
           } else {
-            let html = (q.text || q.question || '').replace(/<img[^>]*>/gi, '');
-            let parts = html.split(/<br\s*\/?>|<\/div>|<div[^>]*>/gi)
+            let html = (q.text || q.question || '')
+          .replace(/<img[^>]*>/gi, '')
+          .replace(/<\/p>/gi,'<br>')
+          .replace(/<div[^>]*>/gi,'<br>')
+          .replace(/<\/div>/gi,'')
+          .replace(/<li[^>]*>/gi,'<br>')
+          .replace(/<\/li>/gi,'')
+          .replace(/<ol[^>]*>|<ul[^>]*>|<\/ol>|<\/ul>/gi,'');
+
+            let parts = html.split(/<br\s*\/?>|\r?\n|\r/gi)
               .map(s => s.replace(/ /g, ' ').trim())
               .filter(Boolean);
 
@@ -641,19 +650,19 @@ if (exam.subjects && exam.subjects.length > 1) {
               questionContentHTML = autoLatexAll(removeMetaLines(removeMetaTags(removeMetaPrefix(q.text || q.question || ""))));
               for (let i = 1; i < parts.length; i++) {
                 let line = autoLatexAll(parts[i]);
-                let inlineOpts = line.match(/([A-D][).][^A-D]*)/g);
+                let inlineOpts = line.match(/([A-D]\s*[\)\.\:\-]\s*[^A-D]+?)(?=(?:\s+[A-D]\s*[\)\.\:\-]\s*)|$)/g);
                 if (inlineOpts && inlineOpts.length >= 2) {
-                  optionLines.push(...inlineOpts.map(opt => autoLatexAll(opt.trim())));
-                } else if (line) {
-                  optionLines.push(autoLatexAll(line));
-                }
+                optionLines.push(...inlineOpts.map(opt => autoLatexAll(opt.trim())));
+              } else if (line) {
+                // descriptive continuation
+                questionContentHTML += '<br>' + autoLatexAll(line);
+              }
               }
               if (optionLines.length === 4) {
-                optionLines = optionLines.map((opt, i) =>
-                  /^[A-D][).]/.test(opt) ? opt : String.fromCharCode(65 + i) + ") " + opt
-                );
-                isMCQ = true;
-              }
+            optionLines = optionLines.map(s => String(s).replace(/\s+/g,' ').trim().replace(/^[A-D]\s*[\)\.\:\-]\s*/,''));
+            optionLines = optionLines.map((opt, i) => String.fromCharCode(65+i) + ") " + opt);
+            isMCQ = true;
+          }
             }
           }
 
@@ -664,11 +673,11 @@ if (exam.subjects && exam.subjects.length > 1) {
             <div class="question-container">
               <div class="question-number">${currentQNum}.</div>
               <div class="question-body">
-              <div class="question-text" style="font-size:1.15em;">
-                ${autoLatexAll(removeMetaTags(removeMetaPrefix(q.text || q.question || "")))}
-                 </div>
+             <div class="question-text" style="font-size:1.15em;">
+              ${questionContentHTML}
+            </div>
                 ${imageHTML}
-                <div class="options-block">${optionsHTML}</div>
+                <div class="options-block" data-options='${JSON.stringify(optionLines)}'>${optionsHTML}</div>
               </div>
             </div>
           `;
@@ -745,8 +754,16 @@ if (exam.subjects && exam.subjects.length > 1) {
           });
             isMCQ = true;
           } else {
-            let html = (q.text || q.question || '').replace(/<img[^>]*>/gi, '');
-            let parts = html.split(/<br\s*\/?>|<\/div>|<div[^>]*>/gi)
+            let html = (q.text || q.question || '')
+            .replace(/<img[^>]*>/gi, '')
+            .replace(/<\/p>/gi,'<br>')
+            .replace(/<div[^>]*>/gi,'<br>')
+            .replace(/<\/div>/gi,'')
+            .replace(/<li[^>]*>/gi,'<br>')
+            .replace(/<\/li>/gi,'')
+            .replace(/<ol[^>]*>|<ul[^>]*>|<\/ol>|<\/ul>/gi,'');
+
+            let parts = html.split(/<br\s*\/?>|\r?\n|\r/gi)
               .map(s => s.replace(/ /g, ' ').trim())
               .filter(Boolean);
 
@@ -754,18 +771,19 @@ if (exam.subjects && exam.subjects.length > 1) {
               questionContentHTML = autoLatexAll(removeMetaLines(removeMetaTags(removeMetaPrefix(q.text || q.question || ""))));
               for (let i = 1; i < parts.length; i++) {
                 let line = autoLatexAll(parts[i]);
-                let inlineOpts = line.match(/([A-D][).][^A-D]*)/g);
+                let inlineOpts = line.match(/([A-D]\s*[\)\.\:\-]\s*[^A-D]+?)(?=(?:\s+[A-D]\s*[\)\.\:\-]\s*)|$)/g);
                 if (inlineOpts && inlineOpts.length >= 2) {
-                  optionLines.push(...inlineOpts.map(opt => autoLatexAll(opt.trim())));
-                } else if (line) {
-                  optionLines.push(autoLatexAll(line));
-                }
+              optionLines.push(...inlineOpts.map(opt => autoLatexAll(opt.trim())));
+            } else if (line) {
+              // descriptive continuation
+              questionContentHTML += '<br>' + autoLatexAll(line);
+            }
               }
               if (optionLines.length === 4) {
-                optionLines = optionLines.map((opt, i) =>
-                  /^[A-D][).]/.test(opt) ? opt : String.fromCharCode(65 + i) + ") " + opt
-                );
-                isMCQ = true;
+              optionLines = optionLines.map(s => String(s).replace(/\s+/g,' ').trim().replace(/^[A-D]\s*[\)\.\:\-]\s*/,''));
+              optionLines = optionLines.map((opt, i) => String.fromCharCode(65+i) + ") " + opt);
+              isMCQ = true;
+            }
               }
             }
           }
@@ -777,11 +795,11 @@ if (exam.subjects && exam.subjects.length > 1) {
             <div class="question-container">
               <div class="question-number">${currentQNum}.</div>
               <div class="question-body">
-              <div class="question-text" style="font-size:1.15em;">
-                ${autoLatexAll(removeMetaTags(removeMetaPrefix(q.text || q.question || "")))}
-                 </div>
+             <div class="question-text" style="font-size:1.15em;">
+            ${questionContentHTML}
+          </div>
                 ${imageHTML}
-                <div class="options-block">${optionsHTML}</div>
+                <div class="options-block" data-options='${JSON.stringify(optionLines)}'>${optionsHTML}</div>
               </div>
             </div>
           `;
@@ -800,7 +818,18 @@ if (exam.subjects && exam.subjects.length > 1) {
     container.appendChild(page);
     container.classList.add('mjx-process'); // allow MathJax to typeset this subtree
    const doTypeset = () =>
-  window.MathJax.typesetPromise([container]).catch(err => console.error('MathJax typeset failed:', err));
+  window.MathJax.typesetPromise([container])
+    .then(() => {
+      document.querySelectorAll('.options-block[data-options]').forEach(node => {
+        try {
+          const arr = JSON.parse(node.getAttribute('data-options') || '[]');
+          if (Array.isArray(arr) && arr.length) {
+            node.innerHTML = renderOptionsLayout(arr);
+          }
+        } catch(e) {}
+      });
+    })
+    .catch(err => console.error('MathJax typeset failed:', err));
 
 if (window.MathJax?.startup?.promise) {
   window.MathJax.startup.promise.then(doTypeset);
@@ -963,6 +992,7 @@ window.addEventListener('DOMContentLoaded', () => {
 </script>
  </body>
 </html>
+
 
 
 
