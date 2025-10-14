@@ -1860,32 +1860,58 @@ if (sourceTypeGlobal === 'Question Bank' && difficultyValue === "Mixed") {
 })();
 // Optional cleanup: remove debug-only srcId from questions before saving
 // Final cleanup: remove srcId, de-dupe by STEM+marks, and renumber
+// Final cleanup: strip srcId, HARD de-dupe by STEM (+marks), then renumber
 try {
+  // Build a stem-only fingerprint (ignores options/answers/shuffling)
+  // Uses normalizeText which already exists above in your file.
+  const makeStemKeyInline = (rawText, marks) => {
+    let t = String(rawText || '');
+
+    // remove leading numbering like "Q1:", "1.)", "Q. 3 -"
+    t = t.replace(/^\s*(?:Q\.?\s*)?\d+\s*[:.)-]?\s*/i, '');
+
+    // drop images and all HTML tags
+    t = t.replace(/<img[^>]*>/gi, ' ').replace(/<[^>]+>/g, ' ');
+
+    // remove inline options from first " A)/A./A:" onwards
+    t = t.replace(/\s+[A-D][).:][\s\S]*$/i, '');
+
+    // remove trailing answer hints
+    t = t.replace(/\bAns?\s*:\s*.*$/i, '');
+
+    // collapse/normalize (provided earlier in your file)
+    t = normalizeText(t);
+
+    if (!t) return '';
+    return t + '||m=' + (marks ?? '');
+  };
+
   let globalN = 1;
+
   (finalPaper.subjects || []).forEach(s => {
-    const subjectSeen = new Set();
+    const subjectSeen = new Set(); // block duplicates across sections within same subject
+
     (s.sections || []).forEach(sec => {
       // 1) strip debug-only fields
       (sec.questions || []).forEach(q => { if ('srcId' in q) delete q.srcId; });
 
-      // 2) de-dupe within section using STEM + marks (use existing makeStemKey)
-      const seen = new Set();
+      // 2) de-dupe within section AND subject by stem+marks
+      const sectionSeen = new Set();
       const filtered = [];
+      const fallbackMarks = sec.marksPerQuestion;
+
       for (const q of (sec.questions || [])) {
-        const key = makeStemKey({ 
-          text: q.text || q.question || '', 
-          marks: q.marks ?? sec.marksPerQuestion 
-        });
+        const key = makeStemKeyInline(q.text || q.question || '', q.marks ?? fallbackMarks);
         if (!key) { filtered.push(q); continue; }
-        if (seen.has(key) || subjectSeen.has(key)) continue;
-        seen.add(key);
+        if (sectionSeen.has(key) || subjectSeen.has(key)) continue;
+        sectionSeen.add(key);
         subjectSeen.add(key);
         filtered.push(q);
       }
 
       // 3) write back, fix counts, renumber globally
       sec.questions = filtered.map(q => ({ ...q, number: globalN++ }));
-      if (sec.type === "internal") {
+      if (sec.type === 'internal') {
         sec.numPairs = sec.questions.length;
       } else {
         sec.numQuestions = sec.questions.length;
@@ -1900,6 +1926,7 @@ sessionStorage.setItem('examPaper', JSON.stringify(finalPaper));
 window.location.href = 'exam-review.html';
 
 
+
             } catch (err) {
                 showToast("Error building exam: " + (err.message || err), "error");
             }
@@ -1911,6 +1938,7 @@ window.location.href = 'exam-review.html';
 </script>
 </body>
 </html>
+
 
 
 
