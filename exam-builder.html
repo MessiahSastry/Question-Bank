@@ -577,6 +577,22 @@ function normalizeText(s) {
 
   return t;
 }
+
+// === STEM-ONLY de-dupe key (ignores options/answers). Adds marks for stability ===
+function makeStemKey(q) {
+  let raw = String(q?.question || q?.text || '');
+
+  // strip HTML + common prefixes/suffixes
+  raw = raw.replace(/<[^>]+>/g, ' ');
+  raw = raw.replace(/^Q\d+:\s*[^A-Za-z0-9]*[\[\]A-Za-z0-9, ]*\s*/i, ''); // "Q4: Level 1, 1 Mark ..."
+  raw = raw.replace(/\bAns?\s*:\s*.*$/i, '');                           // trailing "Ans: ..."
+  raw = raw.replace(/\s*(?:\(?\s*A\s*[\)\.])[\s\S]*$/i, '');            // cut inline options from "A)" onward
+
+  const stemNorm = normalizeText(raw);
+  const marks = (q && q.marks != null) ? String(q.marks) : '';
+  return stemNorm + '|m=' + marks;
+}
+
 // Build a stable de-dupe key from a question object
 function makeDeDupeKey(q) {
   // 1) Base stem (strip html, inline options, answers)
@@ -674,14 +690,14 @@ function _debugList(list, label) {
 }
 function uniqueByIdOrText(arr) {
   const seenIds = new Set();
-  const seenKeys = new Set();
+  const seenStem = new Set();
   const out = [];
-  for (const q of arr) {
-    const id  = q.id || '';
-    const key = makeDeDupeKey(q) + '|m=' + (q.marks ?? '');
-    if ((id && seenIds.has(id)) || (key && seenKeys.has(key))) continue;
+  for (const q of (arr || [])) {
+    const id  = q && q.id;
+    const key = makeStemKey(q); // STEM + marks only
+    if ((id && seenIds.has(id)) || (key && seenStem.has(key))) continue;
     if (id)  seenIds.add(id);
-    if (key) seenKeys.add(key);
+    if (key) seenStem.add(key);
     out.push(q);
   }
   return out;
@@ -897,9 +913,9 @@ function splitEvenAcrossChapters(total, chapters) {
 
 function takeUniqueFromPool(pool, need, usedIds, usedKeys, subjectSeenKeys) {
   const out = [];
-  for (const d of pool || []) {
-    const id  = d.id || null;
-    const key = makeDeDupeKey(d);
+  for (const d of (pool || [])) {
+    const id  = d && d.id;
+    const key = makeStemKey(d); // STEM + marks
     if ((id && usedIds.has(id)) || (key && usedKeys.has(key)) || (key && subjectSeenKeys.has(key))) continue;
     if (id)  usedIds.add(id);
     if (key) usedKeys.add(key);
@@ -1660,13 +1676,14 @@ if (sourceTypeGlobal === 'Question Bank') {
           });
 
           const filtered = [];
-          const sectionSeen = new Set();
-          for (const item of mapped) {
-            const k = makeDeDupeKey({ text: item.text });
-            if (k && (subjectSeenKeys.has(k) || sectionSeen.has(k))) continue;
-            if (k) { subjectSeenKeys.add(k); sectionSeen.add(k); }
-            filtered.push(item);
-          }
+const sectionSeen = new Set();
+for (const item of mapped) {
+  const k = makeStemKey({ text: item.text, marks: mPerQ });
+  if (k && (subjectSeenKeys.has(k) || sectionSeen.has(k))) continue;
+  if (k) { subjectSeenKeys.add(k); sectionSeen.add(k); }
+  filtered.push(item);
+}
+
           questions = filtered.map((it, i) => ({ ...it, number: i + 1 }));
         } else {
           // Mixed(strict): use strictSlots plan
@@ -1689,7 +1706,7 @@ if (sourceTypeGlobal === 'Question Bank') {
             });
 
             let picked = null;
-            const sectionSeen = new Set(questions.map(q => makeDeDupeKey({ text: q.text })));
+            const sectionSeen = new Set(questions.map(q => makeStemKey({ text: q.text, marks: mPerQ })));
             for (const d of uniqueByIdOrText(docs)) {
               const k = makeDeDupeKey(d);
               if (k && (sectionSeen.has(k) || subjectSeenKeys.has(k))) continue;
@@ -1709,7 +1726,7 @@ if (sourceTypeGlobal === 'Question Bank') {
               out = { number: 0, text: stem, marks: mPerQ, options: Array.isArray(opts) ? opts : [], answer: (String(picked.answer || '').toUpperCase().match(/[A-D]/g) || []).join(',') };
             }
             out._assignedLevel = slot.assigned;
-            const key = makeDeDupeKey({ text: out.text }); if (key) subjectSeenKeys.add(key);
+            const key = makeStemKey({ text: out.text, marks: mPerQ }); if (key) subjectSeenKeys.add(key);
             questions.push({ ...out, number: questions.length + 1 });
           }
         }
@@ -1865,6 +1882,7 @@ window.location.href = 'exam-review.html';
 </script>
 </body>
 </html>
+
 
 
 
