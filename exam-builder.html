@@ -1040,63 +1040,41 @@ if (strictOneEach) {
     // Mixed difficulty: first ensure per-chapter coverage when possible, then fall back.
 async function fillMixed(totalNeed) {
   const diffs = ["Level 1", "Level 2", "Level 3"];
+  const wantGlobal = splitCounts(totalNeed, [40, 30, 30]); // strict 40/30/30
 
-  // If no chapter constraint, keep your old (global) behaviour
+  // No chapters selected → enforce global 40/30/30 strictly (no relax/top-ups)
   if (!chs.length) {
-    const parts = splitCounts(totalNeed, [40, 30, 30]); // e.g. 6 -> [3,2,1]
     for (let d = 0; d < diffs.length; d++) {
-      const want = parts[d];
+      const want = wantGlobal[d];
       if (!want) continue;
-      const pool = await fetchFor(null, want, diffs[d]);
-      items.push(...takeUniqueFromPool(pool, want, usedIds, usedKeys, subjectSeenKeys));
-    }
-    const short = totalNeed - items.length;
-    if (short > 0) items.push(...await borrow(short, null)); // any difficulty
-    if (items.length < totalNeed) {
-      errors.push(`${subject}: Only ${items.length} of ${totalNeed} questions found (Mixed, no-chapter).`);
+      const pool = await fetchFor(null, want, diffs[d]); // strict: fixed level only
+      const picked = takeUniqueFromPool(pool, want, usedIds, usedKeys, subjectSeenKeys);
+      items.push(...picked);
+      if (picked.length < want) {
+        errors.push(`${subject}: Mixed (strict) needs ${want} at ${diffs[d]}, found ${picked.length}.`);
+      }
     }
     return;
   }
 
-  // === CHAPTER-FIRST: split total evenly across chapters ===
-  const quotaPerChapter = splitEvenAcrossChapters(totalNeed, chs); // e.g. 6 -> [3,3] for 2 chapters
-
+  // Chapters selected → split evenly across chapters, then enforce 40/30/30 inside each chapter strictly
+  const quotaPerChapter = splitEvenAcrossChapters(totalNeed, chs);
   for (let i = 0; i < chs.length; i++) {
     const ch = chs[i];
-    let need = quotaPerChapter[i];
+    const need = quotaPerChapter[i];
     if (!need) continue;
 
-    // 40/30/30 *inside this chapter*
-    const parts = splitCounts(need, [40, 30, 30]); // e.g. 3 -> [2,1,0]
-    for (let d = 0; d < diffs.length && need > 0; d++) {
+    const parts = splitCounts(need, [40, 30, 30]); // per-chapter strict 40/30/30
+    for (let d = 0; d < diffs.length; d++) {
       const want = parts[d];
       if (!want) continue;
-      const pool = await fetchFor([ch], want, diffs[d]);         // this chapter + this difficulty
+      const pool = await fetchFor([ch], want, diffs[d]); // strict: fixed level only
       const picked = takeUniqueFromPool(pool, want, usedIds, usedKeys, subjectSeenKeys);
       items.push(...picked);
-      need -= picked.length;
+      if (picked.length < want) {
+        errors.push(`${subject} / ${ch}: Mixed (strict) needs ${want} at ${diffs[d]}, found ${picked.length}.`);
+      }
     }
-
-    // Not enough in 40/30/30? Relax difficulty within the SAME chapter
-    if (need > 0) {
-      const poolAny = await fetchFor([ch], need, null);          // this chapter, any difficulty
-      const add = takeUniqueFromPool(poolAny, need, usedIds, usedKeys, subjectSeenKeys);
-      items.push(...add);
-      need -= add.length;
-    }
-
-    quotaPerChapter[i] = need; // leftover for this chapter (likely 0)
-  }
-
-  // Anything still missing? Borrow across ALL chapters, any difficulty.
-  let remaining = totalNeed - items.length;
-  if (remaining > 0) {
-    const topup = await borrow(remaining, null);
-    items.push(...topup);
-  }
-
-  if (items.length < totalNeed) {
-    errors.push(`${subject}: Only ${items.length} of ${totalNeed} questions found (Mixed, chapter-first).`);
   }
 }
   if (difficultyValue === "Mixed") {
@@ -1786,6 +1764,7 @@ window.location.href = 'exam-review.html';
 </script>
 </body>
 </html>
+
 
 
 
