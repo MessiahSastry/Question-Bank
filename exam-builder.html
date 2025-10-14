@@ -1840,6 +1840,31 @@ if (sourceTypeGlobal === 'Question Bank' && difficultyValue === "Mixed") {
 }
 
 // Save and continue as before — but FIRST run a duplicate diagnostic
+function _finalStemKey(raw, marks) {
+  let t = String(raw || '');
+
+  // drop any leading numbering like: Q1 / 1. / 1) / Q. 3
+  t = t.replace(/^\s*(?:Q\.?\s*)?\d+\s*[:.)-]?\s*/i, '');
+
+  // remove HTML, inline options (A) ...), and trailing "Ans: ..."
+  t = t.replace(/<img[^>]*>/gi, ' ')
+       .replace(/<[^>]+>/g, ' ')
+       .replace(/\s+[A-D][).:][\s\S]*$/i, '')
+       .replace(/\bAns?\s*:\s*.*$/i, '');
+
+  // normalize (also handles MathJax spacing)
+  try { t = t.normalize('NFKC'); } catch (e) {}
+  t = t.replace(/[\u200B-\u200D\uFEFF]/g, '')
+       .replace(/[\u2010-\u2015\u2212]/g, '-')
+       .replace(/[\u2018\u2019\u201A\u2032]/g, "'")
+       .replace(/[\u201C\u201D\u2033]/g, '"')
+       .replace(/\u00A0/g, ' ')
+       .replace(/\s+/g, ' ')
+       .trim()
+       .toLowerCase()
+       .replace(/[.,;:!?]+$/g, '');
+  return t ? (t + '||m=' + (marks ?? '')) : '';
+}
 (function () {
   const dupNotes = [];
   for (const subj of finalPaper.subjects || []) {
@@ -1859,59 +1884,31 @@ if (sourceTypeGlobal === 'Question Bank' && difficultyValue === "Mixed") {
     console.warn('BUILDER: NO duplicates in finalPaper before saving');
   }
 })();
-// Optional cleanup: remove debug-only srcId from questions before saving
-// Final cleanup: remove srcId, de-dupe by STEM+marks, and renumber
-// Final cleanup: strip srcId, HARD de-dupe by STEM (+marks), then renumber
+// HARD de-dupe (by normalized stem + marks) and renumber right before save
 try {
-  // Build a stem-only fingerprint (ignores options/answers/shuffling)
-  // Uses normalizeText which already exists above in your file.
-  const makeStemKeyInline = (rawText, marks) => {
-    let t = String(rawText || '');
-
-    // remove leading numbering like "Q1:", "1.)", "Q. 3 -"
-    t = t.replace(/^\s*(?:Q\.?\s*)?\d+\s*[:.)-]?\s*/i, '');
-
-    // drop images and all HTML tags
-    t = t.replace(/<img[^>]*>/gi, ' ').replace(/<[^>]+>/g, ' ');
-
-    // remove inline options from first " A)/A./A:" onwards
-    t = t.replace(/\s+[A-D][).:][\s\S]*$/i, '');
-
-    // remove trailing answer hints
-    t = t.replace(/\bAns?\s*:\s*.*$/i, '');
-
-    // collapse/normalize (provided earlier in your file)
-    t = normalizeText(t);
-
-    if (!t) return '';
-    return t + '||m=' + (marks ?? '');
-  };
-
-  let globalN = 1;
-
   (finalPaper.subjects || []).forEach(s => {
-    const subjectSeen = new Set(); // block duplicates across sections within same subject
+    const subjectSeen = new Set(); // avoid repeats across sections of the same subject
 
     (s.sections || []).forEach(sec => {
-      // 1) strip debug-only fields
-      (sec.questions || []).forEach(q => { if ('srcId' in q) delete q.srcId; });
-
-      // 2) de-dupe within section AND subject by stem+marks
-      const sectionSeen = new Set();
-      const filtered = [];
-      const fallbackMarks = sec.marksPerQuestion;
+      const perSectionSeen = new Set();
+      const out = [];
+      const fallbackMarks = Number(sec.marksPerQuestion ?? 0);
 
       for (const q of (sec.questions || [])) {
-        const key = makeStemKeyInline(q.text || q.question || '', q.marks ?? fallbackMarks);
-        if (!key) { filtered.push(q); continue; }
-        if (sectionSeen.has(key) || subjectSeen.has(key)) continue;
-        sectionSeen.add(key);
-        subjectSeen.add(key);
-        filtered.push(q);
+        if (q && 'srcId' in q) delete q.srcId; // drop debug field if present
+        const stem  = q?.text ?? q?.question ?? '';
+        const marks = Number(q?.marks ?? fallbackMarks);
+        const k = _finalStemKey(stem, marks);
+        if (!k) { out.push(q); continue; }
+        if (perSectionSeen.has(k) || subjectSeen.has(k)) continue;
+        perSectionSeen.add(k);
+        subjectSeen.add(k);
+        out.push(q);
       }
 
-      // 3) write back, fix counts, renumber globally
-      sec.questions = filtered.map(q => ({ ...q, number: globalN++ }));
+      // renumber neatly within the section for preview
+      sec.questions = out.map((q, i) => ({ ...q, number: i + 1 }));
+
       if (sec.type === 'internal') {
         sec.numPairs = sec.questions.length;
       } else {
@@ -1939,6 +1936,7 @@ window.location.href = 'exam-review.html';
 </script>
 </body>
 </html>
+
 
 
 
