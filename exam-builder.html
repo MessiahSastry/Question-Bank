@@ -1469,9 +1469,7 @@ while ((m = headerRe.exec(t)) !== null) nums.push(parseInt(m[1], 10));
 let approx = 0, last = -Infinity;
 for (const n of nums) { if (n >= last + 1) { approx++; last = n; } }
 if (!approx && nums.length) approx = nums.length;
-document.getElementById('global-paste-count').textContent =
-  approx ? `~${approx} question blocks detected` : '';
-    pasteCount.textContent = approx ? `~${approx} question blocks detected` : '';
+pasteCount.textContent = approx ? `~${approx} question blocks detected` : '';
   });
 
   docxInput?.addEventListener('change', async (e) => {
@@ -1580,196 +1578,157 @@ document.getElementById('date-input').valueAsDate = new Date();
                     subjects: [] // Each with: subject, chapters, sections
                 };
 
-                // --- Build all subjects and sections and fetch questions for each
+              
               // --- Build all subjects/sections based on GLOBAL SOURCE ---
+// --- Build all subjects/sections based on GLOBAL SOURCE ---
 let allSectionErrors = [];
 const sourceTypeGlobal = (document.getElementById('exam-source-dropdown')?.dataset?.value) || 'Question Bank';
 
 if (sourceTypeGlobal === 'Question Bank') {
-    // ---- GLOBAL MIXED MARKS BUDGET (strict by marks) ----
-// ---- GLOBAL MIXED STRICT PLAN (40/30/30 by MARKS; no relax) ----
-let strictSlots = [];   // [{sIdx, secIdx, subject, label, marksPerQuestion, assigned:"L1|L2|L3"}]
-
-if (sourceTypeGlobal === 'Question Bank' && difficultyValue === "Mixed") {
-  // 1) enumerate ALL question slots (only 'all' or 'any')
-  const allSlots = [];
-  subjectsData.forEach((sd, sIdx) => {
-    sd.sections.forEach((sec, secIdx) => {
-      if (sec.type === "all" || sec.type === "any") {
-        const n = Number(sec.numQuestions || 0);
-        const m = Number(sec.marksPerQuestion || 0);
-        for (let i = 0; i < n; i++) {
-          allSlots.push({ sIdx, secIdx, subject: sd.subject, label: sec.label, marksPerQuestion: m });
+  // ===== BANK FLOW =====
+  // If “Mixed”, build a strict global plan by MARKS (40/30/30)
+  let strictSlots = [];
+  if (difficultyValue === "Mixed") {
+    const allSlots = [];
+    subjectsData.forEach((sd, sIdx) => {
+      sd.sections.forEach((sec, secIdx) => {
+        if (sec.type === "all" || sec.type === "any") {
+          const n = Number(sec.numQuestions || 0);
+          const m = Number(sec.marksPerQuestion || 0);
+          for (let i = 0; i < n; i++) allSlots.push({ sIdx, secIdx, subject: sd.subject, label: sec.label, marksPerQuestion: m });
         }
-      }
+      });
     });
-  });
-
-  // 2) strict global target by MARKS (40/30/30)
-  const totalMarksAll = allSlots.reduce((sum, sl) => sum + (sl.marksPerQuestion || 0), 0);
-  const parts = splitCounts(totalMarksAll, [40, 30, 30]); // [L1, L2, L3] by marks
-  const target = { L1: parts[0], L2: parts[1], L3: parts[2] };
-
-  // 3) place high-mark slots first so L3/L2 don’t get starved
-  allSlots.sort((a, b) => (b.marksPerQuestion || 0) - (a.marksPerQuestion || 0));
-
-  function take(level, m) {
-    if (target[level] >= m) { target[level] -= m; return true; }
-    return false;
+    const totalMarks = allSlots.reduce((s, sl) => s + (sl.marksPerQuestion || 0), 0);
+    const want = splitCounts(totalMarks, [40, 30, 30]); // [L1,L2,L3] marks
+    const target = { L1: want[0], L2: want[1], L3: want[2] };
+    allSlots.sort((a, b) => (b.marksPerQuestion || 0) - (a.marksPerQuestion || 0));
+    function take(level, m){ if (target[level] >= m){ target[level]-=m; return true;} return false; }
+    strictSlots = allSlots.map(sl => {
+      const m = sl.marksPerQuestion || 0;
+      if (take('L3', m)) return { ...sl, assigned: 'L3' };
+      if (take('L2', m)) return { ...sl, assigned: 'L2' };
+      if (take('L1', m)) return { ...sl, assigned: 'L1' };
+      return { ...sl, assigned: null };
+    });
+    if (strictSlots.some(s => !s.assigned) || target.L1 || target.L2 || target.L3) {
+      allSectionErrors.push(`Mixed(strict): Unable to assign 40/30/30 exactly. Leftover → L1:${target.L1}, L2:${target.L2}, L3:${target.L3}.`);
+    }
   }
 
-  // 4) assign each slot: prefer L3 → L2 → L1 by remaining MARKS
-  strictSlots = allSlots.map(sl => {
-    const m = sl.marksPerQuestion || 0;
-    if (take('L3', m)) return { ...sl, assigned: 'L3' };
-    if (take('L2', m)) return { ...sl, assigned: 'L2' };
-    if (take('L1', m)) return { ...sl, assigned: 'L1' };
-    return { ...sl, assigned: null }; // will error out below
-  });
-
-  // 5) if any unassigned or leftover marks ≠ 0 → hard error now
-  const unassigned = strictSlots.filter(s => !s.assigned);
-  if (unassigned.length || target.L1 || target.L2 || target.L3) {
-    allSectionErrors.push(
-      `Mixed(strict): Unable to assign slots to meet 40/30/30 exactly. Leftover marks → ` +
-      `L1:${target.L1}, L2:${target.L2}, L3:${target.L3}.`
-    );
-  }
-}
-
-  // ===== Old BANK flow (unchanged) =====
-  for (let subjData of subjectsData) {
-    let subjectBlock = { subject: subjData.subject, chapters: subjData.chapters, sections: [] };
+  // Build paper from bank
+  for (let sIdx = 0; sIdx < subjectsData.length; sIdx++) {
+    const subjData = subjectsData[sIdx];
     const subjectSeenKeys = new Set();
+    const subjectBlock = { subject: subjData.subject, chapters: subjData.chapters, sections: [] };
+
     for (let secIdx = 0; secIdx < subjData.sections.length; secIdx++) {
       const sec = subjData.sections[secIdx];
       let questions = [];
       let sectionErrors = [];
 
       if (sec.type === "all" || sec.type === "any") {
-  const requestedCount = Number(sec.numQuestions || 0);
-  const mPerQ = Number(sec.marksPerQuestion || 0);
+        const requestedCount = Number(sec.numQuestions || 0);
+        const mPerQ = Number(sec.marksPerQuestion || 0);
 
-  // === NON-Mixed: keep existing balanced fetch ===
-  if (difficultyValue !== "Mixed") {
-    const { items: rawItems, errors: balanceErrors } = await fetchBalancedAcrossChapters({
-      selectedClass,
-      subject: subjData.subject,
-      chapters: subjData.chapters,
-      marksPerQuestion: sec.marksPerQuestion,
-      mcqType: sec.mcqType,
-      requestedCount,
-      difficultyValue,
-      subjectSeenKeys,
-      globalMixBudget: null
-    });
-    if (balanceErrors?.length) sectionErrors = sectionErrors.concat(balanceErrors);
+        if (difficultyValue !== "Mixed") {
+          // normal balanced fetch (non-mixed)
+          const { items: rawItems, errors: balanceErrors } = await fetchBalancedAcrossChapters({
+            selectedClass,
+            subject: subjData.subject,
+            chapters: subjData.chapters,
+            marksPerQuestion: sec.marksPerQuestion,
+            mcqType: sec.mcqType,
+            requestedCount,
+            difficultyValue,
+            subjectSeenKeys,
+            globalMixBudget: null
+          });
+          if (balanceErrors?.length) sectionErrors = sectionErrors.concat(balanceErrors);
 
-    const pool = Array.isArray(rawItems) ? rawItems.slice() : [];
-    const mapped = pool.slice(0, requestedCount).map((q) => {
-      const opts = extractMCQOptions(q);
-      const stem = q.question || q.text || '';
-      if ((sec.mcqType === "MCQ (Single)" || sec.mcqType === "MCQ (Multiple)") && Array.isArray(opts) && opts.length === 4) {
-        const clean = opts.map(o => o.replace(/^[A-D][).]?\s*/, '').trim());
-        const shuffled = shuffleMCQQuestion({ ...q, options: clean, question: stem, answer: q.answer });
-        const letterAns = (String(shuffled.answer || '').toUpperCase().match(/[A-D]/g) || []).join(',');
-        return { number: 0, text: shuffled.question || "", marks: mPerQ, options: shuffled.options || [], answer: letterAns };
-      }
-      return { number: 0, text: stem, marks: mPerQ, options: Array.isArray(opts) ? opts : [], answer: (String(q.answer || '').toUpperCase().match(/[A-D]/g) || []).join(',') };
-    });
+          const pool = Array.isArray(rawItems) ? rawItems.slice(0, requestedCount) : [];
+          const mapped = pool.map(q => {
+            const opts = extractMCQOptions(q);
+            const stem = q.question || q.text || '';
+            if ((sec.mcqType === "MCQ (Single)" || sec.mcqType === "MCQ (Multiple)") && Array.isArray(opts) && opts.length === 4) {
+              const clean = opts.map(o => o.replace(/^[A-D][).]?\s*/, '').trim());
+              const shuffled = shuffleMCQQuestion({ ...q, options: clean, question: stem, answer: q.answer });
+              const letterAns = (String(shuffled.answer || '').toUpperCase().match(/[A-D]/g) || []).join(',');
+              return { number: 0, text: shuffled.question || "", marks: mPerQ, options: shuffled.options || [], answer: letterAns };
+            }
+            return { number: 0, text: stem, marks: mPerQ, options: Array.isArray(opts) ? opts : [], answer: (String(q.answer || '').toUpperCase().match(/[A-D]/g) || []).join(',') };
+          });
 
-    const filtered = [];
-    const sectionSeen = new Set();
-    for (const item of mapped) {
-      const k = makeDeDupeKey({ text: item.text });
-      if (k && (subjectSeenKeys.has(k) || sectionSeen.has(k))) continue;
-      if (k) { subjectSeenKeys.add(k); sectionSeen.add(k); }
-      filtered.push(item);
-    }
-    questions = filtered.map((it, i) => ({ ...it, number: i + 1 }));
-  } else {
-    // === MIXED STRICT by MARKS (uses strictSlots plan; no relax, no top-ups) ===
-    const mySlots = strictSlots.filter(s =>
-      s.sIdx === subjectsData.indexOf(subjData) &&
-      s.secIdx === secIdx &&
-      s.marksPerQuestion === mPerQ
-    );
+          const filtered = [];
+          const sectionSeen = new Set();
+          for (const item of mapped) {
+            const k = makeDeDupeKey({ text: item.text });
+            if (k && (subjectSeenKeys.has(k) || sectionSeen.has(k))) continue;
+            if (k) { subjectSeenKeys.add(k); sectionSeen.add(k); }
+            filtered.push(item);
+          }
+          questions = filtered.map((it, i) => ({ ...it, number: i + 1 }));
+        } else {
+          // Mixed(strict): use strictSlots plan
+          const mySlots = strictSlots.filter(sl => sl.sIdx === sIdx && sl.secIdx === secIdx && sl.marksPerQuestion === mPerQ);
+          if (mySlots.length !== requestedCount) sectionErrors.push(`${subjData.subject} - ${sec.label}: slot plan mismatch (${mySlots.length} vs ${requestedCount}).`);
 
-    if (mySlots.length !== requestedCount) {
-      sectionErrors.push(`${subjData.subject} - ${sec.label}: slot plan mismatch (${mySlots.length} vs ${requestedCount}).`);
-    }
+          for (let i = 0; i < requestedCount; i++) {
+            const slot = mySlots[i];
+            if (!slot || !slot.assigned) { sectionErrors.push(`${subjData.subject} - ${sec.label}: missing assignment for one ${mPerQ}-mark slot.`); continue; }
 
-    for (let i = 0; i < requestedCount; i++) {
-      const slot = mySlots[i];
-      if (!slot || !slot.assigned) {
-        sectionErrors.push(`${subjData.subject} - ${sec.label}: missing assignment for one ${mPerQ}-mark slot.`);
-        continue;
-      }
-      const forceDiff =
-        slot.assigned === 'L1' ? "Level 1" :
-        slot.assigned === 'L2' ? "Level 2" : "Level 3";
+            const forceDiff = slot.assigned === 'L1' ? "Level 1" : (slot.assigned === 'L2' ? "Level 2" : "Level 3");
+            const docs = await fetchQuestions({
+              selectedClass,
+              selectedSubject: subjData.subject,
+              chapters: subjData.chapters,
+              marksPerQuestion: mPerQ,
+              mcqType: sec.mcqType,
+              count: 8,
+              forceDifficulty: forceDiff
+            });
 
-      // fetch strictly 1 doc for this slot (exact marks + exact difficulty; NO relax)
-      const docs = await fetchQuestions({
-        selectedClass,
-        selectedSubject: subjData.subject,
-        chapters: subjData.chapters,
-        marksPerQuestion: mPerQ,
-        mcqType: sec.mcqType,
-        count: 8,
-        forceDifficulty: forceDiff
-      });
+            let picked = null;
+            const sectionSeen = new Set(questions.map(q => makeDeDupeKey({ text: q.text })));
+            for (const d of uniqueByIdOrText(docs)) {
+              const k = makeDeDupeKey(d);
+              if (k && (sectionSeen.has(k) || subjectSeenKeys.has(k))) continue;
+              picked = d; break;
+            }
+            if (!picked) { sectionErrors.push(`${subjData.subject} - ${sec.label}: need 1×${mPerQ}-mark ${forceDiff} question, none available.`); continue; }
 
-      const sectionSeen = new Set(questions.map(q => makeDeDupeKey({ text: q.text })));
-      let picked = null;
-      for (const d of uniqueByIdOrText(docs)) {
-        const k = makeDeDupeKey(d);
-        if (k && (sectionSeen.has(k) || subjectSeenKeys.has(k))) continue;
-        picked = d; break;
-      }
-
-      if (!picked) {
-        sectionErrors.push(`${subjData.subject} - ${sec.label}: need 1×${mPerQ}-mark ${forceDiff} question, none available.`);
-        continue;
-      }
-
-      const opts = extractMCQOptions(picked);
-      const stem = picked.question || picked.text || '';
-      let out;
-      if ((sec.mcqType === "MCQ (Single)" || sec.mcqType === "MCQ (Multiple)") && Array.isArray(opts) && opts.length === 4) {
-        const clean = opts.map(o => o.replace(/^[A-D][).]?\s*/, '').trim());
-        const shuffled = shuffleMCQQuestion({ ...picked, options: clean, question: stem, answer: picked.answer });
-        const letterAns = (String(shuffled.answer || '').toUpperCase().match(/[A-D]/g) || []).join(',');
-        out = { number: 0, text: shuffled.question || "", marks: mPerQ, options: shuffled.options || [], answer: letterAns };
-      } else {
-        out = { number: 0, text: stem, marks: mPerQ, options: Array.isArray(opts) ? opts : [], answer: (String(picked.answer || '').toUpperCase().match(/[A-D]/g) || []).join(',') };
-      }
-      // mark the assigned level for final audit
-      out._assignedLevel = slot.assigned;
-
-      const key = makeDeDupeKey({ text: out.text });
-      if (key) subjectSeenKeys.add(key);
-      questions.push({ ...out, number: questions.length + 1 });
-    }
-   }
-      else if (sec.type === "internal") {
+            const opts = extractMCQOptions(picked);
+            const stem = picked.question || picked.text || '';
+            let out;
+            if ((sec.mcqType === "MCQ (Single)" || sec.mcqType === "MCQ (Multiple)") && Array.isArray(opts) && opts.length === 4) {
+              const clean = opts.map(o => o.replace(/^[A-D][).]?\s*/, '').trim());
+              const shuffled = shuffleMCQQuestion({ ...picked, options: clean, question: stem, answer: picked.answer });
+              const letterAns = (String(shuffled.answer || '').toUpperCase().match(/[A-D]/g) || []).join(',');
+              out = { number: 0, text: shuffled.question || "", marks: mPerQ, options: shuffled.options || [], answer: letterAns };
+            } else {
+              out = { number: 0, text: stem, marks: mPerQ, options: Array.isArray(opts) ? opts : [], answer: (String(picked.answer || '').toUpperCase().match(/[A-D]/g) || []).join(',') };
+            }
+            out._assignedLevel = slot.assigned;
+            const key = makeDeDupeKey({ text: out.text }); if (key) subjectSeenKeys.add(key);
+            questions.push({ ...out, number: questions.length + 1 });
+          }
+        }
+      } else if (sec.type === "internal") {
         let missingPairs = 0;
-        for (let p = 0; p < (sec.pairs||[]).length; p++) {
-          let qA = await fetchQuestions({ selectedClass, selectedSubject: subjData.subject, chapters: [sec.pairs[p].chapterA], marksPerQuestion: sec.marksPerQuestion, count: 1 });
-          let qB = await fetchQuestions({ selectedClass, selectedSubject: subjData.subject, chapters: [sec.pairs[p].chapterB], marksPerQuestion: sec.marksPerQuestion, count: 1 });
-          if (!qA.length || !qB.length) { sectionErrors.push(`${subjData.subject} - ${sec.label} (Pair ${p+1}): Missing question(s)`); missingPairs++; continue; }
+        for (let p = 0; p < (sec.pairs || []).length; p++) {
+          const qA = await fetchQuestions({ selectedClass, selectedSubject: subjData.subject, chapters: [sec.pairs[p].chapterA], marksPerQuestion: sec.marksPerQuestion, count: 1 });
+          const qB = await fetchQuestions({ selectedClass, selectedSubject: subjData.subject, chapters: [sec.pairs[p].chapterB], marksPerQuestion: sec.marksPerQuestion, count: 1 });
+          if (!qA.length || !qB.length) { missingPairs++; continue; }
           questions.push({ number: p + 1, text: `a) ${qA[0].question || qA[0].text}<br>b) ${qB[0].question || qB[0].text}`, marks: sec.marksPerQuestion, image: qA[0].image || qB[0].image || null });
         }
         if (missingPairs > 0 || questions.length < sec.numPairs) {
           sectionErrors.push(`${subjData.subject} - ${sec.label}: Only ${questions.length} of ${sec.numPairs} pairs found.`);
-          continue;
         }
       }
 
-      const actualCount = Array.isArray(questions) ? questions.length : 0;
       const patchedSec = { ...sec };
-      if (sec.type === "all" || sec.type === "any") patchedSec.numQuestions = actualCount;
-      if (sec.type === "internal")                 patchedSec.numPairs     = actualCount;
+      if (sec.type === "all" || sec.type === "any") patchedSec.numQuestions = (questions || []).length;
+      if (sec.type === "internal")                 patchedSec.numPairs     = (questions || []).length;
 
       subjectBlock.sections.push({ ...patchedSec, questions, instructions: buildSectionInstructions(patchedSec) });
       if (sectionErrors.length) allSectionErrors = allSectionErrors.concat(sectionErrors);
@@ -1778,76 +1737,53 @@ if (sourceTypeGlobal === 'Question Bank' && difficultyValue === "Mixed") {
   }
 
 } else {
-  // ===== PASTE or WORD flow =====
-let rawText = '';
+  // ===== PASTE / .DOCX FLOW =====
+  let rawText = '';
+  const pasteText = (document.getElementById('global-paste-area')?.value || '').trim();
+  const hasPaste = pasteText.length > 0;
+  const hasDocx  = !!window._globalDocxArrayBuffer;
+  let effective  = sourceTypeGlobal;
+  if (effective === 'Upload .docx' && !hasDocx && hasPaste) effective = 'Paste';
+  if (effective === 'Paste' && !hasPaste && hasDocx)       effective = 'Upload .docx';
 
-const pasteText = (document.getElementById('global-paste-area')?.value || '').trim();
-const hasPaste  = pasteText.length > 0;
-const hasDocx   = !!window._globalDocxArrayBuffer;
-const requested = (document.getElementById('exam-source-dropdown')?.dataset?.value) || 'Question Bank';
-
-// Pick effective mode using availability too
-let effective = requested;
-if (requested === 'Upload .docx' && !hasDocx && hasPaste) effective = 'Paste';
-if (requested === 'Paste' && !hasPaste && hasDocx)       effective = 'Upload .docx';
-
-console.log('[SOURCE]', { requested, effective, hasPaste, hasDocx });
-
-if (effective === 'Paste') {
-  rawText = pasteText;
-} else if (effective === 'Upload .docx') {
-  if (!hasDocx) {
-    allSectionErrors.push('No .docx file selected.');
-  } else {
-    try {
-      if (!window.mammoth || !window.mammoth.extractRawText) {
-        allSectionErrors.push('DOCX reader not available. Check internet and the Mammoth script tag.');
-      } else {
-        // read .docx as HTML and inline images (so <img> survives)
-const result = await window.mammoth.convertToHtml(
-  { arrayBuffer: window._globalDocxArrayBuffer },
-  {
-    convertImage: mammoth.images.inline(image =>
-      image.read("base64").then(b64 => ({ src: `data:${image.contentType};base64,${b64}` }))
-    )
-  }
-);
-rawText = htmlToPlainText(result?.value || '');
+  if (effective === 'Paste') {
+    rawText = pasteText;
+  } else if (effective === 'Upload .docx') {
+    if (!hasDocx) {
+      allSectionErrors.push('No .docx file selected.');
+    } else {
+      try {
+        const result = await window.mammoth.convertToHtml(
+          { arrayBuffer: window._globalDocxArrayBuffer },
+          {
+            convertImage: mammoth.images.inline(img => img.read("base64").then(b64 => ({ src: `data:${img.contentType};base64,${b64}` })))
+          }
+        );
+        rawText = htmlToPlainText(result?.value || '');
+      } catch {
+        allSectionErrors.push('Failed to read .docx file.');
       }
-    } catch (e) {
-      allSectionErrors.push('Failed to read .docx file.');
     }
   }
-}
+  if ((effective === 'Paste' || effective === 'Upload .docx') && !rawText) {
+    allSectionErrors.push('No questions detected in the provided source.');
+  }
 
-// Only complain when this path was actually used
-if ((effective === 'Paste' || effective === 'Upload .docx') && !rawText) {
-  allSectionErrors.push('No questions detected in the provided source.');
-}
-
-const pool = parsePastedQuestionsToPool(rawText);
-console.log('DOC SOURCE → detected blocks:', pool.length);
-
-  // Allocate sequentially across ALL subjects/sections
+  const pool = parsePastedQuestionsToPool(rawText);
   const { errors: allocErrors } = allocateSequentiallyAcrossSections(subjectsData, pool);
   if (allocErrors?.length) allSectionErrors = allSectionErrors.concat(allocErrors);
 
-  // Move sections into finalPaper (and set instructions + counts)
   for (const subjData of subjectsData) {
     const subjectBlock = { subject: subjData.subject, chapters: [], sections: [] };
     for (const sec of subjData.sections) {
       const patched = { ...sec };
-      if (sec.type === 'all' || sec.type === 'any') {
-        patched.numQuestions = (sec.questions || []).length;
-      }
-      subjectBlock.sections.push({
-        ...patched,
-        instructions: buildSectionInstructions(patched)
-      });
+      if (sec.type === 'all' || sec.type === 'any') patched.numQuestions = (sec.questions || []).length;
+      subjectBlock.sections.push({ ...patched, instructions: buildSectionInstructions(patched) });
     }
     finalPaper.subjects.push(subjectBlock);
   }
 }
+// --- END replacement block ---
 
 // Show errors if any
 if (allSectionErrors.length > 0) {
@@ -1929,6 +1865,7 @@ window.location.href = 'exam-review.html';
 </script>
 </body>
 </html>
+
 
 
 
