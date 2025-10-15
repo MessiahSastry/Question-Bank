@@ -1524,9 +1524,34 @@ pasteCount.textContent = approx ? `~${approx} question blocks detected` : '';
   try {
     window._globalDocxArrayBuffer = await f.arrayBuffer();
     docxStatus.textContent = `Ready: ${f.name}`;
+
+    // Build prompt immediately and prefill ChatGPT
+    const result = await window.mammoth.convertToHtml(
+      { arrayBuffer: window._globalDocxArrayBuffer },
+      { convertImage: mammoth.images.inline(img => img.read("base64").then(b64 => ({ src: `data:${img.contentType};base64,${b64}` }))) }
+    );
+    const raw = htmlToPlainText(result?.value || '').trim();
+    if (!raw) { showToast('No text found in the .docx', 'error'); return; }
+
+    const fullPrompt = buildLatexPromptFromRaw(raw);
+
+    // 1) Copy full prompt (so user can paste)
+    try {
+      await navigator.clipboard.writeText(fullPrompt);
+      showToast('Full prompt copied. Opening ChatGPT…');
+    } catch {
+      showToast('Copy failed. A short prefill will open; paste manually.', 'error');
+    }
+
+    // 2) Open ChatGPT with a short prefill (URL-safe)
+    const shortPrefill = "Please convert the prompt I just copied to clean LaTeX as per the rules. I will paste it now.";
+    const url = `https://chat.openai.com/?input=${encodeURIComponent(shortPrefill)}`;
+    window.open(url, '_blank', 'noopener');
+
   } catch (err) {
     window._globalDocxArrayBuffer = null;
     docxStatus.textContent = `Read failed: ${err}`;
+    showToast('Failed to read .docx', 'error');
   }
 });
 
@@ -1588,10 +1613,26 @@ if (latexBtn) {
       showToast('Switch source to Paste or Upload .docx first.', 'error');
       return;
     }
-    const raw = await gatherRawTextForLatex();
-    if (!raw) { showToast('No content found to convert.', 'error'); return; }
-    const prompt = buildLatexPromptFromRaw(raw);
-    openLatexHelper(prompt);
+   const raw = await gatherRawTextForLatex();
+if (!raw) { showToast('No content found to convert.', 'error'); return; }
+const prompt = buildLatexPromptFromRaw(raw);
+
+// Auto-copy full prompt
+try {
+  await navigator.clipboard.writeText(prompt);
+  showToast('Full prompt copied. Opening ChatGPT…');
+} catch {
+  showToast('Copy failed. A short prefill will open; paste manually.', 'error');
+}
+
+// Open ChatGPT with short prefill (URL-safe)
+const shortPrefill = "Please convert the prompt I just copied to clean LaTeX as per the rules. I will paste it now.";
+const url = `https://chat.openai.com/?input=${encodeURIComponent(shortPrefill)}`;
+window.open(url, '_blank', 'noopener');
+
+// (Optional) still show the helper modal for transparency/editing
+openLatexHelper(prompt);
+
   });
 }
 
@@ -2041,6 +2082,7 @@ window.location.href = 'exam-review.html';
 </script>
 </body>
 </html>
+
 
 
 
