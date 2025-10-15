@@ -311,7 +311,8 @@ app.post("/convert", upload.single("file"), (req, res) => {
     // Requires 'pandoc' available on PATH
     const args = ["-f","docx","-t","html","--mathjax","--self-contained", inPath, "-o", outPath];
 
-    execFile("pandoc", args, (err) => {
+   const PANDOC = process.env.PANDOC_BIN || "pandoc";
+execFile(PANDOC, args, (err) => {
         try {
             if (err) {
                 fs.rmSync(workdir, { recursive: true, force: true });
@@ -335,6 +336,7 @@ app.use((err, req, res, next) => {
 // ========== START SERVER ==========
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
 
 
 
