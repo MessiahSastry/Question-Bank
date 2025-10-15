@@ -9,10 +9,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.2/Sortable.min.js"></script>
-<!-- DOCX → HTML via server-side Pandoc -->
-<script>
-  window.PANDOC_CONVERTER_URL = "https://question-bank-lqsu.onrender.com/convert";
-</script>
+<!-- NEW: DOCX to text -->
+<script src="https://unpkg.com/mammoth/mammoth.browser.min.js"></script>
 
 
     <style>
@@ -1494,19 +1492,14 @@ pasteCount.textContent = approx ? `~${approx} question blocks detected` : '';
 
   docxInput?.addEventListener('change', async (e) => {
   const f = e.target.files && e.target.files[0];
-  if (!f) { docxStatus.textContent = 'No file chosen'; window._globalDocxHTML = null; return; }
-  docxStatus.textContent = `Uploading ${f.name}…`;
+  if (!f) { docxStatus.textContent = 'No file chosen'; window._globalDocxArrayBuffer = null; return; }
+  docxStatus.textContent = `Reading ${f.name}...`;
   try {
-    const fd = new FormData();
-    fd.append('file', f, f.name);
-    const resp = await fetch(window.PANDOC_CONVERTER_URL, { method: 'POST', body: fd });
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    const data = await resp.json();
-    window._globalDocxHTML = String(data.html || '');
-    docxStatus.textContent = `Ready: ${f.name} (converted)`;
+    window._globalDocxArrayBuffer = await f.arrayBuffer();
+    docxStatus.textContent = `Ready: ${f.name}`;
   } catch (err) {
-    window._globalDocxHTML = null;
-    docxStatus.textContent = `Convert failed: ${err}`;
+    window._globalDocxArrayBuffer = null;
+    docxStatus.textContent = `Read failed: ${err}`;
   }
 });
 })();
@@ -1775,14 +1768,23 @@ for (const item of mapped) {
   if (effective === 'Paste') {
     rawText = pasteText;
   } else if (effective === 'Upload .docx') {
-  if (!window._globalDocxHTML) {
-    allSectionErrors.push('No .docx file converted. Please upload again.');
+  if (!hasDocx) {
+    allSectionErrors.push('No .docx file selected.');
   } else {
-    // Keep math: Pandoc outputs TeX inside HTML wrappers; htmlToPlainText removes tags but
-    // preserves the \( … \) / \[ … \] content for MathJax later.
-    rawText = htmlToPlainText(window._globalDocxHTML || '');
+    try {
+      const result = await window.mammoth.convertToHtml(
+        { arrayBuffer: window._globalDocxArrayBuffer },
+        {
+          convertImage: mammoth.images.inline(img => img.read("base64").then(b64 => ({ src: `data:${img.contentType};base64,${b64}` })))
+        }
+      );
+      rawText = htmlToPlainText(result?.value || '');
+    } catch {
+      allSectionErrors.push('Failed to read .docx file.');
+    }
   }
 }
+
   if ((effective === 'Paste' || effective === 'Upload .docx') && !rawText) {
     allSectionErrors.push('No questions detected in the provided source.');
   }
@@ -1936,6 +1938,7 @@ window.location.href = 'exam-review.html';
 </script>
 </body>
 </html>
+
 
 
 
