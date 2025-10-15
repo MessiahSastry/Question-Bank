@@ -12,6 +12,9 @@ const multer = require("multer");
 const pdfParse = require("pdf-parse");
 require("dotenv").config();
 const path = require("path");
+const { execFile } = require("child_process");
+const fs = require("fs");
+const os = require("os");
 
 const app = express();
 
@@ -42,11 +45,13 @@ const upload = multer({
     storage: storage,
     limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
     fileFilter: (req, file, cb) => {
-        if (file.mimetype.startsWith("image/") || file.mimetype === "application/pdf") {
-            cb(null, true);
-        } else {
-            cb(new Error("Invalid file type. Only images and PDFs are allowed."), false);
-        }
+        const ok =
+          file.mimetype.startsWith("image/") ||
+          file.mimetype === "application/pdf" ||
+          file.mimetype === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+          file.mimetype === "application/msword";
+        if (ok) cb(null, true);
+        else cb(new Error("Invalid file type. Only images, PDFs, and Word (.docx/.doc) are allowed."), false);
     },
 });
 
@@ -289,6 +294,39 @@ Instructions:
 });
 
 // ========== ERROR HANDLING ==========
+// ========== DOCX → HTML (Pandoc) ==========
+app.get("/healthz", (req, res) => res.send("ok"));
+
+app.post("/convert", upload.single("file"), (req, res) => {
+    if (!req.file) return res.status(400).json({ error: "no file" });
+
+    // temp workspace
+    const workdir = fs.mkdtempSync(path.join(os.tmpdir(), "pandoc-"));
+    const inPath  = path.join(workdir, "in.docx");
+    const outPath = path.join(workdir, "out.html");
+
+    try { fs.writeFileSync(inPath, req.file.buffer); }
+    catch (e) { try { fs.rmSync(workdir, { recursive: true, force: true }); } catch {} return res.status(500).json({ error: String(e) }); }
+
+    // Requires 'pandoc' available on PATH
+    const args = ["-f","docx","-t","html","--mathjax","--self-contained", inPath, "-o", outPath];
+
+    execFile("pandoc", args, (err) => {
+        try {
+            if (err) {
+                fs.rmSync(workdir, { recursive: true, force: true });
+                return res.status(500).json({ error: String(err) });
+            }
+            const html = fs.readFileSync(outPath, "utf8");
+            fs.rmSync(workdir, { recursive: true, force: true });
+            res.json({ html });
+        } catch (e) {
+            try { fs.rmSync(workdir, { recursive: true, force: true }); } catch {}
+            res.status(500).json({ error: String(e) });
+        }
+    });
+});
+
 app.use((err, req, res, next) => {
     console.error(err.stack);
     res.status(500).send('Something broke!');
@@ -297,6 +335,7 @@ app.use((err, req, res, next) => {
 // ========== START SERVER ==========
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
 
 
 
