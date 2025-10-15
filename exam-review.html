@@ -144,6 +144,15 @@
   background: #f3f7fe;
   border-radius: 6px;
 }
+     /* --- Per-question image box --- */
+  .q-imgwrap{margin:.5rem 0 1rem 0}
+  .q-imgbar{display:flex;gap:.5rem;align-items:center;margin:.25rem 0 .5rem}
+  .q-imgbar button,.q-imgbar input[type="file"]{padding:.35rem .6rem;border:1px solid #bcd6ef;border-radius:6px;background:#f7fafd;cursor:pointer}
+  .q-imgbox{width:100%;max-width:680px;min-height:160px;border:1.3px dashed #bcd6ef;border-radius:10px;background:#fbfdff;display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative;touch-action:pan-x pan-y}
+  .q-imgbox.empty::after{content:"Paste / Drop / Click to add image";color:#678;position:absolute;font-size:.95rem}
+  .q-imgbox img{max-width:none;max-height:none;will-change:transform;user-select:none;pointer-events:none}
+  .q-imghint{font-size:.82rem;color:#678;margin-top:.35rem}
+
   </style>
 </head>
 <body>
@@ -388,10 +397,10 @@ let qCounter = 0;
 
   <!-- Editable question text -->
   <span class="question-text no-mjx" contenteditable="true">
-  ${stripMetaTags(stripMetaLine(q.text || q.body || q.question || ''))}
-</span>
+    ${stripMetaTags(stripMetaLine(q.text || q.body || q.question || ''))}
+  </span>
 
-  <!-- MCQ options (editable) + answer key (editable) -->
+  <!-- MCQ block (unchanged) -->
   ${
     (q.options && q.options.length === 4)
       ? `
@@ -418,6 +427,24 @@ let qCounter = 0;
 
   <span class="marks-box no-mjx" contenteditable="plaintext-only" tabindex="0">${q.marks || section.marksPerQuestion || ''}</span>
   <span class="marks-label">Marks</span>
+
+  <!-- Per-question image box -->
+  <div class="q-imgwrap" data-qkey="${subjIdx}|${sIdx}|${qIdx}">
+    <div class="q-imgbar">
+      <button type="button" data-act="pick">Upload</button>
+      <button type="button" data-act="fit">Fit</button>
+      <button type="button" data-act="zout">-</button>
+      <button type="button" data-act="zin">+</button>
+      <button type="button" data-act="reset">Reset</button>
+      <button type="button" data-act="remove">Remove</button>
+      <input type="file" accept="image/png,image/jpeg,image/webp" hidden>
+    </div>
+    <div class="q-imgbox ${q.image ? '' : 'empty'}" tabindex="0">
+      ${q.image ? `<img src="${q.image}" alt="question image">` : ''}
+    </div>
+    <div class="q-imghint">Tip: Ctrl/Cmd+V to paste, drag & drop to add. Wheel to zoom, drag to pan.</div>
+  </div>
+
 </div>`;
         });
         html += `</div>`;
@@ -480,6 +507,154 @@ area.querySelectorAll('.num-questions, .marks-per-question').forEach(el => {
 })();
 
    // Inline editing indicators for all [contenteditable]
+   // ---- Per-question image boxes: handlers + state ----
+  attachImageBoxes(area);
+
+  function attachImageBoxes(root){
+    const wraps = root.querySelectorAll('.q-imgwrap');
+    wraps.forEach(wrap => {
+      const box = wrap.querySelector('.q-imgbox');
+      const fileInput = wrap.querySelector('input[type="file"]');
+      const btn = act => wrap.querySelector(`[data-act="${act}"]`);
+      const qkey = wrap.dataset.qkey; // "subj|sec|q"
+
+      // init transform state
+      box._scale = 1; box._tx = 0; box._ty = 0;
+
+      // helpers
+      function getPaper(){ try { return JSON.parse(sessionStorage.getItem("examPaper")||"null"); } catch { return null; } }
+      function setPaper(p){ sessionStorage.setItem("examPaper", JSON.stringify(p)); }
+      function getQ(){
+        const [si, se, qi] = qkey.split('|').map(Number);
+        return getPaper()?.subjects?.[si]?.sections?.[se]?.questions?.[qi];
+      }
+      function setImg(src){
+        box.classList.remove('empty');
+        if (!box.querySelector('img')){
+          const img = document.createElement('img');
+          box.appendChild(img);
+        }
+        box.querySelector('img').src = src;
+        // store into paper
+        const paper = getPaper();
+        const [si, se, qi] = qkey.split('|').map(Number);
+        const q = paper?.subjects?.[si]?.sections?.[se]?.questions?.[qi];
+        if (q){ q.image = src; setPaper(paper); }
+        fit(); // auto-fit on first load
+      }
+      function clearImg(){
+        const img = box.querySelector('img');
+        if (img) img.remove();
+        box.classList.add('empty');
+        const paper = getPaper();
+        const [si, se, qi] = qkey.split('|').map(Number);
+        const q = paper?.subjects?.[si]?.sections?.[se]?.questions?.[qi];
+        if (q && q.image){ delete q.image; setPaper(paper); }
+        resetView();
+      }
+      function applyTransform(){
+        const img = box.querySelector('img');
+        if (!img) return;
+        img.style.transform = `translate(${box._tx}px, ${box._ty}px) scale(${box._scale})`;
+      }
+      function resetView(){ box._scale = 1; box._tx = 0; box._ty = 0; applyTransform(); }
+      function fit(){
+        const img = box.querySelector('img'); if (!img) return;
+        const bw = box.clientWidth, bh = Math.max(160, box.clientHeight || 160);
+        const natural = () => new Promise(res=>{
+          if (img.naturalWidth) return res([img.naturalWidth, img.naturalHeight]);
+          img.onload = ()=>res([img.naturalWidth, img.naturalHeight]);
+        });
+        natural().then(([iw, ih])=>{
+          if(!iw||!ih) return resetView();
+          const s = Math.min(bw/iw, bh/ih);
+          box._scale = Math.max(0.1, Math.min(5, s));
+          box._tx = 0; box._ty = 0; applyTransform();
+        });
+      }
+
+      // upload via file picker
+      btn('pick')?.addEventListener('click', ()=> fileInput.click());
+      fileInput?.addEventListener('change', e=>{
+        const f = e.target.files && e.target.files[0]; if(!f) return;
+        if (!/^image\/(png|jpeg|webp)$/.test(f.type)){ alert('Use PNG/JPEG/WebP'); return; }
+        if (f.size > 20*1024*1024){ alert('Max 20 MB'); return; }
+        const r = new FileReader();
+        r.onload = ()=> setImg(r.result);
+        r.readAsDataURL(f); // store data URL → persists via sessionStorage
+      });
+
+      // paste from clipboard
+      box.addEventListener('paste', e=>{
+        const items = (e.clipboardData && e.clipboardData.items) || [];
+        for (const it of items){
+          if (it.kind === 'file' && /^image\//.test(it.type)){
+            e.preventDefault();
+            const f = it.getAsFile();
+            if (!f) return;
+            const r = new FileReader();
+            r.onload = ()=> setImg(r.result);
+            r.readAsDataURL(f);
+            break;
+          }
+        }
+      });
+
+      // drag & drop
+      box.addEventListener('dragover', e=>{ e.preventDefault(); box.style.borderColor = '#1762a7'; });
+      box.addEventListener('dragleave', ()=>{ box.style.borderColor = '#bcd6ef'; });
+      box.addEventListener('drop', e=>{
+        e.preventDefault(); box.style.borderColor = '#bcd6ef';
+        const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+        if (!f) return;
+        if (!/^image\/(png|jpeg|webp)$/.test(f.type)){ alert('Use PNG/JPEG/WebP'); return; }
+        if (f.size > 20*1024*1024){ alert('Max 20 MB'); return; }
+        const r = new FileReader();
+        r.onload = ()=> setImg(r.result);
+        r.readAsDataURL(f);
+      });
+
+      // zoom with wheel
+      box.addEventListener('wheel', e=>{
+        const img = box.querySelector('img'); if (!img) return;
+        e.preventDefault();
+        const delta = Math.sign(e.deltaY) * -0.1; // wheel up = zoom in
+        const newScale = Math.min(5, Math.max(0.1, box._scale + delta));
+        const rect = box.getBoundingClientRect();
+        const cx = e.clientX - rect.left - rect.width/2;
+        const cy = e.clientY - rect.top  - rect.height/2;
+        const factor = newScale / box._scale;
+        box._tx = cx - factor*(cx - box._tx);
+        box._ty = cy - factor*(cy - box._ty);
+        box._scale = newScale;
+        applyTransform();
+      }, { passive:false });
+
+      // pan by drag
+      let dragging = false, sx=0, sy=0;
+      box.addEventListener('pointerdown', e=>{
+        if (!box.querySelector('img')) return;
+        dragging = true; sx = e.clientX; sy = e.clientY; box.setPointerCapture(e.pointerId);
+      });
+      box.addEventListener('pointermove', e=>{
+        if (!dragging) return;
+        box._tx += (e.clientX - sx);
+        box._ty += (e.clientY - sy);
+        sx = e.clientX; sy = e.clientY;
+        applyTransform();
+      });
+      box.addEventListener('pointerup',   ()=> dragging=false);
+      box.addEventListener('pointercancel',()=> dragging=false);
+
+      // toolbar buttons
+      btn('fit')?.addEventListener('click', fit);
+      btn('reset')?.addEventListener('click', resetView);
+      btn('zin')?.addEventListener('click', ()=>{ box._scale=Math.min(5, box._scale+0.2); applyTransform(); });
+      btn('zout')?.addEventListener('click', ()=>{ box._scale=Math.max(0.1, box._scale-0.2); applyTransform(); });
+      btn('remove')?.addEventListener('click', clearImg);
+    });
+  }
+
 area.querySelectorAll('[contenteditable]').forEach(el => {
   el.addEventListener('input', function() {
     this.classList.add('edited');
@@ -565,6 +740,16 @@ if (optNodes && optNodes.length === 4) {
       const seen = new Set();
       const letters = raw.split(',').filter(x => /^[A-D]$/.test(x) && !seen.has(x) && (seen.add(x), true));
       paper.subjects[subjIdx].sections[secIdx].questions[qIdx].answer = letters.join(letters.length > 1 ? ',' : '');
+           // Sync image (if present)
+      const wrap = qr.querySelector('.q-imgwrap');
+      if (wrap){
+        const img = wrap.querySelector('.q-imgbox img');
+        if (img && img.src){
+          paper.subjects[subjIdx].sections[secIdx].questions[qIdx].image = img.src; // data URL persists
+        } else {
+          delete paper.subjects[subjIdx].sections[secIdx].questions[qIdx].image;
+        }
+      }
     }
   });
 
@@ -842,6 +1027,7 @@ document.getElementById('apply-json-btn').onclick = async function() {
 </script>
 </body>
 </html>
+
 
 
 
