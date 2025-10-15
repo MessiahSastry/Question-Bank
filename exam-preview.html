@@ -659,10 +659,10 @@ if (exam.subjects && exam.subjects.length > 1) {
   const singleOpt = line.match(/^\s*(?:^|\s|\()(?:(?:[A-D])|(?:\(?i{1,3}\)?|iv))\s*[\)\.\:\-–—]\s+.+$/i);
   if (singleOpt) {
     optionLines.push(autoLatexAll((singleOpt[0] || '').trim()));
-  } else if (line) {
-    // descriptive continuation
-    questionContentHTML += '<br>' + autoLatexAll(line);
-  }
+ } else if (line && !/^\s*(?:^|\s|\()(?:(?:[A-D])|(?:\(?i{1,3}\)?|iv))\s*[\)\.\:\-–—]\s+/.test(line)) {
+  // descriptive continuation (but skip lines that are actually option labels)
+  questionContentHTML += '<br>' + autoLatexAll(line);
+}
 }
       }
       if (optionLines.length === 4) {
@@ -782,18 +782,27 @@ if (exam.subjects && exam.subjects.length > 1) {
   )
 );
 
-      for (let i = 1; i < parts.length; i++) {
-        let line = autoLatexAll(parts[i]);
-        let inlineOpts = line.match(/((?:[A-D]|(?:\(?i{1,3}\)?|iv))\s*[\)\.\:\-]\s*.*?)(?=\s+(?:[A-D]|(?:\(?i{1,3}\)?|iv))\s*[\)\.\:\-]\s*|$)/gi);
-       if (inlineOpts && inlineOpts.length >= 2) {
-  optionLines.push(...inlineOpts.map(opt => autoLatexAll(opt.trim())));
-} else {
-  const singleOpt = line.match(/^\s*(?:[A-D]|(?:\(?i{1,3}\)?|iv))\s*[\)\.\:\-]\s*(.+)$/i);
+     for (let i = 1; i < parts.length; i++) {
+  const raw = parts[i];
+  let line = autoLatexAll(raw);
+
+  // Split inline options like "(i) ... (ii) ... (iii) ... (iv) ..."
+  let inlineOpts = line.match(/((?:^|\s|\()(?:(?:[A-D])|(?:\(?i{1,3}\)?|iv))\s*[\)\.\:\-–—]\s*.*?)(?=\s+(?:^|\s|\()(?:(?:[A-D])|(?:\(?i{1,3}\)?|iv))\s*[\)\.\:\-–—]\s*|$)/gi);
+  if (inlineOpts && inlineOpts.length >= 2) {
+    optionLines.push(...inlineOpts.map(opt => autoLatexAll(opt.trim())));
+    continue;
+  }
+
+  // Single option line like "(iv) None of these ..."
+  const singleOpt = raw.match(/^\s*(?:^|\s|\()(?:(?:[A-D])|(?:\(?i{1,3}\)?|iv))\s*[\)\.\:\-–—]\s+.+$/i);
   if (singleOpt) {
-    optionLines.push(autoLatexAll((singleOpt[0] || '').trim()));
-  } else if (line) {
-    // descriptive continuation
-    questionContentHTML += '<br>' + autoLatexAll(line);
+    optionLines.push(autoLatexAll(singleOpt[0].trim()));
+    continue;
+  }
+
+  // Otherwise, it’s descriptive continuation
+  if (line) {
+    questionContentHTML += '<br>' + line;
   }
 }
       }
@@ -1011,6 +1020,7 @@ window.addEventListener('DOMContentLoaded', () => {
 </script>
  </body>
 </html>
+
 
 
 
