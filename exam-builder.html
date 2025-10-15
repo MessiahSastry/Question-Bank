@@ -268,9 +268,17 @@
                         <input type="file" id="global-docx-input" accept=".docx" />
                         <div id="global-docx-status" style="color:#54656f;font-size:.9em;margin-top:6px;">No file chosen</div>
                     </div>
+
+                    <div id="latex-helper-cta" class="form-group" style="display:none;">
+                      <button id="latex-helper-open" style="padding:10px 14px;background:#0f3d6b;color:#fff;border:none;border-radius:8px;font-weight:600;cursor:pointer;">
+                        Convert to LaTeX with AI (build prompt)
+                      </button>
+                      <div style="color:#54656f;font-size:.9em;margin-top:6px;">Works with “Paste” or “Upload .docx” source.</div>
+                    </div>
                     
                     <div class="form-group">
                         <label>Difficulty Level</label>
+
                         <div id="difficulty-dropdown" class="custom-dropdown"></div>
                     </div>
 
@@ -332,8 +340,23 @@
                 cursor: pointer;">OK</button>
         </div>
     </div>
+<!-- LaTeX helper modal -->
+<div id="latex-helper-modal" style="display:none;position:fixed;inset:0;background:rgba(8,20,40,.35);z-index:10001;align-items:center;justify-content:center;">
+  <div style="background:#fff;width:min(900px,94vw);max-height:90vh;overflow:auto;border-radius:14px;box-shadow:0 14px 44px rgba(0,0,0,.25);padding:18px 16px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+      <h3 style="margin:0;color:#0f3d6b;">Prepare LaTeX Conversion Prompt</h3>
+      <div>
+        <button id="latex-helper-copy" style="border:none;background:#1762a7;color:#fff;padding:8px 14px;border-radius:8px;cursor:pointer;margin-right:8px;">Copy Prompt</button>
+        <button id="latex-helper-close" style="border:none;background:#eee;padding:8px 14px;border-radius:8px;cursor:pointer">Close</button>
+      </div>
+    </div>
+    <p style="margin:.6rem 0 1rem 0;color:#54656f">This prompt asks the AI to convert all equations to TeX (<code>\(...\)</code> inline, <code>\[...\]</code> display), keep question order, and return only text.</p>
+    <textarea id="latex-helper-text" style="width:100%;min-height:420px;border:1.3px solid #bcd6ef;border-radius:10px;padding:12px;background:#f7fafd;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.95rem;"></textarea>
+  </div>
+</div>
+
 <script>
-// --- FIREBASE INIT (leave this unchanged if already at top) ---
+// --- FIREBASE INIT
 const firebaseConfig = {
     apiKey: "AIzaSyAszVhWXUUOYLQ7VimKmPKf1yEu_CI9RCE",
     authDomain: "stpatricks-questionbank.firebaseapp.com",
@@ -1455,26 +1478,30 @@ createDropdown('exam-source-dropdown', ["Question Bank","Paste","Upload .docx"],
   const docxStatus = document.getElementById('global-docx-status');
   window._globalDocxArrayBuffer = null;
 
-  function toggle() {
-  const v = dd.dataset.value || 'Question Bank';
-  const isBank  = v === 'Question Bank';
-  const isPaste = v === 'Paste';
-  const isWord  = v === 'Upload .docx';
+    function toggle() {
+    const v = dd.dataset.value || 'Question Bank';
+    const isBank  = v === 'Question Bank';
+    const isPaste = v === 'Paste';
+    const isWord  = v === 'Upload .docx';
 
-  // show paste/word areas
-  pasteWrap.style.display  = isPaste ? 'block' : 'none';
-  uploadWrap.style.display = isWord  ? 'block' : 'none';
+    // show paste/word areas
+    pasteWrap.style.display  = isPaste ? 'block' : 'none';
+    uploadWrap.style.display = isWord  ? 'block' : 'none';
 
-  // hide/show Difficulty (its enclosing .form-group)
-  const diffGroup = document.getElementById('difficulty-dropdown')?.closest('.form-group');
-  if (diffGroup) diffGroup.style.display = isBank ? '' : 'none';
+    // show CTA only for Paste/Word
+    const cta = document.getElementById('latex-helper-cta');
+    if (cta) cta.style.display = (isPaste || isWord) ? 'block' : 'none';
 
-  // hide/show Chapters group for every subject (its enclosing .form-group)
-  document.querySelectorAll('[id^="chapters-multiselect-"]').forEach(el => {
-    const grp = el.closest('.form-group');
-    if (grp) grp.style.display = isBank ? '' : 'none';
-  });
-}
+    // hide/show Difficulty (its enclosing .form-group)
+    const diffGroup = document.getElementById('difficulty-dropdown')?.closest('.form-group');
+    if (diffGroup) diffGroup.style.display = isBank ? '' : 'none';
+
+    // hide/show Chapters group for every subject (its enclosing .form-group)
+    document.querySelectorAll('[id^="chapters-multiselect-"]').forEach(el => {
+      const grp = el.closest('.form-group');
+      if (grp) grp.style.display = isBank ? '' : 'none';
+    });
+  }
 dd.addEventListener('change', toggle);
 toggle();
 
@@ -1502,6 +1529,82 @@ pasteCount.textContent = approx ? `~${approx} question blocks detected` : '';
     docxStatus.textContent = `Read failed: ${err}`;
   }
 });
+
+// === LaTeX helper wiring ===
+const latexBtn   = document.getElementById('latex-helper-open');
+const latexModal = document.getElementById('latex-helper-modal');
+const latexText  = document.getElementById('latex-helper-text');
+const latexClose = document.getElementById('latex-helper-close');
+const latexCopy  = document.getElementById('latex-helper-copy');
+
+async function gatherRawTextForLatex() {
+  const mode = dd.dataset.value || 'Question Bank';
+  if (mode === 'Paste') {
+    const t = (document.getElementById('global-paste-area')?.value || '').trim();
+    return t;
+  }
+  if (mode === 'Upload .docx') {
+    if (!window._globalDocxArrayBuffer) return '';
+    try {
+      const result = await window.mammoth.convertToHtml(
+        { arrayBuffer: window._globalDocxArrayBuffer },
+        { convertImage: mammoth.images.inline(img => img.read("base64").then(b64 => ({ src: `data:${img.contentType};base64,${b64}` }))) }
+      );
+      return htmlToPlainText(result?.value || '').trim();
+    } catch { return ''; }
+  }
+  return '';
+}
+
+function buildLatexPromptFromRaw(raw) {
+  const MAX = 12000; // allow larger source; still guard the prompt size
+  const body = raw.length > MAX ? (raw.slice(0, MAX) + "\n\n[...truncated for prompt...]") : raw;
+  return `Convert the following teacher-written questions to clean, TeX-first plain text for a web builder that renders MathJax (TeX mode only).
+
+STRICT RULES:
+1) Math → LaTeX: Put short/inline math in \\( ... \\) and standalone/derivations in \\[ ... \\].
+2) Preserve numbering & hierarchy EXACTLY:
+   - Keep original main question numbers (e.g., 1., 2., 3. or Q1, Q2).
+   - Preserve sub-questions and their styles: (a),(b),(c) OR 1),2),3) OR i),ii),iii). Do not renumber or change styles.
+   - If a question has parts and sub-parts, keep both levels (e.g., 3. (a) ... (b) ... ; under (a) you may have i), ii), iii)).
+3) MCQs: Keep options labeled A), B), C), D) and retain any given answer as "Ans: X" (or multiple like "Ans: A,C").
+4) Do NOT change wording; only fix obvious OCR spacing/symbol issues. Do not add solutions.
+5) Output must be PLAIN TEXT (no Markdown headings, no extra bullets, no auto-renumbering).
+
+TEXT TO CONVERT:
+${body}`;
+}
+
+function openLatexHelper(text) {
+  if (!latexModal || !latexText) return;
+  latexText.value = text || '';
+  latexModal.style.display = 'flex';
+}
+
+if (latexBtn) {
+  latexBtn.addEventListener('click', async () => {
+    const mode = dd.dataset.value || 'Question Bank';
+    if (!(mode === 'Paste' || mode === 'Upload .docx')) {
+      showToast('Switch source to Paste or Upload .docx first.', 'error');
+      return;
+    }
+    const raw = await gatherRawTextForLatex();
+    if (!raw) { showToast('No content found to convert.', 'error'); return; }
+    const prompt = buildLatexPromptFromRaw(raw);
+    openLatexHelper(prompt);
+  });
+}
+
+if (latexClose) latexClose.addEventListener('click', () => { latexModal.style.display = 'none'; });
+if (latexCopy)  latexCopy.addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText(latexText.value || '');
+    showToast('Prompt copied. Paste in ChatGPT, convert to TeX, then paste back here.');
+  } catch {
+    showToast('Copy failed. Select all and copy manually.', 'error');
+  }
+});
+
 })();
 
 createDropdown('difficulty-dropdown', config.difficultyLevels, 'Select Difficulty');
@@ -1938,6 +2041,7 @@ window.location.href = 'exam-review.html';
 </script>
 </body>
 </html>
+
 
 
 
