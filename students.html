@@ -1991,50 +1991,63 @@ let srcIds = [];
         }
         const setAsSchoolDefault = !!popupContent.querySelector('#setAsSchoolDefault')?.checked;
 
-        // Check for duplicates before adding
-        db.collection('years').doc(academicYear)
-          .collection('exams').doc('classGroups')
-          .collection(classGroup)
-          .where('nameKey', '==', nameKey)
-          .get()
-          .then(dupSnap => {
-            if (!dupSnap.empty) {
-              alert("Exam with this (or very similar) name already exists!");
-              return;
-            }
-            // If not duplicate, add (attach grading)
-         const _scope = window.__sp_overrideScope || (window.__sp_useGroupExams === false ? 'class' : 'group');
+        // Check for duplicates before adding (only block for GROUP; use same id for overrides)
+db.collection('years').doc(academicYear)
+  .collection('exams').doc('classGroups')
+  .collection(classGroup)
+  .where('nameKey', '==', nameKey)
+  .get()
+  .then(dupSnap => {
+    const _scope = window.__sp_overrideScope || (window.__sp_useGroupExams === false ? 'class' : 'group');
 
-if (_scope === 'group') {
-  return db.collection('years').doc(academicYear)
-    .collection('exams').doc('classGroups')
-    .collection(classGroup)
-    .add({
-      name, nameKey, subjects, subtopics,
-      grading: { mode: 'custom', scale: gradingScale }
-    });
-} else if (_scope === 'class') {
-  const ref = db.collection('years').doc(academicYear)
-    .collection('classes').doc(currentClassId)
-    .collection('examOverrides').doc(); // new id
-  return ref.set({
-    name, nameKey, subjects, subtopics,
-    grading: { mode: 'custom', scale: gradingScale },
-    origin: 'class-only'
-  });
-} else { // section
-  const ref = db.collection('years').doc(academicYear)
-    .collection('classes').doc(currentClassId)
-    .collection('sections').doc(currentSectionId)
-    .collection('examOverrides').doc(); // new id
-  return ref.set({
-    name, nameKey, subjects, subtopics,
-    grading: { mode: 'custom', scale: gradingScale },
-    origin: 'section-only'
-  });
-}
+    // GROUP scope: true duplicate protection at group path
+    if (_scope === 'group') {
+      if (!dupSnap.empty) {
+        alert("Exam with this (or very similar) name already exists!");
+        return;
+      }
+      return db.collection('years').doc(academicYear)
+        .collection('exams').doc('classGroups')
+        .collection(classGroup)
+        .add({
+          name, nameKey, subjects, subtopics,
+          grading: { mode: 'custom', scale: gradingScale }
+        });
+    }
 
-          })
+    // CLASS/SECTION scopes:
+    // if a group exam with the same nameKey exists → use THAT id for the override
+    const matchedGroupId = !dupSnap.empty ? dupSnap.docs[0].id : null;
+
+    if (_scope === 'class') {
+      const coll = db.collection('years').doc(academicYear)
+        .collection('classes').doc(currentClassId)
+        .collection('examOverrides');
+
+      const docRef = matchedGroupId ? coll.doc(matchedGroupId) : coll.doc(); // same id for override if matched
+      const origin = matchedGroupId ? 'overridden' : 'class-only';
+
+      return docRef.set({
+        name, nameKey, subjects, subtopics,
+        grading: { mode: 'custom', scale: gradingScale },
+        origin
+      }, { merge: true });
+    } else { // section
+      const coll = db.collection('years').doc(academicYear)
+        .collection('classes').doc(currentClassId)
+        .collection('sections').doc(currentSectionId)
+        .collection('examOverrides');
+
+      const docRef = matchedGroupId ? coll.doc(matchedGroupId) : coll.doc(); // same id for override if matched
+      const origin = matchedGroupId ? 'overridden' : 'section-only';
+
+      return docRef.set({
+        name, nameKey, subjects, subtopics,
+        grading: { mode: 'custom', scale: gradingScale },
+        origin
+      }, { merge: true });
+    }
+  })
           .then(async (docRef) => {
             if (!docRef) return; // early-exit if duplicate branch above
             // Persist school-wide default if requested
@@ -4797,6 +4810,7 @@ if (marksFileInput) {
 </script>
 </body>
 </html>
+
 
 
 
