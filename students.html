@@ -1991,7 +1991,8 @@ let srcIds = [];
         }
         const setAsSchoolDefault = !!popupContent.querySelector('#setAsSchoolDefault')?.checked;
 
-        // Check for duplicates before adding (only block for GROUP; use same id for overrides)
+        // Check for duplicates before adding (block only at GROUP; use same id for overrides)
+// Always return a DocumentReference so the next .then(docRef) runs for all scopes
 db.collection('years').doc(academicYear)
   .collection('exams').doc('classGroups')
   .collection(classGroup)
@@ -2000,7 +2001,7 @@ db.collection('years').doc(academicYear)
   .then(dupSnap => {
     const _scope = window.__sp_overrideScope || (window.__sp_useGroupExams === false ? 'class' : 'group');
 
-    // GROUP scope: true duplicate protection at group path
+    // GROUP scope — enforce duplicate block at group level
     if (_scope === 'group') {
       if (!dupSnap.empty) {
         alert("Exam with this (or very similar) name already exists!");
@@ -2012,11 +2013,11 @@ db.collection('years').doc(academicYear)
         .add({
           name, nameKey, subjects, subtopics,
           grading: { mode: 'custom', scale: gradingScale }
-        });
+        }); // returns DocumentReference
     }
 
-    // CLASS/SECTION scopes:
-    // if a group exam with the same nameKey exists → use THAT id for the override
+    // CLASS / SECTION scopes
+    // If group has a matching exam (same nameKey), use that id for the override
     const matchedGroupId = !dupSnap.empty ? dupSnap.docs[0].id : null;
 
     if (_scope === 'class') {
@@ -2024,30 +2025,31 @@ db.collection('years').doc(academicYear)
         .collection('classes').doc(currentClassId)
         .collection('examOverrides');
 
-      const docRef = matchedGroupId ? coll.doc(matchedGroupId) : coll.doc(); // same id for override if matched
+      const ref = matchedGroupId ? coll.doc(matchedGroupId) : coll.doc(); // same id as group if matched
       const origin = matchedGroupId ? 'overridden' : 'class-only';
 
-      return docRef.set({
+      return ref.set({
         name, nameKey, subjects, subtopics,
         grading: { mode: 'custom', scale: gradingScale },
         origin
-      }, { merge: true });
-    } else { // section
+      }, { merge: true }).then(() => ref); // return DocumentReference
+    } else {
       const coll = db.collection('years').doc(academicYear)
         .collection('classes').doc(currentClassId)
         .collection('sections').doc(currentSectionId)
         .collection('examOverrides');
 
-      const docRef = matchedGroupId ? coll.doc(matchedGroupId) : coll.doc(); // same id for override if matched
+      const ref = matchedGroupId ? coll.doc(matchedGroupId) : coll.doc(); // same id as group if matched
       const origin = matchedGroupId ? 'overridden' : 'section-only';
 
-      return docRef.set({
+      return ref.set({
         name, nameKey, subjects, subtopics,
         grading: { mode: 'custom', scale: gradingScale },
         origin
-      }, { merge: true });
+      }, { merge: true }).then(() => ref); // return DocumentReference
     }
   })
+
           .then(async (docRef) => {
             if (!docRef) return; // early-exit if duplicate branch above
             // Persist school-wide default if requested
@@ -4810,6 +4812,7 @@ if (marksFileInput) {
 </script>
 </body>
 </html>
+
 
 
 
