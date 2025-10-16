@@ -1656,7 +1656,27 @@ function showExamSettingsPopup() {
         ? 'Customized for this class'
         : 'Using inherited defaults';
 
-    const exams = Array.isArray(examsEff) ? examsEff : [];
+    const exams = (() => {
+  const list = Array.isArray(examsEff) ? examsEff : [];
+  const byKey = new Map();
+
+  // precedence: section > class > group
+  const rank = (ex) => {
+    const o = (ex && ex.__origin) || '';
+    if (o === 'section-only' || o === 'overridden' && (ex.__scope === 'section')) return 3;
+    if (o === 'class-only'   || o === 'overridden')                                   return 2;
+    return 1; // inherited/group
+  };
+
+  for (const e of list) {
+    const k = (e.nameKey || normalizeExamName(e.name || '') || e.id || '').toString();
+    if (!k) continue;
+    const prev = byKey.get(k);
+    if (!prev || rank(e) >= rank(prev)) byKey.set(k, e); // override lower-rank with higher-rank
+  }
+
+  return Array.from(byKey.values());
+})();
     let html = `
         <div class="popup-title">Exam Settings</div>
 
@@ -4759,6 +4779,7 @@ if (marksFileInput) {
 </script>
 </body>
 </html>
+
 
 
 
