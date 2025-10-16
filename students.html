@@ -1617,7 +1617,7 @@ async function fetchEffectiveExams(classId, className) {
 if (typeof getExamsForCurrentClass !== 'function' && typeof fetchEffectiveExams === 'function') {
   // expose legacy name
   var getExamsForCurrentClass = function() {
-    return fetchEffectiveExams(currentClassId, currentClassName);
+    return fetchEffectiveExams(currentClassId, currentClassName, { forceRefresh: true });
   };
 }
 if (typeof fetchEffectiveExams !== 'function' && typeof getExamsForCurrentClass === 'function') {
@@ -1716,38 +1716,41 @@ function showExamSettingsPopup() {
           ? '<span style="margin-left:8px;font-size:.8em;padding:2px 8px;border-radius:999px;background:#fff7e6;color:#a26100;border:1px solid #ffd79a;">Overridden</span>'
           : '<span style="margin-left:8px;font-size:.8em;padding:2px 8px;border-radius:999px;background:#e8f3ff;color:#0f3d6b;border:1px solid #c7d7ea;">Inherited</span>';
 
-      return `
+     return `
       <div style="border-bottom:1px solid #f1f1f1;margin-bottom:7px;padding-bottom:7px;">
         <strong>${exam.name}</strong>${badge}
-        ${isAdmin ? `<button type="button" class="popup-action-btn" data-edit="${exam.id}" data-scope="${exam.__scope || exam.__origin || 'group'}" style="margin-left:10px;padding:2px 8px;font-size:0.9em;">Edit</button>` : ''}
+        ${isAdmin ? `<button type="button" class="popup-action-btn"
+                              data-edit="${exam.id}"
+                              data-scope="${
+                                (exam.__origin === 'section-only' || exam.__scope === 'section') ? 'section' :
+                                ((exam.__origin === 'class-only' || exam.__scope === 'class' || exam.__origin === 'overridden') ? 'class' : 'group')
+                              }"
+                              style="margin-left:10px;padding:2px 8px;font-size:0.9em;">Edit</button>` : ''}
         <div style="margin-top:6px;margin-left:8px;font-size:0.99em;">
         ${Array.isArray(exam.subjects) && exam.subjects.length > 0
-        ? exam.subjects.map(subj => {
-            const opt = subj && subj.excludeFromTotal ? ' <span style="color:#a15d00; font-weight:600;">[Optional]</span>' : '';
-           const _mode = (subj && typeof subj.subtopicsMode === 'string')
-  ? subj.subtopicsMode
-  : (Array.isArray(subj?.subtopics) && subj.subtopics.length ? 'custom' : 'common');
-
-const subs = (_mode === 'custom' && Array.isArray(subj.subtopics) && subj.subtopics.length)
-  ? ` <span style="color:#1762a7;">[${subj.subtopics.map(st => `${st.name} (${st.max})`).join(', ')}]</span>`
-  : '';
-            return `${subj.name} <span style="color:#888;">(Max: ${subj.max})</span>${opt}${subs}`;
-          }).join(', ')
-        : '<span style="color:#aaa;">No subjects</span>'
-      }
+          ? exam.subjects.map(subj => {
+              const opt = subj && subj.excludeFromTotal ? ' <span style="color:#a15d00; font-weight:600;">[Optional]</span>' : '';
+              const _mode = (subj && typeof subj.subtopicsMode === 'string')
+                ? subj.subtopicsMode
+                : (Array.isArray(subj?.subtopics) && subj.subtopics.length ? 'custom' : 'common');
+              const subs = (_mode === 'custom' && Array.isArray(subj.subtopics) && subj.subtopics.length)
+                ? ` <span style="color:#1762a7;">[${subj.subtopics.map(st => `${st.name} (${st.max})`).join(', ')}]</span>`
+                : '';
+              return `${subj.name} <span style="color:#888;">(Max: ${subj.max})</span>${opt}${subs}`;
+            }).join(', ')
+          : '<span style="color:#aaa;">No subjects</span>'
+        }
+        </div>
+        <div style="margin-top:4px;margin-left:8px;font-size:0.95em;color:#444;">
+          ${
+            Object.prototype.hasOwnProperty.call(exam, 'subtopics')
+              ? (Array.isArray(exam.subtopics) && exam.subtopics.length > 0
+                  ? 'Subtopics: ' + exam.subtopics.map(st => `${st.name} <span style="color:#888;">(${st.max})</span>`).join(', ')
+                  : '')
+              : ''
+          }
+        </div>
       </div>
-      <div style="margin-top:4px;margin-left:8px;font-size:0.95em;color:#444;">
-        ${
-  Object.prototype.hasOwnProperty.call(exam, 'subtopics')
-    ? (
-        Array.isArray(exam.subtopics) && exam.subtopics.length > 0
-          ? 'Subtopics: ' + exam.subtopics.map(st => `${st.name} <span style="color:#888;">(${st.max})</span>`).join(', ')
-          : ''
-      )
-    : ''
-}
-      </div>
-     </div>
     `;
     }).join('')}
         </div>
@@ -4794,6 +4797,7 @@ if (marksFileInput) {
 </script>
 </body>
 </html>
+
 
 
 
