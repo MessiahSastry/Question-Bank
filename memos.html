@@ -212,22 +212,22 @@ function getClassGroupName(className) {
   return "6-9";
 }
 
-// ===== EFFECTIVE EXAMS (group defaults + class overrides) =====
-async function fetchEffectiveExams(year, classId, className) {
+// ===== EFFECTIVE EXAMS (group defaults → class overrides → section overrides) =====
+async function fetchEffectiveExams(year, classId, className, sectionId) {
   const yearRef = db.collection('years').doc(year);
 
-  // Resolve primary group id from the class name (your existing helper)
+  // Resolve primary group id from the class name
   const baseGroup = getClassGroupName(className) || '';
 
-  // Try a few safe aliases so we survive minor naming drift like "10" vs "class-10"
+  // Survive minor naming drift like "10" vs "class-10"
   const groupCandidates = Array.from(new Set([
     baseGroup,
     baseGroup.toLowerCase(),
-    baseGroup.replace(/^class[-\s]*/i, ''),          // "class-10" -> "10"
-    baseGroup.startsWith('class-') ? baseGroup : `class-${baseGroup}`, // "10" -> "class-10"
+    baseGroup.replace(/^class[-\s]*/i, ''),                                // "class-10" -> "10"
+    baseGroup.startsWith('class-') ? baseGroup : `class-${baseGroup}`,      // "10" -> "class-10"
   ])).filter(Boolean);
 
-  // Accumulator for group-level exams
+  // Accumulator for effective exams
   const map = new Map();
 
   // --- 1) GROUP EXAMS (support BOTH folderings) ---
@@ -241,7 +241,7 @@ async function fetchEffectiveExams(year, classId, className) {
       snap = await yearRef.collection('exams').doc('classGroups').collection(g).get();
       if (snap && !snap.empty) {
         snap.forEach(d => map.set(d.id, { id: d.id, ...d.data(), __origin: 'group' }));
-        break; // we found a populated path; stop trying aliases
+        break; // found a populated path
       }
     } catch (_) {}
 
@@ -250,60 +250,106 @@ async function fetchEffectiveExams(year, classId, className) {
       snap = await yearRef.collection('classGroups').doc(g).collection('exams').get();
       if (snap && !snap.empty) {
         snap.forEach(d => map.set(d.id, { id: d.id, ...d.data(), __origin: 'group' }));
-        break; // populated alternative found
+        break; // alternative path found
       }
     } catch (_) {}
   }
 
   // --- 2) CLASS OVERRIDES / CLASS-ONLY (support BOTH names) ---
   // Prefer: years/{year}/classes/{classId}/examOverrides/*
-  let overSnap = null;
+  let clsSnap = null;
   try {
-    overSnap = await yearRef.collection('classes').doc(classId).collection('examOverrides').get();
+    clsSnap = await yearRef.collection('classes').doc(classId).collection('examOverrides').get();
   } catch (_) {}
 
   // Also accept: years/{year}/classes/{classId}/exams/*
-  if (!overSnap || overSnap.empty) {
+  if (!clsSnap || clsSnap.empty) {
     try {
-      overSnap = await yearRef.collection('classes').doc(classId).collection('exams').get();
+      clsSnap = await yearRef.collection('classes').doc(classId).collection('exams').get();
     } catch (_) {}
   }
 
-  if (overSnap && !overSnap.empty) {
-    overSnap.forEach(doc => {
+  if (clsSnap && !clsSnap.empty) {
+    clsSnap.forEach(doc => {
       const o = doc.data() || {};
 
-      // Explicit hide of an inherited exam
+      // hide inherited exam
       if (o.hidden === true) {
         map.delete(doc.id);
         return;
       }
 
-      // Class-only (own id) or unknown id → add as-is
-      if (o.origin === 'class-only' || !map.has(doc.id)) {
+      // class-only (new id) OR add/override existing
+      if (!map.has(doc.id) || o.origin === 'class-only') {
         map.set(doc.id, { id: doc.id, ...o, __origin: 'class-only' });
-        return;
+      } else {
+        const base = map.get(doc.id);
+        map.set(doc.id, {
+          ...base,
+          name:      (o.name ?? base.name),
+          subjects:  (Array.isArray(o.subjects)  && o.subjects.length  ? o.subjects  : base.subjects),
+          subtopics: (Array.isArray(o.subtopics) && o.subtopics.length ? o.subtopics : base.subtopics),
+          grading:   (o.grading || base.grading),
+          includeInTotal: (o.includeInTotal ?? base.includeInTotal),
+          __origin:  'overridden-class'
+        });
       }
-
-      // Field-level override on a group exam (same id)
-      const base = map.get(doc.id);
-      map.set(doc.id, {
-        ...base,
-        name:      (o.name ?? base.name),
-        subjects:  (Array.isArray(o.subjects)  && o.subjects.length  ? o.subjects  : base.subjects),
-        subtopics: (Array.isArray(o.subtopics) && o.subtopics.length ? o.subtopics : base.subtopics),
-        grading:   (o.grading || base.grading),
-        __origin:  'overridden'
-      });
     });
   }
 
-  // --- 3) Return stable, name-sorted list ---
+  // --- 3) SECTION OVERRIDES / SECTION-ONLY (highest priority; support BOTH names) ---
+  // Prefer: years/{year}/classes/{classId}/sections/{sectionId}/examOverrides/*
+  // Also:   years/{year}/classes/{classId}/sections/{sectionId}/exams/*
+  if (sectionId) {
+    let secSnap = null;
+    try {
+      secSnap = await yearRef.collection('classes').doc(classId)
+        .collection('sections').doc(sectionId)
+        .collection('examOverrides').get();
+    } catch (_) {}
+
+    if (!secSnap || secSnap.empty) {
+      try {
+        secSnap = await yearRef.collection('classes').doc(classId)
+          .collection('sections').doc(sectionId)
+          .collection('exams').get();
+      } catch (_) {}
+    }
+
+    if (secSnap && !secSnap.empty) {
+      secSnap.forEach(doc => {
+        const o = doc.data() || {};
+
+        // hide inherited exam at section scope
+        if (o.hidden === true) {
+          map.delete(doc.id);
+          return;
+        }
+
+        // section-only (new id) OR override whatever exists
+        if (!map.has(doc.id) || o.origin === 'section-only') {
+          map.set(doc.id, { id: doc.id, ...o, __origin: 'section-only' });
+        } else {
+          const base = map.get(doc.id);
+          map.set(doc.id, {
+            ...base,
+            name:      (o.name ?? base.name),
+            subjects:  (Array.isArray(o.subjects)  && o.subjects.length  ? o.subjects  : base.subjects),
+            subtopics: (Array.isArray(o.subtopics) && o.subtopics.length ? o.subtopics : base.subtopics),
+            grading:   (o.grading || base.grading),
+            includeInTotal: (o.includeInTotal ?? base.includeInTotal),
+            __origin:  'overridden-section'
+          });
+        }
+      });
+    }
+  }
+
+  // --- 4) Return stable, name-sorted list ---
   const list = Array.from(map.values());
   list.sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
   return list;
 }
-
 // Custom Y coordinates (exact order as your template for each memo)
 // === Canonical subject-key normalizer (use everywhere) ===
 function nkey(s) {
@@ -770,8 +816,8 @@ async function loadExams() {
 
   await loadGradingDefaultFromFirestore();
 
-  // ✅ Use effective exams (group + class overrides)
-  exams = await fetchEffectiveExams(year, classId, className);
+  // ✅ Use effective exams (group + class + section overrides)
+exams = await fetchEffectiveExams(year, classId, className, sectionSel.value);
 
   // Populate main exam dropdown
   examChoices.clearStore();
@@ -3549,6 +3595,7 @@ page.render({ canvasContext: ctx, viewport });
 </script>
 </body>
 </html>
+
 
 
 
