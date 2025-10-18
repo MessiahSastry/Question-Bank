@@ -244,7 +244,8 @@ window.textbooks = {
       "Light"
     ],
     "Physics IIT & NEET": [
-      "Units and Measurements (As-1 & 2)",
+      "Units and Measurements (As- 1 & 2)
+      (Phyicical quantity & Multiples and Submultiples)",
       "Units and Measurements (As- 3, 4 & 5)",
       "Units and Measurements (As- 6 & 7)",
       "Kinematics (As- 1, 2 & 3)",
@@ -711,6 +712,7 @@ window.textbooks = {
     ]
   }
 };
+
 
 
 
