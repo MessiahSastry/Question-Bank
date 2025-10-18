@@ -1082,27 +1082,31 @@ async function buildExamStructure(examObj, { year, classId, sectionId } = {}) {
 
   if (Array.isArray(examObj.subjects)) {
     subjects = examObj.subjects.map(s => {
-      const name = s?.name || '';
-      let subtopics = Array.isArray(s?.subtopics) ? s.subtopics.map(t => ({
-        name: t?.name || '',
-        max: (typeof t?.max === 'number' && !isNaN(t.max)) ? t.max : null
-      })) : [];
+  const name = s?.name || '';
+  let subtopics = Array.isArray(s?.subtopics) ? s.subtopics.map(t => ({
+    name: t?.name || '',
+    max: (typeof t?.max === 'number' && !isNaN(t.max)) ? t.max : null
+  })) : [];
 
-      // subjectMax: prefer explicit; else sum known subtopic max
-      let subjectMax = (typeof s?.max === 'number' && !isNaN(s.max)) ? s.max : null;
-      if (subjectMax == null && subtopics.length) {
-        const sum = subtopics.reduce((acc, t) => acc + (typeof t.max === 'number' ? t.max : 0), 0);
-        subjectMax = (sum > 0 ? sum : null);
-      }
+  // subjectMax: prefer explicit; else sum known subtopic max
+  let subjectMax = (typeof s?.max === 'number' && !isNaN(s.max)) ? s.max : null;
+  if (subjectMax == null && subtopics.length) {
+    const sum = subtopics.reduce((acc, t) => acc + (typeof t.max === 'number' ? t.max : 0), 0);
+    subjectMax = (sum > 0 ? sum : null);
+  }
 
-           // If subject has no explicit subtopics but exam has an exam-wide schema, use it
-        // If subject has no explicit subtopics but exam has an exam-wide schema, use it
-if ((!subtopics || subtopics.length === 0) && examWideSubs && examWideSubs.length) {
-  subtopics = examWideSubs.map(t => ({ name: t.name, max: t.max }));
-}
-if (Array.isArray(subtopics) && subtopics.length) __examHasSubtopics = true;
-return { name, subtopics, subjectMax };
-    });
+  // If subject has no explicit subtopics but exam has an exam-wide schema, use it
+  if ((!subtopics || subtopics.length === 0) && examWideSubs && examWideSubs.length) {
+    subtopics = examWideSubs.map(t => ({ name: t.name, max: t.max }));
+  }
+  if (Array.isArray(subtopics) && subtopics.length) __examHasSubtopics = true;
+
+  // carry subtopic mode through
+  const subtopicMode = String(s?.subtopicMode || s?.subtopicsMode || s?.mode || '')
+    .trim().toLowerCase();
+
+  return { name, subtopics, subjectMax, subtopicMode };
+});
   }
 
   // 2) If no subjects (or missing subtopics) and Firestore is available, try a light inference
@@ -1188,10 +1192,11 @@ subjects = subjects.map(s => {
 
   // 3) Finalize: ensure stable arrays/fields
   subjects = subjects.map(s => ({
-    name: s.name || '',
-    subtopics: Array.isArray(s.subtopics) ? s.subtopics : [],
-    subjectMax: (typeof s.subjectMax === 'number' && !isNaN(s.subjectMax)) ? s.subjectMax : null
-  }));
+  name: s.name || '',
+  subtopics: Array.isArray(s.subtopics) ? s.subtopics : [],
+  subjectMax: (typeof s.subjectMax === 'number' && !isNaN(s.subjectMax)) ? s.subjectMax : null,
+  subtopicMode: String(s?.subtopicMode || '').trim().toLowerCase()
+}));
 
   __examStructure = { subjects, hasSubtopics: __examHasSubtopics };
   return __examStructure;
@@ -2889,25 +2894,26 @@ const toNum  = v => (v === '' || v == null ? null : (Number.isFinite(+v) ? +v : 
     const subjVal = subjKey ? marks[subjKey] : marks[subjName];
 
     // Prepare subtopic list from structure
-    const subtopics = Array.isArray(subjDef.subtopics) ? subjDef.subtopics.map(t => ({
-      name: t?.name || '',
-      max: (typeof t?.max === 'number' && !isNaN(t.max)) ? t.max : null,
-      mark: '' // will fill below
-    })) : [];
+const subtopics = Array.isArray(subjDef.subtopics) ? subjDef.subtopics.map(t => ({
+  name: t?.name || '',
+  max: (typeof t?.max === 'number' && !isNaN(t.max)) ? t.max : null,
+  mark: '' // will fill below
+})) : [];
 
-   // Choose subtopic source: prefer __subs.<Subject>, fallback to object-at-root
-const subsRoot = (marks && typeof marks.__subs === 'object') ? marks.__subs : null;
-const subsKey  = subsRoot ? Object.keys(subsRoot).find(k => nkey(k) === nkey(subjName)) : null;
-const subsObj  = (subsKey && typeof subsRoot[subsKey] === 'object') ? subsRoot[subsKey] : null;
+// Mode awareness
+const subjMode = String(subjDef?.subtopicMode || subjDef?.subtopicsMode || subjDef?.mode || '')
+  .trim().toLowerCase();
 
-const subSrc = subsObj || (subjVal && typeof subjVal === 'object' && !Array.isArray(subjVal) ? subjVal : null);
-
+// Choose subtopic source: prefer __subs.<Subject>, fallback to object-at-root
+...
 // If no declared subtopics but we have a subtopic object, create cells from its keys
-if ((!subtopics.length) && subSrc) {
+// BUT NOT when mode is 'none' (we want '-' in every subtopic column)
+if ((!subtopics.length) && subSrc && subjMode !== 'none') {
   for (const k of Object.keys(subSrc)) {
     subtopics.push({ name: k, max: null, mark: '' });
   }
 }
+
 
 // Fill subtopic marks from the chosen source
 // Fill subtopic marks from the chosen source
@@ -2980,12 +2986,13 @@ if (subtopics.length && subtopics.every(st => st.mark === 'AB' || st.mark === ''
     // Keep backward-compatible fields (max/marks) for existing drawing,
     // but also attach detailed subtopics.
     stuSubjects.push({
-      name: subjName,
-      max: subjectTotalMax ?? '',             // subject max
-      marks: (grade === 'AB') ? 'AB' : subjectTotalMarks, // subject total marks
-      grade,
-      subtopics                                // detailed cells for rendering
-    });
+  name: subjName,
+  max: subjectTotalMax ?? '',
+  marks: (grade === 'AB') ? 'AB' : subjectTotalMarks,
+  grade,
+  subtopics,
+  subtopicMode: subjMode
+});
   }
 
   // 4) Attendance (cached)
@@ -3609,6 +3616,7 @@ page.render({ canvasContext: ctx, viewport });
 </script>
 </body>
 </html>
+
 
 
 
