@@ -244,10 +244,9 @@ window.textbooks = {
       "Light"
     ],
     "Physics IIT & NEET": [
-      "Units and Measurements (As- 1 & 2)
-      (Phyicical quantity & Multiples and Submultiples)",
-      "Units and Measurements (As- 3, 4 & 5)",
-      "Units and Measurements (As- 6 & 7)",
+      "Units and Measurements (As- 1 & 2)\n(Physical quantity & Multiples and Submultiples)",
+      "Units and Measurements (As- 3, 4 & 5)\n(Mass, Length, Time, Area & Volume)",
+      "Units and Measurements (As- 6 & 7)\n(Density & Dimensional Formula)",
       "Kinematics (As- 1, 2 & 3)",
       "Kinematics (As- 4, & 5)",
       "Newton's Laws of Motion",
@@ -712,6 +711,7 @@ window.textbooks = {
     ]
   }
 };
+
 
 
 
