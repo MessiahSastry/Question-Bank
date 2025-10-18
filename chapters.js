@@ -105,7 +105,6 @@ window.textbooks = {
     ],
     "Chemistry IIT & NEET": [
       "Nature of Chemistry",
-      "Language of Chemistry",
       "Language of Chemistry(symbol of elements & Valency)",
       "Language of Chemistry(Types of Ions & Chemical Formula)",
       "Basic Concept Of Chemistry",
@@ -249,7 +248,7 @@ window.textbooks = {
       "Units and Measurements (As- 3, 4 & 5)",
       "Units and Measurements (As- 6 & 7)",
       "Kinematics (As- 1, 2 & 3)",
-      "Kinematics (As- 4, & 3)",
+      "Kinematics (As- 4, & 5)",
       "Newton's Laws of Motion",
       "Work-Energy and Power",
       "Fluid Pressure",
@@ -712,6 +711,7 @@ window.textbooks = {
     ]
   }
 };
+
 
 
 
