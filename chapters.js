@@ -245,9 +245,11 @@ window.textbooks = {
       "Light"
     ],
     "Physics IIT & NEET": [
-      "Units and Measurements",
-      "Units and Measurements (Measurements of Length, Mass & Area)",
-      "Kinematics",
+      "Units and Measurements (As-1 & 2)",
+      "Units and Measurements (As- 3, 4 & 4)",
+      "Units and Measurements (As- 6 & 7)",
+      "Kinematics (As- 1, 2 & 3)",
+      "Kinematics (As- 4, & 3)",
       "Newton's Laws of Motion",
       "Work-Energy and Power",
       "Fluid Pressure",
@@ -710,6 +712,7 @@ window.textbooks = {
     ]
   }
 };
+
 
 
 
