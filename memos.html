@@ -2985,28 +2985,49 @@ if (subtopics.length && subSrc) {
   }
 }
 
-
-    // Grade computation
+    // Grade computation + SUBJECT TOTAL handling for subtopicMode === 'none'
 let grade = '';
-if (subtopics.length && subtopics.every(st => st.mark === 'AB' || st.mark === '' )) {
-  grade = 'AB'; // all subtopic entries absent/blank
+let displayMarks;
+
+// If teacher set "none", prefer reconciled total/max (recHit)
+if (subjMode === 'none' && recHit) {
+  if (recHit.total === 'AB') {
+    displayMarks = 'AB';
+    subjectTotalMarks = 0;             // keep numeric for overall %
+  } else if (Number.isFinite(+recHit.total)) {
+    displayMarks = +recHit.total;
+    subjectTotalMarks = +recHit.total;
+  }
+  if (subjectTotalMax == null && Number.isFinite(+recHit.max)) {
+    subjectTotalMax = +recHit.max;
+  }
+}
+
+// Derive grade (and final display value)
+if (
+  displayMarks === 'AB' ||
+  (subtopics.length && subtopics.every(st => st.mark === 'AB' || st.mark === ''))
+) {
+  grade = 'AB';
+  displayMarks = 'AB';
 } else if (subjectTotalMax && subjectTotalMax > 0) {
   const pct = (subjectTotalMarks / subjectTotalMax) * 100;
   grade = gradeFromPctUsingScale(pct, getActiveScale());
+  if (displayMarks === undefined) displayMarks = subjectTotalMarks;
 } else {
-  grade = ''; // unknown max → no grade
+  grade = '';
+  if (displayMarks === undefined) displayMarks = subjectTotalMarks;
 }
 
-    // Aggregate to overall
-    if (isNum(subjectTotalMarks)) totalMarksAll += subjectTotalMarks;
-    if (isNum(subjectTotalMax))   totalMaxAll   += subjectTotalMax;
+// Aggregate to overall
+if (isNum(subjectTotalMarks)) totalMarksAll += subjectTotalMarks;
+if (isNum(subjectTotalMax))   totalMaxAll   += subjectTotalMax;
 
-    // Keep backward-compatible fields (max/marks) for existing drawing,
-    // but also attach detailed subtopics.
-    stuSubjects.push({
+// Keep backward-compatible fields (max/marks)
+stuSubjects.push({
   name: subjName,
   max: subjectTotalMax ?? '',
-  marks: (grade === 'AB') ? 'AB' : subjectTotalMarks,
+  marks: displayMarks,                 // TOTAL cell now correct for 'none'
   grade,
   subtopics,
   subtopicMode: subjMode
@@ -3634,6 +3655,7 @@ page.render({ canvasContext: ctx, viewport });
 </script>
 </body>
 </html>
+
 
 
 
