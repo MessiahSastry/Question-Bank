@@ -1155,8 +1155,8 @@ async function buildExamStructure(examObj, { year, classId, sectionId } = {}) {
         const marksData = marksDoc.exists ? (marksDoc.data() || {}) : {};
 
        // If examObj.subjects existed, map against them; else derive subjects from marks keys (excluding __subs).
+const rootKeys = Object.keys(marksData).filter(k => k !== '__subs');
 if (subjects.length === 0) {
-  const rootKeys = Object.keys(marksData).filter(k => k !== '__subs');
   subjects = rootKeys.map(sn => ({
     name: sn,
     subtopics: (examWideSubs && examWideSubs.length)
@@ -1165,8 +1165,22 @@ if (subjects.length === 0) {
     subjectMax: null
   }));
   if (examWideSubs && examWideSubs.length) __examHasSubtopics = true;
+} else {
+  // MERGE any missing subjects from marks into subjects[]
+  const existing = new Set(subjects.map(s => nkey(s.name)));
+  rootKeys.forEach(sn => {
+    if (!existing.has(nkey(sn))) {
+      subjects.push({
+        name: sn,
+        subtopics: (examWideSubs && examWideSubs.length)
+          ? examWideSubs.map(t => ({ name: t.name, max: t.max }))
+          : [],
+        subjectMax: null
+      });
+      if (examWideSubs && examWideSubs.length) __examHasSubtopics = true;
+    }
+  });
 }
-
 
 // Prefer subtopics from marksData.__subs[subject]; fallback to object-at-root heuristic
 const subsRoot = (marksData && typeof marksData.__subs === 'object') ? marksData.__subs : {};
@@ -3485,10 +3499,8 @@ rowPlan.forEach((row, i) => {
   }
 });
 
-// Draw each subject row
-for (let i = 0; i < Math.min(rowSubs.length, rowsY.length); i++) {
-  drawSubjectRow(pdf, rowsY[i], rowSubs[i] || {});
-}
+/* removed duplicate second pass that overwrote custom header */
+
 // Totals pulled from the computed student object
 const totalMarks = (typeof student.totalMarks === "number") ? student.totalMarks : 0;
 const totalMax   = (typeof student.totalMax   === "number") ? student.totalMax   : 0;
@@ -3804,6 +3816,7 @@ page.render({ canvasContext: ctx, viewport });
 </script>
 </body>
 </html>
+
 
 
 
