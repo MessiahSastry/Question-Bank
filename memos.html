@@ -372,6 +372,28 @@ function _isModeNone(subject)   { return _modeOf(subject) === 'none'; }
 /* Expand subject list into a row plan: common=1 row, custom=2 rows (header+data), none=1 row */
 function _makeRowPlan(subjects) {
   const rows = [];
+  (subjects || []).forEach(s => {
+    // If old pre-expanded items slipped in, honor them
+    if (s && s.__rowKind === 'custom-header') {
+      rows.push({ kind: 'custom-header', subject: s });
+      return;
+    }
+    if (s && s.__rowKind === 'custom-data') {
+      rows.push({ kind: 'custom-data', subject: s });
+      return;
+    }
+
+    // Fresh, not-expanded subjects
+    if (_isModeCustom(s)) {
+      rows.push({ kind: 'custom-header', subject: s });
+      rows.push({ kind: 'custom-data',   subject: s });
+    } else {
+      rows.push({ kind: 'normal', subject: s });
+    }
+  });
+  return rows;
+}
+  const rows = [];
   // 1) common-mode first
   subjects.filter(_isModeCommon).forEach(s => rows.push({ kind:'normal', subject:s }));
   // 2) custom-mode next (two-row block: header then data)
@@ -3166,16 +3188,15 @@ if (isNum(subjectTotalMax))   totalMaxAll   += subjectTotalMax;
 stuSubjects.push({
   name: subjName,
   max: subjectTotalMax ?? '',
-  marks: displayMarks,                 // TOTAL cell now correct for 'none'
+  marks: displayMarks,
   grade,
   subtopics,
-  subtopicMode: subjMode
+  subtopicMode: subjMode   // <- keep this
 });
   }
 
  // --- build ordered subjects for front page ---
-// Do NOT pre-expand; the renderer (_makeRowPlan) will create
-// the two-row block (custom-header + custom-data) for each custom subject.
+// Do NOT pre-expand; let _makeRowPlan create the two-row block.
 const commonList = [];
 const customList = [];
 const noneList = [];
@@ -3187,7 +3208,6 @@ const noneList = [];
 });
 
 const subjectsOrdered = [...commonList, ...customList, ...noneList];
-
 
 // 4) Attendance (cached)
 const attSnap = await getSectionAttendance();
@@ -3805,6 +3825,7 @@ page.render({ canvasContext: ctx, viewport });
 </script>
 </body>
 </html>
+
 
 
 
