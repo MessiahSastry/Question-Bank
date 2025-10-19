@@ -1245,12 +1245,13 @@ subjects = subjects.map(s => {
   }
 
   // 3) Finalize: ensure stable arrays/fields (no pre-expansion here)
-const normSubjects = subjects.map(s => ({
-  name: s.name || '',
+const baseSubjects = struct.subjects.map(s => ({
+  // keep every field that was on the structure row
+  ...s,                                  // <-- preserves __rowKind and subtopicMode
+  name: s.name,
   subtopics: Array.isArray(s.subtopics) ? s.subtopics : [],
-  subjectMax: (typeof s.subjectMax === 'number' && !isNaN(s.subjectMax)) ? s.subjectMax : null,
-  max: (typeof s.subjectMax === 'number' && !isNaN(s.subjectMax)) ? s.subjectMax : null,
-  subtopicMode: String(s?.subtopicMode || '').trim().toLowerCase()
+  max: (typeof s.max === 'number' ? s.max
+       : (typeof s.subjectMax === 'number' ? s.subjectMax : null)),
 }));
 
 // 🔧 Expand custom subjects into two rows (header + data).
@@ -3023,7 +3024,14 @@ async function fetchStudentData(stu) {
   // 0) Resolve current selections + exam structure
   const year = yearSel.value, classId = classSel.value, sectionId = sectionSel.value, examId = examSel.value;
   const examObj = exams.find(e => e.id === examId);
-  const structure = await getExamStructure(); // { subjects: [{name, subtopics[], subjectMax}], hasSubtopics }
+  const structure = await getExamStructure(); // { subjects: [...], hasSubtopics }
+
+// Collapse any pre-expanded rows coming from buildExamStructure():
+//   - drop 'custom-header' rows
+//   - keep everything else (including 'custom-data' as the single base row)
+const structSubjects = Array.isArray(structure.subjects)
+  ? structure.subjects.filter(s => s.__rowKind !== 'custom-header')
+  : [];
 
   // 1) Read marks doc for this student
   const marksDoc = await db.collection('years').doc(year)
@@ -3047,7 +3055,7 @@ const toNum  = v => (v === '' || v == null ? null : (Number.isFinite(+v) ? +v : 
   let stuSubjects = [];
   let totalMarksAll = 0, totalMaxAll = 0;
 
-  for (const subjDef of (structure.subjects || [])) {
+  for (const subjDef of (structSubjects || [])) {
     const subjName = subjDef.name || '';
     const keyNorm = nkey(subjName);
     const recHit  = recByName.get(keyNorm);
@@ -3060,7 +3068,12 @@ const subtopics = Array.isArray(subjDef.subtopics) ? subjDef.subtopics.map(t => 
   max: (typeof t?.max === 'number' && !isNaN(t.max)) ? t.max : null,
   mark: '' // will fill below
 })) : [];
-const subjMode = _modeOf(subjDef);
+let subjMode = _modeOf(subjDef);
+// If structure had tagged rows as 'custom-header' / 'custom-data',
+// normalize back to 'custom' for the student-level subject.
+if (subjMode === 'custom-header' || subjMode === 'custom-data') {
+  subjMode = 'custom';
+}
 
 /* TOTAL / GRADE (custom sums only its listed subtopics) */
 let subjectComputedMax = (typeof subjDef?.subjectMax === 'number') ? subjDef.subjectMax : null;
@@ -3858,6 +3871,7 @@ page.render({ canvasContext: ctx, viewport });
 </script>
 </body>
 </html>
+
 
 
 
