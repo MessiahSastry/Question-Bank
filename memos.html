@@ -998,6 +998,26 @@ downloadAllBtn.onclick = async () => {
 };
 
 // ======= EXAM STRUCTURE (subjects, subtopics, max) =======
+  // ---- subtopic mode helpers + row planner (injected) ----
+function _modeOf(s){ return String(s?.subtopicMode || s?.mode || '').trim().toLowerCase() || 'common'; }
+function _isModeCustom(s){ return _modeOf(s) === 'custom'; }
+function _isModeNone(s){ return _modeOf(s) === 'none'; }
+/* Pair custom subjects into two logical rows (header + data) */
+function _makeRowPlan(subjects){
+  const plan = [];
+  for (const s of (subjects || [])) {
+    const m = _modeOf(s);
+    if (m === 'custom') {
+      plan.push({ kind: 'custom-header', subject: s });
+      plan.push({ kind: 'custom-data',   subject: s });
+    } else {
+      plan.push({ kind: 'normal', subject: s });
+    }
+  }
+  return plan;
+}
+// ---- /injected ----
+
 let __examStructure = null;           // last-resolved structure
 const __examStructCache = new Map();  // key: year|class|section|exam -> structure
 let __examHasSubtopics = false;       // quick flag for layout decisions
@@ -1247,16 +1267,16 @@ subjects = subjects.map(s => {
   }
 
   // 3) Finalize: ensure stable arrays/fields
-  subjects = subjects.map(s => ({
+const __mappedSubjects = subjects.map(s => ({
   name: s.name || '',
   subtopics: Array.isArray(s.subtopics) ? s.subtopics : [],
   subjectMax: (typeof s.subjectMax === 'number' && !isNaN(s.subjectMax)) ? s.subjectMax : null,
-  max: (typeof s.subjectMax === 'number' && !isNaN(s.subjectMax)) ? s.subjectMax : null, // ← add this so MAX renders
+  max: (typeof s.subjectMax === 'number' && !isNaN(s.subjectMax)) ? s.subjectMax : null,
   subtopicMode: String(s?.subtopicMode || '').trim().toLowerCase()
 }));
 
- // Expand subjects so custom mode produces two logical rows (header + data)
-const plan = _makeRowPlan(subjects).map(r => {
+// Expand subjects so custom mode produces two logical rows (header + data)
+const plan = _makeRowPlan(__mappedSubjects).map(r => {
   if (r && r.kind === 'custom-header') return { ...r.subject, __rowKind: 'custom-header' };
   if (r && r.kind === 'custom-data')   return { ...r.subject, __rowKind: 'custom-data' };
   return r.subject || r; // normal subjects
@@ -2243,6 +2263,11 @@ function drawSubjectsHeader(pdf, y) {
  * Returns nothing (caller controls vertical positions).
  */
 function drawSubjectRow(pdf, rowY, subject) {
+    // custom subjects print a header row with subtopic names
+  if (subject && subject.__rowKind === 'custom-header') {
+    drawCustomHeaderRow(pdf, rowY, subject);
+    return;
+  }
   // If this is a synthetic header row from custom-mode expansion, draw header and exit
   if (subject && subject.__rowKind === 'custom-header') {
     drawCustomHeaderRow(pdf, rowY, subject);
@@ -2295,23 +2320,55 @@ if (subjMode === 'custom') {
         centerText(pdf, String(subjMax ?? ''), c.x + MAX_X_OFFSET, rowY, 60, COLOR_RED, 'bold');
         break;
 
-      case '__total':
-        centerText(pdf, showAB(tMarks), c.x, rowY, 60, COLOR_GREEN, 'bold');
-        if (tMarks !== 'AB' && typeof tMarks === 'number' && typeof subjMax === 'number' && subjMax > 0) {
-          const pct = (tMarks / subjMax) * 100;
-          if (isFailPct(pct, getActiveScale())) {
-            pdf.setDrawColor(...COLOR_RED);
-            pdf.setLineWidth(4);
-            pdf.ellipse(c.x, rowY - 10, 55, 38, 'D');
-            pdf.setLineWidth(1);
-          }
-        }
-        break;
+      case '__total': {
+  const showAB = v => (v === '' || v == null ? 'AB' : String(v));
+  let tMarks = (subject.marks === 'AB' ? 'AB'
+              : (typeof subject.marks === 'number' ? subject.marks : ''));
+  const subjMax = (typeof subject.max === 'number' ? subject.max : null);
+  const subjMode = _modeOf(subject);
 
-      case '__grade':
-        centerText(pdf, gradeVal, c.x, rowY, 60, COLOR_GRADE, 'bold');
-        break;
+  if (subjMode === 'custom') {
+    // sum only mapped subtopic numbers in this custom subject
+    let sum = 0, saw = false;
+    (Array.isArray(subject.subtopics)?subject.subtopics:[]).forEach(st=>{
+      const v = (st?.mark === 'AB' ? null : (Number.isFinite(+st?.mark) ? +st.mark : null));
+      if (v != null) { sum += v; saw = true; }
+    });
+    tMarks = saw ? sum : 'AB';
+  }
 
+  centerText(pdf, showAB(tMarks), c.x, rowY, 60, COLOR_GREEN, 'bold');
+  if (tMarks !== 'AB' && typeof tMarks === 'number' && typeof subjMax === 'number' && subjMax > 0) {
+    const pct = (tMarks / subjMax) * 100;
+    if (isFailPct(pct, getActiveScale())) {
+      pdf.setDrawColor(...COLOR_RED);
+      pdf.setLineWidth(4);
+      pdf.ellipse(c.x, rowY - 10, 55, 38, 'D');
+      pdf.setLineWidth(1);
+    }
+  }
+  break;
+}
+
+      case '__grade': {
+  let gradeVal = String(subject.grade || '');
+  const subjMax = (typeof subject.max === 'number' ? subject.max : null);
+  const subjMode = _modeOf(subject);
+
+  if (subjMode === 'custom') {
+    // recompute grade off the summed custom total
+    let sum = 0, saw = false;
+    (Array.isArray(subject.subtopics)?subject.subtopics:[]).forEach(st=>{
+      const v = (st?.mark === 'AB' ? null : (Number.isFinite(+st?.mark) ? +st.mark : null));
+      if (v != null) { sum += v; saw = true; }
+    });
+    const pct = (saw && subjMax > 0) ? (sum / subjMax) * 100 : null;
+    gradeVal = (pct != null) ? gradeFromPctUsingScale(pct, getActiveScale()) : '';
+  }
+
+  centerText(pdf, gradeVal, c.x, rowY, 60, COLOR_GRADE, 'bold');
+  break;
+}
       default: {
         const key = nkey(c.key);
 
@@ -3828,14 +3885,3 @@ page.render({ canvasContext: ctx, viewport });
 </script>
 </body>
 </html>
-
-
-
-
-
-
-
-
-
-
-
