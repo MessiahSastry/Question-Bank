@@ -1244,24 +1244,19 @@ subjects = subjects.map(s => {
     }
   }
 
-  // 3) Finalize: ensure stable arrays/fields (no pre-expansion here)
+ // 3) Finalize: ensure stable arrays/fields (no pre-expansion here)
 const normSubjects = (subjects || []).map(s => ({
-  // keep every field that was on the structure row
-  ...s, // preserves __rowKind and subtopicMode
-  name: s.name,
-  subtopics: Array.isArray(s.subtopics) ? s.subtopics : [],
-  max: (typeof s.max === 'number' ? s.max
-       : (typeof s.subjectMax === 'number' ? s.subjectMax : null)),
+  ...s,
+  name: s?.name || '',
+  subtopics: Array.isArray(s?.subtopics) ? s.subtopics : [],
+  // prefer explicit max; else subjectMax; else null
+  max: (Number.isFinite(+s?.max) ? +s.max
+      : (Number.isFinite(+s?.subjectMax) ? +s.subjectMax : null)),
+  // keep the mode field normalized so later code can expand rows
+  subtopicMode: _modeOf(s)
 }));
 
-// 🔧 Expand custom subjects into two rows (header + data).
-const expanded = _makeRowPlan(normSubjects).map(row => {
-  if (row.kind === 'normal') return row.subject;
-  // mark synthetic rows so drawSubjectRow() can render header/data correctly
-  return { ...row.subject, __rowKind: row.kind };
-});
-
-__examStructure = { subjects: expanded, hasSubtopics: __examHasSubtopics };
+__examStructure = { subjects: normSubjects, hasSubtopics: !!__examHasSubtopics };
 return __examStructure;
 }
 
@@ -3868,6 +3863,7 @@ page.render({ canvasContext: ctx, viewport });
 </script>
 </body>
 </html>
+
 
 
 
