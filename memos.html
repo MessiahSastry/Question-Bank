@@ -1472,6 +1472,93 @@ function _subtopicCellFont(n) {
   if (n >= 6)  return 50;
   return 56; // default
 }
+
+/* ===== Helpers: expand subjects into renderable rows (common + custom blocks) ===== */
+function __arrayChunk(arr, size) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
+function __marksSumAndMaxForBatch(batch) {
+  // batch: [{name,max,mark}] — return { total, max }
+  let sawNumeric = false;
+  let total = 0;
+  let max = 0;
+  for (const st of (batch || [])) {
+    if (typeof st?.max === 'number') max += st.max;
+    if (typeof st?.mark === 'number') { total += st.mark; sawNumeric = true; }
+  }
+  return { total: sawNumeric ? total : 'AB', max: max || null };
+}
+
+/**
+ * Build display rows in the exact order required:
+ * - Common subjects: one data row each
+ * - Custom subjects: for each batch of subtopics that fits visible columns:
+ *     - one "custom-header" row (names only in subtopic columns)
+ *     - one "data" row (aligned marks for that batch; TOTAL/GRADE for that batch)
+ *
+ * Returns array of:
+ *   { type: 'data', subject: {...} } OR
+ *   { type: 'custom-header', names: ['Orals','Activity',...] }
+ */
+function expandDisplayRowsForFront(subjects, visibleSubtopicColsCount) {
+  const out = [];
+  const schemaNames = getExamSubtopicSchema().map(s => s.name);
+  const width = Math.max(1, visibleSubtopicColsCount || schemaNames.length);
+
+  for (const s of (subjects || [])) {
+    const mode = String(s?.subtopicMode || s?.subtopicsMode || s?.mode || '').trim().toLowerCase();
+    const subArr = Array.isArray(s?.subtopics) ? s.subtopics : [];
+
+    // Common / none → single data row as-is
+    if (mode !== 'custom' || !subArr.length) {
+      out.push({ type: 'data', subject: s });
+      continue;
+    }
+
+    // Custom → split into batches that fit visible columns
+    const batches = __arrayChunk(subArr, width);
+    batches.forEach((batch) => {
+      // Row A: custom header row with subtopic names
+      const headerNames = batch.map(t => t?.name || '');
+      out.push({ type: 'custom-header', names: headerNames });
+
+      // Row B: data row synthesized for THIS batch
+      const { total, max } = __marksSumAndMaxForBatch(batch);
+
+      // Align batch subtopics with the schema columns: fill only those keys, rest empty
+      // (drawSubjectRow will show '-' for empty when mode none; here we leave missing = blank → "AB")
+      const alignedSubs = schemaNames.map(nm => {
+        const hit = batch.find(t => nkey(t?.name) === nkey(nm));
+        if (hit) return { name: hit.name, max: hit.max ?? null, mark: (hit.mark === 'AB' ? 'AB' : hit.mark) };
+        return { name: nm, max: null, mark: '' };
+      });
+
+      // Decide grade from this batch total/max (keep your grading scale)
+      let gradeVal = '';
+      if (typeof total === 'number' && typeof max === 'number' && max > 0) {
+        const pct = (total / max) * 100;
+        gradeVal = gradeFromPctUsingScale(pct, getActiveScale());
+      }
+
+      // Repeat subject and max on each continuation for clarity (allowed by your rules)
+      const dataRowSubject = {
+        name: s.name,
+        max: max ?? s.max ?? null,
+        marks: total,
+        grade: gradeVal,
+        subtopics: alignedSubs,
+        subtopicMode: 'custom' // keep labeled
+      };
+      out.push({ type: 'data', subject: dataRowSubject });
+    });
+  }
+
+  return out;
+}
+
  //===== Landscape back-page renderer ===== 
 function _measureTextWidth(pdf, text, size=48) {
   pdf.setFont('helvetica', 'bold');
@@ -2194,8 +2281,7 @@ function drawSubjectRow(pdf, rowY, subject) {
   // Sizes (adaptive for subtopic cells)
   const schemaLen = getExamSubtopicSchema().length;
   const subCellSize = _subtopicCellFont(schemaLen);
-// show "AB" for any empty/undefined mark when drawing
-const showAB = v => (v === '' || v === undefined || v === null ? 'AB' : String(v));
+  const showAB = v => (v === '' || v === undefined || v === null ? 'AB' : String(v));
 
   // Values
   const subjName = String(subject.name || '').toUpperCase();
@@ -2205,60 +2291,76 @@ const showAB = v => (v === '' || v === undefined || v === null ? 'AB' : String(v
                    : (typeof subject.marks === 'number' ? subject.marks : ''));
   const gradeVal = String(subject.grade || '');
 
-  // Render each column at its computed x
   for (const c of cols) {
     switch (c.key) {
       case '__subject': {
-  // left-align within the subject column box
-  const leftEdge = Math.round(c.x - (c.width ? c.width / 2 : 0)) + 34; // extra padding
-leftText(pdf, subjName, leftEdge, rowY, 60, COLOR_GREEN, 'bold');
-  break;
-}
+        const leftEdge = Math.round(c.x - (c.width ? c.width / 2 : 0)) + 34;
+        leftText(pdf, subjName, leftEdge, rowY, 60, COLOR_GREEN, 'bold');
+        break;
+      }
       case '__max':
-  centerText(pdf, String(subjMax ?? ''), c.x + MAX_X_OFFSET, rowY, 60, COLOR_RED, 'bold');
-  break;
+        centerText(pdf, String(subjMax ?? ''), c.x + MAX_X_OFFSET, rowY, 60, COLOR_RED, 'bold');
+        break;
 
-     case '__total':
-  centerText(pdf, showAB(tMarks), c.x, rowY, 60, COLOR_GREEN, 'bold');
-         // Fail ring if failing per active scale and both numbers known
-if (tMarks !== 'AB' && typeof tMarks === 'number' && typeof subjMax === 'number' && subjMax > 0) {
-  const pct = (tMarks / subjMax) * 100;
-  if (isFailPct(pct, getActiveScale())) {
-    pdf.setDrawColor(...COLOR_RED);
-    pdf.setLineWidth(4);
-    pdf.ellipse(c.x, rowY - 10, 55, 38, 'D');
-    pdf.setLineWidth(1);
-  }
-}
+      case '__total':
+        centerText(pdf, showAB(tMarks), c.x, rowY, 60, COLOR_GREEN, 'bold');
+        if (tMarks !== 'AB' && typeof tMarks === 'number' && typeof subjMax === 'number' && subjMax > 0) {
+          const pct = (tMarks / subjMax) * 100;
+          if (isFailPct(pct, getActiveScale())) {
+            pdf.setDrawColor(...COLOR_RED);
+            pdf.setLineWidth(4);
+            pdf.ellipse(c.x, rowY - 10, 55, 38, 'D');
+            pdf.setLineWidth(1);
+          }
+        }
         break;
 
       case '__grade':
         centerText(pdf, gradeVal, c.x, rowY, 60, COLOR_GRADE, 'bold');
         break;
 
-     default: {
-  const key = nkey(c.key);
+      default: {
+        const key = nkey(c.key);
+        const subjMode = String(subject?.subtopicMode || subject?.subtopicsMode || subject?.mode || '')
+          .trim().toLowerCase();
+        const hasExplicitNoSubs = (subjMode === 'none');
+        const hasSubs = Array.isArray(subArr) && subArr.length > 0;
 
-  // detect subject's subtopic mode, accepting several possible field names
-  const subjMode = String(subject?.subtopicMode || subject?.subtopicsMode || subject?.mode || '')
-    .trim().toLowerCase();
-
-  // If the subject is explicitly set to "none" (no subtopics), force "-"
-  // Otherwise: if it has subtopics, show entered marks (blank -> AB; number stays number; explicit 'AB' stays 'AB')
-  const hasExplicitNoSubs = (subjMode === 'none');
-  const hasSubs = Array.isArray(subArr) && subArr.length > 0;
-
-  if (hasExplicitNoSubs || !hasSubs) {
-    centerText(pdf, '-', c.x, rowY, subCellSize, COLOR_BLUE, 'bold');
-  } else {
-    const val = (key in byKey) ? byKey[key] : '';
-    centerText(pdf, showAB(val), c.x, rowY, subCellSize, COLOR_BLUE, 'bold');
-  }
-  break;
-}
+        if (hasExplicitNoSubs || !hasSubs) {
+          centerText(pdf, '-', c.x, rowY, subCellSize, COLOR_BLUE, 'bold');
+        } else {
+          const val = (key in byKey) ? byKey[key] : '';
+          centerText(pdf, showAB(val), c.x, rowY, subCellSize, COLOR_BLUE, 'bold');
+        }
+        break;
+      }
     }
   }
 }
+
+/* Draw the custom header row:
+   - SUBJECT, MAX, TOTAL, GRADE must be blank
+   - Put subtopic names (uppercased) in the subtopic columns
+*/
+function drawCustomHeaderRow(pdf, rowY, namesArray) {
+  const cols = computeColumns();
+  const schemaLen = getExamSubtopicSchema().length;
+  const subCellSize = _subtopicCellFont(schemaLen);
+
+  for (const c of cols) {
+    if (c.key === '__subject' || c.key === '__max' || c.key === '__total' || c.key === '__grade') {
+      // leave blank
+      continue;
+    }
+    const nm = namesArray.find(n => nkey(n) === nkey(c.key));
+    if (nm) {
+      centerText(pdf, String(nm || '').toUpperCase(), c.x, rowY, subCellSize, COLOR_BLUE, 'bold');
+    } else {
+      // if the batch has fewer names than columns, leave empty
+    }
+  }
+}
+
     // Create a linear gradient as a dataURL for jsPDF.addImage
 function makeGradientDataURL(w, h, stops, direction = 'diag') {
   const canvas = document.createElement('canvas');
@@ -3655,6 +3757,7 @@ page.render({ canvasContext: ctx, viewport });
 </script>
 </body>
 </html>
+
 
 
 
