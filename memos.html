@@ -361,6 +361,30 @@ function nkey(s) {
     .toLowerCase();
 }
 
+/* ---- Subtopic mode helpers ---- */
+function _modeOf(subject) {
+  return String(subject?.subtopicMode || subject?.subtopicsMode || subject?.mode || '')
+    .trim().toLowerCase();
+}
+function _isModeCommon(subject) { return _modeOf(subject) === 'common' || _modeOf(subject) === ''; }
+function _isModeCustom(subject) { return _modeOf(subject) === 'custom'; }
+function _isModeNone(subject)   { return _modeOf(subject) === 'none'; }
+
+/* Expand subject list into a row plan: common=1 row, custom=2 rows (header+data), none=1 row */
+function _makeRowPlan(subjects) {
+  const rows = [];
+  // 1) common-mode first
+  subjects.filter(_isModeCommon).forEach(s => rows.push({ kind:'normal', subject:s }));
+  // 2) custom-mode next (two-row block: header then data)
+  subjects.filter(_isModeCustom).forEach(s => {
+    rows.push({ kind:'custom-header', subject:s });
+    rows.push({ kind:'custom-data',   subject:s });
+  });
+  // 3) none-mode last
+  subjects.filter(_isModeNone).forEach(s => rows.push({ kind:'normal', subject:s }));
+  return rows;
+}
+
 // X coordinates for (max/marks/grade)
 const X_SUBJECT = 520;    // Subject name column (left-aligned; adjust if needed)
 const X_MAX   = 1236;
@@ -2180,9 +2204,8 @@ function drawSubjectsHeader(pdf, y) {
  * Returns nothing (caller controls vertical positions).
  */
 function drawSubjectRow(pdf, rowY, subject) {
-  const cols = computeColumns(); // [{key,label,x}] spread between PAGE_MARGINS
-  
-  // Build lookup for subtopic marks (marks only, AB respected)
+  const cols = computeColumns();
+
   const subArr = Array.isArray(subject.subtopics) ? subject.subtopics : [];
   const byKey = {};
   for (const st of subArr) {
@@ -2192,74 +2215,119 @@ function drawSubjectRow(pdf, rowY, subject) {
     byKey[k] = v;
   }
 
-  // Sizes (adaptive for subtopic cells)
   const schemaLen = getExamSubtopicSchema().length;
   const subCellSize = _subtopicCellFont(schemaLen);
-// show "AB" for any empty/undefined mark when drawing
-const showAB = v => (v === '' || v === undefined || v === null ? 'AB' : String(v));
+  const showAB = v => (v === '' || v === undefined || v === null ? 'AB' : String(v));
 
-  // Values
   const subjName = String(subject.name || '').toUpperCase();
   const subjMax  = (typeof subject.max === 'number' ? subject.max
                    : (subject.max === '' ? '' : subject.max));
-  const tMarks   = (subject.marks === 'AB' ? 'AB'
-                   : (typeof subject.marks === 'number' ? subject.marks : ''));
-  const gradeVal = String(subject.grade || '');
+  const subjMode = _modeOf(subject);
 
-  // Render each column at its computed x
+// total/grade: for CUSTOM compute sum of shown subtopic numbers; else use provided
+let tMarks = (subject.marks === 'AB' ? 'AB'
+              : (typeof subject.marks === 'number' ? subject.marks : ''));
+let gradeVal = String(subject.grade || '');
+
+if (subjMode === 'custom') {
+  let sum = 0, sawNum = false;
+  Object.values(byKey).forEach(v => {
+    if (typeof v === 'number') { sum += v; sawNum = true; }
+  });
+  tMarks = sawNum ? sum : 'AB';
+  const maxNum = (typeof subject.max === 'number' ? subject.max : null);
+  const pct = (maxNum && tMarks !== 'AB') ? (tMarks / maxNum) * 100 : null;
+  gradeVal = (pct != null) ? gradeFromPctUsingScale(pct, getActiveScale()) : '';
+}
+
   for (const c of cols) {
     switch (c.key) {
       case '__subject': {
-  // left-align within the subject column box
-  const leftEdge = Math.round(c.x - (c.width ? c.width / 2 : 0)) + 34; // extra padding
-leftText(pdf, subjName, leftEdge, rowY, 60, COLOR_GREEN, 'bold');
-  break;
-}
+        const leftEdge = Math.round(c.x - (c.width ? c.width / 2 : 0)) + 34;
+        leftText(pdf, subjName, leftEdge, rowY, 60, COLOR_GREEN, 'bold');
+        break;
+      }
       case '__max':
-  centerText(pdf, String(subjMax ?? ''), c.x + MAX_X_OFFSET, rowY, 60, COLOR_RED, 'bold');
-  break;
+        centerText(pdf, String(subjMax ?? ''), c.x + MAX_X_OFFSET, rowY, 60, COLOR_RED, 'bold');
+        break;
 
-     case '__total':
-  centerText(pdf, showAB(tMarks), c.x, rowY, 60, COLOR_GREEN, 'bold');
-         // Fail ring if failing per active scale and both numbers known
-if (tMarks !== 'AB' && typeof tMarks === 'number' && typeof subjMax === 'number' && subjMax > 0) {
-  const pct = (tMarks / subjMax) * 100;
-  if (isFailPct(pct, getActiveScale())) {
-    pdf.setDrawColor(...COLOR_RED);
-    pdf.setLineWidth(4);
-    pdf.ellipse(c.x, rowY - 10, 55, 38, 'D');
-    pdf.setLineWidth(1);
-  }
-}
+      case '__total':
+        centerText(pdf, showAB(tMarks), c.x, rowY, 60, COLOR_GREEN, 'bold');
+        if (tMarks !== 'AB' && typeof tMarks === 'number' && typeof subjMax === 'number' && subjMax > 0) {
+          const pct = (tMarks / subjMax) * 100;
+          if (isFailPct(pct, getActiveScale())) {
+            pdf.setDrawColor(...COLOR_RED);
+            pdf.setLineWidth(4);
+            pdf.ellipse(c.x, rowY - 10, 55, 38, 'D');
+            pdf.setLineWidth(1);
+          }
+        }
         break;
 
       case '__grade':
         centerText(pdf, gradeVal, c.x, rowY, 60, COLOR_GRADE, 'bold');
         break;
 
-     default: {
-  const key = nkey(c.key);
+      default: {
+        const key = nkey(c.key);
 
-  // detect subject's subtopic mode, accepting several possible field names
-  const subjMode = String(subject?.subtopicMode || subject?.subtopicsMode || subject?.mode || '')
-    .trim().toLowerCase();
+        // Mode: NONE → always "-"
+        if (subjMode === 'none') {
+          centerText(pdf, '-', c.x, rowY, subCellSize, COLOR_BLUE, 'bold');
+          break;
+        }
 
-  // If the subject is explicitly set to "none" (no subtopics), force "-"
-  // Otherwise: if it has subtopics, show entered marks (blank -> AB; number stays number; explicit 'AB' stays 'AB')
-  const hasExplicitNoSubs = (subjMode === 'none');
-  const hasSubs = Array.isArray(subArr) && subArr.length > 0;
+        // Mode: CUSTOM → show only mapped keys; leave extra schema columns blank
+        if (subjMode === 'custom') {
+          if (key in byKey) {
+            const raw = byKey[key];
+            const txt = (raw === '' || raw == null) ? 'AB' : String(raw);
+            centerText(pdf, txt, c.x, rowY, subCellSize, COLOR_BLUE, 'bold');
+          } else {
+            centerText(pdf, '', c.x, rowY, subCellSize, COLOR_BLUE, 'bold');
+          }
+          break;
+        }
 
-  if (hasExplicitNoSubs || !hasSubs) {
-    centerText(pdf, '-', c.x, rowY, subCellSize, COLOR_BLUE, 'bold');
-  } else {
-    const val = (key in byKey) ? byKey[key] : '';
-    centerText(pdf, showAB(val), c.x, rowY, subCellSize, COLOR_BLUE, 'bold');
-  }
-  break;
-}
+        // Mode: COMMON (default)
+        if (subArr.length === 0) {
+          centerText(pdf, '-', c.x, rowY, subCellSize, COLOR_BLUE, 'bold');
+        } else {
+          const val = (key in byKey) ? byKey[key] : '';
+          centerText(pdf, showAB(val), c.x, rowY, subCellSize, COLOR_BLUE, 'bold');
+        }
+        break;
+      }
     }
   }
 }
+
+/* Draw the "Row A" for custom subjects: SUBJECT/MAX/TOTAL/GRADE blank; subtopic cells show the custom subtopic NAMES */
+function drawCustomHeaderRow(pdf, rowY, subject) {
+  const cols = computeColumns();
+  const schemaLen = getExamSubtopicSchema().length;
+  const subCellSize = _subtopicCellFont(schemaLen);
+  const subArr = Array.isArray(subject?.subtopics) ? subject.subtopics : [];
+
+  for (const c of cols) {
+    switch (c.key) {
+      case '__subject':
+      case '__max':
+      case '__total':
+      case '__grade':
+        centerText(pdf, '', c.x, rowY, 60, COLOR_BLUE, 'bold');
+        break;
+      default: {
+        const key = nkey(c.key);
+        const hit = subArr.find(st => nkey(st?.name) === key);
+        const label = hit ? String(hit.name || '') : '';
+        centerText(pdf, label.toUpperCase(), c.x, rowY, subCellSize, COLOR_BLUE, 'bold');
+        break;
+      }
+    }
+  }
+}
+
     // Create a linear gradient as a dataURL for jsPDF.addImage
 function makeGradientDataURL(w, h, stops, direction = 'diag') {
   const canvas = document.createElement('canvas');
@@ -2901,9 +2969,42 @@ const subtopics = Array.isArray(subjDef.subtopics) ? subjDef.subtopics.map(t => 
   mark: '' // will fill below
 })) : [];
 
-// Mode awareness
-const subjMode = String(subjDef?.subtopicMode || subjDef?.subtopicsMode || subjDef?.mode || '')
-  .trim().toLowerCase();
+/* TOTAL / GRADE (custom sums only its listed subtopics) */
+let subjectComputedMax = (typeof subjDef?.subjectMax === 'number') ? subjDef.subjectMax : null;
+if (subjectComputedMax == null && typeof recHit?.max === 'number') subjectComputedMax = recHit.max;
+
+let subjectComputedMarks = 'AB';
+let subjectComputedGrade = '';
+
+{
+  const isCustom = (subjMode === 'custom');
+
+  let total = 0;
+  let sawNumber = false;
+
+  if (isCustom) {
+    // Sum only custom-defined subtopics (ignore schema extras)
+    for (const st of (subtopics || [])) {
+      const v = (st?.mark === 'AB' ? null : (Number.isFinite(+st?.mark) ? +st.mark : null));
+      if (v != null) { total += v; sawNumber = true; }
+    }
+  } else {
+    // Use reconciled totals if present; else sum what we have
+    if (typeof recHit?.total === 'number') { total = recHit.total; sawNumber = true; }
+    else if (typeof subjVal === 'number')  { total = +subjVal; sawNumber = true; }
+    else if (Array.isArray(subtopics) && subtopics.length) {
+      for (const st of subtopics) {
+        const v = (st?.mark === 'AB' ? null : (Number.isFinite(+st?.mark) ? +st.mark : null));
+        if (v != null) { total += v; sawNumber = true; }
+      }
+    }
+  }
+
+  subjectComputedMarks = sawNumber ? total : 'AB';
+  const pct = (typeof subjectComputedMax === 'number' && subjectComputedMax > 0 && subjectComputedMarks !== 'AB')
+    ? (subjectComputedMarks / subjectComputedMax) * 100 : null;
+  subjectComputedGrade = (pct != null) ? gradeFromPctUsingScale(pct) : '';
+}
 
 // Choose subtopic source: prefer __subs.<Subject>, fallback to object-at-root
 const subsRoot = (marks && typeof marks.__subs === 'object') ? marks.__subs : null;
@@ -3064,7 +3165,39 @@ const attSnap = await getSectionAttendance();
     section: (sections.find(s=>s.id===sectionId)?.name) || (sectionSel.options[sectionSel.selectedIndex]?.text || ''),
     percentage,
     rank: '',
-    subjects: stuSubjects,
+    // Build ordered + expanded subjects:
+// 1) common subjects (1 row each)
+// 2) for each custom subject: add a header row then the data row
+// 3) none subjects (1 row each)
+const commonList = [];
+const customList = [];
+const noneList = [];
+
+(stuSubjects || []).forEach(s => {
+  if (_isModeCustom(s)) customList.push(s);
+  else if (_isModeNone(s)) noneList.push(s);
+  else commonList.push(s);
+});
+
+// Expand custom subjects to (header + data) rows
+const expandedCustom = [];
+customList.forEach(s => {
+  // header row object: only subtopic names matter
+  expandedCustom.push({
+    __rowKind: 'custom-header',
+    name: '', max: '', marks: '', grade: '',
+    subtopicMode: 'custom',
+    subtopics: (Array.isArray(s.subtopics) ? s.subtopics.map(t => ({ name: t?.name || '', mark: '' })) : [])
+  });
+  // data row object: the actual subject row
+  expandedCustom.push(s);
+});
+
+// Final ordered list
+const subjectsOrdered = [...commonList, ...expandedCustom, ...noneList];
+
+// Use this list in the returned student object
+subjects: subjectsOrdered,
     totalMarks: totalMarksAll,
     totalMax: totalMaxAll,
     overallGrade: totalMaxAll
@@ -3337,7 +3470,8 @@ if (!rowSubs.length) {
 }
 
 // Build vertical positions and draw header
-const { rowsY, totalY } = buildSubjectY(rowSubs.length);
+const rowPlan = _makeRowPlan(rowSubs || []);
+const { rowsY, totalY } = buildSubjectY(rowPlan.length);
 drawSubjectsHeader(pdf, SUBJECT_HEADER_Y);
 // move ONLY the TOTAL band down
 const totalYAdj = Math.min(totalY + TOTAL_SHIFT_PX, SUBJECT_LAYOUT.endY - 20);
@@ -3489,7 +3623,8 @@ if (!rowSubs.length) {
   if (!student.attendance?.length && rec.attendance?.length) student.attendance = rec.attendance;
 }
 
-const { rowsY, totalY } = buildSubjectY(rowSubs.length);
+const rowPlan = _makeRowPlan(rowSubs || []);
+const { rowsY, totalY } = buildSubjectY(rowPlan.length);
 drawSubjectsHeader(pdf, SUBJECT_HEADER_Y);
 
 const totalYAdj = Math.min(totalY + TOTAL_SHIFT_PX, SUBJECT_LAYOUT.endY - 20);
@@ -3656,3 +3791,4 @@ page.render({ canvasContext: ctx, viewport });
 </script>
 </body>
 </html>
+
