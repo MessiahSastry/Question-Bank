@@ -1504,57 +1504,91 @@ function __marksSumAndMaxForBatch(batch) {
  *   { type: 'custom-header', names: ['Orals','Activity',...] }
  */
 function expandDisplayRowsForFront(subjects, visibleSubtopicColsCount) {
-  const out = [];
+  // Keep current schema columns (SUBJECT | MAX MARKS | Subtopic 1..N | TOTAL | GRADE)
   const schemaNames = getExamSubtopicSchema().map(s => s.name);
   const width = Math.max(1, visibleSubtopicColsCount || schemaNames.length);
 
+  // Helpers (local so the block is drop-in)
+  function __arrayChunk(arr, size) {
+    const out = [];
+    for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+    return out;
+  }
+  function __marksSumAndMaxForBatch(batch) {
+    let sawNumeric = false, total = 0, max = 0;
+    for (const st of (batch || [])) {
+      if (typeof st?.max === 'number') max += st.max;
+      if (typeof st?.mark === 'number') { total += st.mark; sawNumeric = true; }
+    }
+    return { total: sawNumeric ? total : 'AB', max: max || null };
+  }
+  const nk = v => String(v || '').normalize('NFKC').replace(/\s+/g,' ').trim().toLowerCase();
+
+  // Partition: first render all common-mode subjects, then all custom-mode subjects
+  const commons = [], customs = [];
   for (const s of (subjects || [])) {
     const mode = String(s?.subtopicMode || s?.subtopicsMode || s?.mode || '').trim().toLowerCase();
+    if (mode === 'custom') customs.push(s); else commons.push(s);
+  }
+
+  const out = [];
+
+  // 1) Common-mode subjects → single data rows (no headings)
+  commons.forEach(s => out.push({ type: 'data', subject: s }));
+
+  // 2) Custom-mode subjects → two-row blocks (header names row + data row)
+  customs.forEach(s => {
     const subArr = Array.isArray(s?.subtopics) ? s.subtopics : [];
 
-    // Common / none → single data row as-is
-    if (mode !== 'custom' || !subArr.length) {
-      out.push({ type: 'data', subject: s });
-      continue;
+    // If flagged custom but has no subtopics, treat it like "none"
+    if (!subArr.length) {
+      out.push({ type: 'data', subject: { ...s, subtopicMode: 'none' } });
+      return;
     }
 
-    // Custom → split into batches that fit visible columns
+    // Handle overflow by batching to visible column width
     const batches = __arrayChunk(subArr, width);
     batches.forEach((batch) => {
-      // Row A: custom header row with subtopic names
+      // Row A: custom header row — only subtopic names; SUBJECT/MAX/TOTAL/GRADE are blank
       const headerNames = batch.map(t => t?.name || '');
       out.push({ type: 'custom-header', names: headerNames });
 
-      // Row B: data row synthesized for THIS batch
+      // Row B: custom data row — marks aligned beneath the header names
       const { total, max } = __marksSumAndMaxForBatch(batch);
 
-      // Align batch subtopics with the schema columns: fill only those keys, rest empty
-      // (drawSubjectRow will show '-' for empty when mode none; here we leave missing = blank → "AB")
+      // Align marks to shared schema columns; blanks remain '' (renderer shows "AB")
       const alignedSubs = schemaNames.map(nm => {
-        const hit = batch.find(t => nkey(t?.name) === nkey(nm));
-        if (hit) return { name: hit.name, max: hit.max ?? null, mark: (hit.mark === 'AB' ? 'AB' : hit.mark) };
+        const hit = batch.find(t => nk(t?.name) === nk(nm));
+        if (hit) {
+          return {
+            name: hit.name,
+            max: (typeof hit.max === 'number' ? hit.max : null),
+            mark: (hit.mark === 'AB' ? 'AB' : hit.mark)
+          };
+        }
         return { name: nm, max: null, mark: '' };
       });
 
-      // Decide grade from this batch total/max (keep your grading scale)
+      // Grade from the visible batch only (TOTAL / MAX × 100)
       let gradeVal = '';
       if (typeof total === 'number' && typeof max === 'number' && max > 0) {
         const pct = (total / max) * 100;
         gradeVal = gradeFromPctUsingScale(pct, getActiveScale());
       }
 
-      // Repeat subject and max on each continuation for clarity (allowed by your rules)
-      const dataRowSubject = {
-        name: s.name,
-        max: max ?? s.max ?? null,
-        marks: total,
-        grade: gradeVal,
-        subtopics: alignedSubs,
-        subtopicMode: 'custom' // keep labeled
-      };
-      out.push({ type: 'data', subject: dataRowSubject });
+      out.push({
+        type: 'data',
+        subject: {
+          name: s.name,              // may repeat for continuations (OK)
+          max: max ?? s.max ?? null, // batch max; falls back to subject max
+          marks: total,              // batch total
+          grade: gradeVal,
+          subtopics: alignedSubs,
+          subtopicMode: 'custom'
+        }
+      });
     });
-  }
+  });
 
   return out;
 }
@@ -3757,6 +3791,7 @@ page.render({ canvasContext: ctx, viewport });
 </script>
 </body>
 </html>
+
 
 
 
