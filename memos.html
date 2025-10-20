@@ -2631,27 +2631,56 @@ function drawRemarkBox(pdf, text) {
   pdf.setLineWidth(4);
   pdf.roundedRect(x, y, w, h, 14, 14, 'S');
 
-  // Second pass: render with per-piece styles
+    // Second pass: render with per-piece styles (full justification except last line)
   const startY = y + padY + bodyFontSize;
+
+  // helper: whitespace check
+  const isWS = (t) => /^\s+$/.test(t);
 
   for (let li = 0; li < maxLines; li++) {
     const row = lines[li];
-    let cursorX = x + padX;
+    const isLastLine = (li === maxLines - 1);
 
+    // Measure base widths
+    let baseWidth = 0;
+    let spacesCount = 0;
     for (const p of row) {
-      // set color + weight per token
+      // measure using weight (bold for P/I/F/AB, normal otherwise)
+      const weight = (p.kind === 'P' || p.kind === 'I' || p.kind === 'F' || p.kind === 'AB') ? 'bold' : 'normal';
+      pdf.setFont('helvetica', weight);
+      baseWidth += tw(p.text);
+      if (isWS(p.text)) spacesCount++;
+    }
+
+    // How much extra to distribute across spaces
+    const needed = Math.max(0, wrapWidth - baseWidth);
+    const extraPerSpace = (!isLastLine && spacesCount > 0) ? (needed / spacesCount) : 0;
+
+    // Render line
+    let cursorX = x + padX;
+    for (const p of row) {
+      const weight = (p.kind === 'P' || p.kind === 'I' || p.kind === 'F' || p.kind === 'AB') ? 'bold' : 'normal';
+
+      // color by token kind
       let color = [0, 0, 0];
-      let weight = 'normal';
-      if (p.kind === 'P') { color = [15, 61, 107]; weight = 'bold'; }          // blue (praise)
-      if (p.kind === 'I') { color = [22, 163, 74]; weight = 'bold'; }          // green (improve)
-      if (p.kind === 'F' || p.kind === 'AB') { color = [220, 38, 38]; weight = 'bold'; } // red (fail/absent)
+      if (p.kind === 'P') { color = [15, 61, 107]; }         // blue (praise)
+      if (p.kind === 'I') { color = [22, 163, 74]; }         // green (improve)
+      if (p.kind === 'F' || p.kind === 'AB') { color = [220, 38, 38]; } // red (fail/absent)
 
       pdf.setFont('helvetica', weight);
       pdf.setFontSize(bodyFontSize);
       pdf.setTextColor(...color);
 
-      pdf.text(p.text, cursorX, startY + li * lineGap, { align: 'left', baseline: 'alphabetic' });
-      cursorX += tw(p.text);
+      const wPiece = tw(p.text);
+
+      if (isWS(p.text)) {
+        // advance by space width (+ justification) without drawing
+        cursorX += wPiece + extraPerSpace;
+      } else {
+        // draw the word
+        pdf.text(p.text, cursorX, startY + li * lineGap, { align: 'left', baseline: 'alphabetic' });
+        cursorX += wPiece;
+      }
     }
   }
 
@@ -3992,6 +4021,7 @@ page.render({ canvasContext: ctx, viewport });
 </script>
 </body>
 </html>
+
 
 
 
