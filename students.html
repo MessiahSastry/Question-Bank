@@ -1226,28 +1226,78 @@ function showAddStudentPopup() {
     img.onerror = () => alert('Could not load image.');
     img.src = URL.createObjectURL(file);
 
-    // ---- Pointer/gesture events ----
-    canvas.onpointerdown = (e) => {
-      addCrop.dragging = true;
-      addCrop.startX = e.clientX;
-      addCrop.startY = e.clientY;
-      canvas.setPointerCapture(e.pointerId);
-    };
-    canvas.onpointermove = (e) => {
-      if (!addCrop.dragging) return;
-      const dxCss = e.clientX - addCrop.startX;
-      const dyCss = e.clientY - addCrop.startY;
-      addCrop.startX = e.clientX;
-      addCrop.startY = e.clientY;
-      const d = addCrop.dpr || 1;
-      addCrop.offX += dxCss * d;
-      addCrop.offY += dyCss * d;
+    // ---- Pointer/gesture events (drag + pinch) ----
+const addTouches = new Map();
+let addLastDist = null;
+
+canvas.onpointerdown = (e) => {
+  canvas.setPointerCapture(e.pointerId);
+  addTouches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (addTouches.size === 1) {
+    addCrop.dragging = true;
+    addCrop.startX = e.clientX;
+    addCrop.startY = e.clientY;
+  } else if (addTouches.size === 2) {
+    addCrop.dragging = false;
+    const pts = Array.from(addTouches.values());
+    const dx = pts[1].x - pts[0].x;
+    const dy = pts[1].y - pts[0].y;
+    addLastDist = Math.hypot(dx, dy);
+  }
+};
+
+canvas.onpointermove = (e) => {
+  if (!addTouches.has(e.pointerId)) return;
+  addTouches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+  const d = addCrop.dpr || 1;
+
+  if (addTouches.size === 2) {
+    // Pinch zoom around midpoint
+    const pts = Array.from(addTouches.values());
+    const midXcss = (pts[0].x + pts[1].x) / 2;
+    const midYcss = (pts[0].y + pts[1].y) / 2;
+    const rect = canvas.getBoundingClientRect();
+    const midX = (midXcss - rect.left) * d; // device px
+    const midY = (midYcss - rect.top)  * d;
+
+    const dx = pts[1].x - pts[0].x;
+    const dy = pts[1].y - pts[0].y;
+    const dist = Math.hypot(dx, dy);
+    if (addLastDist) {
+      const factor = dist / addLastDist;
+      const prev = addCrop.scale;
+      let next = prev * factor;
+      next = Math.min(Math.max(next, addCrop.minScale), addCrop.maxScale);
+      const k = next / prev;
+      // zoom about midpoint
+      addCrop.offX = midX - (midX - addCrop.offX) * k;
+      addCrop.offY = midY - (midY - addCrop.offY) * k;
+      addCrop.scale = next;
       drawAddCropper();
-    };
-    canvas.onpointerup = (e) => {
-      addCrop.dragging = false;
-      canvas.releasePointerCapture(e.pointerId);
-    };
+    }
+    addLastDist = dist;
+    return;
+  }
+
+  if (addCrop.dragging) {
+    const dxCss = e.clientX - addCrop.startX;
+    const dyCss = e.clientY - addCrop.startY;
+    addCrop.startX = e.clientX;
+    addCrop.startY = e.clientY;
+    addCrop.offX += dxCss * d;
+    addCrop.offY += dyCss * d;
+    drawAddCropper();
+  }
+};
+
+canvas.onpointerup = (e) => {
+  addTouches.delete(e.pointerId);
+  canvas.releasePointerCapture(e.pointerId);
+  if (addTouches.size < 2) addLastDist = null;
+  if (addTouches.size === 0) addCrop.dragging = false;
+};
+
     canvas.addEventListener('wheel', (e) => {
       e.preventDefault();
       const delta = e.deltaY < 0 ? 1.06 : 0.94;
@@ -1567,27 +1617,75 @@ async function showEditStudentPopup(studentId) {
     img.onerror = () => alert('Could not load image.');
     img.src = URL.createObjectURL(file);
 
-    canvas.onpointerdown = (e) => {
-      editCrop.dragging = true;
-      editCrop.startX = e.clientX;
-      editCrop.startY = e.clientY;
-      canvas.setPointerCapture(e.pointerId);
-    };
-    canvas.onpointermove = (e) => {
-      if (!editCrop.dragging) return;
-      const dxCss = e.clientX - editCrop.startX;
-      const dyCss = e.clientY - editCrop.startY;
-      editCrop.startX = e.clientX;
-      editCrop.startY = e.clientY;
-      const d = editCrop.dpr || 1;
-      editCrop.offX += dxCss * d;
-      editCrop.offY += dyCss * d;
+    // Drag + pinch
+const editTouches = new Map();
+let editLastDist = null;
+
+canvas.onpointerdown = (e) => {
+  canvas.setPointerCapture(e.pointerId);
+  editTouches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (editTouches.size === 1) {
+    editCrop.dragging = true;
+    editCrop.startX = e.clientX;
+    editCrop.startY = e.clientY;
+  } else if (editTouches.size === 2) {
+    editCrop.dragging = false;
+    const pts = Array.from(editTouches.values());
+    const dx = pts[1].x - pts[0].x;
+    const dy = pts[1].y - pts[0].y;
+    editLastDist = Math.hypot(dx, dy);
+  }
+};
+
+canvas.onpointermove = (e) => {
+  if (!editTouches.has(e.pointerId)) return;
+  editTouches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+  const d = editCrop.dpr || 1;
+
+  if (editTouches.size === 2) {
+    const pts = Array.from(editTouches.values());
+    const midXcss = (pts[0].x + pts[1].x) / 2;
+    const midYcss = (pts[0].y + pts[1].y) / 2;
+    const rect = canvas.getBoundingClientRect();
+    const midX = (midXcss - rect.left) * d;
+    const midY = (midYcss - rect.top)  * d;
+
+    const dx = pts[1].x - pts[0].x;
+    const dy = pts[1].y - pts[0].y;
+    const dist = Math.hypot(dx, dy);
+    if (editLastDist) {
+      const factor = dist / editLastDist;
+      const prev = editCrop.scale;
+      let next = prev * factor;
+      next = Math.min(Math.max(next, editCrop.minScale), editCrop.maxScale);
+      const k = next / prev;
+      editCrop.offX = midX - (midX - editCrop.offX) * k;
+      editCrop.offY = midY - (midY - editCrop.offY) * k;
+      editCrop.scale = next;
       drawEditCropper();
-    };
-    canvas.onpointerup = (e) => {
-      editCrop.dragging = false;
-      canvas.releasePointerCapture(e.pointerId);
-    };
+    }
+    editLastDist = dist;
+    return;
+  }
+
+  if (editCrop.dragging) {
+    const dxCss = e.clientX - editCrop.startX;
+    const dyCss = e.clientY - editCrop.startY;
+    editCrop.startX = e.clientX;
+    editCrop.startY = e.clientY;
+    editCrop.offX += dxCss * d;
+    editCrop.offY += dyCss * d;
+    drawEditCropper();
+  }
+};
+
+canvas.onpointerup = (e) => {
+  editTouches.delete(e.pointerId);
+  canvas.releasePointerCapture(e.pointerId);
+  if (editTouches.size < 2) editLastDist = null;
+  if (editTouches.size === 0) editCrop.dragging = false;
+};
     canvas.addEventListener('wheel', (e) => {
       e.preventDefault();
       const delta = e.deltaY < 0 ? 1.06 : 0.94;
@@ -5187,6 +5285,7 @@ if (marksFileInput) {
 </script>
 </body>
 </html>
+
 
 
 
