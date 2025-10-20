@@ -2546,10 +2546,10 @@ function leftText(pdf, text, x, y, size=12, color=[0,0,0], fontStyle="bold", fon
  
 // ---- Drawer for the remark box (placed below attendance table) ----
 function drawRemarkBox(pdf, text) {
-  // Box anchors (align to PAGE_MARGINS; PAGE_LEFT/RIGHT were undefined)
-  const x = PAGE_MARGINS.left;                          // left margin
-  const y = 3040;                                       // moved up
-  const w = PAGE_MARGINS.right - PAGE_MARGINS.left;     // full width between margins
+  // Box anchors
+  const x = PAGE_MARGINS.left;
+  const y = 3040;
+  const w = PAGE_MARGINS.right - PAGE_MARGINS.left;
 
   // Heading ABOVE the box (left-aligned)
   pdf.setFont('helvetica', 'bold');
@@ -2557,38 +2557,107 @@ function drawRemarkBox(pdf, text) {
   pdf.setFontSize(56);
   pdf.text('REMARKS', x, y - 16, { align: 'left', baseline: 'alphabetic' });
 
-  // Body typography & sentence-by-sentence wrapping (helvetica)
+  // Layout + typography
   const padX = 20;
   const padY = 16;
-  const bodyFontSize = 56;  // increased
-  const lineGap = 64;       // increased
+  const bodyFontSize = 56;
+  const lineGap = 64;
+  const wrapWidth = w - padX * 2;
+
+  // Parse tokens: [[P:Name]] blue, [[I:Name]] green, [[F:Name]]/[[AB:Name]] red
+  function tokenize(s) {
+    const out = [];
+    const re = /\[\[(P|I|F|AB):(.+?)\]\]/g;
+    let i = 0, m;
+    while ((m = re.exec(s)) !== null) {
+      if (m.index > i) out.push({ kind: 'T', text: s.slice(i, m.index) });
+      out.push({ kind: m[1], text: m[2] });
+      i = re.lastIndex;
+    }
+    if (i < s.length) out.push({ kind: 'T', text: s.slice(i) });
+    return out;
+  }
+
+  // Split a segment into word pieces for wrapping (keeps kind)
+  function words(seg) {
+    // keep spaces so spacing renders correctly
+    return seg.text.split(/(\s+)/).filter(t => t.length).map(t => ({ kind: seg.kind, text: t }));
+  }
+
+  // measure with current font settings
+  function tw(str) {
+    return pdf.getTextWidth(String(str));
+  }
+
+  // Build lines with mixed styles
+  const segments = tokenize(String(text || 'Assessment in progress. Details will be updated shortly.').replace(/\s+/g, ' '));
+
+  // prebuild word pieces
+  const pieces = segments.flatMap(words);
+
+  // First pass: estimate height by simulating wraps (using normal font)
   pdf.setFont('helvetica', 'normal');
-  pdf.setTextColor(139, 69, 19); // dark brown
   pdf.setFontSize(bodyFontSize);
 
-  // Wrap the whole text as a single flowing paragraph
-  const wrapWidth = w - padX * 2;
-  const bodyText = String(text || 'Assessment in progress. Details will be updated shortly.');
+  const lines = [];
+  let line = [];
+  let lineWidth = 0;
 
-// Wrap the whole text as a single flowing paragraph
-const lines = pdf.splitTextToSize(bodyText.replace(/\s+/g, ' '), wrapWidth);
+  for (const p of pieces) {
+    // set style temporarily for width measuring
+    let weight = 'normal';
+    if (p.kind === 'P' || p.kind === 'I' || p.kind === 'F' || p.kind === 'AB') weight = 'bold';
+    pdf.setFont('helvetica', weight);
+    const wPiece = tw(p.text);
 
-// Dynamic height to fit all lines
-const maxLines = Math.min(lines.length, 60);
-const contentH = maxLines * lineGap;
-const minH = 160;
-const h = Math.max(minH, contentH + padY * 2);
-
-// Draw box (no fill, GREEN border)
-pdf.setDrawColor(22, 163, 74); // green
-pdf.setLineWidth(4);
-pdf.roundedRect(x, y, w, h, 14, 14, 'S'); // stroke only (no fill)
-
-// Draw sentence lines
-const startY = y + padY + bodyFontSize;
-for (let i = 0; i < maxLines; i++) {
-  pdf.text(lines[i], x + padX, startY + i * lineGap, { align: 'left', baseline: 'alphabetic' });
+    if (lineWidth + wPiece > wrapWidth && line.length) {
+      lines.push(line);
+      line = [p];
+      lineWidth = wPiece;
+    } else {
+      line.push(p);
+      lineWidth += wPiece;
+    }
   }
+  if (line.length) lines.push(line);
+
+  const maxLines = Math.min(lines.length, 60);
+  const contentH = maxLines * lineGap;
+  const minH = 160;
+  const h = Math.max(minH, contentH + padY * 2);
+
+  // Draw box (no fill, GREEN border)
+  pdf.setDrawColor(22, 163, 74);
+  pdf.setLineWidth(4);
+  pdf.roundedRect(x, y, w, h, 14, 14, 'S');
+
+  // Second pass: render with per-piece styles
+  const startY = y + padY + bodyFontSize;
+
+  for (let li = 0; li < maxLines; li++) {
+    const row = lines[li];
+    let cursorX = x + padX;
+
+    for (const p of row) {
+      // set color + weight per token
+      let color = [0, 0, 0];
+      let weight = 'normal';
+      if (p.kind === 'P') { color = [15, 61, 107]; weight = 'bold'; }          // blue (praise)
+      if (p.kind === 'I') { color = [22, 163, 74]; weight = 'bold'; }          // green (improve)
+      if (p.kind === 'F' || p.kind === 'AB') { color = [220, 38, 38]; weight = 'bold'; } // red (fail/absent)
+
+      pdf.setFont('helvetica', weight);
+      pdf.setFontSize(bodyFontSize);
+      pdf.setTextColor(...color);
+
+      pdf.text(p.text, cursorX, startY + li * lineGap, { align: 'left', baseline: 'alphabetic' });
+      cursorX += tw(p.text);
+    }
+  }
+
+  // reset font state
+  pdf.setFont('helvetica', 'normal');
+  pdf.setTextColor(0, 0, 0);
 }
 function formatClass(val) {
   if (!val) return '';
@@ -2762,6 +2831,19 @@ function formatSubjectsList(arr, limit = 3) {
   if (list.length === 1) return list[0];
   if (list.length === 2) return `${list[0]} and ${list[1]}`;
   return `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`;
+}
+
+// only wrap SUBJECT NAMES; sentences stay plain
+function joinWithAnd(arr) {
+  const list = (arr || []).filter(Boolean);
+  if (!list.length) return '';
+  if (list.length === 1) return list[0];
+  if (list.length === 2) return `${list[0]} and ${list[1]}`;
+  return `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`;
+}
+function fmtSubjects(arr, kind) {
+  const wrap = s => `[[${kind}:${s}]]`;
+  return joinWithAnd((arr || []).filter(Boolean).map(wrap));
 }
 const REMARK_POOLS = {
   overall: {
@@ -2970,11 +3052,11 @@ if (perSub.length && perSub.every(x => x.isAB)) {
     parts.push(pick(pool));
   }
   if (best95.length) {
-    parts.push(pick(REMARK_POOLS.praise95).replace('{SUBJECTS}', formatSubjectsList(best95)));
+    parts.push(pick(REMARK_POOLS.praise95).replace('{SUBJECTS}', fmtSubjects(best95, 'P')));
   } else if (very90.length) {
-    parts.push(pick(REMARK_POOLS.praise90).replace('{SUBJECTS}', formatSubjectsList(very90)));
+    parts.push(pick(REMARK_POOLS.praise90).replace('{SUBJECTS}', fmtSubjects(very90, 'P')));
   } else if (good85.length) {
-    parts.push(pick(REMARK_POOLS.praise85).replace('{SUBJECTS}', formatSubjectsList(good85)));
+    parts.push(pick(REMARK_POOLS.praise85).replace('{SUBJECTS}', fmtSubjects(good85, 'P')));
   }
     // --- Weakness/Fail line selection with “bottom-2” fallback (no AB; avoid praising & scolding same subject) ---
   const praisedSet = new Set([...best95, ...very90, ...good85].map(n => nkey(n)));
@@ -2987,7 +3069,7 @@ if (perSub.length && perSub.every(x => x.isAB)) {
     // If any fails → ONLY a fail line (max 2)
     const list = chooseUpToTwo(failSubs);
     if (list.length) {
-      parts.push(pick(REMARK_POOLS.focusFail).replace('{SUBJECTS}', formatSubjectsList(list)));
+     parts.push(pick(REMARK_POOLS.focusFail).replace('{SUBJECTS}', fmtSubjects(list, 'F')));
     }
   } else {
     // Absolute weakness first
@@ -2995,9 +3077,9 @@ if (perSub.length && perSub.every(x => x.isAB)) {
     const w60 = chooseUpToTwo(weakLE60);
 
     if (w50.length) {
-      parts.push(pick(REMARK_POOLS.focusLT50).replace('{SUBJECTS}', formatSubjectsList(w50)));
+      parts.push(pick(REMARK_POOLS.focusLT50).replace('{SUBJECTS}', fmtSubjects(w50, 'I')));
     } else if (w60.length) {
-      parts.push(pick(REMARK_POOLS.focusLE60).replace('{SUBJECTS}', formatSubjectsList(w60)));
+      parts.push(pick(REMARK_POOLS.focusLE60).replace('{SUBJECTS}', fmtSubjects(w60, 'I')));
     } else {
       // Relative fallback: pick bottom-2 by percentage (exclude AB & praised)
       const relativeTwo = perSub
@@ -3008,7 +3090,7 @@ if (perSub.length && perSub.every(x => x.isAB)) {
 
       if (relativeTwo.length) {
         // Use a gentle improvement tone
-        parts.push(pick(REMARK_POOLS.focusLE60).replace('{SUBJECTS}', formatSubjectsList(relativeTwo)));
+        parts.push(pick(REMARK_POOLS.focusLE60).replace('{SUBJECTS}', fmtSubjects(relativeTwo, 'I')));
       }
     }
    }
@@ -3907,6 +3989,7 @@ page.render({ canvasContext: ctx, viewport });
 </script>
 </body>
 </html>
+
 
 
 
