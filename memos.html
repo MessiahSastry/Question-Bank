@@ -2949,14 +2949,43 @@ const perSub = subs
   } else if (good85.length) {
     parts.push(pick(REMARK_POOLS.praise85).replace('{SUBJECTS}', formatSubjectsList(good85)));
   }
+    // --- Weakness/Fail line selection with “bottom-2” fallback (no AB; avoid praising & scolding same subject) ---
+  const praisedSet = new Set([...best95, ...very90, ...good85].map(n => nkey(n)));
+  const chooseUpToTwo = (arr) => (arr || [])
+    .filter(Boolean)
+    .filter(n => !praisedSet.has(nkey(n)))   // don’t contradict praise
+    .slice(0, 2);
+
   if (failSubs.length) {
-    parts.push(pick(REMARK_POOLS.focusFail).replace('{SUBJECTS}', formatSubjectsList(failSubs)));
-  } else if (weakLT50.length) {
-    parts.push(pick(REMARK_POOLS.focusLT50).replace('{SUBJECTS}', formatSubjectsList(weakLT50)));
-  } else if (weakLE60.length) {
-    parts.push(pick(REMARK_POOLS.focusLE60).replace('{SUBJECTS}', formatSubjectsList(weakLE60)));
+    // If any fails → ONLY a fail line (max 2)
+    const list = chooseUpToTwo(failSubs);
+    if (list.length) {
+      parts.push(pick(REMARK_POOLS.focusFail).replace('{SUBJECTS}', formatSubjectsList(list)));
+    }
+  } else {
+    // Absolute weakness first
+    const w50 = chooseUpToTwo(weakLT50);
+    const w60 = chooseUpToTwo(weakLE60);
+
+    if (w50.length) {
+      parts.push(pick(REMARK_POOLS.focusLT50).replace('{SUBJECTS}', formatSubjectsList(w50)));
+    } else if (w60.length) {
+      parts.push(pick(REMARK_POOLS.focusLE60).replace('{SUBJECTS}', formatSubjectsList(w60)));
+    } else {
+      // Relative fallback: pick bottom-2 by percentage (exclude AB & praised)
+      const relativeTwo = perSub
+        .filter(x => x.pct != null && !x.isAB && !praisedSet.has(nkey(x.name)))
+        .sort((a, b) => a.pct - b.pct)
+        .slice(0, 2)
+        .map(x => x.name);
+
+      if (relativeTwo.length) {
+        // Use a gentle improvement tone
+        parts.push(pick(REMARK_POOLS.focusLE60).replace('{SUBJECTS}', formatSubjectsList(relativeTwo)));
+      }
+    }
   }
-  
+
   if (att != null) {
     let apool;
     if      (att >= 95) apool = REMARK_POOLS.attendance.ge95;
@@ -3844,6 +3873,7 @@ page.render({ canvasContext: ctx, viewport });
 </script>
 </body>
 </html>
+
 
 
 
