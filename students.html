@@ -1083,7 +1083,7 @@ function showAddStudentPopup() {
         <div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(92vw,520px);background:#fff;border-radius:16px;box-shadow:0 10px 40px rgba(0,0,0,.25);">
           <div style="padding:14px 16px;border-bottom:1px solid #eee;font-weight:700;color:#0f3d6b;">Crop your photo</div>
           <div style="padding:12px 12px 4px 12px;">
-            <div style="position:relative;width:100%;aspect-ratio:1;border-radius:12px;background:#111;overflow:hidden;touch-action:none;">
+            <div id="addCropBox" style="position:relative;width:100%;border-radius:12px;background:#111;overflow:hidden;touch-action:none;">
               <canvas id="addCropCanvas" style="width:100%;height:100%;display:block;"></canvas>
               <!-- circle guide overlay -->
               <div style="position:absolute;inset:0;pointer-events:none;">
@@ -1185,151 +1185,157 @@ function showAddStudentPopup() {
   };
 
   function openAddCropper(file) {
-    const overlay = document.getElementById('addCropperOverlay');
-    const canvas = document.getElementById('addCropCanvas');
-    const ctx = canvas.getContext('2d');
-    addCrop.canvas = canvas;
-    addCrop.ctx = ctx;
+  const overlay = document.getElementById('addCropperOverlay');
+  const canvas  = document.getElementById('addCropCanvas');
+  const ctx     = canvas.getContext('2d');
+  addCrop.canvas = canvas;
+  addCrop.ctx    = ctx;
 
-    // Size the backing store to square
-    const box = canvas.parentElement.getBoundingClientRect();
-    canvas.width = Math.floor(box.width);
-    canvas.height = Math.floor(box.width);
+  // --- Force a true square in CSS and scale backing store for DPR ---
+  const boxEl   = document.getElementById('addCropBox');
+  const cssSize = Math.floor(boxEl.clientWidth);            // CSS px
+  boxEl.style.height = cssSize + 'px';                      // force square
+  const dpr = Math.max(1, window.devicePixelRatio || 1);    // device ratio
+  canvas.style.width  = cssSize + 'px';
+  canvas.style.height = cssSize + 'px';
+  canvas.width  = Math.floor(cssSize * dpr);
+  canvas.height = Math.floor(cssSize * dpr);
 
-    const img = new Image();
-    img.onload = () => {
-      addCrop.img = img;
-      addCrop.imgW = img.naturalWidth;
-      addCrop.imgH = img.naturalHeight;
+  const img = new Image();
+  img.onload = () => {
+    addCrop.img  = img;
+    addCrop.imgW = img.naturalWidth;
+    addCrop.imgH = img.naturalHeight;
 
-      // Fit-center and compute minScale so circle is fully covered
-      const r = Math.min(canvas.width, canvas.height) * 0.40; // circle radius in px (matches SVG r=40%)
-      const needSize = r * 2 * 1.02; // small buffer
-      const scaleX = needSize / img.naturalWidth;
-      const scaleY = needSize / img.naturalHeight;
-      addCrop.minScale = Math.max(scaleX, scaleY);
-      addCrop.scale = Math.max(addCrop.minScale, 1);
-      addCrop.maxScale = Math.max(addCrop.scale * 8, 8);
+    // Circle radius in CSS px
+    const rCss = cssSize * 0.40;
+    const needCss = rCss * 2 * 1.02;
+    const scaleX = needCss / img.naturalWidth;
+    const scaleY = needCss / img.naturalHeight;
+    addCrop.minScale = Math.max(scaleX, scaleY);
+    addCrop.scale    = Math.max(addCrop.minScale, 1);
+    addCrop.maxScale = Math.max(addCrop.scale * 8, 8);
 
-      addCrop.offX = canvas.width / 2;
-      addCrop.offY = canvas.height / 2;
+    // Store DPR and offsets in DEVICE px
+    addCrop.dpr  = dpr;
+    addCrop.offX = canvas.width / 2;
+    addCrop.offY = canvas.height / 2;
 
-      drawAddCropper();
-      overlay.style.display = 'block';
-    };
-    img.onerror = () => alert('Could not load image.');
-    // EXIF-rotate is skipped here; if you use it elsewhere, plug it in before onload.
-    img.src = URL.createObjectURL(file);
+    drawAddCropper();
+    overlay.style.display = 'block';
+  };
+  img.onerror = () => alert('Could not load image.');
+  img.src = URL.createObjectURL(file);
 
-    // Events
-    canvas.onpointerdown = (e) => {
-      addCrop.dragging = true;
-      addCrop.startX = e.clientX;
-      addCrop.startY = e.clientY;
-      canvas.setPointerCapture(e.pointerId);
-    };
-    canvas.onpointermove = (e) => {
-      if (!addCrop.dragging) return;
-      const dx = e.clientX - addCrop.startX;
-      const dy = e.clientY - addCrop.startY;
-      addCrop.startX = e.clientX;
-      addCrop.startY = e.clientY;
-      addCrop.offX += dx;
-      addCrop.offY += dy;
-      drawAddCropper();
-    };
-    canvas.onpointerup = (e) => {
-      addCrop.dragging = false;
-      canvas.releasePointerCapture(e.pointerId);
-    };
-    canvas.onwheel = (e) => {
-      e.preventDefault();
-      const delta = e.deltaY < 0 ? 1.06 : 0.94;
-      const prevScale = addCrop.scale;
-      let next = prevScale * delta;
-      next = Math.min(Math.max(next, addCrop.minScale), addCrop.maxScale);
+  // ---- Pointer/gesture events (convert CSS deltas to device px) ----
+  canvas.onpointerdown = (e) => {
+    addCrop.dragging = true;
+    addCrop.startX = e.clientX;
+    addCrop.startY = e.clientY;
+    canvas.setPointerCapture(e.pointerId);
+  };
+  canvas.onpointermove = (e) => {
+    if (!addCrop.dragging) return;
+    const dxCss = e.clientX - addCrop.startX;
+    const dyCss = e.clientY - addCrop.startY;
+    addCrop.startX = e.clientX;
+    addCrop.startY = e.clientY;
+    const d = addCrop.dpr || 1;
+    addCrop.offX += dxCss * d;
+    addCrop.offY += dyCss * d;
+    drawAddCropper();
+  };
+  canvas.onpointerup = (e) => {
+    addCrop.dragging = false;
+    canvas.releasePointerCapture(e.pointerId);
+  };
+  canvas.onwheel = (e) => {
+    e.preventDefault();
+    const delta = e.deltaY < 0 ? 1.06 : 0.94;
+    const prevScale = addCrop.scale;
+    let next = prevScale * delta;
+    next = Math.min(Math.max(next, addCrop.minScale), addCrop.maxScale);
 
-      // Zoom around cursor
-      const rect = canvas.getBoundingClientRect();
-      const cx = e.clientX - rect.left;
-      const cy = e.clientY - rect.top;
-      const k = next / prevScale;
-      addCrop.offX = cx - (cx - addCrop.offX) * k;
-      addCrop.offY = cy - (cy - addCrop.offY) * k;
+    const rect = canvas.getBoundingClientRect();
+    const d = addCrop.dpr || 1;
+    const cx = (e.clientX - rect.left) * d;   // device px
+    const cy = (e.clientY - rect.top)  * d;
+    const k = next / prevScale;
+    addCrop.offX = cx - (cx - addCrop.offX) * k;
+    addCrop.offY = cy - (cy - addCrop.offY) * k;
 
-      addCrop.scale = next;
-      drawAddCropper();
-    }, { passive: false };
+    addCrop.scale = next;
+    drawAddCropper();
+  }, { passive: false });
 
-    document.getElementById('addZoomIn').onclick = () => {
-      addCrop.scale = Math.min(addCrop.scale * 1.1, addCrop.maxScale);
-      drawAddCropper();
-    };
-    document.getElementById('addZoomOut').onclick = () => {
-      addCrop.scale = Math.max(addCrop.scale / 1.1, addCrop.minScale);
-      drawAddCropper();
-    };
-    document.getElementById('addReset').onclick = () => {
-      addCrop.scale = Math.max(addCrop.minScale, 1);
-      addCrop.offX = canvas.width / 2;
-      addCrop.offY = canvas.height / 2;
-      drawAddCropper();
-    };
-    document.getElementById('addCropCancel').onclick = () => {
-      overlay.style.display = 'none';
-      // no change
-    };
-    document.getElementById('addCropUse').onclick = async () => {
-      // Export to 512x512 square with circular crop painted on white
-      const outSize = 512;
-      const out = document.createElement('canvas');
-      out.width = outSize; out.height = outSize;
-      const octx = out.getContext('2d');
-      octx.fillStyle = '#ffffff';
-      octx.fillRect(0,0,outSize,outSize);
+  document.getElementById('addZoomIn').onclick = () => {
+    addCrop.scale = Math.min(addCrop.scale * 1.1, addCrop.maxScale);
+    drawAddCropper();
+  };
+  document.getElementById('addZoomOut').onclick = () => {
+    addCrop.scale = Math.max(addCrop.scale / 1.1, addCrop.minScale);
+    drawAddCropper();
+  };
+  document.getElementById('addReset').onclick = () => {
+    addCrop.scale = Math.max(addCrop.minScale, 1);
+    addCrop.offX = canvas.width / 2;
+    addCrop.offY = canvas.height / 2;
+    drawAddCropper();
+  };
+  document.getElementById('addCropCancel').onclick = () => {
+    overlay.style.display = 'none';
+  };
+  document.getElementById('addCropUse').onclick = async () => {
+    const outSize = 512;
+    const out = document.createElement('canvas');
+    out.width = outSize; out.height = outSize;
+    const octx = out.getContext('2d');
+    octx.fillStyle = '#ffffff';
+    octx.fillRect(0,0,outSize,outSize);
 
-      const circleR = outSize * 0.40; // same ratio as preview
-      const cx = outSize / 2, cy = outSize / 2;
+    const circleR = outSize * 0.40;
+    const cx = outSize / 2, cy = outSize / 2;
 
-      octx.save();
-      octx.beginPath();
-      octx.arc(cx, cy, circleR, 0, Math.PI * 2);
-      octx.closePath();
-      octx.clip();
+    octx.save();
+    octx.beginPath();
+    octx.arc(cx, cy, circleR, 0, Math.PI * 2);
+    octx.closePath();
+    octx.clip();
 
-      // Map preview transform to output canvas
-      const scaleRatio = addCrop.scale * (outSize / canvas.width);
-      const dx = (addCrop.offX - canvas.width / 2) * (outSize / canvas.width);
-      const dy = (addCrop.offY - canvas.height / 2) * (outSize / canvas.height);
+    // Map preview (device px) to output
+    const d = addCrop.dpr || 1;
+    const scaleRatio = addCrop.scale * (outSize / (canvas.width / d));
+    const dx = (addCrop.offX - canvas.width / 2) * (outSize / canvas.width);
+    const dy = (addCrop.offY - canvas.height / 2) * (outSize / canvas.height);
 
-      octx.setTransform(scaleRatio, 0, 0, scaleRatio, cx + dx, cy + dy);
-      octx.drawImage(addCrop.img, -addCrop.imgW / 2, -addCrop.imgH / 2);
-      octx.restore();
+    octx.setTransform(scaleRatio, 0, 0, scaleRatio, cx + dx, cy + dy);
+    octx.drawImage(addCrop.img, -addCrop.imgW / 2, -addCrop.imgH / 2);
+    octx.restore();
 
-      // Compress to JPEG
-      const dataUrl = out.toDataURL('image/jpeg', 0.85);
-      const blob = await (await fetch(dataUrl)).blob();
+    const dataUrl = out.toDataURL('image/jpeg', 0.85);
+    const blob = await (await fetch(dataUrl)).blob();
 
-      window.__addPhotoBlob = blob;
-      showPreviewFromDataUrl(dataUrl);
+    window.__addPhotoBlob = blob;
+    showPreviewFromDataUrl(dataUrl);
 
-      document.getElementById('addCropperOverlay').style.display = 'none';
-    };
-  }
+    document.getElementById('addCropperOverlay').style.display = 'none';
+  };
+}
 
   function drawAddCropper() {
-    const { ctx, canvas, img, imgW, imgH, scale, offX, offY } = addCrop;
-    if (!img) return;
-    ctx.setTransform(1,0,0,1,0,0);
-    ctx.clearRect(0,0,canvas.width,canvas.height);
-    ctx.fillStyle = '#111';
-    ctx.fillRect(0,0,canvas.width,canvas.height);
+  const { ctx, canvas, img, imgW, imgH, scale, offX, offY } = addCrop;
+  if (!img) return;
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.fillStyle = '#111';
+  ctx.fillRect(0,0,canvas.width,canvas.height);
 
-    ctx.setTransform(scale, 0, 0, scale, offX, offY);
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(img, -imgW/2, -imgH/2);
-  }
+  // All offsets are in DEVICE px
+  ctx.setTransform(scale, 0, 0, scale, offX, offY);
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(img, -imgW/2, -imgH/2);
+}
 
   async function handleFile(file){
     if (!file) return;
@@ -1392,7 +1398,7 @@ async function showEditStudentPopup(studentId) {
         <div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(92vw,520px);background:#fff;border-radius:16px;box-shadow:0 10px 40px rgba(0,0,0,.25);">
           <div style="padding:14px 16px;border-bottom:1px solid #eee;font-weight:700;color:#0f3d6b;">Crop your photo</div>
           <div style="padding:12px 12px 4px 12px;">
-            <div style="position:relative;width:100%;aspect-ratio:1;border-radius:12px;background:#111;overflow:hidden;touch-action:none;">
+            <div id="editCropBox" style="position:relative;width:100%;border-radius:12px;background:#111;overflow:hidden;touch-action:none;">
               <canvas id="editCropCanvas" style="width:100%;height:100%;display:block;"></canvas>
               <div style="position:absolute;inset:0;pointer-events:none;">
                 <svg viewBox="0 0 100 100" preserveAspectRatio="none" style="width:100%;height:100%;display:block;">
@@ -1523,144 +1529,153 @@ async function showEditStudentPopup(studentId) {
   };
 
   function openEditCropper(file) {
-    const overlay = document.getElementById('editCropperOverlay');
-    const canvas = document.getElementById('editCropCanvas');
-    const ctx = canvas.getContext('2d');
-    editCrop.canvas = canvas;
-    editCrop.ctx = ctx;
+  const overlay = document.getElementById('editCropperOverlay');
+  const canvas  = document.getElementById('editCropCanvas');
+  const ctx     = canvas.getContext('2d');
+  editCrop.canvas = canvas;
+  editCrop.ctx    = ctx;
 
-    const box = canvas.parentElement.getBoundingClientRect();
-    canvas.width = Math.floor(box.width);
-    canvas.height = Math.floor(box.width);
+  // --- Force a true square in CSS and scale backing store for DPR ---
+  const boxEl   = document.getElementById('editCropBox');
+  const cssSize = Math.floor(boxEl.clientWidth);
+  boxEl.style.height = cssSize + 'px';
+  const dpr = Math.max(1, window.devicePixelRatio || 1);
+  canvas.style.width  = cssSize + 'px';
+  canvas.style.height = cssSize + 'px';
+  canvas.width  = Math.floor(cssSize * dpr);
+  canvas.height = Math.floor(cssSize * dpr);
 
-    const img = new Image();
-    img.onload = () => {
-      editCrop.img = img;
-      editCrop.imgW = img.naturalWidth;
-      editCrop.imgH = img.naturalHeight;
+  const img = new Image();
+  img.onload = () => {
+    editCrop.img  = img;
+    editCrop.imgW = img.naturalWidth;
+    editCrop.imgH = img.naturalHeight;
 
-      const r = Math.min(canvas.width, canvas.height) * 0.40;
-      const needSize = r * 2 * 1.02;
-      const scaleX = needSize / img.naturalWidth;
-      const scaleY = needSize / img.naturalHeight;
-      editCrop.minScale = Math.max(scaleX, scaleY);
-      editCrop.scale = Math.max(editCrop.minScale, 1);
-      editCrop.maxScale = Math.max(editCrop.scale * 8, 8);
+    const rCss = cssSize * 0.40;
+    const needCss = rCss * 2 * 1.02;
+    const scaleX = needCss / img.naturalWidth;
+    const scaleY = needCss / img.naturalHeight;
+    editCrop.minScale = Math.max(scaleX, scaleY);
+    editCrop.scale    = Math.max(editCrop.minScale, 1);
+    editCrop.maxScale = Math.max(editCrop.scale * 8, 8);
 
-      editCrop.offX = canvas.width / 2;
-      editCrop.offY = canvas.height / 2;
+    editCrop.dpr  = dpr;
+    editCrop.offX = canvas.width / 2;
+    editCrop.offY = canvas.height / 2;
 
-      drawEditCropper();
-      overlay.style.display = 'block';
-    };
-    img.onerror = () => alert('Could not load image.');
-    img.src = URL.createObjectURL(file);
+    drawEditCropper();
+    overlay.style.display = 'block';
+  };
+  img.onerror = () => alert('Could not load image.');
+  img.src = URL.createObjectURL(file);
 
-    canvas.onpointerdown = (e) => {
-      editCrop.dragging = true;
-      editCrop.startX = e.clientX;
-      editCrop.startY = e.clientY;
-      canvas.setPointerCapture(e.pointerId);
-    };
-    canvas.onpointermove = (e) => {
-      if (!editCrop.dragging) return;
-      const dx = e.clientX - editCrop.startX;
-      const dy = e.clientY - editCrop.startY;
-      editCrop.startX = e.clientX;
-      editCrop.startY = e.clientY;
-      editCrop.offX += dx;
-      editCrop.offY += dy;
-      drawEditCropper();
-    };
-    canvas.onpointerup = (e) => {
-      editCrop.dragging = false;
-      canvas.releasePointerCapture(e.pointerId);
-    };
-    canvas.onwheel = (e) => {
-      e.preventDefault();
-      const delta = e.deltaY < 0 ? 1.06 : 0.94;
-      const prevScale = editCrop.scale;
-      let next = prevScale * delta;
-      next = Math.min(Math.max(next, editCrop.minScale), editCrop.maxScale);
+  canvas.onpointerdown = (e) => {
+    editCrop.dragging = true;
+    editCrop.startX = e.clientX;
+    editCrop.startY = e.clientY;
+    canvas.setPointerCapture(e.pointerId);
+  };
+  canvas.onpointermove = (e) => {
+    if (!editCrop.dragging) return;
+    const dxCss = e.clientX - editCrop.startX;
+    const dyCss = e.clientY - editCrop.startY;
+    editCrop.startX = e.clientX;
+    editCrop.startY = e.clientY;
+    const d = editCrop.dpr || 1;
+    editCrop.offX += dxCss * d;
+    editCrop.offY += dyCss * d;
+    drawEditCropper();
+  };
+  canvas.onpointerup = (e) => {
+    editCrop.dragging = false;
+    canvas.releasePointerCapture(e.pointerId);
+  };
+  canvas.onwheel = (e) => {
+    e.preventDefault();
+    const delta = e.deltaY < 0 ? 1.06 : 0.94;
+    const prevScale = editCrop.scale;
+    let next = prevScale * delta;
+    next = Math.min(Math.max(next, editCrop.minScale), editCrop.maxScale);
 
-      const rect = canvas.getBoundingClientRect();
-      const cx = e.clientX - rect.left;
-      const cy = e.clientY - rect.top;
-      const k = next / prevScale;
-      editCrop.offX = cx - (cx - editCrop.offX) * k;
-      editCrop.offY = cy - (cy - editCrop.offY) * k;
+    const rect = canvas.getBoundingClientRect();
+    const d = editCrop.dpr || 1;
+    const cx = (e.clientX - rect.left) * d;
+    const cy = (e.clientY - rect.top)  * d;
+    const k = next / prevScale;
+    editCrop.offX = cx - (cx - editCrop.offX) * k;
+    editCrop.offY = cy - (cy - editCrop.offY) * k;
 
-      editCrop.scale = next;
-      drawEditCropper();
-    }, { passive: false };
+    editCrop.scale = next;
+    drawEditCropper();
+  }, { passive: false });
 
-    document.getElementById('editZoomIn').onclick = () => {
-      editCrop.scale = Math.min(editCrop.scale * 1.1, editCrop.maxScale);
-      drawEditCropper();
-    };
-    document.getElementById('editZoomOut').onclick = () => {
-      editCrop.scale = Math.max(editCrop.scale / 1.1, editCrop.minScale);
-      drawEditCropper();
-    };
-    document.getElementById('editReset').onclick = () => {
-      editCrop.scale = Math.max(editCrop.minScale, 1);
-      editCrop.offX = canvas.width / 2;
-      editCrop.offY = canvas.height / 2;
-      drawEditCropper();
-    };
-    document.getElementById('editCropCancel').onclick = () => {
-      overlay.style.display = 'none';
-    };
-    document.getElementById('editCropUse').onclick = async () => {
-      const outSize = 512;
-      const out = document.createElement('canvas');
-      out.width = outSize; out.height = outSize;
-      const octx = out.getContext('2d');
-      octx.fillStyle = '#ffffff';
-      octx.fillRect(0,0,outSize,outSize);
+  document.getElementById('editZoomIn').onclick = () => {
+    editCrop.scale = Math.min(editCrop.scale * 1.1, editCrop.maxScale);
+    drawEditCropper();
+  };
+  document.getElementById('editZoomOut').onclick = () => {
+    editCrop.scale = Math.max(editCrop.scale / 1.1, editCrop.minScale);
+    drawEditCropper();
+  };
+  document.getElementById('editReset').onclick = () => {
+    editCrop.scale = Math.max(editCrop.minScale, 1);
+    editCrop.offX = canvas.width / 2;
+    editCrop.offY = canvas.height / 2;
+    drawEditCropper();
+  };
+  document.getElementById('editCropCancel').onclick = () => {
+    overlay.style.display = 'none';
+  };
+  document.getElementById('editCropUse').onclick = async () => {
+    const outSize = 512;
+    const out = document.createElement('canvas');
+    out.width = outSize; out.height = outSize;
+    const octx = out.getContext('2d');
+    octx.fillStyle = '#ffffff';
+    octx.fillRect(0,0,outSize,outSize);
 
-      const circleR = outSize * 0.40;
-      const cx = outSize / 2, cy = outSize / 2;
+    const circleR = outSize * 0.40;
+    const cx = outSize / 2, cy = outSize / 2;
 
-      octx.save();
-      octx.beginPath();
-      octx.arc(cx, cy, circleR, 0, Math.PI * 2);
-      octx.closePath();
-      octx.clip();
+    octx.save();
+    octx.beginPath();
+    octx.arc(cx, cy, circleR, 0, Math.PI * 2);
+    octx.closePath();
+    octx.clip();
 
-      const scaleRatio = editCrop.scale * (outSize / canvas.width);
-      const dx = (editCrop.offX - canvas.width / 2) * (outSize / canvas.width);
-      const dy = (editCrop.offY - canvas.height / 2) * (outSize / canvas.height);
+    const d = editCrop.dpr || 1;
+    const scaleRatio = editCrop.scale * (outSize / (canvas.width / d));
+    const dx = (editCrop.offX - canvas.width / 2) * (outSize / canvas.width);
+    const dy = (editCrop.offY - canvas.height / 2) * (outSize / canvas.height);
 
-      octx.setTransform(scaleRatio, 0, 0, scaleRatio, cx + dx, cy + dy);
-      octx.drawImage(editCrop.img, -editCrop.imgW / 2, -editCrop.imgH / 2);
-      octx.restore();
+    octx.setTransform(scaleRatio, 0, 0, scaleRatio, cx + dx, cy + dy);
+    octx.drawImage(editCrop.img, -editCrop.imgW / 2, -editCrop.imgH / 2);
+    octx.restore();
 
-      const dataUrl = out.toDataURL('image/jpeg', 0.85);
-      const blob = await (await fetch(dataUrl)).blob();
+    const dataUrl = out.toDataURL('image/jpeg', 0.85);
+    const blob = await (await fetch(dataUrl)).blob();
 
-      window.__editPhotoBlob = blob;
-      window.__editRemovePhoto = false;
-      showPreviewFromDataUrl(dataUrl);
-      if (btnRem) btnRem.style.display = 'inline-block';
+    window.__editPhotoBlob = blob;
+    window.__editRemovePhoto = false;
+    showPreviewFromDataUrl(dataUrl);
+    if (btnRem) btnRem.style.display = 'inline-block';
 
-      document.getElementById('editCropperOverlay').style.display = 'none';
-    };
-  }
-
+    document.getElementById('editCropperOverlay').style.display = 'none';
+  };
+}
   function drawEditCropper() {
-    const { ctx, canvas, img, imgW, imgH, scale, offX, offY } = editCrop;
-    if (!img) return;
-    ctx.setTransform(1,0,0,1,0,0);
-    ctx.clearRect(0,0,canvas.width,canvas.height);
-    ctx.fillStyle = '#111';
-    ctx.fillRect(0,0,canvas.width,canvas.height);
+  const { ctx, canvas, img, imgW, imgH, scale, offX, offY } = editCrop;
+  if (!img) return;
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.fillStyle = '#111';
+  ctx.fillRect(0,0,canvas.width,canvas.height);
 
-    ctx.setTransform(scale, 0, 0, scale, offX, offY);
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(img, -imgW/2, -imgH/2);
-  }
+  ctx.setTransform(scale, 0, 0, scale, offX, offY);
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(img, -imgW/2, -imgH/2);
+}
 
   async function handleFile(file) {
     if (!file) return;
@@ -5174,6 +5189,7 @@ if (marksFileInput) {
 </script>
 </body>
 </html>
+
 
 
 
