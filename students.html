@@ -1063,6 +1063,7 @@ function showAddStudentPopup() {
 
       <label>Parent Phone Number</label>
       <input name="parentPhone" type="tel" maxlength="16" required placeholder="e.g., 9876543210">
+
       <label>Photo (optional)</label>
       <div class="photo-row">
         <div class="photo-preview" id="addPhotoPreview">${getInitials('')}</div>
@@ -1077,6 +1078,41 @@ function showAddStudentPopup() {
         </div>
       </div>
 
+      <!-- ======= Circular Cropper Modal (hidden by default) ======= -->
+      <div id="addCropperOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;">
+        <div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(92vw,520px);background:#fff;border-radius:16px;box-shadow:0 10px 40px rgba(0,0,0,.25);">
+          <div style="padding:14px 16px;border-bottom:1px solid #eee;font-weight:700;color:#0f3d6b;">Crop your photo</div>
+          <div style="padding:12px 12px 4px 12px;">
+            <div style="position:relative;width:100%;aspect-ratio:1;border-radius:12px;background:#111;overflow:hidden;touch-action:none;">
+              <canvas id="addCropCanvas" style="width:100%;height:100%;display:block;"></canvas>
+              <!-- circle guide overlay -->
+              <div style="position:absolute;inset:0;pointer-events:none;">
+                <svg viewBox="0 0 100 100" preserveAspectRatio="none" style="width:100%;height:100%;display:block;">
+                  <defs>
+                    <mask id="addCircleMask">
+                      <rect x="0" y="0" width="100" height="100" fill="white"></rect>
+                      <circle cx="50" cy="50" r="40" fill="black"></circle>
+                    </mask>
+                  </defs>
+                  <rect x="0" y="0" width="100" height="100" fill="rgba(0,0,0,.45)" mask="url(#addCircleMask)"></rect>
+                  <circle cx="50" cy="50" r="40" fill="none" stroke="white" stroke-width="1.5"></circle>
+                </svg>
+              </div>
+            </div>
+            <div style="display:flex;gap:8px;justify-content:center;margin-top:10px;flex-wrap:wrap;">
+              <button type="button" class="mini" id="addZoomOut">−</button>
+              <button type="button" class="mini" id="addZoomIn">+</button>
+              <button type="button" class="mini" id="addReset">Reset</button>
+            </div>
+          </div>
+          <div style="display:flex;gap:10px;justify-content:flex-end;padding:12px;border-top:1px solid #eee;">
+            <button type="button" class="popup-cancel-btn" id="addCropCancel">Cancel</button>
+            <button type="button" class="popup-action-btn" id="addCropUse">Use Photo</button>
+          </div>
+        </div>
+      </div>
+      <!-- ======= /Circular Cropper Modal ======= -->
+
       <div class="popup-btn-row">
         <button type="button" class="popup-cancel-btn">Cancel</button>
         <button type="submit" class="popup-action-btn">Add</button>
@@ -1089,10 +1125,11 @@ function showAddStudentPopup() {
     const father = e.target.fatherName.value.trim();
     const roll = parseInt(e.target.rollNo.value.trim(), 10);
     const parentPhone = e.target.parentPhone.value.replace(/\D/g, '');
-if (!name || !father || isNaN(roll) || parentPhone.length < 10 || parentPhone.length > 12) {
-  alert('Please enter a 10–12 digit parent phone number (digits only).');
-  return;
-}
+    if (!name || !father || isNaN(roll) || parentPhone.length < 10 || parentPhone.length > 12) {
+      alert('Please enter a 10–12 digit parent phone number (digits only).');
+      return;
+    }
+
     // 1) Create the student first (without photo)
     const docRef = await db.collection('years').doc(academicYear)
       .collection('classes').doc(currentClassId)
@@ -1100,27 +1137,23 @@ if (!name || !father || isNaN(roll) || parentPhone.length < 10 || parentPhone.le
       .collection('students').add({ name, father, roll, parentPhone });
 
     // 2) If a photo is selected, upload to Storage and save URL in Firestore
-if (window.__addPhotoBlob) {
-  try {
-    const path = `years/${academicYear}/classes/${currentClassId}/sections/${currentSectionId}/students/${docRef.id}/profile.jpg`;
-    const ref = storage.ref().child(path);
+    if (window.__addPhotoBlob) {
+      try {
+        const path = `years/${academicYear}/classes/${currentClassId}/sections/${currentSectionId}/students/${docRef.id}/profile.jpg`;
+        const ref = storage.ref().child(path);
 
-    // Upload the blob
-    await ref.put(window.__addPhotoBlob, {
-      contentType: 'image/jpeg',
-      cacheControl: 'public,max-age=31536000'
-    });
+        await ref.put(window.__addPhotoBlob, {
+          contentType: 'image/jpeg',
+          cacheControl: 'public,max-age=31536000'
+        });
 
-    // Get download URL
-    const url = await ref.getDownloadURL();
-
-    // Save the URL into Firestore document
-    await docRef.update({ photoUrl: url, photoPath: path });
-  } catch (err) {
-    console.error('Photo upload failed:', err);
-    alert('Student saved, but photo upload failed.');
-  }
-}
+        const url = await ref.getDownloadURL();
+        await docRef.update({ photoUrl: url, photoPath: path });
+      } catch (err) {
+        console.error('Photo upload failed:', err);
+        alert('Student saved, but photo upload failed.');
+      }
+    }
     closePopup();
     renderStudentList();
   });
@@ -1142,12 +1175,165 @@ if (window.__addPhotoBlob) {
     btnRem.style.display = 'inline-block';
   }
 
+  // === CROPPER STATE ===
+  let addCrop = {
+    img: null, imgW: 0, imgH: 0,
+    canvas: null, ctx: null,
+    scale: 1, minScale: 1, maxScale: 10,
+    offX: 0, offY: 0,
+    startX: 0, startY: 0, dragging: false
+  };
+
+  function openAddCropper(file) {
+    const overlay = document.getElementById('addCropperOverlay');
+    const canvas = document.getElementById('addCropCanvas');
+    const ctx = canvas.getContext('2d');
+    addCrop.canvas = canvas;
+    addCrop.ctx = ctx;
+
+    // Size the backing store to square
+    const box = canvas.parentElement.getBoundingClientRect();
+    canvas.width = Math.floor(box.width);
+    canvas.height = Math.floor(box.width);
+
+    const img = new Image();
+    img.onload = () => {
+      addCrop.img = img;
+      addCrop.imgW = img.naturalWidth;
+      addCrop.imgH = img.naturalHeight;
+
+      // Fit-center and compute minScale so circle is fully covered
+      const r = Math.min(canvas.width, canvas.height) * 0.40; // circle radius in px (matches SVG r=40%)
+      const needSize = r * 2 * 1.02; // small buffer
+      const scaleX = needSize / img.naturalWidth;
+      const scaleY = needSize / img.naturalHeight;
+      addCrop.minScale = Math.max(scaleX, scaleY);
+      addCrop.scale = Math.max(addCrop.minScale, 1);
+      addCrop.maxScale = Math.max(addCrop.scale * 8, 8);
+
+      addCrop.offX = canvas.width / 2;
+      addCrop.offY = canvas.height / 2;
+
+      drawAddCropper();
+      overlay.style.display = 'block';
+    };
+    img.onerror = () => alert('Could not load image.');
+    // EXIF-rotate is skipped here; if you use it elsewhere, plug it in before onload.
+    img.src = URL.createObjectURL(file);
+
+    // Events
+    canvas.onpointerdown = (e) => {
+      addCrop.dragging = true;
+      addCrop.startX = e.clientX;
+      addCrop.startY = e.clientY;
+      canvas.setPointerCapture(e.pointerId);
+    };
+    canvas.onpointermove = (e) => {
+      if (!addCrop.dragging) return;
+      const dx = e.clientX - addCrop.startX;
+      const dy = e.clientY - addCrop.startY;
+      addCrop.startX = e.clientX;
+      addCrop.startY = e.clientY;
+      addCrop.offX += dx;
+      addCrop.offY += dy;
+      drawAddCropper();
+    };
+    canvas.onpointerup = (e) => {
+      addCrop.dragging = false;
+      canvas.releasePointerCapture(e.pointerId);
+    };
+    canvas.onwheel = (e) => {
+      e.preventDefault();
+      const delta = e.deltaY < 0 ? 1.06 : 0.94;
+      const prevScale = addCrop.scale;
+      let next = prevScale * delta;
+      next = Math.min(Math.max(next, addCrop.minScale), addCrop.maxScale);
+
+      // Zoom around cursor
+      const rect = canvas.getBoundingClientRect();
+      const cx = e.clientX - rect.left;
+      const cy = e.clientY - rect.top;
+      const k = next / prevScale;
+      addCrop.offX = cx - (cx - addCrop.offX) * k;
+      addCrop.offY = cy - (cy - addCrop.offY) * k;
+
+      addCrop.scale = next;
+      drawAddCropper();
+    }, { passive: false };
+
+    document.getElementById('addZoomIn').onclick = () => {
+      addCrop.scale = Math.min(addCrop.scale * 1.1, addCrop.maxScale);
+      drawAddCropper();
+    };
+    document.getElementById('addZoomOut').onclick = () => {
+      addCrop.scale = Math.max(addCrop.scale / 1.1, addCrop.minScale);
+      drawAddCropper();
+    };
+    document.getElementById('addReset').onclick = () => {
+      addCrop.scale = Math.max(addCrop.minScale, 1);
+      addCrop.offX = canvas.width / 2;
+      addCrop.offY = canvas.height / 2;
+      drawAddCropper();
+    };
+    document.getElementById('addCropCancel').onclick = () => {
+      overlay.style.display = 'none';
+      // no change
+    };
+    document.getElementById('addCropUse').onclick = async () => {
+      // Export to 512x512 square with circular crop painted on white
+      const outSize = 512;
+      const out = document.createElement('canvas');
+      out.width = outSize; out.height = outSize;
+      const octx = out.getContext('2d');
+      octx.fillStyle = '#ffffff';
+      octx.fillRect(0,0,outSize,outSize);
+
+      const circleR = outSize * 0.40; // same ratio as preview
+      const cx = outSize / 2, cy = outSize / 2;
+
+      octx.save();
+      octx.beginPath();
+      octx.arc(cx, cy, circleR, 0, Math.PI * 2);
+      octx.closePath();
+      octx.clip();
+
+      // Map preview transform to output canvas
+      const scaleRatio = addCrop.scale * (outSize / canvas.width);
+      const dx = (addCrop.offX - canvas.width / 2) * (outSize / canvas.width);
+      const dy = (addCrop.offY - canvas.height / 2) * (outSize / canvas.height);
+
+      octx.setTransform(scaleRatio, 0, 0, scaleRatio, cx + dx, cy + dy);
+      octx.drawImage(addCrop.img, -addCrop.imgW / 2, -addCrop.imgH / 2);
+      octx.restore();
+
+      // Compress to JPEG
+      const dataUrl = out.toDataURL('image/jpeg', 0.85);
+      const blob = await (await fetch(dataUrl)).blob();
+
+      window.__addPhotoBlob = blob;
+      showPreviewFromDataUrl(dataUrl);
+
+      document.getElementById('addCropperOverlay').style.display = 'none';
+    };
+  }
+
+  function drawAddCropper() {
+    const { ctx, canvas, img, imgW, imgH, scale, offX, offY } = addCrop;
+    if (!img) return;
+    ctx.setTransform(1,0,0,1,0,0);
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    ctx.fillStyle = '#111';
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+
+    ctx.setTransform(scale, 0, 0, scale, offX, offY);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(img, -imgW/2, -imgH/2);
+  }
+
   async function handleFile(file){
     if (!file) return;
-    // crop + resize + compress to jpeg (512x512)
-    const { blob, dataUrl } = await processImageFile(file, 512, 0.85);
-    window.__addPhotoBlob = blob;
-    showPreviewFromDataUrl(dataUrl);
+    openAddCropper(file);
   }
 
   btnCam.onclick       = () => inputCam.click();
@@ -1201,6 +1387,40 @@ async function showEditStudentPopup(studentId) {
         </div>
       </div>
 
+      <!-- ======= Circular Cropper Modal (hidden by default) ======= -->
+      <div id="editCropperOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;">
+        <div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(92vw,520px);background:#fff;border-radius:16px;box-shadow:0 10px 40px rgba(0,0,0,.25);">
+          <div style="padding:14px 16px;border-bottom:1px solid #eee;font-weight:700;color:#0f3d6b;">Crop your photo</div>
+          <div style="padding:12px 12px 4px 12px;">
+            <div style="position:relative;width:100%;aspect-ratio:1;border-radius:12px;background:#111;overflow:hidden;touch-action:none;">
+              <canvas id="editCropCanvas" style="width:100%;height:100%;display:block;"></canvas>
+              <div style="position:absolute;inset:0;pointer-events:none;">
+                <svg viewBox="0 0 100 100" preserveAspectRatio="none" style="width:100%;height:100%;display:block;">
+                  <defs>
+                    <mask id="editCircleMask">
+                      <rect x="0" y="0" width="100" height="100" fill="white"></rect>
+                      <circle cx="50" cy="50" r="40" fill="black"></circle>
+                    </mask>
+                  </defs>
+                  <rect x="0" y="0" width="100" height="100" fill="rgba(0,0,0,.45)" mask="url(#editCircleMask)"></rect>
+                  <circle cx="50" cy="50" r="40" fill="none" stroke="white" stroke-width="1.5"></circle>
+                </svg>
+              </div>
+            </div>
+            <div style="display:flex;gap:8px;justify-content:center;margin-top:10px;flex-wrap:wrap;">
+              <button type="button" class="mini" id="editZoomOut">−</button>
+              <button type="button" class="mini" id="editZoomIn">+</button>
+              <button type="button" class="mini" id="editReset">Reset</button>
+            </div>
+          </div>
+          <div style="display:flex;gap:10px;justify-content:flex-end;padding:12px;border-top:1px solid #eee;">
+            <button type="button" class="popup-cancel-btn" id="editCropCancel">Cancel</button>
+            <button type="button" class="popup-action-btn" id="editCropUse">Use Photo</button>
+          </div>
+        </div>
+      </div>
+      <!-- ======= /Circular Cropper Modal ======= -->
+
       <div class="popup-btn-row">
         <button type="button" class="popup-cancel-btn">Cancel</button>
         <button type="submit" class="popup-action-btn">Save</button>
@@ -1213,59 +1433,53 @@ async function showEditStudentPopup(studentId) {
     const father = e.target.fatherName.value.trim();
     const roll = parseInt(e.target.rollNo.value.trim(), 10);
     const parentPhone = e.target.parentPhone.value.replace(/\D/g, ''); // digits only
-if (!name || !father || isNaN(roll) || parentPhone.length < 10 || parentPhone.length > 12) {
-  alert('Please enter a 10–12 digit parent phone number (digits only).');
-  return;
-}
+    if (!name || !father || isNaN(roll) || parentPhone.length < 10 || parentPhone.length > 12) {
+      alert('Please enter a 10–12 digit parent phone number (digits only).');
+      return;
+    }
 
-try {
-  // Save basic fields first
-  await docRef.update({ name, father, roll, parentPhone });
-} catch (err) {
-  console.error(err);
-  alert('Failed to save. ' + (err && err.message ? err.message : ''));
-  return;
-}
+    try {
+      await docRef.update({ name, father, roll, parentPhone });
+    } catch (err) {
+      console.error(err);
+      alert('Failed to save. ' + (err && err.message ? err.message : ''));
+      return;
+    }
 
     // If user chose to REMOVE photo (and did not upload a new one)
-   // If user chose to REMOVE photo (and did not upload a new one)
-if (window.__editRemovePhoto === true && !window.__editPhotoBlob) {
-  try {
-    if (stu.photoPath) {
-      await storage.ref().child(stu.photoPath).delete().catch(() => {});
+    if (window.__editRemovePhoto === true && !window.__editPhotoBlob) {
+      try {
+        if (stu.photoPath) {
+          await storage.ref().child(stu.photoPath).delete().catch(() => {});
+        }
+        await docRef.update({
+          photoUrl: firebase.firestore.FieldValue.delete(),
+          photoPath: firebase.firestore.FieldValue.delete()
+        });
+      } catch (err) {
+        console.error('Remove photo failed:', err);
+        alert('Details saved, but photo removal failed.');
+      }
     }
-    await docRef.update({
-      photoUrl: firebase.firestore.FieldValue.delete(),
-      photoPath: firebase.firestore.FieldValue.delete()
-    });
-  } catch (err) {
-    console.error('Remove photo failed:', err);
-    alert('Details saved, but photo removal failed.');
-  }
-}
 
     // If user uploaded/took a new photo
-if (window.__editPhotoBlob) {
-  try {
-    const path = `years/${academicYear}/classes/${currentClassId}/sections/${currentSectionId}/students/${studentId}/profile.jpg`;
-    const sref = storage.ref().child(path);
+    if (window.__editPhotoBlob) {
+      try {
+        const path = `years/${academicYear}/classes/${currentClassId}/sections/${currentSectionId}/students/${studentId}/profile.jpg`;
+        const sref = storage.ref().child(path);
 
-    // Upload the blob
-    await sref.put(window.__editPhotoBlob, {
-      contentType: 'image/jpeg',
-      cacheControl: 'public,max-age=31536000'
-    });
+        await sref.put(window.__editPhotoBlob, {
+          contentType: 'image/jpeg',
+          cacheControl: 'public,max-age=31536000'
+        });
 
-    // Get download URL
-    const url = await sref.getDownloadURL();
-
-    // Save the URL into Firestore
-    await docRef.update({ photoUrl: url, photoPath: path });
-  } catch (err) {
-    console.error('Edit photo error:', err);
-    alert('Details updated, but photo change failed. You can try again.');
-  }
-}
+        const url = await sref.getDownloadURL();
+        await docRef.update({ photoUrl: url, photoPath: path });
+      } catch (err) {
+        console.error('Edit photo error:', err);
+        alert('Details updated, but photo change failed. You can try again.');
+      }
+    }
 
     closePopup();
     renderStudentList();
@@ -1297,17 +1511,160 @@ if (window.__editPhotoBlob) {
   function showInitials() {
     prev.textContent = getInitials(stu.name || '');
   }
-
-  // Initialize preview
   if (stu.photoUrl) { showPreviewFromUrl(stu.photoUrl); }
+
+  // === CROPPER STATE ===
+  let editCrop = {
+    img: null, imgW: 0, imgH: 0,
+    canvas: null, ctx: null,
+    scale: 1, minScale: 1, maxScale: 10,
+    offX: 0, offY: 0,
+    startX: 0, startY: 0, dragging: false
+  };
+
+  function openEditCropper(file) {
+    const overlay = document.getElementById('editCropperOverlay');
+    const canvas = document.getElementById('editCropCanvas');
+    const ctx = canvas.getContext('2d');
+    editCrop.canvas = canvas;
+    editCrop.ctx = ctx;
+
+    const box = canvas.parentElement.getBoundingClientRect();
+    canvas.width = Math.floor(box.width);
+    canvas.height = Math.floor(box.width);
+
+    const img = new Image();
+    img.onload = () => {
+      editCrop.img = img;
+      editCrop.imgW = img.naturalWidth;
+      editCrop.imgH = img.naturalHeight;
+
+      const r = Math.min(canvas.width, canvas.height) * 0.40;
+      const needSize = r * 2 * 1.02;
+      const scaleX = needSize / img.naturalWidth;
+      const scaleY = needSize / img.naturalHeight;
+      editCrop.minScale = Math.max(scaleX, scaleY);
+      editCrop.scale = Math.max(editCrop.minScale, 1);
+      editCrop.maxScale = Math.max(editCrop.scale * 8, 8);
+
+      editCrop.offX = canvas.width / 2;
+      editCrop.offY = canvas.height / 2;
+
+      drawEditCropper();
+      overlay.style.display = 'block';
+    };
+    img.onerror = () => alert('Could not load image.');
+    img.src = URL.createObjectURL(file);
+
+    canvas.onpointerdown = (e) => {
+      editCrop.dragging = true;
+      editCrop.startX = e.clientX;
+      editCrop.startY = e.clientY;
+      canvas.setPointerCapture(e.pointerId);
+    };
+    canvas.onpointermove = (e) => {
+      if (!editCrop.dragging) return;
+      const dx = e.clientX - editCrop.startX;
+      const dy = e.clientY - editCrop.startY;
+      editCrop.startX = e.clientX;
+      editCrop.startY = e.clientY;
+      editCrop.offX += dx;
+      editCrop.offY += dy;
+      drawEditCropper();
+    };
+    canvas.onpointerup = (e) => {
+      editCrop.dragging = false;
+      canvas.releasePointerCapture(e.pointerId);
+    };
+    canvas.onwheel = (e) => {
+      e.preventDefault();
+      const delta = e.deltaY < 0 ? 1.06 : 0.94;
+      const prevScale = editCrop.scale;
+      let next = prevScale * delta;
+      next = Math.min(Math.max(next, editCrop.minScale), editCrop.maxScale);
+
+      const rect = canvas.getBoundingClientRect();
+      const cx = e.clientX - rect.left;
+      const cy = e.clientY - rect.top;
+      const k = next / prevScale;
+      editCrop.offX = cx - (cx - editCrop.offX) * k;
+      editCrop.offY = cy - (cy - editCrop.offY) * k;
+
+      editCrop.scale = next;
+      drawEditCropper();
+    }, { passive: false };
+
+    document.getElementById('editZoomIn').onclick = () => {
+      editCrop.scale = Math.min(editCrop.scale * 1.1, editCrop.maxScale);
+      drawEditCropper();
+    };
+    document.getElementById('editZoomOut').onclick = () => {
+      editCrop.scale = Math.max(editCrop.scale / 1.1, editCrop.minScale);
+      drawEditCropper();
+    };
+    document.getElementById('editReset').onclick = () => {
+      editCrop.scale = Math.max(editCrop.minScale, 1);
+      editCrop.offX = canvas.width / 2;
+      editCrop.offY = canvas.height / 2;
+      drawEditCropper();
+    };
+    document.getElementById('editCropCancel').onclick = () => {
+      overlay.style.display = 'none';
+    };
+    document.getElementById('editCropUse').onclick = async () => {
+      const outSize = 512;
+      const out = document.createElement('canvas');
+      out.width = outSize; out.height = outSize;
+      const octx = out.getContext('2d');
+      octx.fillStyle = '#ffffff';
+      octx.fillRect(0,0,outSize,outSize);
+
+      const circleR = outSize * 0.40;
+      const cx = outSize / 2, cy = outSize / 2;
+
+      octx.save();
+      octx.beginPath();
+      octx.arc(cx, cy, circleR, 0, Math.PI * 2);
+      octx.closePath();
+      octx.clip();
+
+      const scaleRatio = editCrop.scale * (outSize / canvas.width);
+      const dx = (editCrop.offX - canvas.width / 2) * (outSize / canvas.width);
+      const dy = (editCrop.offY - canvas.height / 2) * (outSize / canvas.height);
+
+      octx.setTransform(scaleRatio, 0, 0, scaleRatio, cx + dx, cy + dy);
+      octx.drawImage(editCrop.img, -editCrop.imgW / 2, -editCrop.imgH / 2);
+      octx.restore();
+
+      const dataUrl = out.toDataURL('image/jpeg', 0.85);
+      const blob = await (await fetch(dataUrl)).blob();
+
+      window.__editPhotoBlob = blob;
+      window.__editRemovePhoto = false;
+      showPreviewFromDataUrl(dataUrl);
+      if (btnRem) btnRem.style.display = 'inline-block';
+
+      document.getElementById('editCropperOverlay').style.display = 'none';
+    };
+  }
+
+  function drawEditCropper() {
+    const { ctx, canvas, img, imgW, imgH, scale, offX, offY } = editCrop;
+    if (!img) return;
+    ctx.setTransform(1,0,0,1,0,0);
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    ctx.fillStyle = '#111';
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+
+    ctx.setTransform(scale, 0, 0, scale, offX, offY);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(img, -imgW/2, -imgH/2);
+  }
 
   async function handleFile(file) {
     if (!file) return;
-    const { blob, dataUrl } = await processImageFile(file, 512, 0.85);
-    window.__editPhotoBlob = blob;
-    window.__editRemovePhoto = false; // override remove if new picked
-    showPreviewFromDataUrl(dataUrl);
-    if (btnRem) btnRem.style.display = 'inline-block';
+    openEditCropper(file);
   }
 
   btnCam.onclick      = () => inputCam.click();
@@ -4817,6 +5174,7 @@ if (marksFileInput) {
 </script>
 </body>
 </html>
+
 
 
 
