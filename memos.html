@@ -1165,9 +1165,9 @@ if (year && classId && sectionId) {
         const marksDoc = await firstStu.ref.collection('marks').doc(examSel.value).get();
         const marksData = marksDoc.exists ? (marksDoc.data() || {}) : {};
 
-       // If examObj.subjects existed, map against them; else derive subjects from marks keys (excluding __subs).
-const rootKeys = Object.keys(marksData).filter(k => k !== '__subs');
-if (subjects.length === 0) {
+       // If examObj.subjects existed, map against them; else derive subjects from marks keys (exclude meta like __subs / __subs.* / __*)
+      const rootKeys = Object.keys(marksData).filter(k => !/^__subs(\b|[.\[])/i.test(k) && !/^__/.test(k));
+      if (subjects.length === 0) {
   subjects = rootKeys.map(sn => ({
     name: sn,
     subtopics: (examWideSubs && examWideSubs.length)
@@ -2683,10 +2683,9 @@ function _extractSubjectTotalsFromMarks(marksObj, structure) {
   const subsRoot = (marksObj && typeof marksObj.__subs === 'object') ? marksObj.__subs : {};
 
   const baseSubjects = (structure?.subjects?.length
-    ? structure.subjects.map(s => s.name)
-    : Object.keys(marksObj).filter(k => k !== '__subs')
-  );
-
+  ? structure.subjects.map(s => s.name)
+  : Object.keys(marksObj).filter(k => !/^__subs(\b|[.\[])/i.test(k) && !/^__/.test(k))
+);
   for (const subjName of baseSubjects) {
     // locate values for this subject
     const keyRoot = Object.keys(marksObj).find(k => nkey(k) === nkey(subjName));
@@ -3051,7 +3050,7 @@ const toNum  = v => (v === '' || v == null ? null : (Number.isFinite(+v) ? +v : 
     const subjName = subjDef.name || '';
     const keyNorm = nkey(subjName);
     const recHit  = recByName.get(keyNorm);
-    const subjKey = Object.keys(marks).find(k => nkey(k) === nkey(subjName));
+    const subjKey = Object.keys(marks).find(k => !/^__/.test(k) && nkey(k) === nkey(subjName));
     const subjVal = subjKey ? marks[subjKey] : marks[subjName];
 
     // Prepare subtopic list from structure
@@ -3356,8 +3355,7 @@ async function buildBackDataForStudent(stu) {
         // subject exists in schema → look for student's values
         const subsRoot = (mobj && typeof mobj.__subs === 'object') ? mobj.__subs : null;
         const subsKey  = subsRoot ? Object.keys(subsRoot).find(k => nkey(k) === keyName) : null;
-        const subjKey  = Object.keys(mobj).find(k => k !== '__subs' && nkey(k) === keyName);
-
+        const subjKey  = Object.keys(mobj).find(k => !/^__/.test(k) && nkey(k) === keyName);
         if (subsKey && typeof subsRoot[subsKey] === 'object') {
           // sum numeric parts; if none, AB
           let sum = 0, sawNum = false;
@@ -3863,6 +3861,7 @@ page.render({ canvasContext: ctx, viewport });
 </script>
 </body>
 </html>
+
 
 
 
