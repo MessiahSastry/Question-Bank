@@ -1103,56 +1103,57 @@ function isFailPct(pct, scale = getActiveScale()) {
  * }
  */
 async function buildExamStructure(examObj, { year, classId, sectionId } = {}) {
-  __examHasSubtopics = false;
+  // PURE VERSION: does NOT mutate __examStructure or __examHasSubtopics.
+  // Returns: { subjects: [...], hasSubtopics: boolean }
 
+  let hasSubtopics = false;
   if (!examObj) return { subjects: [], hasSubtopics: false };
 
-    // 1) Start from explicit exam definition if available
+  // 1) Start from explicit exam definition if available
   let subjects = [];
 
-  // NEW: allow exam-wide subtopics at root of exam doc
+  // Exam-wide subtopics at root (schema shared by subjects that don't define their own)
   const examWideSubs = Array.isArray(examObj?.subtopics)
     ? examObj.subtopics.map(t => ({
         name: t?.name || '',
         max: (typeof t?.max === 'number' && !isNaN(t.max)) ? t.max : null
       }))
     : null;
-  if (examWideSubs && examWideSubs.length) __examHasSubtopics = true;
+  if (examWideSubs && examWideSubs.length) hasSubtopics = true;
 
   if (Array.isArray(examObj.subjects)) {
     subjects = examObj.subjects.map(s => {
-  const name = s?.name || '';
-  let subtopics = Array.isArray(s?.subtopics) ? s.subtopics.map(t => ({
-    name: t?.name || '',
-    max: (typeof t?.max === 'number' && !isNaN(t.max)) ? t.max : null
-  })) : [];
+      const name = s?.name || '';
+      let subtopics = Array.isArray(s?.subtopics)
+        ? s.subtopics.map(t => ({
+            name: t?.name || '',
+            max: (typeof t?.max === 'number' && !isNaN(t.max)) ? t.max : null
+          }))
+        : [];
 
-  // subjectMax: prefer explicit; else sum known subtopic max
-  let subjectMax = (typeof s?.max === 'number' && !isNaN(s.max)) ? s.max : null;
-  if (subjectMax == null && subtopics.length) {
-    const sum = subtopics.reduce((acc, t) => acc + (typeof t.max === 'number' ? t.max : 0), 0);
-    subjectMax = (sum > 0 ? sum : null);
+      // subjectMax: prefer explicit; else sum known subtopic max
+      let subjectMax = (typeof s?.max === 'number' && !isNaN(s.max)) ? s.max : null;
+      if (subjectMax == null && subtopics.length) {
+        const sum = subtopics.reduce((acc, t) => acc + (typeof t.max === 'number' ? t.max : 0), 0);
+        subjectMax = (sum > 0 ? sum : null);
+      }
+
+      // If subject has no explicit subtopics but exam has an exam-wide schema, use it
+      if ((!subtopics || subtopics.length === 0) && examWideSubs && examWideSubs.length) {
+        subtopics = examWideSubs.map(t => ({ name: t.name, max: t.max }));
+      }
+      if (Array.isArray(subtopics) && subtopics.length) hasSubtopics = true;
+
+      const subtopicMode = String(s?.subtopicMode || s?.subtopicsMode || s?.mode || '')
+        .trim().toLowerCase();
+
+      return { name, subtopics, subjectMax, subtopicMode, max: s?.max };
+    });
   }
 
-  // If subject has no explicit subtopics but exam has an exam-wide schema, use it
-  if ((!subtopics || subtopics.length === 0) && examWideSubs && examWideSubs.length) {
-    subtopics = examWideSubs.map(t => ({ name: t.name, max: t.max }));
-  }
-  if (Array.isArray(subtopics) && subtopics.length) __examHasSubtopics = true;
-
-  // carry subtopic mode through
-  const subtopicMode = String(s?.subtopicMode || s?.subtopicsMode || s?.mode || '')
-    .trim().toLowerCase();
-
-  return { name, subtopics, subjectMax, subtopicMode };
-});
-  }
-
-  // 2) If no subjects (or missing subtopics) and Firestore is available, try a light inference
-  //    (We only look at the first student’s marks to infer consistent subtopic keys.)
+  // 2) If subjects missing / missing subtopics, try a light inference from first student's marks
   const needsInference = subjects.length === 0 || subjects.some(s => s.subtopics.length === 0);
-// Always read first student's marks so we can merge any missing subjects
-if (year && classId && sectionId) {
+  if (needsInference && year && classId && sectionId) {
     try {
       const secRef = db.collection('years').doc(year)
         .collection('classes').doc(classId)
@@ -1165,99 +1166,87 @@ if (year && classId && sectionId) {
         const marksDoc = await firstStu.ref.collection('marks').doc(examSel.value).get();
         const marksData = marksDoc.exists ? (marksDoc.data() || {}) : {};
 
-       // If examObj.subjects existed, map against them; else derive subjects from marks keys (exclude meta like __subs / __subs.* / __*)
-      const rootKeys = Object.keys(marksData).filter(k => !/^__subs(\b|[.\[])/i.test(k) && !/^__/.test(k));
-      if (subjects.length === 0) {
-  subjects = rootKeys.map(sn => ({
-    name: sn,
-    subtopics: (examWideSubs && examWideSubs.length)
-      ? examWideSubs.map(t => ({ name: t.name, max: t.max }))
-      : [],
-    subjectMax: null
-  }));
-  if (examWideSubs && examWideSubs.length) __examHasSubtopics = true;
-} else {
-  // MERGE any missing subjects from marks into subjects[]
-  const existing = new Set(subjects.map(s => nkey(s.name)));
-  rootKeys.forEach(sn => {
-    if (!existing.has(nkey(sn))) {
-      subjects.push({
-        name: sn,
-        subtopics: (examWideSubs && examWideSubs.length)
-          ? examWideSubs.map(t => ({ name: t.name, max: t.max }))
-          : [],
-        subjectMax: null
-      });
-      if (examWideSubs && examWideSubs.length) __examHasSubtopics = true;
-    }
-  });
-}
+        // build/merge subject names from marks when needed (ignore __subs / __*)
+        const rootKeys = Object.keys(marksData).filter(k => !/^__subs(\b|[.\[])/i.test(k) && !/^__/.test(k));
+        if (subjects.length === 0) {
+          subjects = rootKeys.map(sn => ({
+            name: sn,
+            subtopics: (examWideSubs && examWideSubs.length)
+              ? examWideSubs.map(t => ({ name: t.name, max: t.max }))
+              : [],
+            subjectMax: null
+          }));
+          if (examWideSubs && examWideSubs.length) hasSubtopics = true;
+        } else {
+          const existing = new Set(subjects.map(s => nkey(s.name)));
+          rootKeys.forEach(sn => {
+            if (!existing.has(nkey(sn))) {
+              subjects.push({
+                name: sn,
+                subtopics: (examWideSubs && examWideSubs.length)
+                  ? examWideSubs.map(t => ({ name: t.name, max: t.max }))
+                  : [],
+                subjectMax: null
+              });
+              if (examWideSubs && examWideSubs.length) hasSubtopics = true;
+            }
+          });
+        }
 
-// Prefer subtopics from marksData.__subs[subject]; fallback to object-at-root heuristic
-const subsRoot = (marksData && typeof marksData.__subs === 'object') ? marksData.__subs : {};
+        // Prefer breakdown from __subs.<Subject>, else object-at-root heuristic
+        const subsRoot = (marksData && typeof marksData.__subs === 'object') ? marksData.__subs : {};
+        subjects = subjects.map(s => {
+          const subjName = s.name || '';
+          const subjKey  = Object.keys(marksData).find(k => nkey(k) === nkey(subjName));
+          const subjVal  = subjKey ? marksData[subjKey] : null;
 
-subjects = subjects.map(s => {
-  const subjName = s.name || '';
-  // exact/normalized match at root for totals
-  const subjKey = Object.keys(marksData).find(k => nkey(k) === nkey(subjName));
-  const subjVal = subjKey ? marksData[subjKey] : null;
+          const subsKey  = Object.keys(subsRoot).find(k => nkey(k) === nkey(subjName));
+          const subsObj  = subsKey ? subsRoot[subsKey] : null;
 
-  // exact/normalized match inside __subs for breakdown
-  const subsKey = Object.keys(subsRoot).find(k => nkey(k) === nkey(subjName));
-  const subsObj = subsKey ? subsRoot[subsKey] : null;
+          if (subsObj && typeof subsObj === 'object' && !Array.isArray(subsObj)) {
+            const inferred = Object.keys(subsObj).map(k => ({ name: k, max: null }));
+            if (inferred.length) {
+              hasSubtopics = true;
+              if (s.subtopics.length === 0) s.subtopics = inferred;
+              if (s.subjectMax == null) s.subjectMax = null;
+            }
+          } else if (subjVal && typeof subjVal === 'object' && !Array.isArray(subjVal)) {
+            const entries = Object.entries(subjVal);
+            const inferred = entries
+              .filter(([, v]) => (typeof v === 'number' || String(v).toUpperCase() === 'AB'))
+              .map(([k]) => ({ name: k, max: null }));
+            if (inferred.length) {
+              hasSubtopics = true;
+              if (s.subtopics.length === 0) s.subtopics = inferred;
+              if (s.subjectMax == null) s.subjectMax = null;
+            }
+          }
 
-  // Case 1: breakdown present under __subs.<Subject>
-  if (subsObj && typeof subsObj === 'object' && !Array.isArray(subsObj)) {
-    const inferred = Object.keys(subsObj).map(k => ({ name: k, max: null }));
-    if (inferred.length) {
-      __examHasSubtopics = true;
-      if (s.subtopics.length === 0) s.subtopics = inferred;
-      if (s.subjectMax == null) s.subjectMax = null; // unknown without explicit max
-    }
-  }
-  // Case 2: fallback heuristic: object stored at root under subject key
-  else if (subjVal && typeof subjVal === 'object' && !Array.isArray(subjVal)) {
-    const entries = Object.entries(subjVal);
-    const inferred = entries
-      .filter(([k, v]) => (typeof v === 'number' || String(v).toUpperCase() === 'AB'))
-      .map(([k]) => ({ name: k, max: null }));
-    if (inferred.length) {
-      __examHasSubtopics = true;
-      if (s.subtopics.length === 0) s.subtopics = inferred;
-      if (s.subjectMax == null) s.subjectMax = null;
-    }
-  }
-
-  // ✅ IMPORTANT: if still missing, attach exam-wide schema even when no marks exist
-  if ((!s.subtopics || s.subtopics.length === 0) && examWideSubs && examWideSubs.length) {
-    s.subtopics = examWideSubs.map(t => ({ name: t.name, max: t.max }));
-    __examHasSubtopics = true;
-  }
-
-  return s;
-});
-
-
+          // still missing? attach exam-wide schema if present
+          if ((!s.subtopics || s.subtopics.length === 0) && examWideSubs && examWideSubs.length) {
+            s.subtopics = examWideSubs.map(t => ({ name: t.name, max: t.max }));
+            hasSubtopics = true;
+          }
+          return s;
+        });
       }
     } catch (e) {
-      console.warn('Exam structure inference skipped:', e);
+      console.warn('Exam structure inference skipped (pure):', e);
     }
   }
 
- // 3) Finalize: ensure stable arrays/fields (no pre-expansion here)
-const normSubjects = (subjects || []).map(s => ({
-  ...s,
-  name: s?.name || '',
-  subtopics: Array.isArray(s?.subtopics) ? s.subtopics : [],
-  // prefer explicit max; else subjectMax; else null
-  max: (Number.isFinite(+s?.max) ? +s.max
-      : (Number.isFinite(+s?.subjectMax) ? +s.subjectMax : null)),
-  // keep the mode field normalized so later code can expand rows
-  subtopicMode: _modeOf(s)
-}));
+  // 3) Finalize: ensure stable arrays/fields
+  const normSubjects = (subjects || []).map(s => ({
+    ...s,
+    name: s?.name || '',
+    subtopics: Array.isArray(s?.subtopics) ? s.subtopics : [],
+    max: (Number.isFinite(+s?.max) ? +s.max
+        : (Number.isFinite(+s?.subjectMax) ? +s.subjectMax : null)),
+    subtopicMode: String(s?.subtopicMode || s?.subtopicsMode || s?.mode || '')
+      .trim().toLowerCase()
+  }));
 
-__examStructure = { subjects: normSubjects, hasSubtopics: !!__examHasSubtopics };
-return __examStructure;
+  return { subjects: normSubjects, hasSubtopics: !!hasSubtopics };
 }
 
 /** Get or rebuild the structure for current selects */
@@ -1276,8 +1265,7 @@ async function getExamStructure() {
   }
   const built = await buildExamStructure(examObj, { year, classId, sectionId });
   __examStructCache.set(key, built);
-  __examStructure = built;
-  __examHasSubtopics = !!built.hasSubtopics;
+  /* no global mutation here */
   return built;
 }
 // Get the exam structure for a specific examId (used by back page)
@@ -4021,6 +4009,7 @@ page.render({ canvasContext: ctx, viewport });
 </script>
 </body>
 </html>
+
 
 
 
