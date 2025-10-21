@@ -38,11 +38,8 @@ window.textbooks = {
     "Math 1": [
       "Knowing Our Numbers",
       "Whole Numbers",
-      "Playing with Numbers",
-      "Basic Geometrical Ideas",
-      "Understanding Elementary Shapes",
-      "Integers"
-    ],
+      "Basic Geometrical Ideas"
+        ],
     "Math 1 IIT": [
       "Tables, Squares and Cubes",
       "Knowing Our Numbers",
@@ -57,6 +54,9 @@ window.textbooks = {
       "Simple Intrest, Time - Distance, Time - Work"
     ],
     "Math 2": [
+      "Playing with Numbers",
+      "Understanding Elementary Shapes",
+      "Integers",
       "Fractions",
       "Decimals",
       "Data Handling",
@@ -711,6 +711,7 @@ window.textbooks = {
     ]
   }
 };
+
 
 
 
