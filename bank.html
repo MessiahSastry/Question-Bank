@@ -74,6 +74,9 @@
     .custom-dropdown.open .dropdown-options { display: block; }
     .dropdown-options div[data-value] { padding: 10px 15px; cursor: pointer; }
     .dropdown-options div[data-value]:hover { background: #e0eaff; }
+    /* Multi-select panel refinements */
+.dropdown-options label:hover { background:#f4f8ff; }
+.dropdown-options input[type="checkbox"] { width:16px; height:16px; accent-color:#1762a7; }
 
     .question-item {
       background: #fff; border: 1.5px solid #e0eaff; border-radius: 16px;
@@ -266,7 +269,7 @@
       },
       questionTypes: ["MCQ (Single)", "MCQ (Multiple)", "Descriptive"],
       marks: Array.from({ length: 10 }, (_, i) => i + 1),
-      levels: ["Level 1", "Level 2", "Level 3", "Mixed"]
+      levels: ["Level 1", "Level 2", "Level 3"]
     };
 
     document.addEventListener('DOMContentLoaded', () => {
@@ -301,9 +304,13 @@
 
       const classVal = document.getElementById('class-value').value || '';
       const subjectVal = document.getElementById('subject-value').value || '';
-      const chapterVal = document.getElementById('chapter-value').value || '';
-      const qtypeFilterVal = (document.getElementById('qtype-value')?.value || '').trim();
+     const selChaptersForHeader = getMultiSelected('chapter');
+const singleChapter = (selChaptersForHeader.length === 1) ? selChaptersForHeader[0] : '';
+const showChapterInBox = !!singleChapter;
 
+// Use actual selected types to drive layout later
+const selectedQtypes = getMultiSelected('qtype'); // [] means All
+const qtypeFilterVal = (selectedQtypes.length === 0) ? 'All' : selectedQtypes.join(', ');
 
       // Wrapper for PDF content
      const printable = document.createElement('div');
@@ -343,10 +350,10 @@ printable.prepend(avoidCSS);
           <img src="schoollogo2.png" style="height:72px;width:auto;margin-left:8px;" onerror="this.style.display='none';">
         </div>
         <div style="margin:22px auto 18px auto; border:2.5px solid #bdd7f6; border-radius:16px; padding:20px 40px 14px 40px; background:#fafdff; box-sizing:border-box; max-width:510px;">
-          ${chapterVal ? `
-            <div style="font-size:1.24em;font-weight:800;letter-spacing:0.01em;text-align:center;margin-bottom:5px;">
-              ${chapterVal.toUpperCase()}
-            </div>` : ``}
+         ${showChapterInBox ? `
+        <div style="font-size:1.24em;font-weight:800;letter-spacing:0.01em;text-align:center;margin-bottom:5px;">
+          ${singleChapter.toUpperCase()}
+        </div>` : ``}
           <div style="font-size:1.14em;font-weight:700;text-align:center;">
             WORKSHEET${(qtypeFilterVal && qtypeFilterVal !== 'All') ? ` (${qtypeFilterVal})` : ``}
           </div>
@@ -420,199 +427,265 @@ printable.prepend(avoidCSS);
       // For MathJax rendering
       let mathElements = [];
 
-     // Group questions by level → type when Question Type = All
-        const levelsOrder = ['Level 1', 'Level 2', 'Level 3'];
-        const typesOrder  = ['MCQ (Single)', 'MCQ (Multiple)', 'Descriptive'];
-        
-        // buckets[level][type] = array of nodes
-        const buckets = {
-          'Level 1': { 'MCQ (Single)': [], 'MCQ (Multiple)': [], 'Descriptive': [] },
-          'Level 2': { 'MCQ (Single)': [], 'MCQ (Multiple)': [], 'Descriptive': [] },
-          'Level 3': { 'MCQ (Single)': [], 'MCQ (Multiple)': [], 'Descriptive': [] },
-          '':        { 'MCQ (Single)': [], 'MCQ (Multiple)': [], 'Descriptive': [] },
-        };
-        
-        nodes.forEach(node => {
-          const lvl  = (node.getAttribute('data-level') || '').trim();
-          const type = (node.getAttribute('data-type')  || 'Descriptive').trim();
-          const safeLvl  = buckets[lvl] ? lvl : '';
-          const safeType = typesOrder.includes(type) ? type : 'Descriptive';
-          buckets[safeLvl][safeType].push(node);
-        });
-        
-        let qCounter = 1;
-        
-        // helper to build one question's HTML (same as before, but uses qCounter)
-        function buildQuestionHTML(item) {
-        const clone = item.cloneNode(true);
-        clone.querySelectorAll('.question-img-btn, .delete-img-btn, .question-image-input').forEach(btn => btn.remove());
+     // === Chapter-wise rendering rules ===
+// Single chapter → box shows chapter; flat render
+// 2+ chapters → NO chapter names in the box; below, per-chapter sections
 
-        // IMAGE HANDLING
-        let imgHtml = '';
-        const imgTag = clone.querySelector('img');
-        if (imgTag && imgTag.src) {
-          imgHtml = `
-            <div class="question-img-block" style="margin:10px 0 4px 0;">
-              <img class="question-img" src="${imgTag.src}" style="max-width:170px;max-height:110px;border:1px solid #eee;border-radius:5px;display:block;"/>
-            </div>`;
-        }
+const levelsOrder = ['Level 1', 'Level 2', 'Level 3'];
+const marksOrder  = [2, 4, 8];
+const typesOrder  = ['MCQ (Single)', 'MCQ (Multiple)', 'Descriptive'];
 
-        // UNIVERSAL QUESTION TEXT + OPTIONS EXTRACTION
-        const textDiv = clone.querySelector('.question-text');
-        let questionLine = '';
-        let options = [];
-        if (textDiv) {
-          let html = textDiv.innerHTML.replace(/<img[^>]*>/gi, '');
-          let parts = html.split(/<br\s*\/?>|<\/div>|<div[^>]*>/gi)
-            .map(s => s.replace(/&nbsp;/g, ' ').trim())
-            .filter(Boolean);
+let qCounter = 1;
 
-          parts = parts.filter(line => line && !/^<br\s*\/?>$/i.test(line));
+// helper to build one question's HTML (kept from your original)
+function buildQuestionHTML(item) {
+  const clone = item.cloneNode(true);
+  clone.querySelectorAll('.question-img-btn, .delete-img-btn, .question-image-input').forEach(btn => btn.remove());
 
-          if (parts.length > 0) {
-            questionLine = parts[0];
-            let optionLines = [];
-            for (let i = 1; i < parts.length; i++) {
-              let line = parts[i];
-              let inlineOpts = line.match(/([A-D][).][^A-D]*)/g);
-              if (inlineOpts && inlineOpts.length >= 2) {
-                optionLines.push(...inlineOpts.map(opt => opt.trim()));
-              } else if (line) {
-                optionLines.push(line);
-              }
-            }
-            if (optionLines.length === 4) {
-              options = optionLines.map((opt, i) =>
-                /^[A-D][).]/.test(opt) ? opt : String.fromCharCode(65 + i) + ") " + opt
-              );
-            } else {
-              options = optionLines;
-            }
-          }
-        }
-        const isMCQ = options.length === 4;
-
-        const questionHtml = `
-          <div class="question-container" style="display:flex;align-items:flex-start;margin-bottom:10px;page-break-inside:avoid;break-inside:avoid;">
-            <div class="question-body" style="flex:1;">
-              ${createHangingDiv(qCounter, questionLine, isMCQ)}
-              ${imgHtml ? imgHtml : ''}
-              <div class="options-block" style="margin-top:2px;">
-                ${
-                  isMCQ ? (() => {
-                    // === MCQ layout block (keep logic) ===
-                    let optionLines = options.slice(0, 4).map((opt, i) => {
-                      let cleaned = opt.replace(/^[A-D][\)\.\-]\s*/, '');
-                      return String.fromCharCode(65 + i) + ") " + cleaned;
-                    });
-
-                    function fitsInLine(a, b) {
-                      let d = document.createElement('span');
-                      d.style.cssText = 'visibility:hidden;position:absolute;white-space:nowrap;padding:0;margin:0;border:none;font-family:Times New Roman,Times,serif;font-size:1.11em;';
-                      d.innerText = a + " " + b;
-                      document.body.appendChild(d);
-                      let fits = d.offsetWidth < 450;
-                      document.body.removeChild(d);
-                      return fits;
-                    }
-
-                    let dummyDiv = document.createElement('div');
-                    dummyDiv.style.cssText = 'visibility:hidden;position:absolute;white-space:nowrap;padding:0;margin:0;border:none;z-index:-1;font-family:Times New Roman,Times,serif;font-size:1.11em;';
-                    dummyDiv.innerHTML = optionLines.map(opt => `<span style="display:inline-block;vertical-align:middle;margin-right:32px;">${opt.trim()}</span>`).join('');
-                    document.body.appendChild(dummyDiv);
-                    let fitsFour = dummyDiv.offsetWidth < 700;
-                    document.body.removeChild(dummyDiv);
-
-                    let abFits = fitsInLine(optionLines[0], optionLines[1]);
-                    let cdFits = fitsInLine(optionLines[2], optionLines[3]);
-
-                    if (fitsFour) {
-                      return `
-                        <div style="display:flex;gap:32px;flex-wrap:wrap;margin-bottom:3px;margin-left:2px;">
-                          ${optionLines.map(opt => `<span style="min-width:70px;display:inline-block;vertical-align:top;">${opt.trim()}</span>`).join('')}
-                        </div>`;
-                    } else if (abFits && cdFits) {
-                      return `
-                        <div style="display:grid;grid-template-columns:auto auto;column-gap:24px;row-gap:0;margin-bottom:2px;margin-left:2px;width:max-content;">
-                          <span style="min-width:70px;display:inline-block;vertical-align:top;">${optionLines[0]}</span>
-                          <span style="min-width:70px;display:inline-block;vertical-align:top;">${optionLines[1]}</span>
-                          <span style="min-width:70px;display:inline-block;vertical-align:top;">${optionLines[2]}</span>
-                          <span style="min-width:70px;display:inline-block;vertical-align:top;">${optionLines[3]}</span>
-                        </div>`;
-                    } else {
-                      return optionLines
-                        .map(opt => `<div style="margin-bottom:2px;margin-left:2px;">${opt.trim().replace(/\n/g, '<br>')}</div>`)
-                        .join('');
-                    }
-                  })()
-                  : (options.length > 0
-                      ? options.map(opt => `<div style="margin-bottom:2px;margin-left:2px;">${opt.trim().replace(/\n/g, '<br>')}</div>`).join('')
-                      : '')
-                }
-              </div>
-            </div>
-          </div>`;
-
-        if (/\$|\\\(|\\\)/.test(questionLine)) mathElements.push(qCounter - 1);
-
-        const wrap = document.createElement('div');
-        wrap.className = 'no-split';
-        wrap.style.cssText = 'page-break-inside:avoid; break-inside:avoid; display:block;';
-        wrap.innerHTML = questionHtml;
-        printable.appendChild(wrap);
-
-
-        qCounter++;
-        return wrap;
-      }
-
-     // Render sections
-levelsOrder.concat(['']).forEach(levelName => {
-  const levelBucket = buckets[levelName];
-  if (!levelBucket) return;
-
-  // When Question Type filter is "All": Level → Type subsections
-  if (qtypeFilterVal === '' || qtypeFilterVal === 'All') {
-    // Skip empty levels entirely
-    const hasAny = typesOrder.some(t => (levelBucket[t] && levelBucket[t].length));
-    if (!hasAny) return;
-
-    // Level heading
-    const keepBlock = document.createElement('div');
-    keepBlock.style.cssText = 'page-break-inside: avoid; break-inside: avoid;';
-    keepBlock.innerHTML = `
-      <div style="font-size:1.15em;font-weight:800;letter-spacing:0.02em;text-align:left;margin:16px 0 8px 0;page-break-after: avoid;">
-        ${(levelName || 'UNSPECIFIED LEVEL').toUpperCase()}
+  // IMAGE HANDLING
+  let imgHtml = '';
+  const imgTag = clone.querySelector('img');
+  if (imgTag && imgTag.src) {
+    imgHtml = `
+      <div class="question-img-block" style="margin:10px 0 4px 0;">
+        <img class="question-img" src="${imgTag.src}" style="max-width:170px;max-height:110px;border:1px solid #eee;border-radius:5px;display:block;"/>
       </div>`;
-    printable.appendChild(keepBlock);
-
-    // Type headings inside each level
-   typesOrder.forEach(typeName => {
-  const list = levelBucket[typeName] || [];
-  if (!list.length) return;
-
-  // wrapper to keep heading + first question together
-  const headBlock = document.createElement('div');
-  headBlock.className = 'keep-with-next';
-  headBlock.style.cssText = 'page-break-inside:avoid; break-inside:avoid;';
-
-  const typeHdr = document.createElement('div');
-  typeHdr.style.cssText = 'font-size:1.05em;font-weight:800;letter-spacing:0.01em;text-align:left;margin:8px 0 6px 0;';
-  typeHdr.textContent = typeName;
-
-  // first question with the heading
-  const firstNode = buildQuestionHTML(list[0]);
-
-  headBlock.appendChild(typeHdr);
-  headBlock.appendChild(firstNode);
-  printable.appendChild(headBlock);
-
-  // remaining questions
-  for (let i = 1; i < list.length; i++) {
-    const node = buildQuestionHTML(list[i]);
-    printable.appendChild(node);
   }
+
+  // UNIVERSAL QUESTION TEXT + OPTIONS EXTRACTION (unchanged)
+  const textDiv = clone.querySelector('.question-text');
+  let questionLine = '';
+  let options = [];
+  if (textDiv) {
+    let html = textDiv.innerHTML.replace(/<img[^>]*>/gi, '');
+    let parts = html.split(/<br\s*\/?>|<\/div>|<div[^>]*>/gi)
+      .map(s => s.replace(/&nbsp;/g, ' ').trim())
+      .filter(Boolean);
+
+    parts = parts.filter(line => line && !/^<br\s*\/?>$/i.test(line));
+
+    if (parts.length > 0) {
+      questionLine = parts[0];
+      let optionLines = [];
+      for (let i = 1; i < parts.length; i++) {
+        let line = parts[i];
+        let inlineOpts = line.match(/([A-D][).][^A-D]*)/g);
+        if (inlineOpts && inlineOpts.length >= 2) {
+          optionLines.push(...inlineOpts.map(opt => opt.trim()));
+        } else if (line) {
+          optionLines.push(line);
+        }
+      }
+      if (optionLines.length === 4) {
+        options = optionLines.map((opt, i) =>
+          /^[A-D][).]/.test(opt) ? opt : String.fromCharCode(65 + i) + ") " + opt
+        );
+      } else {
+        options = optionLines;
+      }
+    }
+  }
+  const isMCQ = options.length === 4;
+
+  const questionHtml = `
+    <div class="question-container" style="display:flex;align-items:flex-start;margin-bottom:10px;page-break-inside:avoid;break-inside:avoid;">
+      <div class="question-body" style="flex:1;">
+        ${createHangingDiv(qCounter, questionLine, isMCQ)}
+        ${imgHtml ? imgHtml : ''}
+        <div class="options-block" style="margin-top:2px;">
+          ${
+            isMCQ ? (() => {
+              let optionLines = options.slice(0, 4).map((opt, i) => {
+                let cleaned = opt.replace(/^[A-D][\)\.\-]\s*/, '');
+                return String.fromCharCode(65 + i) + ") " + cleaned;
+              });
+
+              function fitsInLine(a, b) {
+                let d = document.createElement('span');
+                d.style.cssText = 'visibility:hidden;position:absolute;white-space:nowrap;padding:0;margin:0;border:none;font-family:Times New Roman,Times,serif;font-size:1.11em;';
+                d.innerText = a + " " + b;
+                document.body.appendChild(d);
+                let fits = d.offsetWidth < 450;
+                document.body.removeChild(d);
+                return fits;
+              }
+
+              let dummyDiv = document.createElement('div');
+              dummyDiv.style.cssText = 'visibility:hidden;position:absolute;white-space:nowrap;padding:0;margin:0;border:none;z-index:-1;font-family:Times New Roman,Times,serif;font-size:1.11em;';
+              dummyDiv.innerHTML = optionLines.map(opt => `<span style="display:inline-block;vertical-align:middle;margin-right:32px;">${opt.trim()}</span>`).join('');
+              document.body.appendChild(dummyDiv);
+              let fitsFour = dummyDiv.offsetWidth < 700;
+              document.body.removeChild(dummyDiv);
+
+              let abFits = fitsInLine(optionLines[0], optionLines[1]);
+              let cdFits = fitsInLine(optionLines[2], optionLines[3]);
+
+              if (fitsFour) {
+                return `
+                  <div style="display:flex;gap:32px;flex-wrap:wrap;margin-bottom:3px;margin-left:2px;">
+                    ${optionLines.map(opt => `<span style="min-width:70px;display:inline-block;vertical-align:top;">${opt.trim()}</span>`).join('')}
+                  </div>`;
+              } else if (abFits && cdFits) {
+                return `
+                  <div style="display:grid;grid-template-columns:auto auto;column-gap:24px;row-gap:0;margin-bottom:2px;margin-left:2px;width:max-content;">
+                    <span style="min-width:70px;display:inline-block;vertical-align:top;">${optionLines[0]}</span>
+                    <span style="min-width:70px;display:inline-block;vertical-align:top;">${optionLines[1]}</span>
+                    <span style="min-width:70px;display:inline-block;vertical-align:top;">${optionLines[2]}</span>
+                    <span style="min-width:70px;display:inline-block;vertical-align:top;">${optionLines[3]}</span>
+                  </div>`;
+              } else {
+                return optionLines
+                  .map(opt => `<div style="margin-bottom:2px;margin-left:2px;">${opt.trim().replace(/\n/g, '<br>')}</div>`)
+                  .join('');
+              }
+            })()
+            : (options.length > 0
+                ? options.map(opt => `<div style="margin-bottom:2px;margin-left:2px;">${opt.trim().replace(/\n/g, '<br>')}</div>`).join('')
+                : '')
+          }
+        </div>
+      </div>
+    </div>`;
+
+  if (/\$|\\\(|\\\)/.test(questionLine)) mathElements.push(qCounter - 1);
+
+  const wrap = document.createElement('div');
+  wrap.className = 'no-split';
+  wrap.style.cssText = 'page-break-inside:avoid; break-inside:avoid; display:block;';
+  wrap.innerHTML = questionHtml;
+  printable.appendChild(wrap);
+
+  qCounter++;
+  return wrap;
+}
+
+// === Build chapter index from current nodes ===
+const chapterMap = new Map();
+nodes.forEach(node => {
+  const ch = (node.getAttribute('data-chapter') || 'Unspecified').trim() || 'Unspecified';
+  if (!chapterMap.has(ch)) chapterMap.set(ch, []);
+  chapterMap.get(ch).push(node);
 });
+
+// Determine ordering of chapters
+let chapterOrder = [];
+if (selChaptersForHeader.length >= 2) {
+  // preserve user selection order if multiple selected
+  chapterOrder = selChaptersForHeader.filter(c => chapterMap.has(c));
+} else if (selChaptersForHeader.length === 1) {
+  // single selected: just that chapter (others, if any, appended)
+  const only = selChaptersForHeader[0];
+  chapterOrder = chapterMap.has(only)
+    ? [only, ...Array.from(chapterMap.keys()).filter(k => k !== only)]
+    : Array.from(chapterMap.keys());
+} else {
+  // no selection => All; sort alphabetically for stability
+  chapterOrder = Array.from(chapterMap.keys()).sort((a,b)=>a.localeCompare(b));
+}
+
+// helpers
+function renderCenteredChapterTitle(text) {
+  const t = document.createElement('div');
+  t.style.cssText = 'font-size:1.15em;font-weight:800;letter-spacing:0.02em;text-align:center;margin:16px 0 8px 0;page-break-inside:avoid;break-inside:avoid;';
+  t.textContent = String(text || 'Unspecified').toUpperCase();
+  printable.appendChild(t);
+}
+
+function renderLeftHeading(text) {
+  const h = document.createElement('div');
+  h.style.cssText = 'font-size:1.05em;font-weight:800;letter-spacing:0.01em;text-align:left;margin:8px 0 6px 0;';
+  h.textContent = text;
+  printable.appendChild(h);
+}
+
+// Decide layout mode
+const includesDescriptive = (selectedQtypes.length === 0) || selectedQtypes.includes('Descriptive');
+const includesAnyMCQ = (selectedQtypes.length === 0) || selectedQtypes.includes('MCQ (Single)') || selectedQtypes.includes('MCQ (Multiple)');
+
+const multipleChaptersSelected = selChaptersForHeader.length >= 2;
+
+// === RENDER ===
+if (!multipleChaptersSelected) {
+  // Single-chapter (or effectively one in results): flat render (your existing order based on display)
+  nodes.forEach(item => { buildQuestionHTML(item); });
+} else {
+  // Two or more chapters: per-chapter sections below the box
+  chapterOrder.forEach(ch => {
+    const list = chapterMap.get(ch) || [];
+    if (!list.length) return;
+
+    // Chapter name centered
+    renderCenteredChapterTitle(ch);
+
+    // DESCRIPTIVE block (Marks → Levels)
+    if (includesDescriptive) {
+      renderLeftHeading('2 Marks');
+      levelsOrder.forEach(lvl => {
+        const subset = list.filter(n =>
+          (n.getAttribute('data-type') || '').trim() === 'Descriptive' &&
+          String(n.getAttribute('data-marks') || '') === '2' &&
+          (n.getAttribute('data-level') || '').trim() === lvl
+        );
+        if (subset.length) {
+          renderLeftHeading(lvl);
+          subset.forEach(item => buildQuestionHTML(item));
+        }
+      });
+
+      renderLeftHeading('4 Marks');
+      levelsOrder.forEach(lvl => {
+        const subset = list.filter(n =>
+          (n.getAttribute('data-type') || '').trim() === 'Descriptive' &&
+          String(n.getAttribute('data-marks') || '') === '4' &&
+          (n.getAttribute('data-level') || '').trim() === lvl
+        );
+        if (subset.length) {
+          renderLeftHeading(lvl);
+          subset.forEach(item => buildQuestionHTML(item));
+        }
+      });
+
+      renderLeftHeading('8 Marks');
+      levelsOrder.forEach(lvl => {
+        const subset = list.filter(n =>
+          (n.getAttribute('data-type') || '').trim() === 'Descriptive' &&
+          String(n.getAttribute('data-marks') || '') === '8' &&
+          (n.getAttribute('data-level') || '').trim() === lvl
+        );
+        if (subset.length) {
+          renderLeftHeading(lvl);
+          subset.forEach(item => buildQuestionHTML(item));
+        }
+      });
+    }
+
+    // MCQ block
+    if (includesAnyMCQ) {
+      const hasSingle = list.some(n => (n.getAttribute('data-type') || '').trim() === 'MCQ (Single)');
+      const hasMulti  = list.some(n => (n.getAttribute('data-type') || '').trim() === 'MCQ (Multiple)');
+
+      if (hasSingle || hasMulti) {
+        renderLeftHeading('MCQs');
+
+        if (hasSingle && hasMulti) {
+          renderLeftHeading('MCQ (Single)');
+          list.filter(n => (n.getAttribute('data-type') || '').trim() === 'MCQ (Single)')
+              .forEach(item => buildQuestionHTML(item));
+
+          renderLeftHeading('MCQ (Multiple)');
+          list.filter(n => (n.getAttribute('data-type') || '').trim() === 'MCQ (Multiple)')
+    .forEach(item => buildQuestionHTML(item));
+        } else if (hasSingle) {
+          list.filter(n => (n.getAttribute('data-type') || '').trim() === 'MCQ (Single)')
+              .forEach(item => buildQuestionHTML(item));
+        } else if (hasMulti) {
+          list.filter(n => (n.getAttribute('data-type') || '').trim() === 'MCQ (Multiple)')
+    .forEach(item => buildQuestionHTML(item));
+        }
+      }
+    }
+  });
+}
   } else {
     // If a specific Question Type is selected: keep your original (flat) per-level rendering
     const flatList = []
@@ -650,7 +723,7 @@ await __waitForImages(printable);
 
       html2pdf().set({
         margin: [1.5, 1.5, 1.5, 1.5],
-        filename: `Question_Bank_${(classVal || '').replace(/ /g, "_")}_${(subjectVal || '').replace(/ /g, "_")}_${(chapterVal || '').replace(/ /g, "_")}.pdf`,
+        filename: `Question_Bank_${(classVal || '').replace(/ /g, "_")}_${(subjectVal || '').replace(/ /g, "_")}_${((selChaptersForHeader.join('_')) || 'All').replace(/ /g, "_")}.pdf`,
         html2canvas: { scale: 2, useCORS: true },
         jsPDF: { unit: 'cm', format: 'a4', orientation: 'portrait' },
         pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
@@ -822,15 +895,106 @@ await __waitForImages(printable);
 
     // Dropdown HTML
     function createDropdownHTML(id, options, defaultValueText = 'All') {
-      const optionsHTML = options.map(opt => `<div data-value="${opt}">${opt}</div>`).join('');
-      return `
-        <input type="hidden" id="${id}-value" value="All">
-        <div class="selected-option">${defaultValueText}</div>
-        <div class="dropdown-options">
-          <div data-value="All">${defaultValueText}</div>
-          ${optionsHTML}
-        </div>`;
+  const optionsHTML = options.map(opt => `<div data-value="${opt}">${opt}</div>`).join('');
+  return `
+    <input type="hidden" id="${id}-value" value="All">
+    <div class="selected-option">${defaultValueText}</div>
+    <div class="dropdown-options">
+      <div data-value="All">${defaultValueText}</div>
+      ${optionsHTML}
+    </div>`;
+}
+
+/* ==== Multi-select dropdown helpers (checkbox UI) ==== */
+function createMultiDropdownHTML(id, options, label = 'All') {
+  const opts = (options || []).map((opt, idx) => {
+    const safe = String(opt).replace(/"/g,'&quot;');
+    return `
+      <label style="display:flex;align-items:center;gap:8px;padding:8px 10px;cursor:pointer;">
+        <input type="checkbox" class="${id}-chk" value="${safe}">
+        <span>${safe}</span>
+      </label>`;
+  }).join('');
+
+  return `
+    <input type="hidden" id="${id}-values" value="">
+    <div class="selected-option" id="${id}-chip">${label}</div>
+    <div class="dropdown-options" id="${id}-panel" style="padding:6px 0;">
+      <div style="display:flex;justify-content:space-between;gap:8px;padding:8px 10px;border-bottom:1px solid #e6eef7;">
+        <button type="button" class="msel-all" data-target="${id}" style="background:#f2f7ff;border:1px solid #bdd6ef;border-radius:6px;padding:6px 10px;cursor:pointer;">Select all</button>
+        <button type="button" class="msel-clear" data-target="${id}" style="background:#fff;border:1px solid #bdd6ef;border-radius:6px;padding:6px 10px;cursor:pointer;">Clear</button>
+        <button type="button" class="msel-done" data-target="${id}" style="background:#1762a7;border:1px solid #1762a7;color:#fff;border-radius:6px;padding:6px 10px;cursor:pointer;">Done</button>
+      </div>
+      <div style="max-height:220px;overflow:auto;padding:4px 0 6px 0;">
+        ${opts || `<div style="padding:10px;color:#666;">No items</div>`}
+      </div>
+    </div>`;
+}
+
+function addMultiDropdownListener(dropdownId, onChange) {
+  const dd = document.getElementById(dropdownId);
+  const chip = dd.querySelector('.selected-option');
+  const panel = dd.querySelector('.dropdown-options');
+  const hidden = dd.querySelector(`#${dropdownId.split('-')[0]}-values`);
+
+  chip.addEventListener('click', (e) => {
+    e.stopPropagation();
+    dd.classList.toggle('open');
+  });
+
+  // prevent outside click handler from closing while interacting inside panel
+  panel.addEventListener('click', (e) => {
+    e.stopPropagation();
+
+    const btn = e.target.closest('button');
+    if (!btn) return;
+
+    const targetId = btn.getAttribute('data-target');
+    if (!targetId) return;
+
+    const boxList = dd.querySelectorAll(`input.${targetId}-chk`);
+    if (btn.classList.contains('msel-all')) {
+      boxList.forEach(b => b.checked = true);
+    } else if (btn.classList.contains('msel-clear')) {
+      boxList.forEach(b => b.checked = false);
+    } else if (btn.classList.contains('msel-done')) {
+      dd.classList.remove('open'); // only close on Done
     }
+    __updateMultiChip(dd, hidden, chip, onChange);
+  });
+
+  // ensure checkbox changes don’t bubble to document click
+  panel.addEventListener('change', (e) => {
+    e.stopPropagation();
+    if (e.target && e.target.matches('input[type="checkbox"]')) {
+      __updateMultiChip(dd, hidden, chip, onChange);
+    }
+  });
+}
+
+function __updateMultiChip(dd, hidden, chip, onChange) {
+  const id = dd.id;
+  const cls = `${id}-chk`;
+  const boxes = dd.querySelectorAll(`input.${cls}`);
+  const selected = Array.from(boxes).filter(b => b.checked).map(b => b.value);
+
+  hidden.value = selected.join('||'); // store as "A||B||C"
+  if (selected.length === 0) {
+    chip.textContent = 'All';
+  } else if (selected.length <= 2) {
+    chip.textContent = selected.join(', ');
+  } else {
+    chip.textContent = `${selected.length} selected`;
+  }
+  if (typeof onChange === 'function') onChange();
+}
+
+function getMultiSelected(idPrefix) {
+  const el = document.getElementById(`${idPrefix}-values`);
+  if (!el) return [];
+  const raw = el.value || '';
+  return raw ? raw.split('||').filter(Boolean) : [];
+}
 
     function setupDropdowns() {
       const classDropdown = document.getElementById('class-dropdown');
@@ -841,31 +1005,32 @@ await __waitForImages(printable);
       subjectDropdown.innerHTML = createDropdownHTML('subject', [], 'Select Subject');
       document.getElementById('subject-value').value = '';
 
-      const qtypeDropdown = document.getElementById('qtype-dropdown');
-      qtypeDropdown.innerHTML = createDropdownHTML('qtype', filterConfig.questionTypes);
-
-      const chapterDropdown = document.getElementById('chapter-dropdown');
-      chapterDropdown.innerHTML = createDropdownHTML('chapter', [], 'Select Chapter');
-      document.getElementById('chapter-value').value = '';
-
-      const marksDropdown = document.getElementById('marks-dropdown');
-      const marksOptions = filterConfig.marks.map(m => `${m} Mark(s)`);
-      marksDropdown.innerHTML = createDropdownHTML('marks', marksOptions);
-
-      const levelDropdown = document.getElementById('level-dropdown');
-      levelDropdown.innerHTML = createDropdownHTML('level', filterConfig.levels, 'Select Level');
       const __debouncedFetch = () => {
   clearTimeout(window.__qbFetchT);
   window.__qbFetchT = setTimeout(fetchAndDisplayQuestions, 250);
 };
 
-addDropdownListener('level-dropdown', __debouncedFetch);
+const qtypeDropdown = document.getElementById('qtype-dropdown');
+qtypeDropdown.innerHTML = createMultiDropdownHTML('qtype', filterConfig.questionTypes, 'All');
+addMultiDropdownListener('qtype-dropdown', __debouncedFetch);
+
+const chapterDropdown = document.getElementById('chapter-dropdown');
+chapterDropdown.innerHTML = createMultiDropdownHTML('chapter', [], 'Select Chapter');
+addMultiDropdownListener('chapter-dropdown', __debouncedFetch);
+
+const marksDropdown = document.getElementById('marks-dropdown');
+const marksOptions = filterConfig.marks.map(m => `${m} Mark(s)`);
+marksDropdown.innerHTML = createMultiDropdownHTML('marks', marksOptions, 'All');
+addMultiDropdownListener('marks-dropdown', __debouncedFetch);
+
+const levelDropdown = document.getElementById('level-dropdown');
+/* Drop "Mixed" now that multi-select exists */
+const levelOpts = filterConfig.levels.filter(l => l !== 'Mixed');
+levelDropdown.innerHTML = createMultiDropdownHTML('level', levelOpts, 'Select Level');
+addMultiDropdownListener('level-dropdown', __debouncedFetch);
 
 addDropdownListener('class-dropdown', onClassChange);
 addDropdownListener('subject-dropdown', onSubjectChange);
-addDropdownListener('qtype-dropdown', __debouncedFetch);
-addDropdownListener('chapter-dropdown', __debouncedFetch);
-addDropdownListener('marks-dropdown', __debouncedFetch);
 
     }
 
@@ -920,28 +1085,30 @@ addDropdownListener('marks-dropdown', __debouncedFetch);
       const subjectVal = document.getElementById('subject-value').value;
       const chapterDropdown = document.getElementById('chapter-dropdown');
 
-      if (!classVal || classVal === 'All' || !subjectVal || subjectVal === 'All') {
-        chapterDropdown.innerHTML = createDropdownHTML('chapter', [], 'Select Chapter');
-        addDropdownListener('chapter-dropdown', fetchAndDisplayQuestions);
-        return;
-      }
+       if (!classVal || classVal === 'All' || !subjectVal || subjectVal === 'All') {
+    chapterDropdown.innerHTML = createMultiDropdownHTML('chapter', [], 'Select Chapter');
+    addMultiDropdownListener('chapter-dropdown', fetchAndDisplayQuestions);
+    return;
+  }
 
-      try {
-        const query = db.collection('questions')
-          .where('class', '==', classVal)
-          .where('subject', '==', subjectVal);
+  try {
+    const q = db.collection('questions')
+      .where('class', '==', classVal)
+      .where('subject', '==', subjectVal);
 
-        const snapshot = await query.get();
-        const chapters = new Set();
-        snapshot.forEach(doc => {
-          if (doc.data().chapter) chapters.add(doc.data().chapter);
-        });
+    const snapshot = await q.get();
+    const chapters = new Set();
+    snapshot.forEach(doc => {
+      const ch = doc.data().chapter;
+      if (ch) chapters.add(ch);
+    });
 
-        chapterDropdown.innerHTML = createDropdownHTML('chapter', Array.from(chapters));
-        addDropdownListener('chapter-dropdown', fetchAndDisplayQuestions);
-      } catch (error) {
-        console.error("Error fetching chapters: ", error);
-      }
+    const list = Array.from(chapters).sort();
+    chapterDropdown.innerHTML = createMultiDropdownHTML('chapter', list, 'All');
+    addMultiDropdownListener('chapter-dropdown', fetchAndDisplayQuestions);
+  } catch (error) {
+    console.error("Error fetching chapters: ", error);
+  }
     }
 
     async function fetchAndDisplayQuestions() {
@@ -961,26 +1128,28 @@ addDropdownListener('marks-dropdown', __debouncedFetch);
       displayArea.innerHTML = '<p class="no-questions-message">Loading questions...</p>';
       
       try {
-        const qtypeVal = document.getElementById('qtype-value').value;
-        const chapterVal = document.getElementById('chapter-value').value;
-        const marksVal = document.getElementById('marks-value').value;
-        const levelVal = document.getElementById('level-value').value;
-        const numericMarks = parseInt(marksVal, 10);
+        const selChapters = getMultiSelected('chapter');          // array of chapter names
+const selQtypes   = getMultiSelected('qtype');            // array of types
+const selMarks    = getMultiSelected('marks');            // array of strings like "2 Mark(s)"
+const selLevels   = getMultiSelected('level');            // array of "Level 1/2/3"
 
         let query = db.collection('questions');
-        if (classVal && classVal !== 'Select Class' && classVal !== 'All') {
-          query = query.where('class', '==', classVal);
-        }
-        if (subjectVal && subjectVal !== 'Select Subject' && subjectVal !== 'All') {
-          query = query.where('subject', '==', subjectVal);
-        }
-        if (chapterVal && chapterVal !== 'Select Chapter' && chapterVal !== 'All') {
-          query = query.where('chapter', '==', chapterVal);
-        }
-        if (levelVal && levelVal !== 'Select Level' && levelVal !== 'All' && levelVal !== 'Mixed') {
-          query = query.where('difficulty', '==', levelVal);
-        }
-       query = query.orderBy("questionNumber");
+if (classVal && classVal !== 'Select Class' && classVal !== 'All') {
+  query = query.where('class', '==', classVal);
+}
+if (subjectVal && subjectVal !== 'Select Subject' && subjectVal !== 'All') {
+  query = query.where('subject', '==', subjectVal);
+}
+
+/* Firestore constraints:
+   - We'll only push a single equality for chapter if exactly one is chosen.
+   - Levels/Qtypes/Marks will be filtered client-side to avoid 'in' limits (and >10 values issues).
+*/
+if (selChapters.length === 1) {
+  query = query.where('chapter', '==', selChapters[0]);
+}
+
+query = query.orderBy("questionNumber");
 
         const snapshot = await query.get();
 
@@ -997,33 +1166,45 @@ addDropdownListener('marks-dropdown', __debouncedFetch);
           if (Array.isArray(data.options)) {
             console.log("Options for", doc.id, data.options);
           }
-          if (marksVal !== 'All') {
-            const questionMarks = Number(data.marks);
-            if (questionMarks !== numericMarks) return;
-          }
-          if (qtypeVal && qtypeVal !== 'All') {
-            if (qtypeVal === 'MCQ (Single)') {
-              if (
-                (data.mcqType && data.mcqType !== 'MCQ (Single)') ||
-                (!data.mcqType && (!Array.isArray(data.options) || data.options.length !== 4))
-              ) return;
-            } else if (qtypeVal === 'MCQ (Multiple)') {
-              if (data.mcqType !== 'MCQ (Multiple)') return;
-            } else if (qtypeVal === 'Descriptive') {
-              if (
-                (data.mcqType === 'MCQ (Single)' || data.mcqType === 'MCQ (Multiple)') ||
-                (Array.isArray(data.options) && data.options.length === 4 && (!data.mcqType || data.mcqType === ''))
-              ) return;
-            }
-          }
+          /* --- Client-side filters for multi-select --- */
 
+// Chapter (if multiple chosen)
+if (selChapters.length > 1) {
+  if (!data.chapter || !selChapters.includes(data.chapter)) return;
+}
+
+// Level
+if (selLevels.length > 0) {
+  const lv = (data.difficulty || data.level || '').trim();
+  if (!lv || !selLevels.includes(lv)) return;
+}
+
+// Marks
+if (selMarks.length > 0) {
+  const m = Number(data.marks);
+  // selMarks are strings like "2 Mark(s)" → normalize to number set
+  const wanted = new Set(selMarks.map(s => Number(String(s).replace(/[^\d]/g, ''))));
+  if (!wanted.has(m)) return;
+}
+
+// Question Type
+if (selQtypes.length > 0) {
+  const inferredType = (data.mcqType
+    ? data.mcqType
+    : (Array.isArray(data.options) && data.options.length === 4 ? 'MCQ (Single)' : 'Descriptive'));
+
+  if (!selQtypes.includes(inferredType)) return;
+}
           questionCount++;
           questionsHTML += `
            <div class="question-item"
      data-id="${doc.id}"
      data-level="${data.difficulty || data.level || ''}"
      data-type="${(data.mcqType ? data.mcqType : (Array.isArray(data.options) && data.options.length === 4 ? 'MCQ (Single)' : 'Descriptive'))}"
+     data-chapter="${data.chapter || ''}"
+     data-marks="${(data.marks ?? '')}"
      style="position:relative;">
+
               <div class="question-meta">
                 Q${questionCount}: ${(data.difficulty || data.level || 'N/A')}, ${(data.marks ?? 'N/A')} Mark(s)${data.mcqType ? ` [${data.mcqType}]` : ''}
               </div>
@@ -1070,75 +1251,79 @@ addDropdownListener('marks-dropdown', __debouncedFetch);
           if (typeof setupQuestionActionMenus === "function") setupQuestionActionMenus();
 
 /* ==== Explain It (AI) — open directly in ChatGPT (copy prompt + toast + open tab) ==== */
-document.addEventListener('click', async (e) => {
-  const btn = e.target.closest('.ask-ai-btn');
-  if (!btn) return;
+if (!window.__explainItBound) {
+  window.__explainItBound = true;
+  document.addEventListener('click', async (e) => {
+    const btn = e.target.closest('.ask-ai-btn');
+    if (!btn) return;
 
-  const card = btn.closest('.question-item');
-  const docId = card?.getAttribute('data-id');
-  if (!docId) return;
+    const card = btn.closest('.question-item');
+    const docId = card?.getAttribute('data-id');
+    if (!docId) return;
 
-  // tiny inline toast helper
-  function __qb_toast(msg) {
-    const t = document.createElement('div');
-    t.textContent = msg;
-    t.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);bottom:24px;background:#0f3d6b;color:#fff;padding:10px 14px;border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,.2);z-index:100000;font-weight:600;letter-spacing:.2px;font-size:14px;opacity:0.98';
-    document.body.appendChild(t);
-    setTimeout(() => { t.style.transition='opacity .35s'; t.style.opacity='0'; }, 1200);
-    setTimeout(() => t.remove(), 1600);
-  }
-
-  try {
-    // Pull freshest data for this question
-    const snap = await db.collection('questions').doc(docId).get();
-    const data = snap.data() || {};
-
-    // Build a clean prompt
-    const cls     = data.class || document.getElementById('class-value')?.value || '';
-    const subject = data.subject || document.getElementById('subject-value')?.value || '';
-    const chapter = data.chapter || document.getElementById('chapter-value')?.value || '';
-    const level   = data.difficulty || data.level || '';
-    const type    = data.mcqType || (Array.isArray(data.options) && data.options.length === 4 ? 'MCQ (Single)' : 'Descriptive');
-    const marks   = (data.marks ?? '');
-
-    const qText   = (data.question || data.body || data.text || '').trim();
-    const options = Array.isArray(data.options) ? data.options.filter(Boolean) : [];
-
-    let prompt = `Please solve and explain clearly.\n`;
-    const meta = [subject && `Subject: ${subject}`, cls && `Class: ${cls}`, chapter && `Chapter: ${chapter}`, level && `Level: ${level}`, type && `Type: ${type}`, marks!=='' && `Marks: ${marks}`]
-      .filter(Boolean).join(' · ');
-    if (meta) prompt += meta + `\n\n`;
-    prompt += `Question:\n${qText}\n`;
-    if (options.length) {
-      prompt += `\nOptions:\n` + options.map((o,i)=>`${String.fromCharCode(65+i)}) ${o.replace(/^[A-D][).]\s*/, '')}`).join('\n');
-      prompt += `\n\nRespond with the correct option (A–D) and a step-by-step explanation.`;
-    } else {
-      prompt += `\n\nRespond with the final answer and a step-by-step explanation.`;
+    // tiny inline toast helper
+    function __qb_toast(msg) {
+      const t = document.createElement('div');
+      t.textContent = msg;
+      t.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);bottom:24px;background:#0f3d6b;color:#fff;padding:10px 14px;border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,.2);z-index:100000;font-weight:600;letter-spacing:.2px;font-size:14px;opacity:0.98';
+      document.body.appendChild(t);
+      setTimeout(() => { t.style.transition='opacity .35s'; t.style.opacity='0'; }, 1200);
+      setTimeout(() => t.remove(), 1600);
     }
 
-    // Copy to clipboard for quick paste
-    let copied = false;
     try {
-      await navigator.clipboard.writeText(prompt);
-      copied = true;
-    } catch (_) {
-      copied = false;
+      // Pull freshest data for this question
+      const snap = await db.collection('questions').doc(docId).get();
+      const data = snap.data() || {};
+
+      // Build a clean prompt
+      const cls     = data.class || document.getElementById('class-value')?.value || '';
+      const subject = data.subject || document.getElementById('subject-value')?.value || '';
+      const chapterSel = getMultiSelected('chapter');
+      const chapter = data.chapter || (chapterSel.length ? chapterSel.join(', ') : '');
+      const level   = data.difficulty || data.level || '';
+      const type    = data.mcqType || (Array.isArray(data.options) && data.options.length === 4 ? 'MCQ (Single)' : 'Descriptive');
+      const marks   = (data.marks ?? '');
+
+      const qText   = (data.question || data.body || data.text || '').trim();
+      const options = Array.isArray(data.options) ? data.options.filter(Boolean) : [];
+
+      let prompt = `Please solve and explain clearly.\n`;
+      const meta = [subject && `Subject: ${subject}`, cls && `Class: ${cls}`, chapter && `Chapter: ${chapter}`, level && `Level: ${level}`, type && `Type: ${type}`, marks!=='' && `Marks: ${marks}`]
+        .filter(Boolean).join(' · ');
+      if (meta) prompt += meta + `\n\n`;
+      prompt += `Question:\n${qText}\n`;
+      if (options.length) {
+        prompt += `\nOptions:\n` + options.map((o,i)=>`${String.fromCharCode(65+i)}) ${o.replace(/^[A-D][).]\s*/, '')}`).join('\n');
+        prompt += `\n\nRespond with the correct option (A–D) and a step-by-step explanation.`;
+      } else {
+        prompt += `\n\nRespond with the final answer and a step-by-step explanation.`;
+      }
+
+      // Copy to clipboard for quick paste
+      let copied = false;
+      try {
+        await navigator.clipboard.writeText(prompt);
+        copied = true;
+      } catch (_) {
+        copied = false;
+      }
+
+      __qb_toast(copied ? 'Copied prompt. Opening ChatGPT…' : 'Opening ChatGPT… (paste prompt manually)');
+
+      // Open ChatGPT (model selector in URL if supported)
+      const handoffUrl = new URL('https://chatgpt.com/');
+      handoffUrl.searchParams.set('q', prompt); // pre-fill the message
+
+      // Open ChatGPT with the prefilled prompt
+      window.open(handoffUrl.toString(), '_blank', 'noopener');
+
+    } catch (err) {
+      console.error('Explain It handoff failed:', err);
+      alert('Could not open in ChatGPT. Please try again.');
     }
-
-    __qb_toast(copied ? 'Copied prompt. Opening ChatGPT…' : 'Opening ChatGPT… (paste prompt manually)');
-
-    // Open ChatGPT (model selector in URL if supported)
-   const handoffUrl = new URL('https://chatgpt.com/');
-handoffUrl.searchParams.set('q', prompt); // pre-fill the message
-
-// Open ChatGPT with the prefilled prompt
-window.open(handoffUrl.toString(), '_blank', 'noopener');
-
-  } catch (err) {
-    console.error('Explain It handoff failed:', err);
-    alert('Could not open in ChatGPT. Please try again.');
-  }
-});
+  });
+}
 
           document.querySelectorAll('.question-img-btn').forEach(btn => {
             btn.onclick = function() {
@@ -1480,7 +1665,7 @@ window.open(handoffUrl.toString(), '_blank', 'noopener');
         const quizDoc = await db.collection('quizzes').add({
           createdBy: currentUser.uid,
           createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-          level: document.getElementById('level-value').value || "Mixed",
+          level: (getMultiSelected('level').join(', ') || "Mixed"),
           questions: questions
         });
         const quizId = quizDoc.id;
@@ -1488,8 +1673,8 @@ window.open(handoffUrl.toString(), '_blank', 'noopener');
 
         const classVal = document.getElementById('class-value').value;
         const subjectVal = document.getElementById('subject-value').value;
-        const chapterVal = document.getElementById('chapter-value').value;
-        const levelVal = document.getElementById('level-value').value;
+        const chapterVal = (getMultiSelected('chapter').join(', ') || 'All');
+    const levelVal = (getMultiSelected('level').join(', ') || 'Mixed');
         const message = `*St. PATRICK'S SCHOOL*
 *IIT & NEET FOUNDATION*
 *QUIZ*
@@ -1568,3 +1753,4 @@ All the Best`;
 
 </body>
 </html>
+
