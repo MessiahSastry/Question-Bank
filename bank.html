@@ -304,12 +304,13 @@
 
       const classVal = document.getElementById('class-value').value || '';
       const subjectVal = document.getElementById('subject-value').value || '';
-      const selChaptersForHeader = getMultiSelected('chapter');
-const chapterHeader = selChaptersForHeader.length
-  ? (selChaptersForHeader.length <= 2 ? selChaptersForHeader.join(', ') : `${selChaptersForHeader.length} Chapters`)
-  : '';
-// For multi-select, show "All" in the header (keeps your Level→Type grouping)
-const qtypeFilterVal = 'All';
+     const selChaptersForHeader = getMultiSelected('chapter');
+const singleChapter = (selChaptersForHeader.length === 1) ? selChaptersForHeader[0] : '';
+const showChapterInBox = !!singleChapter;
+
+// Use actual selected types to drive layout later
+const selectedQtypes = getMultiSelected('qtype'); // [] means All
+const qtypeFilterVal = (selectedQtypes.length === 0) ? 'All' : selectedQtypes.join(', ');
 
       // Wrapper for PDF content
      const printable = document.createElement('div');
@@ -349,9 +350,9 @@ printable.prepend(avoidCSS);
           <img src="schoollogo2.png" style="height:72px;width:auto;margin-left:8px;" onerror="this.style.display='none';">
         </div>
         <div style="margin:22px auto 18px auto; border:2.5px solid #bdd7f6; border-radius:16px; padding:20px 40px 14px 40px; background:#fafdff; box-sizing:border-box; max-width:510px;">
-          ${chapterHeader ? `
+          ${showChapterInBox ? `
         <div style="font-size:1.24em;font-weight:800;letter-spacing:0.01em;text-align:center;margin-bottom:5px;">
-          ${chapterHeader.toUpperCase()}
+          ${singleChapter.toUpperCase()}
         </div>` : ``}
           <div style="font-size:1.14em;font-weight:700;text-align:center;">
             WORKSHEET${(qtypeFilterVal && qtypeFilterVal !== 'All') ? ` (${qtypeFilterVal})` : ``}
@@ -426,222 +427,265 @@ printable.prepend(avoidCSS);
       // For MathJax rendering
       let mathElements = [];
 
-     // Group questions by level → type when Question Type = All
-        const levelsOrder = ['Level 1', 'Level 2', 'Level 3'];
-        const typesOrder  = ['MCQ (Single)', 'MCQ (Multiple)', 'Descriptive'];
-        
-        // buckets[level][type] = array of nodes
-        const buckets = {
-          'Level 1': { 'MCQ (Single)': [], 'MCQ (Multiple)': [], 'Descriptive': [] },
-          'Level 2': { 'MCQ (Single)': [], 'MCQ (Multiple)': [], 'Descriptive': [] },
-          'Level 3': { 'MCQ (Single)': [], 'MCQ (Multiple)': [], 'Descriptive': [] },
-          '':        { 'MCQ (Single)': [], 'MCQ (Multiple)': [], 'Descriptive': [] },
-        };
-        
-        nodes.forEach(node => {
-          const lvl  = (node.getAttribute('data-level') || '').trim();
-          const type = (node.getAttribute('data-type')  || 'Descriptive').trim();
-          const safeLvl  = buckets[lvl] ? lvl : '';
-          const safeType = typesOrder.includes(type) ? type : 'Descriptive';
-          buckets[safeLvl][safeType].push(node);
-        });
-        
-        let qCounter = 1;
-        
-        // helper to build one question's HTML (same as before, but uses qCounter)
-        function buildQuestionHTML(item) {
-        const clone = item.cloneNode(true);
-        clone.querySelectorAll('.question-img-btn, .delete-img-btn, .question-image-input').forEach(btn => btn.remove());
+     // === Chapter-wise rendering rules ===
+// Single chapter → box shows chapter; flat render
+// 2+ chapters → NO chapter names in the box; below, per-chapter sections
 
-        // IMAGE HANDLING
-        let imgHtml = '';
-        const imgTag = clone.querySelector('img');
-        if (imgTag && imgTag.src) {
-          imgHtml = `
-            <div class="question-img-block" style="margin:10px 0 4px 0;">
-              <img class="question-img" src="${imgTag.src}" style="max-width:170px;max-height:110px;border:1px solid #eee;border-radius:5px;display:block;"/>
-            </div>`;
+const levelsOrder = ['Level 1', 'Level 2', 'Level 3'];
+const marksOrder  = [2, 4, 8];
+const typesOrder  = ['MCQ (Single)', 'MCQ (Multiple)', 'Descriptive'];
+
+let qCounter = 1;
+
+// helper to build one question's HTML (kept from your original)
+function buildQuestionHTML(item) {
+  const clone = item.cloneNode(true);
+  clone.querySelectorAll('.question-img-btn, .delete-img-btn, .question-image-input').forEach(btn => btn.remove());
+
+  // IMAGE HANDLING
+  let imgHtml = '';
+  const imgTag = clone.querySelector('img');
+  if (imgTag && imgTag.src) {
+    imgHtml = `
+      <div class="question-img-block" style="margin:10px 0 4px 0;">
+        <img class="question-img" src="${imgTag.src}" style="max-width:170px;max-height:110px;border:1px solid #eee;border-radius:5px;display:block;"/>
+      </div>`;
+  }
+
+  // UNIVERSAL QUESTION TEXT + OPTIONS EXTRACTION (unchanged)
+  const textDiv = clone.querySelector('.question-text');
+  let questionLine = '';
+  let options = [];
+  if (textDiv) {
+    let html = textDiv.innerHTML.replace(/<img[^>]*>/gi, '');
+    let parts = html.split(/<br\s*\/?>|<\/div>|<div[^>]*>/gi)
+      .map(s => s.replace(/&nbsp;/g, ' ').trim())
+      .filter(Boolean);
+
+    parts = parts.filter(line => line && !/^<br\s*\/?>$/i.test(line));
+
+    if (parts.length > 0) {
+      questionLine = parts[0];
+      let optionLines = [];
+      for (let i = 1; i < parts.length; i++) {
+        let line = parts[i];
+        let inlineOpts = line.match(/([A-D][).][^A-D]*)/g);
+        if (inlineOpts && inlineOpts.length >= 2) {
+          optionLines.push(...inlineOpts.map(opt => opt.trim()));
+        } else if (line) {
+          optionLines.push(line);
         }
-
-        // UNIVERSAL QUESTION TEXT + OPTIONS EXTRACTION
-        const textDiv = clone.querySelector('.question-text');
-        let questionLine = '';
-        let options = [];
-        if (textDiv) {
-          let html = textDiv.innerHTML.replace(/<img[^>]*>/gi, '');
-          let parts = html.split(/<br\s*\/?>|<\/div>|<div[^>]*>/gi)
-            .map(s => s.replace(/&nbsp;/g, ' ').trim())
-            .filter(Boolean);
-
-          parts = parts.filter(line => line && !/^<br\s*\/?>$/i.test(line));
-
-          if (parts.length > 0) {
-            questionLine = parts[0];
-            let optionLines = [];
-            for (let i = 1; i < parts.length; i++) {
-              let line = parts[i];
-              let inlineOpts = line.match(/([A-D][).][^A-D]*)/g);
-              if (inlineOpts && inlineOpts.length >= 2) {
-                optionLines.push(...inlineOpts.map(opt => opt.trim()));
-              } else if (line) {
-                optionLines.push(line);
-              }
-            }
-            if (optionLines.length === 4) {
-              options = optionLines.map((opt, i) =>
-                /^[A-D][).]/.test(opt) ? opt : String.fromCharCode(65 + i) + ") " + opt
-              );
-            } else {
-              options = optionLines;
-            }
-          }
-        }
-        const isMCQ = options.length === 4;
-
-        const questionHtml = `
-          <div class="question-container" style="display:flex;align-items:flex-start;margin-bottom:10px;page-break-inside:avoid;break-inside:avoid;">
-            <div class="question-body" style="flex:1;">
-              ${createHangingDiv(qCounter, questionLine, isMCQ)}
-              ${imgHtml ? imgHtml : ''}
-              <div class="options-block" style="margin-top:2px;">
-                ${
-                  isMCQ ? (() => {
-                    // === MCQ layout block (keep logic) ===
-                    let optionLines = options.slice(0, 4).map((opt, i) => {
-                      let cleaned = opt.replace(/^[A-D][\)\.\-]\s*/, '');
-                      return String.fromCharCode(65 + i) + ") " + cleaned;
-                    });
-
-                    function fitsInLine(a, b) {
-                      let d = document.createElement('span');
-                      d.style.cssText = 'visibility:hidden;position:absolute;white-space:nowrap;padding:0;margin:0;border:none;font-family:Times New Roman,Times,serif;font-size:1.11em;';
-                      d.innerText = a + " " + b;
-                      document.body.appendChild(d);
-                      let fits = d.offsetWidth < 450;
-                      document.body.removeChild(d);
-                      return fits;
-                    }
-
-                    let dummyDiv = document.createElement('div');
-                    dummyDiv.style.cssText = 'visibility:hidden;position:absolute;white-space:nowrap;padding:0;margin:0;border:none;z-index:-1;font-family:Times New Roman,Times,serif;font-size:1.11em;';
-                    dummyDiv.innerHTML = optionLines.map(opt => `<span style="display:inline-block;vertical-align:middle;margin-right:32px;">${opt.trim()}</span>`).join('');
-                    document.body.appendChild(dummyDiv);
-                    let fitsFour = dummyDiv.offsetWidth < 700;
-                    document.body.removeChild(dummyDiv);
-
-                    let abFits = fitsInLine(optionLines[0], optionLines[1]);
-                    let cdFits = fitsInLine(optionLines[2], optionLines[3]);
-
-                    if (fitsFour) {
-                      return `
-                        <div style="display:flex;gap:32px;flex-wrap:wrap;margin-bottom:3px;margin-left:2px;">
-                          ${optionLines.map(opt => `<span style="min-width:70px;display:inline-block;vertical-align:top;">${opt.trim()}</span>`).join('')}
-                        </div>`;
-                    } else if (abFits && cdFits) {
-                      return `
-                        <div style="display:grid;grid-template-columns:auto auto;column-gap:24px;row-gap:0;margin-bottom:2px;margin-left:2px;width:max-content;">
-                          <span style="min-width:70px;display:inline-block;vertical-align:top;">${optionLines[0]}</span>
-                          <span style="min-width:70px;display:inline-block;vertical-align:top;">${optionLines[1]}</span>
-                          <span style="min-width:70px;display:inline-block;vertical-align:top;">${optionLines[2]}</span>
-                          <span style="min-width:70px;display:inline-block;vertical-align:top;">${optionLines[3]}</span>
-                        </div>`;
-                    } else {
-                      return optionLines
-                        .map(opt => `<div style="margin-bottom:2px;margin-left:2px;">${opt.trim().replace(/\n/g, '<br>')}</div>`)
-                        .join('');
-                    }
-                  })()
-                  : (options.length > 0
-                      ? options.map(opt => `<div style="margin-bottom:2px;margin-left:2px;">${opt.trim().replace(/\n/g, '<br>')}</div>`).join('')
-                      : '')
-                }
-              </div>
-            </div>
-          </div>`;
-
-        if (/\$|\\\(|\\\)/.test(questionLine)) mathElements.push(qCounter - 1);
-
-        const wrap = document.createElement('div');
-        wrap.className = 'no-split';
-        wrap.style.cssText = 'page-break-inside:avoid; break-inside:avoid; display:block;';
-        wrap.innerHTML = questionHtml;
-        printable.appendChild(wrap);
-
-
-        qCounter++;
-        return wrap;
       }
-
-     // Render sections
-levelsOrder.concat(['']).forEach(levelName => {
-  const levelBucket = buckets[levelName];
-  if (!levelBucket) return;
-
-  // When Question Type filter is "All": Level → Type subsections
-  if (qtypeFilterVal === '' || qtypeFilterVal === 'All') {
-    // Skip empty levels entirely
-    const hasAny = typesOrder.some(t => (levelBucket[t] && levelBucket[t].length));
-    if (!hasAny) return;
-
-    // Level heading
-    const keepBlock = document.createElement('div');
-    keepBlock.style.cssText = 'page-break-inside: avoid; break-inside: avoid;';
-    keepBlock.innerHTML = `
-      <div style="font-size:1.15em;font-weight:800;letter-spacing:0.02em;text-align:left;margin:16px 0 8px 0;page-break-after: avoid;">
-        ${(levelName || 'UNSPECIFIED LEVEL').toUpperCase()}
-      </div>`;
-    printable.appendChild(keepBlock);
-
-    // Type headings inside each level
-   typesOrder.forEach(typeName => {
-  const list = levelBucket[typeName] || [];
-  if (!list.length) return;
-
-  // wrapper to keep heading + first question together
-  const headBlock = document.createElement('div');
-  headBlock.className = 'keep-with-next';
-  headBlock.style.cssText = 'page-break-inside:avoid; break-inside:avoid;';
-
-  const typeHdr = document.createElement('div');
-  typeHdr.style.cssText = 'font-size:1.05em;font-weight:800;letter-spacing:0.01em;text-align:left;margin:8px 0 6px 0;';
-  typeHdr.textContent = typeName;
-
-  // first question with the heading
-  const firstNode = buildQuestionHTML(list[0]);
-
-  headBlock.appendChild(typeHdr);
-  headBlock.appendChild(firstNode);
-  printable.appendChild(headBlock);
-
-  // remaining questions
-  for (let i = 1; i < list.length; i++) {
-    const node = buildQuestionHTML(list[i]);
-    printable.appendChild(node);
+      if (optionLines.length === 4) {
+        options = optionLines.map((opt, i) =>
+          /^[A-D][).]/.test(opt) ? opt : String.fromCharCode(65 + i) + ") " + opt
+        );
+      } else {
+        options = optionLines;
+      }
+    }
   }
+  const isMCQ = options.length === 4;
+
+  const questionHtml = `
+    <div class="question-container" style="display:flex;align-items:flex-start;margin-bottom:10px;page-break-inside:avoid;break-inside:avoid;">
+      <div class="question-body" style="flex:1;">
+        ${createHangingDiv(qCounter, questionLine, isMCQ)}
+        ${imgHtml ? imgHtml : ''}
+        <div class="options-block" style="margin-top:2px;">
+          ${
+            isMCQ ? (() => {
+              let optionLines = options.slice(0, 4).map((opt, i) => {
+                let cleaned = opt.replace(/^[A-D][\)\.\-]\s*/, '');
+                return String.fromCharCode(65 + i) + ") " + cleaned;
+              });
+
+              function fitsInLine(a, b) {
+                let d = document.createElement('span');
+                d.style.cssText = 'visibility:hidden;position:absolute;white-space:nowrap;padding:0;margin:0;border:none;font-family:Times New Roman,Times,serif;font-size:1.11em;';
+                d.innerText = a + " " + b;
+                document.body.appendChild(d);
+                let fits = d.offsetWidth < 450;
+                document.body.removeChild(d);
+                return fits;
+              }
+
+              let dummyDiv = document.createElement('div');
+              dummyDiv.style.cssText = 'visibility:hidden;position:absolute;white-space:nowrap;padding:0;margin:0;border:none;z-index:-1;font-family:Times New Roman,Times,serif;font-size:1.11em;';
+              dummyDiv.innerHTML = optionLines.map(opt => `<span style="display:inline-block;vertical-align:middle;margin-right:32px;">${opt.trim()}</span>`).join('');
+              document.body.appendChild(dummyDiv);
+              let fitsFour = dummyDiv.offsetWidth < 700;
+              document.body.removeChild(dummyDiv);
+
+              let abFits = fitsInLine(optionLines[0], optionLines[1]);
+              let cdFits = fitsInLine(optionLines[2], optionLines[3]);
+
+              if (fitsFour) {
+                return `
+                  <div style="display:flex;gap:32px;flex-wrap:wrap;margin-bottom:3px;margin-left:2px;">
+                    ${optionLines.map(opt => `<span style="min-width:70px;display:inline-block;vertical-align:top;">${opt.trim()}</span>`).join('')}
+                  </div>`;
+              } else if (abFits && cdFits) {
+                return `
+                  <div style="display:grid;grid-template-columns:auto auto;column-gap:24px;row-gap:0;margin-bottom:2px;margin-left:2px;width:max-content;">
+                    <span style="min-width:70px;display:inline-block;vertical-align:top;">${optionLines[0]}</span>
+                    <span style="min-width:70px;display:inline-block;vertical-align:top;">${optionLines[1]}</span>
+                    <span style="min-width:70px;display:inline-block;vertical-align:top;">${optionLines[2]}</span>
+                    <span style="min-width:70px;display:inline-block;vertical-align:top;">${optionLines[3]}</span>
+                  </div>`;
+              } else {
+                return optionLines
+                  .map(opt => `<div style="margin-bottom:2px;margin-left:2px;">${opt.trim().replace(/\n/g, '<br>')}</div>`)
+                  .join('');
+              }
+            })()
+            : (options.length > 0
+                ? options.map(opt => `<div style="margin-bottom:2px;margin-left:2px;">${opt.trim().replace(/\n/g, '<br>')}</div>`).join('')
+                : '')
+          }
+        </div>
+      </div>
+    </div>`;
+
+  if (/\$|\\\(|\\\)/.test(questionLine)) mathElements.push(qCounter - 1);
+
+  const wrap = document.createElement('div');
+  wrap.className = 'no-split';
+  wrap.style.cssText = 'page-break-inside:avoid; break-inside:avoid; display:block;';
+  wrap.innerHTML = questionHtml;
+  printable.appendChild(wrap);
+
+  qCounter++;
+  return wrap;
+}
+
+// === Build chapter index from current nodes ===
+const chapterMap = new Map();
+nodes.forEach(node => {
+  const ch = (node.getAttribute('data-chapter') || 'Unspecified').trim() || 'Unspecified';
+  if (!chapterMap.has(ch)) chapterMap.set(ch, []);
+  chapterMap.get(ch).push(node);
 });
-  } else {
-    // If a specific Question Type is selected: keep your original (flat) per-level rendering
-    const flatList = []
-      .concat(levelBucket['MCQ (Single)'])
-      .concat(levelBucket['MCQ (Multiple)'])
-      .concat(levelBucket['Descriptive']);
 
-    if (!flatList.length) return;
+// Determine ordering of chapters
+let chapterOrder = [];
+if (selChaptersForHeader.length >= 2) {
+  // preserve user selection order if multiple selected
+  chapterOrder = selChaptersForHeader.filter(c => chapterMap.has(c));
+} else if (selChaptersForHeader.length === 1) {
+  // single selected: just that chapter (others, if any, appended)
+  const only = selChaptersForHeader[0];
+  chapterOrder = chapterMap.has(only)
+    ? [only, ...Array.from(chapterMap.keys()).filter(k => k !== only)]
+    : Array.from(chapterMap.keys());
+} else {
+  // no selection => All; sort alphabetically for stability
+  chapterOrder = Array.from(chapterMap.keys()).sort((a,b)=>a.localeCompare(b));
+}
 
-    const keepBlock = document.createElement('div');
-    keepBlock.style.cssText = 'page-break-inside: avoid; break-inside: avoid;';
-    keepBlock.innerHTML = `
-      <div style="font-size:1.15em;font-weight:800;letter-spacing:0.02em;text-align:left;margin:16px 0 8px 0;page-break-after: avoid;">
-        ${(levelName || 'UNSPECIFIED LEVEL').toUpperCase()}
-      </div>`;
-    printable.appendChild(keepBlock);
+// helpers
+function renderCenteredChapterTitle(text) {
+  const t = document.createElement('div');
+  t.style.cssText = 'font-size:1.15em;font-weight:800;letter-spacing:0.02em;text-align:center;margin:16px 0 8px 0;page-break-inside:avoid;break-inside:avoid;';
+  t.textContent = String(text || 'Unspecified').toUpperCase();
+  printable.appendChild(t);
+}
 
-    flatList.forEach(item => {
-      const node = buildQuestionHTML(item);
-      printable.appendChild(node);
-    });
-  }
-});
+function renderLeftHeading(text) {
+  const h = document.createElement('div');
+  h.style.cssText = 'font-size:1.05em;font-weight:800;letter-spacing:0.01em;text-align:left;margin:8px 0 6px 0;';
+  h.textContent = text;
+  printable.appendChild(h);
+}
+
+// Decide layout mode
+const includesDescriptive = (selectedQtypes.length === 0) || selectedQtypes.includes('Descriptive');
+const includesAnyMCQ = (selectedQtypes.length === 0) || selectedQtypes.includes('MCQ (Single)') || selectedQtypes.includes('MCQ (Multiple)');
+
+const multipleChaptersSelected = selChaptersForHeader.length >= 2;
+
+// === RENDER ===
+if (!multipleChaptersSelected) {
+  // Single-chapter (or effectively one in results): flat render (your existing order based on display)
+  nodes.forEach(item => { buildQuestionHTML(item); });
+} else {
+  // Two or more chapters: per-chapter sections below the box
+  chapterOrder.forEach(ch => {
+    const list = chapterMap.get(ch) || [];
+    if (!list.length) return;
+
+    // Chapter name centered
+    renderCenteredChapterTitle(ch);
+
+    // DESCRIPTIVE block (Marks → Levels)
+    if (includesDescriptive) {
+      renderLeftHeading('2 Marks');
+      levelsOrder.forEach(lvl => {
+        const subset = list.filter(n =>
+          (n.getAttribute('data-type') || '').trim() === 'Descriptive' &&
+          String(n.getAttribute('data-marks') || '') === '2' &&
+          (n.getAttribute('data-level') || '').trim() === lvl
+        );
+        if (subset.length) {
+          renderLeftHeading(lvl);
+          subset.forEach(item => buildQuestionHTML(item));
+        }
+      });
+
+      renderLeftHeading('4 Marks');
+      levelsOrder.forEach(lvl => {
+        const subset = list.filter(n =>
+          (n.getAttribute('data-type') || '').trim() === 'Descriptive' &&
+          String(n.getAttribute('data-marks') || '') === '4' &&
+          (n.getAttribute('data-level') || '').trim() === lvl
+        );
+        if (subset.length) {
+          renderLeftHeading(lvl);
+          subset.forEach(item => buildQuestionHTML(item));
+        }
+      });
+
+      renderLeftHeading('8 Marks');
+      levelsOrder.forEach(lvl => {
+        const subset = list.filter(n =>
+          (n.getAttribute('data-type') || '').trim() === 'Descriptive' &&
+          String(n.getAttribute('data-marks') || '') === '8' &&
+          (n.getAttribute('data-level') || '').trim() === lvl
+        );
+        if (subset.length) {
+          renderLeftHeading(lvl);
+          subset.forEach(item => buildQuestionHTML(item));
+        }
+      });
+    }
+
+    // MCQ block
+    if (includesAnyMCQ) {
+      const hasSingle = list.some(n => (n.getAttribute('data-type') || '').trim() === 'MCQ (Single)');
+      const hasMulti  = list.some(n => (n.getAttribute('data-type') || '').trim() === 'MCQ (Multiple)');
+
+      if (hasSingle || hasMulti) {
+        renderLeftHeading('MCQs');
+
+        if (hasSingle && hasMulti) {
+          renderLeftHeading('MCQ (Single)');
+          list.filter(n => (n.getAttribute('data-type') || '').trim() === 'MCQ (Single)')
+              .forEach(item => buildQuestionHTML(item));
+
+          renderLeftHeading('MCQ (Multiple)');
+          list.filter(n => (n.getAttribute('data-type') || '').trim() === 'MCQ (Multiple')")
+              .forEach(item => buildQuestionHTML(item));
+        } else if (hasSingle) {
+          list.filter(n => (n.getAttribute('data-type') || '').trim() === 'MCQ (Single)')
+              .forEach(item => buildQuestionHTML(item));
+        } else if (hasMulti) {
+          list.filter(n => (n.getAttribute('data-type') || '').trim() === 'MCQ (Multiple')")
+              .forEach(item => buildQuestionHTML(item));
+        }
+      }
+    }
+  });
+}
 
      if (window.MathJax && typeof window.MathJax.typesetPromise === 'function') {
   await window.MathJax.typesetPromise([printable]);
@@ -1133,11 +1177,13 @@ if (selQtypes.length > 0) {
 }
           questionCount++;
           questionsHTML += `
-           <div class="question-item"
-     data-id="${doc.id}"
-     data-level="${data.difficulty || data.level || ''}"
-     data-type="${(data.mcqType ? data.mcqType : (Array.isArray(data.options) && data.options.length === 4 ? 'MCQ (Single)' : 'Descriptive'))}"
-     style="position:relative;">
+          <div class="question-item"
+             data-id="${doc.id}"
+             data-level="${data.difficulty || data.level || ''}"
+             data-type="${(data.mcqType ? data.mcqType : (Array.isArray(data.options) && data.options.length === 4 ? 'MCQ (Single)' : 'Descriptive'))}"
+             data-chapter="${data.chapter || ''}"
+             data-marks="${(data.marks ?? '')}"
+             style="position:relative;">
               <div class="question-meta">
                 Q${questionCount}: ${(data.difficulty || data.level || 'N/A')}, ${(data.marks ?? 'N/A')} Mark(s)${data.mcqType ? ` [${data.mcqType}]` : ''}
               </div>
@@ -1685,6 +1731,7 @@ All the Best`;
 
 </body>
 </html>
+
 
 
 
