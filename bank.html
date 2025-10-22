@@ -1359,14 +1359,42 @@ if (!window.__explainItBound) {
     }
 
     function autoLatexAll(str) {
-      if (!str) return '';
-      let match = str.match(/(\$[^\$]+\$)/g);
-      if (match && match.length >= 2) {
-        let joined = str.replace(/\$([^\$]+)\$/g, '$1');
-        str = '$' + joined.replace(/\s*\+\s*/g, ' + ') + '$';
-      }
-      return str;
+  if (!str) return '';
+
+  // Normalize spaces/newlines; keep backslashes intact
+  str = String(str).replace(/\u00a0/g, ' ').replace(/\r?\n/g, ' ').trim();
+
+  // If there is any $...$ math, leave it as-is (MathJax will handle it)
+  if (/\$[^$]+\$/.test(str)) return str;
+
+  // Count existing \( and \) to detect unbalanced or missing delimiters
+  const openCnt  = (str.match(/\\\(/g) || []).length;
+  const closeCnt = (str.match(/\\\)/g) || []).length;
+
+  // If both sides present (even multiple), don't touch
+  if (openCnt > 0 && closeCnt > 0) return str;
+
+  // Heuristic: detect LaTeX-y content that should be inline math
+  const hasLatexToken =
+    /\\[A-Za-z]+|[_^]|\\frac|\\sqrt|\\cdot|\\times|\\leq|\\geq|\\ldots|\\dots|\\angle|\\pi|\\alpha|\\beta|\\gamma/.test(str);
+
+  // Case A: one side missing — add the counterpart
+  if (openCnt > 0 && closeCnt === 0) return str + '\\)';
+  if (closeCnt > 0 && openCnt === 0) return '\\(' + str;
+
+  // Case B: no explicit \( \) but looks like math → wrap
+  if (hasLatexToken) {
+    // If the string is already surrounded by plain parentheses, upgrade them to \( \)
+    const t = str.trim();
+    if (t.startsWith('(') && t.endsWith(')')) {
+      return '\\(' + t.slice(1, -1).trim() + '\\)';
     }
+    return '\\(' + str + '\\)';
+  }
+
+  // Otherwise, return unchanged
+  return str;
+}
 
     // 3-dot menu actions for each question in Question Bank
     function setupQuestionActionMenus() {
@@ -1733,6 +1761,7 @@ All the Best`;
 
 </body>
 </html>
+
 
 
 
