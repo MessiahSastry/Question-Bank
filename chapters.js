@@ -137,9 +137,11 @@ window.textbooks = {
     ],
     "Social": [
       "Our Earth in the Solar Syatem",
+      "Maps",
+      "Early Life to Settled Life",
       "Reading and Making Maps",
       "Globe – A Model of the Earth",
-      "Land Forms",
+      "Land Forms - Andhra Pradesh",
       "India – Our Motherland",
       "Indian Rivers",
       "Major Domains of the Earth",
@@ -713,6 +715,7 @@ window.textbooks = {
     ]
   }
 };
+
 
 
 
