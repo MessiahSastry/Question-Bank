@@ -8,7 +8,7 @@
 
   <script>
     window.MathJax = {
-      tex: { inlineMath: [["$", "$"], ["\\(", "\\)"]] }
+      tex: { inlineMath: [["\\(", "\\)"]] }
     };
   </script>
   <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
@@ -1228,21 +1228,27 @@ if (selQtypes.length > 0) {
       // only convert parenthesized chunks that contain a backslash (LaTeX token) and are NOT already \( \)
       el.innerHTML = el.innerHTML
         // ( \angle A = 45^\circ )  ->  \( \angle A = 45^\circ \)
-        .replace(/\(\s*(\\[^()]*?)\s*\)/g, (_m, inner) => `\\(${inner.trim()}\\)`)
-        // repair one-sided cases
-        .replace(/\\\(\s*([^)]*?)\s*\)(?!\\)/g, (_m, inner) => `\\(${inner.trim()}\\)`)
-        .replace(/\(\s*([^)]*?)\s*\\\)/g, (_m, inner) => `\\(${inner.trim()}\\)`);
+        // 1) Don’t touch already-correct \( ... \)
+        el.innerHTML = el.innerHTML.replace(/\\\([\s\S]*?\\\)/g, m => m);
+        // 2) Only convert plain "( \latex ... )" → "\( ... \)"
+        el.innerHTML = el.innerHTML.replace(/\(\s*(\\[^()]+?)\s*\)/g, (_m, inner) => `\\(${inner.trim()}\\)`);
+
     });
   }
   __upgradeParenMathInNode(displayArea);
+displayArea.innerHTML = displayArea.innerHTML
+  .replace(/\\\(\s+/g, '\\(')
+  .replace(/\s+\\\)/g, '\\)');
 
   if (window.MathJax && typeof window.MathJax.typesetPromise === 'function') {
-    // yield one frame so the DOM paints before heavy typesetting
-    await new Promise(r => requestAnimationFrame(() => r()));
-    window.MathJax.typesetPromise([displayArea]).catch(function (err) {
-      console.error('MathJax rendering error:', err);
-    });
+  // Wait for MathJax core to finish starting
+  if (window.MathJax.startup && window.MathJax.startup.promise) {
+    await window.MathJax.startup.promise;
   }
+  // Ensure the new nodes are in the layout tree
+  await new Promise(r => requestAnimationFrame(r));
+  await window.MathJax.typesetPromise([displayArea]);
+}
       if (typeof setupQuestionActionMenus === "function") setupQuestionActionMenus();
 
 /* ==== Explain It (AI) — open directly in ChatGPT (copy prompt + toast + open tab) ==== */
@@ -1373,13 +1379,7 @@ if (!window.__explainItBound) {
     }
 
    function autoLatexAll(str) {
-  if (!str) return '';
-  let match = str.match(/(\$[^\$]+\$)/g);
-  if (match && match.length >= 2) {
-    let joined = str.replace(/\$([^\$]+)\$/g, '$1');
-    str = '$' + joined.replace(/\s*\+\s*/g, ' + ') + '$';
-  }
-  return str;
+  return (str || '').replace(/\u00a0/g, ' '); // normalize NBSP -> space
 }
 
     // 3-dot menu actions for each question in Question Bank
@@ -1747,6 +1747,7 @@ All the Best`;
 
 </body>
 </html>
+
 
 
 
