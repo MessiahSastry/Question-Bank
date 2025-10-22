@@ -1362,23 +1362,27 @@ if (!window.__explainItBound) {
   if (!str) return '';
   let s = String(str).replace(/\u00a0/g, ' ').replace(/\r?\n/g, ' ').trim();
 
-  // 1) Leave existing $...$ or \( ... \) alone
-  if (/\$[^$]+\$/.test(s)) return s;
+  // 0) Respect existing delimiters
+  if (/\$[^$]+\$/.test(s) || /\\\(.+?\\\)/.test(s)) return s;
 
-  // 2) Repair orphaned delimiters only (don't wrap whole sentences)
-  const openCnt  = (s.match(/\\\(/g) || []).length;
-  const closeCnt = (s.match(/\\\)/g) || []).length;
-  if (openCnt > 0 && closeCnt === 0) return s + '\\)';
-  if (closeCnt > 0 && openCnt === 0) return '\\(' + s;
+  // 1) Repair one-sided cases (if someone saved "\(...)" or "(... \)")
+  if (/\\\(/.test(s) && !/\\\)/.test(s)) return s + '\\)';
+  if (/\\\)/.test(s) && !/\\\(/.test(s)) return '\\(' + s;
 
-  // 3) Upgrade ONLY parenthesized LaTeX chunks like "( \angle A = 45^\circ )" → "\( \angle A = 45^\circ \)"
-  //    This preserves normal words outside the math.
-  s = s.replace(/\(\s*([^)]*\\[A-Za-z][^)]*)\s*\)/g, (_m, inner) => `\\(${inner.trim()}\\)`);
+  // 2) UPGRADE any parenthesized LaTeX chunk:
+  //    "(  \something  ... )"  →  "\( \something ... \)"
+  //    Works even with extra spaces; keeps only the inner content inside \( \)
+  s = s.replace(/\(\s*(\\(?:[A-Za-z]+|[^()\s])[^)]*?)\s*\)/g, (_m, inner) => `\\(${inner.trim()}\\)`);
 
-  // 4) If there is still a plain LaTeX token but no delimiters, do NOT wrap the whole string.
-  //    (Avoid turning the entire sentence into math mode which collapses spaces.)
+  // 3) Also catch typical math not in parentheses but obviously LaTeX-y:
+  //    e.g., "\angle A = 45^\circ" → "\( \angle A = 45^\circ \)"
+  //    (Do NOT wrap whole sentences; only short pure-math runs.)
+  s = s.replace(/(^|[\s,;:—-])((?:\\[A-Za-z]+|[A-Za-z0-9 _^\\+\-*/=<>\u00B0])+?\^\s*\\[A-Za-z]+(?:\s*[A-Za-z0-9])*)(?=$|[\s,;:—-])/g,
+    (_m, lead, math) => `${lead}\\(${math.trim()}\\)`);
+
   return s;
 }
+
     // 3-dot menu actions for each question in Question Bank
     function setupQuestionActionMenus() {
       document.querySelectorAll('.q-action-btn').forEach((btn) => {
@@ -1744,6 +1748,7 @@ All the Best`;
 
 </body>
 </html>
+
 
 
 
