@@ -118,6 +118,8 @@ window.textbooks = {
       "Apparatus in Chemical Laboratory"
     ],
     "Biology": [
+      "Components of Food",
+      "Getting to Know Plants",
       "The Living World",
       "Plant World",
       "Animal World",
@@ -711,6 +713,7 @@ window.textbooks = {
     ]
   }
 };
+
 
 
 
