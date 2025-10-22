@@ -1218,18 +1218,32 @@ if (selQtypes.length > 0) {
             </div>`;
         });
 
-        if (questionCount > 0) {
-          displayArea.innerHTML = questionsHTML;
+       if (questionCount > 0) {
+  displayArea.innerHTML = questionsHTML;
 
-         if (window.MathJax && typeof window.MathJax.typesetPromise === 'function') {
-  // yield one frame so the DOM paints before heavy typesetting
-  await new Promise(r => requestAnimationFrame(() => r()));
-  window.MathJax.typesetPromise([displayArea]).catch(function (err) {
-    console.error('MathJax rendering error:', err);
-  });
-}
+  // --- Upgrade plain "( \latex … )" to "\( … \)" inside each question block ---
+  function __upgradeParenMathInNode(root) {
+    if (!root) return;
+    root.querySelectorAll('.question-text').forEach(el => {
+      // only convert parenthesized chunks that contain a backslash (LaTeX token) and are NOT already \( \)
+      el.innerHTML = el.innerHTML
+        // ( \angle A = 45^\circ )  ->  \( \angle A = 45^\circ \)
+        .replace(/\(\s*(\\[^()]*?)\s*\)/g, (_m, inner) => `\\(${inner.trim()}\\)`)
+        // repair one-sided cases
+        .replace(/\\\(\s*([^)]*?)\s*\)(?!\\)/g, (_m, inner) => `\\(${inner.trim()}\\)`)
+        .replace(/\(\s*([^)]*?)\s*\\\)/g, (_m, inner) => `\\(${inner.trim()}\\)`);
+    });
+  }
+  __upgradeParenMathInNode(displayArea);
 
-          if (typeof setupQuestionActionMenus === "function") setupQuestionActionMenus();
+  if (window.MathJax && typeof window.MathJax.typesetPromise === 'function') {
+    // yield one frame so the DOM paints before heavy typesetting
+    await new Promise(r => requestAnimationFrame(() => r()));
+    window.MathJax.typesetPromise([displayArea]).catch(function (err) {
+      console.error('MathJax rendering error:', err);
+    });
+  }
+      if (typeof setupQuestionActionMenus === "function") setupQuestionActionMenus();
 
 /* ==== Explain It (AI) — open directly in ChatGPT (copy prompt + toast + open tab) ==== */
 if (!window.__explainItBound) {
@@ -1748,6 +1762,7 @@ All the Best`;
 
 </body>
 </html>
+
 
 
 
