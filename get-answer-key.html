@@ -170,6 +170,18 @@ main > *:first-child p {
   margin-top: 4px !important;
 }
 </style>
+<script>
+  // Pull and consume the Bank→AnswerKey payload once
+  function __consumeBankPayload() {
+    try {
+      const raw = sessionStorage.getItem('answerKeyPayload');
+      const p = raw ? JSON.parse(raw) : null;
+      if (!p || p.source !== 'bank') return null;
+      sessionStorage.removeItem('answerKeyPayload');
+      return p;
+    } catch (_) { return null; }
+  }
+</script>
 </head>
 <body>
   <!-- (kept for consistency; will be hidden in JS) -->
@@ -289,7 +301,28 @@ Q1) C — &lt;explanation&gt;"></textarea>
         };
         const passedIds = (st.questionIds && st.questionIds.length) ? st.questionIds : qpIds;
 
-        await loadSelection(passedIds);
+        const __p = (typeof __consumeBankPayload === 'function') ? __consumeBankPayload() : null;
+
+if (__p) {
+  sessionParams = {
+    class: __p.meta?.class || '',
+    subject: __p.meta?.subject || '',
+    chapter: __p.meta?.chapter || '',
+    questionType: __p.meta?.questionType || 'MCQ (Single)',
+    questionIds: []
+  };
+
+  selectedQuestions = (__p.questions || []).map((q, i) => ({
+    id: q.id || ('local_' + (i + 1)),
+    questionNumber: i + 1,
+    question: q.question || '',
+    options: Array.isArray(q.options) ? q.options.slice(0,4) : [],
+    parsedAnswer: q.answer || ''
+  }));
+  sessionParams.questionIds = selectedQuestions.map(x => x.id);
+} else {
+  await loadSelection(passedIds);
+}
         renderHeaderInfo();
         makeBatches(15);
         renderBatches();
@@ -676,5 +709,6 @@ btnRow.style.gap = '6px';
 </script>
 </body>
 </html>
+
 
 
