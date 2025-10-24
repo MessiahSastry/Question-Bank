@@ -1737,26 +1737,57 @@ const MAX_BATCH = 15;                           // send 15 at a time
 
 // Update selectors to match how selection works in Bank.html.
 // The code tries these in order and uses the first that returns results.
+// If no explicit selection UI exists, fall back to “all visible questions”
 const SELECTOR_CANDIDATES = [
   'input.bank-select[type="checkbox"]:checked',
   'input[type="checkbox"][name*="select"]:checked',
-  '[data-selected="true"]'
+  '[data-selected="true"]',
+  '#questions-display-area .question-item'     // <— NEW
 ];
 
 // How each selected row exposes its data. Adjust if your attribute names differ.
 function extractQuestionFrom(el){
-  const row = el.closest('[data-qid]') || el.closest('[data-row]') || el;
-  const ds  = row.dataset || {};
+  // works with your .question-item cards
+  const row = el.closest('.question-item') || el.closest('[data-qid]') || el.closest('[data-row]') || el;
+  const ds  = row?.dataset || {};
+  const id  = ds.id || ds.qid || row?.getAttribute('data-id') || '';
+
+  // get the rich text
+  const textDiv = row?.querySelector('.question-text');
+  let html = (textDiv?.innerHTML || '').replace(/<img[^>]*>/gi, '');
+  // split into lines: first is stem, rest are (possible) options
+  let parts = html.split(/<br\s*\/?>|<\/div>|<div[^>]*>/gi)
+                  .map(s => s.replace(/&nbsp;/g, ' ').trim())
+                  .filter(Boolean);
+
+  const stem = parts[0] || '';
+
+  // collect options from remaining lines; handle inline "A) .. B) .." too
+  let optionLines = [];
+  for (let i = 1; i < parts.length; i++){
+    const line = parts[i];
+    const inline = line.match(/([A-D][).][^A-D]*)/g);
+    if (inline && inline.length >= 2){
+      optionLines.push(...inline.map(t => t.trim()));
+    } else if (line) {
+      optionLines.push(line);
+    }
+  }
+  // normalize to A-D (max 4)
+  const makeLabeled = (t, i) => (/^[A-D][).]/.test(t) ? t : String.fromCharCode(65 + i) + ') ' + t);
+  const opts = optionLines.slice(0, 4).map(makeLabeled);
+
   return {
-    id:       ds.qid     || ds.id     || '',
-    question: (ds.question  || '').trim(),
-    A:        (ds.optionsA  || ds.a || '').trim(),
-    B:        (ds.optionsB  || ds.b || '').trim(),
-    C:        (ds.optionsC  || ds.c || '').trim(),
-    D:        (ds.optionsD  || ds.d || '').trim(),
-    answer:   (ds.answer    || '').trim()
+    id,
+    question: stem.trim(),
+    A: (opts[0] || '').replace(/^[A-D][).]\s*/, '').trim(),
+    B: (opts[1] || '').replace(/^[A-D][).]\s*/, '').trim(),
+    C: (opts[2] || '').replace(/^[A-D][).]\s*/, '').trim(),
+    D: (opts[3] || '').replace(/^[A-D][).]\s*/, '').trim(),
+    answer: (ds.answer || '').trim()   // (kept if you later add data-answer)
   };
 }
+
 
 // (optional) if your Bank page shows class/subject/chapter somewhere in hidden inputs
 function getSessionParams(){
@@ -1801,33 +1832,51 @@ function buildPasteBlock(questions){
 }
 
 function placeButton(btn){
-  // try common toolbars; if none, leave it floating
-  const containers = document.querySelectorAll(
-    '.header-actions, .toolbar, .top-actions, header .actions, .actions, .controls, .topbar'
-  );
-  const host = containers[0] || null;
-  if (host){
-    btn.style.cssText = 'margin-left:8px';
-    host.appendChild(btn);
-  }else{
-    // floating fallback
-    btn.style.cssText = `
-      position: fixed; right: 20px; bottom: 20px; z-index: 9999;
-      background:#28a745;color:#fff;border:none;border-radius:8px;
-      padding:12px 16px;font-weight:700;cursor:pointer;box-shadow:0 6px 16px rgba(0,0,0,.15)
-    `;
-    document.body.appendChild(btn);
+  const area = document.getElementById('questions-display-area');
+  if (!area) { document.body.appendChild(btn); return; }
+
+  // Create (or reuse) a footer row under the questions
+  let footer = document.getElementById('answer-key-footer');
+  if (!footer){
+    footer = document.createElement('div');
+    footer.id = 'answer-key-footer';
+    footer.style.cssText =
+      'width:100%;max-width:650px;margin:14px auto 40px auto;padding:0 12px;box-sizing:border-box;';
+    // put it immediately after the questions container
+    area.insertAdjacentElement('afterend', footer);
   }
+
+  // drop the button there (same width/centering as Download PDF)
+  btn.style.removeProperty('position');
+  btn.style.removeProperty('right');
+  btn.style.removeProperty('bottom');
+  footer.appendChild(btn);
+
+  // Keep footer right after questions even when list re-renders
+  const mo = new MutationObserver(() => {
+    if (footer.previousElementSibling !== area) {
+      area.insertAdjacentElement('afterend', footer);
+    }
+    // show only when there are questions
+    const hasQs = area.querySelector('.question-item');
+    btn.disabled = !hasQs;
+    btn.style.display = hasQs ? '' : 'none';
+  });
+  mo.observe(area, { childList: true, subtree: false });
+  // initial state
+  const hasQs = area.querySelector('.question-item');
+  btn.disabled = !hasQs;
+  btn.style.display = hasQs ? '' : 'none';
 }
 
 (function initGetAnswerKey(){
   const btn = document.createElement('button');
-  btn.id = 'open-answer-key-btn';
-  btn.textContent = 'Get Answer Key';
-  btn.setAttribute('type','button');
-  btn.className = 'btn-small';
-  btn.style.background = '#28a745';
-  btn.style.color = '#fff';
+btn.id = 'open-answer-key-btn';
+btn.setAttribute('type','button');
+// same style as your blue buttons
+btn.className = 'main-btn';
+btn.innerHTML = '<i class="fa-solid fa-key"></i> Get Answer Key';
+btn.style.marginTop = '12px';
 
   btn.addEventListener('click', () => {
     const selectedEls = findSelectedElements();
@@ -1871,6 +1920,7 @@ function placeButton(btn){
 </script>
 </body>
 </html>
+
 
 
 
