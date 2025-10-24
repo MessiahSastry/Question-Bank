@@ -1730,8 +1730,148 @@ All the Best`;
     </div>
   </div>
 
+<script>
+/* ===================== CONFIG (edit if needed) ===================== */
+const ANSWER_UI_PATH = 'get-answer-key.html';   // your AI page
+const MAX_BATCH = 15;                           // send 15 at a time
+
+// Update selectors to match how selection works in Bank.html.
+// The code tries these in order and uses the first that returns results.
+const SELECTOR_CANDIDATES = [
+  'input.bank-select[type="checkbox"]:checked',
+  'input[type="checkbox"][name*="select"]:checked',
+  '[data-selected="true"]'
+];
+
+// How each selected row exposes its data. Adjust if your attribute names differ.
+function extractQuestionFrom(el){
+  const row = el.closest('[data-qid]') || el.closest('[data-row]') || el;
+  const ds  = row.dataset || {};
+  return {
+    id:       ds.qid     || ds.id     || '',
+    question: (ds.question  || '').trim(),
+    A:        (ds.optionsA  || ds.a || '').trim(),
+    B:        (ds.optionsB  || ds.b || '').trim(),
+    C:        (ds.optionsC  || ds.c || '').trim(),
+    D:        (ds.optionsD  || ds.d || '').trim(),
+    answer:   (ds.answer    || '').trim()
+  };
+}
+
+// (optional) if your Bank page shows class/subject/chapter somewhere in hidden inputs
+function getSessionParams(){
+  const byId = id => document.getElementById(id)?.value?.trim();
+  return {
+    class:       byId('class-value-ai')   || byId('class-value')   || '',
+    subject:     byId('subject-value-ai') || byId('subject-value') || '',
+    chapter:     byId('chapter-value-ai') || byId('chapter-value') || '',
+    questionType:byId('qtype-value-ai')   || byId('question-type') || ''
+  };
+}
+/* =================== END CONFIG =================== */
+
+function findSelectedElements(){
+  for (const sel of SELECTOR_CANDIDATES){
+    const list = Array.from(document.querySelectorAll(sel));
+    if (list.length) return list;
+  }
+  return [];
+}
+
+function buildPasteBlock(questions){
+  const out = [];
+  questions.forEach((q, i) => {
+    const n = i + 1;
+    const isMcq = !!(q.A || q.B || q.C || q.D);
+    const meta = isMcq
+      ? `Q${n}: Level ?, 1 Mark [MCQ (Single)]`
+      : `Q${n}: Level ?, 2 Marks [Descriptive]`;
+    out.push(meta);
+    out.push(q.question || '');
+    if (isMcq){
+      out.push(`A) ${q.A || ''}`);
+      out.push(`B) ${q.B || ''}`);
+      out.push(`C) ${q.C || ''}`);
+      out.push(`D) ${q.D || ''}`);
+      if (q.answer) out.push(q.answer);
+    }
+    out.push('');
+  });
+  return out.join('\n').trim();
+}
+
+function placeButton(btn){
+  // try common toolbars; if none, leave it floating
+  const containers = document.querySelectorAll(
+    '.header-actions, .toolbar, .top-actions, header .actions, .actions, .controls, .topbar'
+  );
+  const host = containers[0] || null;
+  if (host){
+    btn.style.cssText = 'margin-left:8px';
+    host.appendChild(btn);
+  }else{
+    // floating fallback
+    btn.style.cssText = `
+      position: fixed; right: 20px; bottom: 20px; z-index: 9999;
+      background:#28a745;color:#fff;border:none;border-radius:8px;
+      padding:12px 16px;font-weight:700;cursor:pointer;box-shadow:0 6px 16px rgba(0,0,0,.15)
+    `;
+    document.body.appendChild(btn);
+  }
+}
+
+(function initGetAnswerKey(){
+  const btn = document.createElement('button');
+  btn.id = 'open-answer-key-btn';
+  btn.textContent = 'Get Answer Key';
+  btn.setAttribute('type','button');
+  btn.className = 'btn-small';
+  btn.style.background = '#28a745';
+  btn.style.color = '#fff';
+
+  btn.addEventListener('click', () => {
+    const selectedEls = findSelectedElements();
+    if (!selectedEls.length){
+      alert('Please select at least one question.');
+      return;
+    }
+
+    const allQs = selectedEls.map(extractQuestionFrom).filter(q => (q.question || '').trim());
+    const batch = allQs.slice(0, MAX_BATCH);
+
+    if (!batch.length){
+      alert('Selected items have no question text. Check your data-* attributes.');
+      return;
+    }
+
+    const payload = {
+      sessionParams: getSessionParams(),
+      totalSelected: allQs.length,
+      batchSize: batch.length,
+      raw: batch,
+      pasteBlock: buildPasteBlock(batch)
+    };
+
+    try { sessionStorage.setItem('answerKeyPayload', JSON.stringify(payload)); }
+    catch(e){ console.warn('sessionStorage failed', e); }
+
+    const url = new URL(ANSWER_UI_PATH, location.href);
+    url.searchParams.set('from','bank');
+    url.searchParams.set('count', String(batch.length));
+    window.location.href = url.toString();
+  });
+
+  // place it
+  if (document.readyState === 'loading'){
+    document.addEventListener('DOMContentLoaded', () => placeButton(btn));
+  }else{
+    placeButton(btn);
+  }
+})();
+</script>
 </body>
 </html>
+
 
 
 
