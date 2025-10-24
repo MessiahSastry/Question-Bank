@@ -362,11 +362,7 @@ if (__p) {
           const qs = await db.collection('questions').where(firebase.firestore.FieldPath.documentId(), 'in', slice).get();
           qs.forEach(doc => chunks.push({id:doc.id, ...doc.data()}));
         }
-        selectedQuestions = sortByNumber(chunks).map(q => ({
-  ...q,
-  question: __cleanMathJaxArtifacts(q.question || q.body || q.text || ''),
-  options: Array.isArray(q.options) ? q.options.map(x => __cleanMathJaxArtifacts(x || '')) : q.options
-}));
+       selectedQuestions = sortByNumber(chunks);
 
       } else {
         const snap = await db.collection('questions')
@@ -377,12 +373,7 @@ if (__p) {
           .get();
         selectedQuestions = [];
         snap.forEach(doc => selectedQuestions.push({id:doc.id, ...doc.data()}));
-        selectedQuestions = selectedQuestions.map(q => ({
-  ...q,
-  question: __cleanMathJaxArtifacts(q.question || q.body || q.text || ''),
-  options: Array.isArray(q.options) ? q.options.map(x => __cleanMathJaxArtifacts(x || '')) : q.options
-}));
-sessionParams.questionIds = selectedQuestions.map(x => x.id);
+        sessionParams.questionIds = selectedQuestions.map(x => x.id);
       }
     }
 
@@ -412,28 +403,32 @@ sessionParams.questionIds = selectedQuestions.map(x => x.id);
 
    /* ---------- SANITIZE (strip any saved MathJax/mjx/SVG) ---------- */
 function __cleanMathJaxArtifacts(s=''){
-  let t = String(s);
+  const str = String(s);
 
-  // Drop whole mjx containers and inline SVGs
+  // If it already looks like plain TeX (no HTML tags) keep it EXACTLY as is.
+  const hasTags = /<[^>]+>/.test(str);
+  const hasPlainTeX = /\\\(|\\\[|\\begin\{/.test(str);
+  if (hasPlainTeX && !hasTags) return str;
+
+  let t = str;
+
+  // Remove whole MathJax containers and inline SVG blobs
   t = t
     .replace(/<mjx-container[\s\S]*?<\/mjx-container>/gi, '')
     .replace(/<svg[\s\S]*?<\/svg>/gi, '');
 
-  // Drop any remaining MathJax/mjx/g/path/defs/use/rect/span/div/style tags
+  // Strip remaining MathJax/SVG related tags
   t = t.replace(/<\/?(?:mjx-\w+|g|path|defs|use|rect|span|div|style)\b[^>]*>/gi, '');
 
-  // Kill any path "d" attributes that might have leaked as plain text
+  // Remove any path "d" attributes that may have leaked
   t = t.replace(/\bd="[^"]*"/gi, '');
 
-  // Kill lines that are ONLY SVG path commands (M L C Q T S H V Z + numbers/commas)
+  // Remove lines that are ONLY SVG path commands (avoid nuking normal text)
   t = t.replace(/^[ \t]*[MLCQTSHVZmlcqts hvz][0-9,\.\-\seE]+[ \t]*$/gm, '');
 
-  // Decode common entities and normalize spaces
+  // Normalize whitespace; DO NOT touch backslashes
   t = t
     .replace(/&nbsp;/gi, ' ')
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
-    .replace(/&amp;/gi, '&')
     .replace(/\s+\n/g, '\n')
     .replace(/\n\s+/g, '\n')
     .replace(/[ \t]{2,}/g, ' ')
@@ -753,6 +748,7 @@ btnRow.style.gap = '6px';
 </script>
 </body>
 </html>
+
 
 
 
