@@ -400,7 +400,20 @@ if (__p) {
       toast(`Batch ${idx+1} ready`);
     }
 
-    /* ---------- RENDER ---------- */
+   /* ---------- SANITIZE (strip any saved MathJax/mjx/SVG) ---------- */
+function __cleanMathJaxArtifacts(s=''){
+  return String(s)
+    .replace(/<mjx-container[\s\S]*?<\/mjx-container>/gi, '')
+    .replace(/<svg[\s\S]*?<\/svg>/gi, '')
+    .replace(/<mjx-\w+[\s\S]*?<\/mjx-\w+>/gi, '')
+    .replace(/<span[^>]*class="MathJax[^"]*"[^>]*>[\s\S]*?<\/span>/gi, '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/* ---------- RENDER ---------- */
+
     function renderHeaderInfo(){
       byId('hdr-class').textContent   = sessionParams.class || '—';
       byId('hdr-subject').textContent = sessionParams.subject || '—';
@@ -457,7 +470,7 @@ if (__p) {
         item.innerHTML = `<span class="question-meta-ai">${label}</span>`;
         const txt = document.createElement('div');
         txt.className = 'question-text-ai';
-        txt.textContent = body;  // no HTML, safe for MathJax to process
+        txt.textContent = __cleanMathJaxArtifacts(body);  // strip any saved SVG/mjx first
         item.appendChild(txt);
         area.appendChild(item);
       });
@@ -465,18 +478,19 @@ if (__p) {
     }
 
     function buildQuestionBody(q){
-      if (q.options && q.options.length){
-        const lines = [
-          q.question || q.body || '',
-          `A) ${q.options[0] || ''}`,
-          `B) ${q.options[1] || ''}`,
-          `C) ${q.options[2] || ''}`,
-          `D) ${q.options[3] || ''}`
-        ];
-        return lines.join('\n');
-      }
-      return q.text || q.body || q.question || '';
-    }
+  const stem = __cleanMathJaxArtifacts(q.question || q.body || q.text || '');
+  if (q.options && q.options.length){
+    const lines = [
+      stem,
+      `A) ${__cleanMathJaxArtifacts(q.options[0] || '')}`,
+      `B) ${__cleanMathJaxArtifacts(q.options[1] || '')}`,
+      `C) ${__cleanMathJaxArtifacts(q.options[2] || '')}`,
+      `D) ${__cleanMathJaxArtifacts(q.options[3] || '')}`
+    ];
+    return lines.join('\n');
+  }
+  return stem;
+}
 
     /* ---------- CHATGPT HANDOFF ---------- */
     function openChatGptForCurrentBatch(){
@@ -624,7 +638,7 @@ if (__p) {
         const label = q.questionNumber ? `Q${q.questionNumber}` : q.id.slice(0,6);
         rows.push({
           label,
-          question: (q.question || q.text || q.body || '').replace(/\s+/g,' ').trim(),
+          question: __cleanMathJaxArtifacts(q.question || q.text || q.body || ''),
           answer: (key.answer || '').trim(),
           explanation: (key.explanation || '').trim()
         });
@@ -710,6 +724,7 @@ btnRow.style.gap = '6px';
 </script>
 </body>
 </html>
+
 
 
 
