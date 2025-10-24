@@ -1930,31 +1930,72 @@ if (!batch.length){
   return;
 }
 
-  // ===== Build Answer Key prompt for ChatGPT — PLAIN TEXT ONLY =====
+ // ===== Build Answer Key prompt for ChatGPT — ANSWERS NOW + PRINT LATER INSTRUCTIONS =====
 const meta = getSessionParams();
 
+const headerClass   = (meta.class || "").trim();
+const headerSubject = (meta.subject || "").trim();
+const headerChapter = (meta.chapter || "All").trim();
+const headerType    = (meta.questionType || "Mixed").trim();
+
 const lines = [];
+
+// STAGE 1 (NOW): produce answers + explanations
 lines.push(
-  "Please provide the CORRECT ANSWER and a CLEAR, STEP-BY-STEP EXPLANATION for each question.",
-  "Output PLAIN TEXT only — do NOT return HTML, Markdown code blocks, or any CSS.",
-  "Respond exactly in this format:",
-  "Q<n>: Ans: <A) or B) or C) or D) or text>",
-  "Explanation: <your explanation>",
+  "You will receive a list of questions (some MCQ, some Descriptive).",
   "",
-  meta.class ? `Class: ${meta.class}` : "",
-  meta.subject ? `Subject: ${meta.subject}` : "",
-  meta.chapter ? `Chapter: ${meta.chapter}` : "",
-  meta.questionType ? `Type: ${meta.questionType}` : "",
+  "STAGE 1 — DO THIS NOW:",
+  "• For each question, return the CORRECT ANSWER and a CLEAR, STEP-BY-STEP EXPLANATION.",
+  "• Preserve all LaTeX exactly as given (do not alter math).",
+  "• For MCQs: output the correct option letter (A–D) and a clear explanation.",
+  "• For Descriptive: give a clear explanation; SCALE the depth by marks (2→brief key steps; 4→moderate detail; 8→thorough solution).",
+  "• Number answers in the same order as the questions.",
+  "• Output PLAIN TEXT ONLY for this stage (no HTML, no markdown fences).",
   "",
-  "Rules:",
-  "• Preserve all LaTeX exactly as given (math is already in LaTeX).",
-  "• For MCQs: return the correct option letter (A–D) and a clear, step-by-step explanation.",
-  "• For Descriptive: give a clear, step-by-step explanation; SCALE the depth by marks (2 marks → brief key steps; 4 marks → moderate detail; 8 marks → thorough solution).",
-  "• Number answers in the same order as questions.",
+  (headerClass   ? `Class: ${headerClass}`   : ""),
+  (headerSubject ? `Subject: ${headerSubject}` : ""),
+  (headerChapter ? `Chapter: ${headerChapter}` : ""),
+  (headerType    ? `Type: ${headerType}`       : ""),
   ""
 );
 
-// List questions (MCQ detected by presence of A–D)
+// STAGE 2 (LATER): when user says “print pdf” or “download pdf file”, return printable HTML
+lines.push(
+  "STAGE 2 — REMEMBER THESE INSTRUCTIONS FOR LATER:",
+  "When I later type exactly “print pdf” or “download pdf file”, convert ALL questions and the answers/explanations you produced in this chat into ONE self-contained HTML page READY for Print → Save as PDF, following these STRICT rules:",
+  "• Use only Times New Roman everywhere.",
+  "• @page margins: 1.5cm on all four sides.",
+  "• Header (center-aligned, three lines):",
+  "  1) St. Patrick's School",
+  "  2) Class & Subject (single line, centered), e.g., \"7th Class — Math 1 IIT\"",
+  "  3) Chapter name + Question Type (Single / Multiple / Descriptive), centered",
+  "• Per-question formatting:",
+  "  – MCQ (Single/Multiple): question in RED; correct option(s) in GREEN; detailed explanation in BLUE.",
+  "  – Descriptive: question in RED; detailed explanation in BLUE; explanation depth reflects marks (2/4/8).",
+  "• Show each question number in order.",
+  "• Render LaTeX as inline \\( ... \\) or display \\[ ... \\). If a math engine isn’t available, output the raw LaTeX in the HTML.",
+  "• Return ONE <html> page ONLY (NO markdown fences, NO extra commentary). Include a <style> with at least:",
+  "  body { font-family: 'Times New Roman', Times, serif; }",
+  "  @page { margin: 1.5cm; }",
+  "  .q-stem { color: #c82333; }",
+  "  .q-ans  { color: #2e7d32; }",
+  "  .q-exp  { color: #1565c0; }",
+  "• In the body, for each question, use:",
+  "  <div class=\"q\">",
+  "    <div class=\"q-num\">Q<n></div>",
+  "    <div class=\"q-stem\">[question text, LaTeX preserved]</div>",
+  "    <div class=\"q-ans\">Ans: [A/B/C/D or text]</div>",
+  "    <div class=\"q-exp\">Explanation: [detailed; depth scaled by marks]</div>",
+  "  </div>",
+  "",
+  "Header values to use in that HTML:",
+  "• School: St. Patrick's School",
+  `• Class & Subject: ${headerClass}${(headerClass && headerSubject) ? " — " : ""}${headerSubject}`,
+  `• Chapter & Type: ${headerChapter}${headerType ? " — " + headerType : ""}`,
+  ""
+);
+
+// List questions (MCQ detected by presence of options and used for Stage 1 now)
 batch.forEach((q, i) => {
   const n = i + 1;
   lines.push(`Q${n}:`);
@@ -1967,7 +2008,6 @@ batch.forEach((q, i) => {
   } else {
     lines.push("Descriptive question.");
   }
-  // include marks if you have them
   if (q.marks !== undefined && q.marks !== '') lines.push(`Marks: ${q.marks}`);
   lines.push("");
 });
@@ -1994,6 +2034,7 @@ window.open(chatUrl.toString(), '_blank', 'noopener');
 </script>
 </body>
 </html>
+
 
 
 
