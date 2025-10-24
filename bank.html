@@ -1754,7 +1754,6 @@ All the Best`;
 <script>
 /* ===================== CONFIG (edit if needed) ===================== */
 const ANSWER_UI_PATH = 'get-answer-key.html';   // your AI page
-const MAX_BATCH = 15;                           // send 15 at a time
 
 // Update selectors to match how selection works in Bank.html.
 // The code tries these in order and uses the first that returns results.
@@ -1919,33 +1918,75 @@ btn.addEventListener('mouseleave', () => (btn.style.background = '#28a745'));
 }
 
     const allQs = selectedEls.map(extractQuestionFrom).filter(q => (q.question || '').trim());
-    const batch = allQs.slice(0, MAX_BATCH);
+    const batch = allQs;
 
     if (!batch.length){
       alert('Selected items have no question text. Check your data-* attributes.');
       return;
     }
 
-   const payload = {
-  source: 'bank',
-  meta: getSessionParams(),
-  count: batch.length,
-  questions: batch.map(q => ({
-    id: q.id,
-    question: q.question,
-    options: [q.A, q.B, q.C, q.D].filter(Boolean),
-    answer: q.answer || ''
-  })),
-  paste: buildPasteBlock(batch)
-};
+   // ===== Build a single prompt that asks ChatGPT to return a READY-TO-PRINT HTML (Times New Roman, margins, colors) =====
+const meta = getSessionParams(); // { class, subject, chapter, questionType }
 
-    try { sessionStorage.setItem('answerKeyPayload', JSON.stringify(payload)); }
-    catch(e){ console.warn('sessionStorage failed', e); }
+const lines = [];
+lines.push(
+  "Task: Create a single, printable ANSWER KEY as a self-contained HTML document. I will print to PDF.",
+  "",
+  "Strict layout & style (IMPORTANT):",
+  "• Use only Times New Roman everywhere.",
+  "• @page margins: 1.5cm on all four sides.",
+  "• Header (center-aligned, three lines):",
+  "  1) St. Patrick's School",
+  "  2) Class & Subject (single line, centered), e.g., '7th Class — Math 1 IIT'",
+  "  3) Chapter name + Question Type (Single / Multiple / Descriptive), centered",
+  "• Per-question formatting:",
+  "  – MCQ (Single/Multiple): question in RED; correct option(s) in GREEN; detailed explanation in BLUE.",
+  "  – Descriptive: question in RED; detailed explanation in BLUE; explanation depth should reflect marks (e.g., 2/4/8 marks).",
+  "• Show each question number in order.",
+  "• Render LaTeX math as inline \\( ... \\) or display \\[ ... \\). (If a math engine isn’t available, output the raw LaTeX in the HTML—no conversion needed.)",
+  "• Do not add extra commentary; return ONE <html> page only, with <style> including:",
+  "  body { font-family: 'Times New Roman', Times, serif; }",
+  "  @page { margin: 1.5cm; }",
+  "  .q-stem { color: #c82333; }           /* red */",
+  "  .q-ans  { color: #2e7d32; }           /* green */",
+  "  .q-exp  { color: #1565c0; }           /* blue */",
+  "",
+  "Header values:",
+  `• School: St. Patrick's School`,
+  `• Class & Subject: ${ (meta.class || '') }${ (meta.class && meta.subject) ? ' — ' : '' }${ (meta.subject || '') }`,
+  `• Chapter & Type: ${ (meta.chapter || 'All') }${ meta.questionType ? ' — ' + meta.questionType : '' }`,
+  "",
+  "Questions (preserve LaTeX exactly; identify MCQ vs Descriptive by presence of options):"
+);
 
-    const url = new URL(ANSWER_UI_PATH, location.href);
-    url.searchParams.set('from','bank');
-    url.searchParams.set('count', String(batch.length));
-    window.location.href = url.toString();
+// list the selected questions
+batch.forEach((q, i) => {
+  const n = i + 1;
+  const isMcq = !!(q.A || q.B || q.C || q.D);
+  lines.push(`\nQ${n}:`);
+  lines.push(q.question || "");
+  if (isMcq) {
+    if (q.A) lines.push(`A) ${q.A}`);
+    if (q.B) lines.push(`B) ${q.B}`);
+    if (q.C) lines.push(`C) ${q.C}`);
+    if (q.D) lines.push(`D) ${q.D}`);
+    lines.push("Please mark the correct option(s) in GREEN and provide a BLUE detailed explanation.");
+  } else {
+    lines.push("Descriptive question. Provide a BLUE detailed explanation scaled by marks (assume 2/4/8 marks as appropriate).");
+  }
+});
+
+lines.push(
+  "",
+  "Return only the final HTML with a single <style> and body content ready to print to PDF. No extra notes."
+);
+
+const prompt = lines.join("\n");
+
+// open ChatGPT with prefilled prompt; user will press Print → Save as PDF there
+const url = new URL(CHATGPT_BASE);
+url.searchParams.set('q', prompt);
+window.open(url.toString(), '_blank', 'noopener');
   });
 
   // place it
@@ -1958,6 +1999,7 @@ btn.addEventListener('mouseleave', () => (btn.style.background = '#28a745'));
 </script>
 </body>
 </html>
+
 
 
 
