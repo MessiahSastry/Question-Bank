@@ -362,7 +362,12 @@ if (__p) {
           const qs = await db.collection('questions').where(firebase.firestore.FieldPath.documentId(), 'in', slice).get();
           qs.forEach(doc => chunks.push({id:doc.id, ...doc.data()}));
         }
-        selectedQuestions = sortByNumber(chunks);
+        selectedQuestions = sortByNumber(chunks).map(q => ({
+  ...q,
+  question: __cleanMathJaxArtifacts(q.question || q.body || q.text || ''),
+  options: Array.isArray(q.options) ? q.options.map(x => __cleanMathJaxArtifacts(x || '')) : q.options
+}));
+
       } else {
         const snap = await db.collection('questions')
           .where('class','==',sessionParams.class)
@@ -372,7 +377,12 @@ if (__p) {
           .get();
         selectedQuestions = [];
         snap.forEach(doc => selectedQuestions.push({id:doc.id, ...doc.data()}));
-        sessionParams.questionIds = selectedQuestions.map(x => x.id);
+        selectedQuestions = selectedQuestions.map(q => ({
+  ...q,
+  question: __cleanMathJaxArtifacts(q.question || q.body || q.text || ''),
+  options: Array.isArray(q.options) ? q.options.map(x => __cleanMathJaxArtifacts(x || '')) : q.options
+}));
+sessionParams.questionIds = selectedQuestions.map(x => x.id);
       }
     }
 
@@ -402,16 +412,35 @@ if (__p) {
 
    /* ---------- SANITIZE (strip any saved MathJax/mjx/SVG) ---------- */
 function __cleanMathJaxArtifacts(s=''){
-  return String(s)
-    .replace(/<mjx-container[\s\S]*?<\/mjx-container>/gi, '')
-    .replace(/<svg[\s\S]*?<\/svg>/gi, '')
-    .replace(/<mjx-\w+[\s\S]*?<\/mjx-\w+>/gi, '')
-    .replace(/<span[^>]*class="MathJax[^"]*"[^>]*>[\s\S]*?<\/span>/gi, '')
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
+  let t = String(s);
 
+  // Drop whole mjx containers and inline SVGs
+  t = t
+    .replace(/<mjx-container[\s\S]*?<\/mjx-container>/gi, '')
+    .replace(/<svg[\s\S]*?<\/svg>/gi, '');
+
+  // Drop any remaining MathJax/mjx/g/path/defs/use/rect/span/div/style tags
+  t = t.replace(/<\/?(?:mjx-\w+|g|path|defs|use|rect|span|div|style)\b[^>]*>/gi, '');
+
+  // Kill any path "d" attributes that might have leaked as plain text
+  t = t.replace(/\bd="[^"]*"/gi, '');
+
+  // Kill lines that are ONLY SVG path commands (M L C Q T S H V Z + numbers/commas)
+  t = t.replace(/^[ \t]*[MLCQTSHVZmlcqts hvz][0-9,\.\-\seE]+[ \t]*$/gm, '');
+
+  // Decode common entities and normalize spaces
+  t = t
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&amp;/gi, '&')
+    .replace(/\s+\n/g, '\n')
+    .replace(/\n\s+/g, '\n')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
+
+  return t;
+}
 /* ---------- RENDER ---------- */
 
     function renderHeaderInfo(){
@@ -512,10 +541,10 @@ function __cleanMathJaxArtifacts(s=''){
 
       const body = cur.map((q, i) => {
         const label = q.questionNumber ? `Q${q.questionNumber}` : `Q${i+1}`;
-        const stem  = (q.question || q.body || q.text || '').trim();
-        const opts  = (q.options && q.options.length)
-          ? `\\nA) ${q.options[0] || ''}\\nB) ${q.options[1] || ''}\\nC) ${q.options[2] || ''}\\nD) ${q.options[3] || ''}`
-          : '';
+        const stem  = __cleanMathJaxArtifacts(q.question || q.body || q.text || '');
+const opts  = (q.options && q.options.length)
+  ? `\nA) ${__cleanMathJaxArtifacts(q.options[0] || '')}\nB) ${__cleanMathJaxArtifacts(q.options[1] || '')}\nC) ${__cleanMathJaxArtifacts(q.options[2] || '')}\nD) ${__cleanMathJaxArtifacts(q.options[3] || '')}`
+  : '';
         return `${label}:\\n${stem}${opts}`;
       }).join('\\n\\n');
 
@@ -724,6 +753,7 @@ btnRow.style.gap = '6px';
 </script>
 </body>
 </html>
+
 
 
 
