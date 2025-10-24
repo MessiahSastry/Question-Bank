@@ -1889,7 +1889,7 @@ btn.style.color = '#fff';
 btn.addEventListener('mouseenter', () => (btn.style.background = '#218838'));
 btn.addEventListener('mouseleave', () => (btn.style.background = '#28a745'));
 
-  btn.addEventListener('click', () => {
+  btn.addEventListener('click', async () => {
     const selectedEls = findSelectedElements();
    if (!selectedEls.length){
   alert('No questions found on the page.');
@@ -1904,39 +1904,44 @@ btn.addEventListener('mouseleave', () => (btn.style.background = '#28a745'));
       return;
     }
 
-   // ===== Build a single prompt that asks ChatGPT to return a READY-TO-PRINT HTML (Times New Roman, margins, colors) =====
+   // ===== Build Answer Key prompt for ChatGPT (direct handoff) =====
 const meta = getSessionParams(); // { class, subject, chapter, questionType }
 
 const lines = [];
 lines.push(
-  "Task: Create a single, printable ANSWER KEY as a self-contained HTML document. I will print to PDF.",
+  "Please provide the CORRECT ANSWER and a CLEAR, STEP-BY-STEP EXPLANATION for each question.",
+  "Respond as:",
+  "Q<n>: Ans: <A) or B) or C) or D) or text>",
+  "Explanation: <your explanation>",
   "",
-  "Strict layout & style (IMPORTANT):",
-  "• Use only Times New Roman everywhere.",
-  "• @page margins: 1.5cm on all four sides.",
-  "• Header (center-aligned, three lines):",
-  "  1) St. Patrick's School",
-  "  2) Class & Subject (single line, centered), e.g., '7th Class — Math 1 IIT'",
-  "  3) Chapter name + Question Type (Single / Multiple / Descriptive), centered",
-  "• Per-question formatting:",
-  "  – MCQ (Single/Multiple): question in RED; correct option(s) in GREEN; detailed explanation in BLUE.",
-  "  – Descriptive: question in RED; detailed explanation in BLUE; explanation depth should reflect marks (e.g., 2/4/8 marks).",
-  "• Show each question number in order.",
-  "• Render LaTeX math as inline \\( ... \\) or display \\[ ... \\). (If a math engine isn’t available, output the raw LaTeX in the HTML—no conversion needed.)",
-  "• Do not add extra commentary; return ONE <html> page only, with <style> including:",
-  "  body { font-family: 'Times New Roman', Times, serif; }",
-  "  @page { margin: 1.5cm; }",
-  "  .q-stem { color: #c82333; }           /* red */",
-  "  .q-ans  { color: #2e7d32; }           /* green */",
-  "  .q-exp  { color: #1565c0; }           /* blue */",
+  meta.class ? `Class: ${meta.class}` : "",
+  meta.subject ? `Subject: ${meta.subject}` : "",
+  meta.chapter ? `Chapter: ${meta.chapter}` : "",
+  meta.questionType ? `Type: ${meta.questionType}` : "",
   "",
-  "Header values:",
-  `• School: St. Patrick's School`,
-  `• Class & Subject: ${ (meta.class || '') }${ (meta.class && meta.subject) ? ' — ' : '' }${ (meta.subject || '') }`,
-  `• Chapter & Type: ${ (meta.chapter || 'All') }${ meta.questionType ? ' — ' + meta.questionType : '' }`,
-  "",
-  "Questions (preserve LaTeX exactly; identify MCQ vs Descriptive by presence of options):"
+  "Rules:",
+  "• Preserve all LaTeX exactly as given (math is already in LaTeX).",
+  "• For MCQs: return the correct option letter (A–D) and a clear, step-by-step explanation.",
+  "• For Descriptive: give a clear, step-by-step explanation; SCALE the depth by marks (2 marks → brief key steps; 4 marks → moderate detail; 8 marks → thorough solution).",
+  "• Number answers in the same order as questions.",
+  ""
 );
+
+// list the selected questions (MCQ detected by presence of A–D)
+batch.forEach((q, i) => {
+  const n = i + 1;
+  lines.push(`Q${n}:`);
+  lines.push(q.question || "");
+  if (q.A || q.B || q.C || q.D) {
+    if (q.A) lines.push(`A) ${q.A}`);
+    if (q.B) lines.push(`B) ${q.B}`);
+    if (q.C) lines.push(`C) ${q.C}`);
+    if (q.D) lines.push(`D) ${q.D}`);
+  } else {
+    lines.push("Descriptive question.");
+  }
+  lines.push("");
+});
 
 // list the selected questions
 batch.forEach((q, i) => {
@@ -1963,16 +1968,13 @@ lines.push(
 const prompt = lines.join("\n");
 
 // open ChatGPT with prefilled prompt; user will press Print → Save as PDF there
-sessionStorage.setItem('answerKeyPayload', JSON.stringify({
-  source: 'bank',
-  meta: getSessionParams(),     // class, subject, chapter, type
-  questions: batch,             // the extracted Qs/options
-  paste: prompt                 // full prompt text (optional)
-}));
+// Try copying prompt for convenience (non-blocking)
+try { await navigator.clipboard.writeText(prompt); } catch (_) {}
 
-// open your internal renderer page
-const w = window.open(ANSWER_UI_PATH, '_blank', 'noopener');
-if (!w) location.href = ANSWER_UI_PATH;
+// Open ChatGPT with the prompt prefilled
+const chatUrl = new URL('https://chatgpt.com/');
+chatUrl.searchParams.set('q', prompt);
+window.open(chatUrl.toString(), '_blank', 'noopener');
   });
 
   // place it
@@ -1985,6 +1987,7 @@ if (!w) location.href = ANSWER_UI_PATH;
 </script>
 </body>
 </html>
+
 
 
 
