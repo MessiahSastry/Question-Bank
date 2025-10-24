@@ -1891,18 +1891,44 @@ btn.addEventListener('mouseleave', () => (btn.style.background = '#28a745'));
 
   btn.addEventListener('click', async () => {
     const selectedEls = findSelectedElements();
-   if (!selectedEls.length){
+if (!selectedEls.length){
   alert('No questions found on the page.');
   return;
 }
 
-    const allQs = selectedEls.map(extractQuestionFrom).filter(q => (q.question || '').trim());
-    const batch = allQs;
+// Collect Firestore IDs from the selected/visible cards
+const ids = Array.from(new Set(
+  selectedEls.map(el => (el.closest('.question-item') || el).getAttribute('data-id'))
+    .filter(Boolean)
+));
 
-    if (!batch.length){
-      alert('Selected items have no question text. Check your data-* attributes.');
-      return;
-    }
+if (!ids.length){
+  alert('Could not find IDs for selected items.');
+  return;
+}
+
+// Fetch RAW data from Firestore to preserve LaTeX
+const snaps = await Promise.all(ids.map(id => db.collection('questions').doc(id).get()));
+const batch = snaps.map(snap => {
+  const d = snap.data() || {};
+  const stem = (d.question || d.body || d.text || '').trim();
+  const opts = Array.isArray(d.options) ? d.options.slice(0,4).map(x => String(x || '').trim()) : [];
+  return {
+    id: snap.id,
+    question: stem,
+    A: (opts[0] || ''),
+    B: (opts[1] || ''),
+    C: (opts[2] || ''),
+    D: (opts[3] || ''),
+    answer: (d.parsedAnswer || d.answer || '').trim(),
+    marks: d.marks || ''
+  };
+}).filter(q => q.question);
+
+if (!batch.length){
+  alert('No usable questions were loaded from Firestore.');
+  return;
+}
 
    // ===== Build Answer Key prompt for ChatGPT (direct handoff) =====
 const meta = getSessionParams(); // { class, subject, chapter, questionType }
@@ -1987,6 +2013,7 @@ window.open(chatUrl.toString(), '_blank', 'noopener');
 </script>
 </body>
 </html>
+
 
 
 
