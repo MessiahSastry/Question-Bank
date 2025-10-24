@@ -405,34 +405,50 @@ if (__p) {
 function __cleanMathJaxArtifacts(s=''){
   const str = String(s);
 
-  // If it already looks like plain TeX (no HTML tags) keep it EXACTLY as is.
+  // Quick exit: plain TeX with no HTML
   const hasTags = /<[^>]+>/.test(str);
-  const hasPlainTeX = /\\\(|\\\[|\\begin\{/.test(str);
+  const hasPlainTeX = /\\\(|\\\[|\\begin\{|\\\$|\\\]/.test(str);
   if (hasPlainTeX && !hasTags) return str;
 
-  let t = str;
+  // 1) Fix double-escaped TeX delimiters (e.g. "\\(" -> "\(" from JSON/Firestore)
+  let t = str
+    .replace(/\\\\\(/g, '\\(')
+    .replace(/\\\\\)/g, '\\)')
+    .replace(/\\\\\[/g, '\\[')
+    .replace(/\\\\\]/g, '\\]');
 
-  // Remove whole MathJax containers and inline SVG blobs
+  // 2) PROTECT TeX blocks
+  const placeholders = [];
+  const protect = (rx, wrap) => {
+    t = t.replace(rx, (_, m) => {
+      const key = `__MATH_${placeholders.length}__`;
+      placeholders.push([key, wrap(m)]);
+      return key;
+    });
+  };
+  protect(/\\\(([\s\S]*?)\\\)/g, m => `\\(${m}\\)`);
+  protect(/\\\[([\s\S]*?)\\\]/g, m => `\\[${m}\\]`);
+  protect(/\$\$([\s\S]*?)\$\$/g, m => `$$${m}$$`);
+
+  // 3) Strip MathJax-rendered wrappers only (leave generic spans/divs alone)
   t = t
     .replace(/<mjx-container[\s\S]*?<\/mjx-container>/gi, '')
-    .replace(/<svg[\s\S]*?<\/svg>/gi, '');
+    .replace(/<svg[\s\S]*?<\/svg>/gi, '')
+    .replace(/<\/?(?:mjx-\w+|g|path|defs|use|rect|style)\b[^>]*>/gi, '')
+    .replace(/\bd="[^"]*"/gi, '')
+    // If any stray KaTeX was ever pasted, strip those wrappers too:
+    .replace(/<\/?(?:span|div)\b[^>]*class="[^"]*(?:katex|katex-html)[^"]*"[^>]*>/gi, '');
 
-  // Strip remaining MathJax/SVG related tags
-  t = t.replace(/<\/?(?:mjx-\w+|g|path|defs|use|rect|style)\b[^>]*>/gi, '');
-
-  // Remove any path "d" attributes that may have leaked
-  t = t.replace(/\bd="[^"]*"/gi, '');
-
-  // Remove lines that are ONLY SVG path commands (avoid nuking normal text)
-  t = t.replace(/^[ \t]*[MLCQTSHVZmlcqts hvz][0-9,\.\-\seE]+[ \t]*$/gm, '');
-
-  // Normalize whitespace; DO NOT touch backslashes
+  // 4) Normalize whitespace (do not touch backslashes)
   t = t
     .replace(/&nbsp;/gi, ' ')
     .replace(/\s+\n/g, '\n')
     .replace(/\n\s+/g, '\n')
     .replace(/[ \t]{2,}/g, ' ')
     .trim();
+
+  // 5) RESTORE TeX
+  for (const [k, v] of placeholders) t = t.replaceAll(k, v);
 
   return t;
 }
@@ -498,7 +514,7 @@ function __cleanMathJaxArtifacts(s=''){
         item.appendChild(txt);
         area.appendChild(item);
       });
-      if (window.MathJax) MathJax.typesetPromise([area]);
+      if (window.MathJax) { MathJax.typesetClear(); MathJax.typesetPromise([area]); }
     }
 
     function buildQuestionBody(q){
@@ -748,6 +764,7 @@ btnRow.style.gap = '6px';
 </script>
 </body>
 </html>
+
 
 
 
