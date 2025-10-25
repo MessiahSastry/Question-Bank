@@ -224,7 +224,7 @@ async function fetchEffectiveExams(year, classId, className, sectionId) {
     baseGroup,
     baseGroup.toLowerCase(),
     baseGroup.replace(/^class[-\s]*/i, ''),                                // "class-10" -> "10"
-    baseGroup.startsWith('class-') ? baseGroup : `class-${baseGroup}`,      // "10" -> "class-10"
+    baseGroup.startsWith('class-') ? baseGroup : class-${baseGroup},      // "10" -> "class-10"
   ])).filter(Boolean);
 
   // Accumulator for effective exams
@@ -355,17 +355,9 @@ async function fetchEffectiveExams(year, classId, className, sectionId) {
 function nkey(s) {
   return String(s || '')
     .normalize('NFKC')
-    .replace(/[^a-z0-9]+/gi, '')   // remove spaces, dots, punctuation
+    .replace(/\s+/g, ' ')
+    .trim()
     .toLowerCase();
-}
-
-// Canonical subject resolver: use this for matching & display
-function resolveSubjectName(name) {
-  const key = nkey(name);
-  if (key === 'evs') {
-    return { key: 'evs', display: 'E V S' };
-  }
-  return { key, display: String(name || '').trim() };
 }
 
 /* ---- Subtopic mode helpers ---- */
@@ -907,7 +899,7 @@ exams = await fetchEffectiveExams(year, classId, className, sectionSel.value);
   if (backExamSelect) {
     backExamSelect.disabled = false;
     backExamSelect.innerHTML = '<option value="">Select exam…</option>' +
-      exams.map(e => `<option value="${e.id}">${e.name}</option>`).join('');
+      exams.map(e => <option value="${e.id}">${e.name}</option>).join('');
   }
 
   // Prune back-side selected exam columns that no longer exist
@@ -942,12 +934,12 @@ async function loadStudents() {
 }
 function showStudentList() {
   studentListDiv.innerHTML = students.length ?
-    `<div style="font-weight:600;color:#195084;margin-bottom:8px;">Download Individual:</div>` +
+    <div style="font-weight:600;color:#195084;margin-bottom:8px;">Download Individual:</div> +
     students.map(stu =>
-      `<div class="student-name-row"><span style="flex:1;text-align:left;font-size:1.08em;color:#14305a;">${stu.roll ? stu.roll + '. ' : ''}${stu.name}</span>
-      <button class="student-btn" onclick="downloadOne('${stu.id}')">Download</button></div>`
+      <div class="student-name-row"><span style="flex:1;text-align:left;font-size:1.08em;color:#14305a;">${stu.roll ? stu.roll + '. ' : ''}${stu.name}</span>
+      <button class="student-btn" onclick="downloadOne('${stu.id}')">Download</button></div>
     ).join('')
-    : `<span style="color:#999;">No students in this section.</span>`;
+    : <span style="color:#999;">No students in this section.</span>;
 }
 yearSel.onchange = () => { __attendanceCache = null; __marksCache?.clear?.(); __photoCache?.clear?.(); __examStructCache?.clear?.(); loadClasses(); };
 classSel.onchange = () => { __attendanceCache = null; __marksCache?.clear?.(); __photoCache?.clear?.(); __examStructCache?.clear?.(); loadSections(); };
@@ -986,7 +978,7 @@ console.log("📝 Individual download student data:", {
 previewBtn.onclick = async () => {
   showSpinner();
   try {
-    pdfPreview.innerHTML = `<i>Generating preview...</i>`;
+    pdfPreview.innerHTML = <i>Generating preview...</i>;
     await sleep(150);
     let fullDataArr = await getAllStudentFullData();
     await showPreviewPDF(fullDataArr.slice(0,3));
@@ -1038,7 +1030,7 @@ function _normalizeScale(scaleArr) {
     .sort((a, b) => b.min - a.min);
 }
 
-// Resolve scale for a given examId from loaded `exams` list
+// Resolve scale for a given examId from loaded exams list
 function getScaleForExamId(examId) {
   try {
     const ex = (Array.isArray(exams) ? exams.find(e => e.id === examId) : null);
@@ -1062,7 +1054,6 @@ function getActiveScale() {
   const exId = (examSel?.value || '').trim();
   return getScaleForExamId(exId);
 }
-
 
 // Compute grade from percentage using a scale
 function gradeFromPctUsingScale(pct, scale = getActiveScale()) {
@@ -1155,10 +1146,7 @@ async function buildExamStructure(examObj, { year, classId, sectionId } = {}) {
       const subtopicMode = String(s?.subtopicMode || s?.subtopicsMode || s?.mode || '')
         .trim().toLowerCase();
 
-     {
-  const { display } = resolveSubjectName(name);
-  return { name: display, subtopics, subjectMax, subtopicMode, max: s?.max };
-}
+      return { name, subtopics, subjectMax, subtopicMode, max: s?.max };
     });
   }
 
@@ -1247,18 +1235,15 @@ async function buildExamStructure(examObj, { year, classId, sectionId } = {}) {
   }
 
   // 3) Finalize: ensure stable arrays/fields
-  const normSubjects = (subjects || []).map(s => {
-  const { display } = resolveSubjectName(s?.name || '');
-  return {
+  const normSubjects = (subjects || []).map(s => ({
     ...s,
-    name: display, // <- render as "E V S"
+    name: s?.name || '',
     subtopics: Array.isArray(s?.subtopics) ? s.subtopics : [],
     max: (Number.isFinite(+s?.max) ? +s.max
         : (Number.isFinite(+s?.subjectMax) ? +s.subjectMax : null)),
     subtopicMode: String(s?.subtopicMode || s?.subtopicsMode || s?.mode || '')
       .trim().toLowerCase()
-  };
-});
+  }));
 
   return { subjects: normSubjects, hasSubtopics: !!hasSubtopics };
 }
@@ -1296,1726 +1281,7 @@ async function getExamStructureForExamId(examId) {
 }
 
 // ======= PDF Helpers ========
-/* ======= PAGE MARGINS + DYNAMIC COLUMN BUILDER (auto-spread) ======= */
-// Only margins are fixed; all column x-positions are computed to fill the width
-const PAGE_MARGINS = { left: 220, right: 2260 }; // tweak if you need more/less padding
-const MAX_TO_NEXT_EXTRA_GAP = 28;
-    const MAX_X_OFFSET = 100;
-    
-// ==== Exam-wide subtopic schema (names + header max) ====
-let __examSubtopicSchema = null;
-let __ranksByExam = null; 
-// Build schema strictly in the exact Firestore array order.
-// If multiple subjects define subtopics, prefer the longest list (still preserves that array's order).
-function getExamSubtopicSchema() {
-  if (!__examStructure || !Array.isArray(__examStructure.subjects)) {
-    __examSubtopicSchema = [];
-    return __examSubtopicSchema;
-  }
-
-  // 1) Pick the subject that carries the canonical Firestore array order
-  const withSubs = (__examStructure.subjects || []).filter(s => Array.isArray(s.subtopics) && s.subtopics.length);
-  const canonical = withSubs.length
-    ? withSubs.slice().sort((a,b) => b.subtopics.length - a.subtopics.length)[0]   // longest subtopic list wins
-    : null;
-
-  const orderNames = canonical
-    ? canonical.subtopics.map(t => String(t?.name || ''))
-    : [];
-
-  // 2) Build max map from the first occurrence of each name (do not reorder)
-  const maxBy = {};
-  for (const subj of (__examStructure.subjects || [])) {
-    const subs = Array.isArray(subj.subtopics) ? subj.subtopics : [];
-    for (const st of subs) {
-      const key = nkey(st?.name || '');
-      const m = (typeof st?.max === 'number' && !isNaN(st.max)) ? st.max : null;
-      if (key && maxBy[key] == null && m != null) maxBy[key] = m;
-    }
-  }
-
-  // 3) Emit schema in canonical order; if we didn't find any subject with subtopics,
-  //    fall back to the original union logic (but that should be rare when exams define subtopics).
-  if (orderNames.length) {
-    __examSubtopicSchema = orderNames.map(n => {
-      const m = maxBy[nkey(n)];
-      return { name: n, max: (m != null ? m : null) };
-    });
-  } else {
-    // fallback (old behavior)
-    const seen = new Set();
-    const order = [];
-    for (const subj of (__examStructure.subjects || [])) {
-      const subs = Array.isArray(subj.subtopics) ? subj.subtopics : [];
-      for (const st of subs) {
-        const nm = String(st?.name || '');
-        const k  = nkey(nm);
-        if (!seen.has(k)) { seen.add(k); order.push(nm); }
-      }
-    }
-    __examSubtopicSchema = order.map(n => ({ name: n, max: (maxBy[nkey(n)] ?? null) }));
-  }
-
-  return __examSubtopicSchema;
-}
-// Columns cache for header + rows
-let __cols = []; // [{key,label,x}] including SUBJECT, MAX MARKS, each subtopic, TOTAL, GRADE
-
-/**
- * Build the full column list and spread them evenly between margins.
- * SUBJECT and GRADE are NOT fixed — they’re just first/last in the array.
- */
-// Auto-fit columns to content (no stretch to full width)
-function computeColumns() {
-  const schema = getExamSubtopicSchema(); // [{name,max}]
-  const headers = [
-    { key: '__subject', label: 'SUBJECT' },
-    { key: '__max',     label: 'MAX MARKS' },
-    ...schema.map(s => ({
-      key: s.name,
-      label: s.max != null ? `${s.name} (${s.max})` : `${s.name}`
-    })),
-    { key: '__total',   label: 'TOTAL' },
-    { key: '__grade',   label: 'GRADE' }
-  ];
-
-  const headerSize = _subtopicHeaderFont(schema.length);
-  const avgCharPx  = headerSize * 0.60;
-
-    // Base sizes (smaller than before)
-  const BASE_GAP  = 24;   // edge gaps
-  const MIN_GAP   = 6;
-
-  // Extra breathing room only between SUBJECT -> MAX
-  const SUBJECT_TO_MAX_EXTRA_GAP = 84;
-
-  // Inner gaps (between subtopic columns) will be 60% of the edge gap
-  const innerGapFor = g => Math.max(6, Math.floor(g * 0.6));
-
-  // Minimum widths (slightly tightened except subject/max kept larger)
-  const MIN_SUBJECT = 420, MIN_MAX = 180, MIN_TOTAL = 150, MIN_GRADE = 140, MIN_SUBTOPIC = 100;
-  const MAX_COL     = 420;
-
-  function estWidth(label, minW, maxW = MAX_COL) {
-    const L = String(label || '').toUpperCase();
-    const w = Math.round((L.length + 2) * avgCharPx);
-    return Math.max(minW, Math.min(maxW, w));
-  }
-
-  // widths + mins
-  const widths = {}, mins = {};
-  for (const h of headers) {
-    if (h.key === '__subject') { mins[h.key] = MIN_SUBJECT; widths[h.key] = estWidth(h.label, MIN_SUBJECT); }
-    else if (h.key === '__max') { mins[h.key] = MIN_MAX; widths[h.key] = estWidth(h.label, MIN_MAX); }
-    else if (h.key === '__total') { mins[h.key] = MIN_TOTAL; widths[h.key] = estWidth(h.label, MIN_TOTAL); }
-    else if (h.key === '__grade') { mins[h.key] = MIN_GRADE; widths[h.key] = estWidth(h.label, MIN_GRADE); }
-    else { mins[h.key] = MIN_SUBTOPIC; widths[h.key] = estWidth(h.label, MIN_SUBTOPIC); }
-  }
-
-  const L = PAGE_MARGINS.left, R = PAGE_MARGINS.right;
-  const avail = Math.max(0, R - L);
-
-  const keys = headers.map(h => h.key);
-
-  // compute total width using pair-wise gaps (inner subtopic gaps are smaller)
-     function totalWidth(edgeGap, ws) {
-    const sumW = keys.reduce((a,k) => a + ws[k], 0);
-    let gaps = 0;
-   for (let i = 0; i < headers.length - 1; i++) {
-  const left  = headers[i].key, right = headers[i+1].key;
-
-  const isInnerSubGap =
-    left !== '__subject' && right !== '__grade' &&
-    left !== '__max' && right !== '__total'; // between subtopic-like columns
-
-  const isSubjectToMax = (left === '__subject' && right === '__max');
-  const isMaxToNext    = (left === '__max' && right !== '__total'); // MAX → first subtopic
-
-  const base  = isInnerSubGap ? innerGapFor(edgeGap) : edgeGap;
-  const extra = isSubjectToMax
-    ? SUBJECT_TO_MAX_EXTRA_GAP
-    : (isMaxToNext ? MAX_TO_NEXT_EXTRA_GAP : 0);
-
-  gaps += base + extra;
-}
-return sumW + gaps;
-}
-
-  // 1) try base gap
-  let gap = BASE_GAP;
-  let ws  = { ...widths };
-
-  // 2) shrink to MIN_GAP if needed
-  if (totalWidth(gap, ws) > avail) gap = MIN_GAP;
-
-  // 3) scale widths toward mins if still overflow
-  if (totalWidth(gap, ws) > avail) {
-    let lo = 0, hi = 1, best = 1;
-    for (let it = 0; it < 22; it++) {
-      const mid = (lo + hi) / 2;
-      const trial = {};
-      for (const h of headers) {
-        const k = h.key;
-        // Give subtopic columns a slightly higher shrink rate (pull them more)
-        const bias = (k !== '__subject' && k !== '__max' && k !== '__total' && k !== '__grade') ? 0.9 : 1.0;
-        trial[k] = Math.max(mins[k], Math.floor(mins[k] + (widths[k] - mins[k]) * (mid * bias)));
-      }
-      if (totalWidth(gap, trial) <= avail) { best = mid; lo = mid; }
-      else { hi = mid; }
-    }
-    for (const h of headers) {
-      const k = h.key;
-      const bias = (k !== '__subject' && k !== '__max' && k !== '__total' && k !== '__grade') ? 0.9 : 1.0;
-      ws[k] = Math.max(mins[k], Math.floor(mins[k] + (widths[k] - mins[k]) * (best * bias)));
-    }
-  }
-
-  // final centering
-  const tableW = totalWidth(gap, ws);
-  const startX = Math.round(L + Math.max(0, (avail - tableW) / 2));
-
-  // lay out with pair-wise gaps
-  let cursorX = startX;
-  __cols = headers.map((h, i) => {
-    const k = h.key;
-    const w = ws[k];
-    const cx = cursorX + Math.round(w / 2);
-    const def = { ...h, x: cx, width: w };
-    // choose next gap: smaller between subtopic-like columns
-       if (i < headers.length - 1) {
-  const nextK = headers[i+1].key;
-  const isInnerSubGap =
-    k !== '__subject' && nextK !== '__grade' &&
-    k !== '__max' && nextK !== '__total';
-  const isSubjectToMax = (k === '__subject' && nextK === '__max');
-  const isMaxToNext    = (k === '__max' && nextK !== '__total'); // MAX → first subtopic
-
-  const base  = isInnerSubGap ? innerGapFor(gap) : gap;
-  const extra = isSubjectToMax
-    ? SUBJECT_TO_MAX_EXTRA_GAP
-    : (isMaxToNext ? MAX_TO_NEXT_EXTRA_GAP : 0);
-
-  cursorX += w + base + extra;
-}
-    return def;
-  });
-
-  return __cols;
-}
-
-// table bounds shared by header + total row
-function getTableBounds(pad = 30) {
-  const cols = computeColumns();
-  const left  = Math.round(cols[0].x - cols[0].width / 2) - pad;
-  const right = Math.round(cols[cols.length - 1].x + cols[cols.length - 1].width / 2) + pad;
-  return { left, right, width: right - left };
-}
-
-  function getColX(key) {
-  // Recompute each time to follow current schema and ensure __cols is fresh
-  const cols = computeColumns();
-  const hit = cols.find(c => c.key === key);
-  return hit ? hit.x : null;
-}
-function _subtopicHeaderFont(n) {
-  if (n >= 12) return 30;
-  if (n >= 10) return 34;
-  if (n >= 8)  return 38;
-  if (n >= 6)  return 44;
-  return 48; // default
-}
-
-function _subtopicCellFont(n) {
-  if (n >= 12) return 36;
-  if (n >= 10) return 40;
-  if (n >= 8)  return 44;
-  if (n >= 6)  return 50;
-  return 56; // default
-}
- //===== Landscape back-page renderer ===== 
-function _measureTextWidth(pdf, text, size=48) {
-  pdf.setFont('helvetica', 'bold');
-  pdf.setFontSize(size);
-  return pdf.getTextWidth(String(text || ''));
-}
-
-// Build columns as groups: each exam → two subcolumns (TOTAL, GRADE)
-function _buildBackColumnsModel(backPlan, exams) {
-  const cols = [{ key: '__subject', label: 'SUBJECT', kind: 'subject' }];
-  const groups = []; // [{ examId, name, startIndex, endIndex }]
-
-  for (const exId of (backPlan.examCols || [])) {
-    const exName = (exams.find(e => e.id === exId)?.name || exId);
-    const startIndex = cols.length;
-    cols.push({ key: `${exId}__tot`, label: 'TOTAL', kind: 'tot', examId: exId });
-cols.push({ key: `${exId}__gr`,  label: 'GRADE', kind: 'gr',  examId: exId });
-    const endIndex = cols.length - 1;
-    groups.push({ examId: exId, name: exName, startIndex, endIndex });
-  }
-
-  return { cols, groups };
-}
-
-// Two-tone school title (solid fill inside + colored outline)
-// NOTE: preserves the original casing (no toUpperCase()).
-function drawSchoolTitleTwoTone(
-  pdf,
-  text,
-  { borderX, borderY, borderW },
-  opts = {}
-) {
-  const {
-    fill = '#0f3d6b',       // INSIDE color (navy)
-    stroke = '#ff7a00',     // OUTLINE color (orange)
-    strokeWidth = 12,
-    shadow = 'rgba(0,0,0,0.18)',
-    fontPx = 88,
-    yOffset = 40,
-    family = "Segoe UI, Arial, Helvetica, sans-serif"
-  } = opts;
-
-    const targetW = Math.min(1600, Math.floor(borderW * 0.70)); // smaller cap & scale
-  const pad = 40;
-
-  // measure
-  const mCanvas = document.createElement('canvas');
-  const mCtx = mCanvas.getContext('2d');
-  mCanvas.width = 2200; mCanvas.height = 220;
-  mCtx.font = `900 ${fontPx}px ${family}`;
-  const textStr = String(text || '');               // ← keep original casing
-  const textW = Math.ceil(mCtx.measureText(textStr).width);
-
-  // paint
-  const W = textW + pad * 2;
-  const H = fontPx + pad * 2;
-  const canvas = document.createElement('canvas');
-  canvas.width = W; canvas.height = H;
-  const ctx = canvas.getContext('2d');
-
-  ctx.font = `900 ${fontPx}px ${family}`;
-  ctx.textBaseline = 'top';
-
-  // soft shadow
-  if (shadow) {
-    ctx.shadowColor = shadow;
-    ctx.shadowBlur = 16;
-    ctx.shadowOffsetY = 8;
-  }
-
-  // outline first
-  ctx.lineJoin = 'round';
-  ctx.lineCap = 'round';
-  ctx.strokeStyle = stroke;     // orange border
-  ctx.lineWidth = strokeWidth;
-  ctx.strokeText(textStr, pad, pad);
-
-  // fill inside
-  ctx.shadowColor = 'transparent';
-  ctx.fillStyle = fill;         // navy fill
-  ctx.fillText(textStr, pad, pad);
-
-  // place on PDF
-  const ratio = targetW / canvas.width;
-  const w = targetW;
-  const h = Math.round(canvas.height * ratio);
-  const x = borderX + Math.round((borderW - w) / 2);
-  const y = borderY + yOffset;
-
-  pdf.addImage(canvas.toDataURL('image/png'), 'PNG', x, y, w, h, undefined, 'FAST');
-return { x, y, w, h };
-}
-
-function drawBackPageLandscape(pdf, backData, backPlan, exams, student) {
-  const W = 3509, H = 2481;
-  const borderX = 120, borderY = 120, borderW = W - 240, borderH = H - 240;
-
-  // Colors
-  const BLUE = [15,61,107], GREEN = [22,163,74];
-  const EXAM_COLORS = [
-    [20, 46, 112],  // deep blue
-    [12, 88, 38],   // deep green
-    [110, 28, 28],  // deep maroon
-    [94, 56, 142],  // deep violet
-    [128, 64, 0],   // deep brown
-    [8, 92, 104],   // deep teal
-  ];
-    // show "AB" when value is blank/undefined/null
-  const showAB = v => (v === '' || v === null || v === undefined ? 'AB' : String(v));
-
-  // Title + subheading
-  const titleBox = { x: borderX, y: borderY, w: 0, h: 0 };
-
- 
-// (keep font state neutral)
-pdf.setFont('helvetica','bold');
-pdf.setTextColor(0,0,0);
-pdf.setFontSize(68); // was 56
-// details line centered just below the subheading band
-const centerX = borderX + Math.round(borderW / 2);
-const detailsY = borderY + 450;  // tweak ±20 as needed
-pdf.setFont('helvetica','bold');
-pdf.setFontSize(68); // was 56
-
-const nameLabel = 'NAME: ';
-const nameVal   = (student?.name || '').toUpperCase();
-
-const csLabel   = 'CLASS / SECTION: ';
-const csVal     = `${formatClass(student?.class || '')}${
-  student?.section ? ' / ' + formatSection(student.section) : ''
-}`;
-
-const rollLabel = 'ROLL: ';
-const rollVal   = (student?.roll ?? '').toString();
-
-const sep = '   •   ';
-
-// measure total width to keep the whole line centered
-const w = (s) => pdf.getTextWidth(String(s));
-const totalW =
-  w(nameLabel) + w(nameVal) + w(sep) +
-  w(csLabel)   + w(csVal)   + w(sep) +
-  w(rollLabel) + w(rollVal);
-
-let dx = centerX - totalW / 2;
-
-// NAME ...
-pdf.setTextColor(...COLOR_VIOLET); pdf.text(nameLabel, dx, detailsY, { align:'left' }); dx += w(nameLabel);
-pdf.setTextColor(...COLOR_GREEN ); pdf.text(nameVal  , dx, detailsY, { align:'left' }); dx += w(nameVal);
-pdf.setTextColor(0,0,0);           pdf.text(sep     , dx, detailsY, { align:'left' }); dx += w(sep);
-
-// CLASS / SECTION ...
-pdf.setTextColor(...COLOR_VIOLET); pdf.text(csLabel, dx, detailsY, { align:'left' }); dx += w(csLabel);
-pdf.setTextColor(...COLOR_GREEN ); pdf.text(csVal  , dx, detailsY, { align:'left' }); dx += w(csVal);
-pdf.setTextColor(0,0,0);           pdf.text(sep   , dx, detailsY, { align:'left' }); dx += w(sep);
-
-// ROLL ...
-pdf.setTextColor(...COLOR_VIOLET); pdf.text(rollLabel, dx, detailsY, { align:'left' }); dx += w(rollLabel);
-pdf.setTextColor(...COLOR_GREEN ); pdf.text(rollVal  , dx, detailsY, { align:'left' });
-
-
-// reset
-pdf.setTextColor(0,0,0);
-
-  // Model
-  const { cols, groups } = _buildBackColumnsModel(backPlan, exams);
-  if (!backData || !Array.isArray(backData.rows) || backData.rows.length === 0) return;
-
-  // Measure per-column widths from content
- const headerSizeBase = 60, subHeaderSizeBase = 56, cellSizeBase = 46, padX = 18, gapBase = 18;
-// extra breathing room between SUBJECT and the first exam group
-const GAP_AFTER_SUBJECT = 48; // try 36–60 to taste
-
-  const widths = new Map();
-  for (const c of cols) {
-    let w = _measureTextWidth(pdf, c.label, headerSizeBase) + padX * 2;
-    if (c.key === '__subject') {
-        for (const r of backData.rows) {
-          w = Math.max(w, _measureTextWidth(pdf, r.subject, cellSizeBase) + padX * 2);
-        }
-        // also account for footer labels so they fit without overlap
-        w = Math.max(w, _measureTextWidth(pdf, 'TOTAL', cellSizeBase) + padX * 2);
-        w = Math.max(w, _measureTextWidth(pdf, 'RANK / PERCENTAGE', cellSizeBase) + padX * 2);
-      
-        // allow a bit more headroom so exam groups shift right if needed
-        w = Math.max(260, Math.min(820, Math.ceil(w)));
-      } else {
-      for (const r of backData.rows) {
-        const ex = r.exams?.[c.examId];
-        const txt = c.kind === 'tot' ? (ex?.marks ?? '') : (ex?.grade ?? '');
-        w = Math.max(w, _measureTextWidth(pdf, txt, cellSizeBase) + padX * 2);
-      }
-      w = Math.max(160, Math.min(360, Math.ceil(w)));
-    }
-    widths.set(c.key, w);
-  }
-
-  // Horizontal layout
-  const sumW = cols.reduce((a, c) => a + (widths.get(c.key) || 0), 0)
-  + gapBase * (cols.length - 1)
-  + GAP_AFTER_SUBJECT; // subject → first exam extra gap
-
-  const startX = borderX + Math.max(0, (borderW - sumW) / 2);
-
-  // Vertical layout — SINGLE PAGE FIT
- // Vertical layout — SINGLE PAGE FIT
-const groupHeaderY = borderY + 600;     // exam names (spanning)
-
-// Push the subheader row a little LOWER (does NOT change font size)
-const SUBHEADER_DOWN = 26;               // tweak 18–36 to taste
-const subHeaderY   = groupHeaderY + 110 + SUBHEADER_DOWN;
-
-  // add a small gap below the header box
-const ROW_TOP_GAP = 18; // tweak 12–24 to taste
-const rowFirstY = subHeaderY + 110 + ROW_TOP_GAP;
-
-
-  // We must fit: all subject rows + 2 summary rows in remaining height
-  const rowsCount = backData.rows.length + 2; // +2 for summary rows
-  const bottomLimit = borderY + borderH - 60; // safe bottom padding inside the border
-  const availableH = Math.max(200, bottomLimit - rowFirstY);
-
-  // Compute row gap and cell font to fit everything on one page
-  let rowGap = Math.floor(availableH / rowsCount);
-  rowGap = Math.max(54, Math.min(90, rowGap)); // clamp
-  const headerSize    = headerSizeBase;
-  const subHeaderSize = Math.max(40, Math.min(56, Math.round(rowGap * 0.62)));
-  const cellSize      = Math.max(36, Math.min(54, Math.round(rowGap * 0.64)));
-
-  // Draw headers (group + subheaders)
-  let x = startX;
-  pdf.setFont('helvetica', 'bold');
-  pdf.setTextColor(15, 61, 107);
-  pdf.setFontSize(headerSize);
-
-  // SUBJECT header — left aligned
-  const subjW = widths.get('__subject');
-  const subjLeftInset = 12;
-  pdf.setTextColor(...GREEN);
-  pdf.setFontSize(subHeaderSize);
-  pdf.text('SUBJECT', x + subjLeftInset, subHeaderY, { align: 'left', baseline: 'alphabetic' });
-  pdf.setTextColor(15, 61, 107);
-  x += subjW + gapBase + GAP_AFTER_SUBJECT;
-
-  // Exam group headers
- pdf.setFontSize(headerSize);
-groups.forEach((g, idx) => {
-  const c1 = cols[g.startIndex], c2 = cols[g.endIndex];
-  const w1 = widths.get(c1.key), w2 = widths.get(c2.key);
-  const groupW = w1 + gapBase + w2;
-
-  // compute this exam's TOTAL MAX = sum of per-subject max (already on rows)
-  // Header "(NN MARKS)" should come from the exam schema we built
-const perSubjectMax = backData?.headerMaxByExam?.get
-  ? backData.headerMaxByExam.get(g.examId)
-  : (backData.headerMaxByExam ? backData.headerMaxByExam[g.examId] : null);
-
-const marksLine = (typeof perSubjectMax === 'number' && perSubjectMax > 0)
-  ? `(${perSubjectMax} MARKS)` : '';
-
-  const GCLR = EXAM_COLORS[idx % EXAM_COLORS.length];
-  pdf.setTextColor(...GCLR);
-
-  const parts = String(g.name || '').trim().split(/\s+/);
-  const line1 = (parts.length > 1) ? parts[0] : (parts[0] || '');
-  const line2 = (parts.length > 1) ? parts.slice(1).join(' ') : '';
-
-  // three-line stack: LINE1, LINE2 (if any), then "(NN MARKS)"
-  const baseY = groupHeaderY;
-// increase vertical gaps between the stacked lines
-const GAP = 50;         // was 40
-const SINGLE_OFF = 28;  // was 20
-
-if (line2) {
-  pdf.text(line1.toUpperCase(), x + groupW/2, baseY - GAP, { align:'center' });
-  pdf.text(line2.toUpperCase(), x + groupW/2, baseY,       { align:'center' });
-  if (marksLine) pdf.text(marksLine, x + groupW/2, baseY + GAP, { align:'center' });
-} else {
-  pdf.text(line1.toUpperCase(), x + groupW/2, baseY - SINGLE_OFF, { align:'center' });
-  if (marksLine) pdf.text(marksLine, x + groupW/2, baseY + GAP,   { align:'center' });
-}
-  // subheaders
-  pdf.setFontSize(subHeaderSize);
-  pdf.text('TOTAL', x + w1/2,               subHeaderY, { align:'center' });
-  pdf.text('GRADE', x + w1 + gapBase + w2/2, subHeaderY, { align:'center' });
-
-  pdf.setTextColor(15,61,107);
-  x += groupW + gapBase;
-});
-  // --- Divider line between exam titles and the subheader row ---
-{
-  // A neat rule under "Formative Assessment 1/2 (50 MARKS)" before "TOTAL / GRADE"
- // Lift the divider slightly so it doesn't touch the subheader row
-const DIVIDER_UP = 16; // try 16–22 if you want a bit more lift
-const lineY = subHeaderY - Math.ceil(subHeaderSize * 0.60) - DIVIDER_UP;
-
-  pdf.setDrawColor(15, 61, 107);
-  pdf.setLineWidth(2);
-  // Span the whole table width with a tiny overhang
-  pdf.line(startX - 6, lineY, startX + sumW + 6, lineY);
-}
-
-    // Rounded box around the header row (SUBJECT | ... | TOTAL | GRADE)
- // Rounded box around FULL header (group titles + header line)
-// Rounded box around FULL header (group titles + header line) — tighter
-{
-  const padX = 12, padTop = 18, padBottom = 10, r = 16;
-
-  // span the whole table width
-  const boxX = startX - padX;
-  const boxW = sumW + padX * 2;
-
-  // slightly smaller vertical span than before
-  const headerTop    = groupHeaderY - (headerSize + 18);            // was 28
-  const headerBottom = subHeaderY   + Math.ceil(subHeaderSize * 0.85); // was ~0.95
-
-  const boxY = headerTop - padTop;
-  const boxH = (headerBottom - headerTop) + padTop + padBottom;
-
-  pdf.setDrawColor(15, 61, 107);
-  pdf.setLineWidth(2);
-  pdf.roundedRect(boxX, boxY, boxW, boxH, r, r, 'S');
-}
-
-  // Precompute per-exam TOTALS and PERCENTAGE for summary rows
-  const perExam = new Map(); // exId -> { total, max, grade, pct }
-// (grading via gradeFromPctUsingScale; local function removed)
-
-  for (const g of groups) {
-    let sum = 0, max = 0;
-    for (const r of backData.rows) {
-      const ex = r.exams?.[g.examId];
-      const marks = (ex && typeof ex.marks === 'number') ? ex.marks : null;
-      const mmax  = (ex && typeof ex.max   === 'number') ? ex.max   : null;
-      if (marks != null) sum += marks;
-      if (mmax  != null) max += mmax;
-    }
-    const pct = (max > 0) ? Math.round((sum / max) * 100) : null;
-    perExam.set(g.examId, { total: sum, max, pct, grade: gradeFromPctUsingScale(pct, getScaleForExamId(g.examId)) });
-  }
-
-  // Rows (NO PAGINATION)
-  let y = rowFirstY;
-  pdf.setFont('helvetica','bold');
-  pdf.setFontSize(cellSize);
-  pdf.setTextColor(0,0,0);
-
-  for (const r of backData.rows) {
-    x = startX;
-
-    // SUBJECT (left aligned, green)
-    const wSub = widths.get('__subject');
-    pdf.setTextColor(...GREEN);
-    pdf.text(String(r.subject).toUpperCase(), x + 12, y, { align:'left', baseline:'alphabetic' });
-    pdf.setTextColor(0,0,0);
-    x += wSub + gapBase + GAP_AFTER_SUBJECT;
-
-    // For each exam → two subcolumns
-    for (const g of groups) {
-  const cTotKey = cols[g.startIndex].key;
-  const cGrKey  = cols[g.endIndex].key;
-  const wTot = widths.get(cTotKey);
-  const wGr  = widths.get(cGrKey);
-  const ex   = r.exams?.[g.examId] || {};
-  const t    = ex.marks ?? '';
-  const grd  = ex.grade ?? '';
-
-  const gIdx2 = groups.indexOf(g);
-  const GCLR2 = EXAM_COLORS[gIdx2 % EXAM_COLORS.length];
-  pdf.setTextColor(...GCLR2);
-
-  // TOTAL (with fail ring if pct < 40)
-  const cxTot = x + wTot/2;
-   pdf.text(showAB(t), cxTot, y, { align:'center', baseline:'alphabetic' });
-
-  // draw red ring when grade is failing per the active scale
-if (typeof ex.marks === 'number' && typeof ex.max === 'number' && ex.max > 0) {
-  const pct = (ex.marks / ex.max) * 100;
-  if (isFailPct(pct, getScaleForExamId(g.examId))) {
-    pdf.setDrawColor(...COLOR_RED);
-    pdf.setLineWidth(2.5);
-    // ellipse sized to cell; tweak factors if you want a bigger ring
-    const rx = Math.max(28, wTot * 0.18);
-    const ry = Math.max(20, cellSize * 0.42);
-    pdf.ellipse(cxTot, y - Math.round(cellSize * 0.25), rx, ry, 'D');
-    pdf.setLineWidth(1);
-    pdf.setDrawColor(0,0,0);
-  }
-}
-  x += wTot + gapBase;
-
-  // GRADE — recompute from TOTAL & max using the same thresholds as front page
-let gradeDisplay = '-';
-if (typeof t === 'number' && typeof ex.max === 'number' && ex.max > 0) {
-  const pctCell = (t / ex.max) * 100;
-  gradeDisplay = gradeFromPctUsingScale(pctCell, getScaleForExamId(g.examId));
-}
-pdf.text(gradeDisplay, x + wGr/2, y, { align:'center', baseline:'alphabetic' });
-x += wGr + gapBase;
-  pdf.setTextColor(0,0,0);
-}
-    y += rowGap;
-  }
-  // small gap before TOTAL / RANK box
-const FOOTER_GAP = 12; // tweak 8–20 to taste
-y += FOOTER_GAP;
-
-   // ---- Footer box covering BOTH rows (TOTAL + RANK/PERCENTAGE) ----
-  const footerStartY = y;                     // baseline of first footer row
-  const footerSecondY = footerStartY + rowGap; // baseline of second footer row
- {
-  // Footer box (unchanged)
-  const padX = 12, padY = 16, r = 16;
-  const boxX = startX - padX;
-  const boxW = sumW + padX * 2;
-  const textHeight = cellSize;             // approx text height for baseline padding
-  const boxY = footerStartY - (textHeight + padY);
-  const boxH = (footerSecondY - footerStartY) + textHeight + padY * 2 + textHeight; // two lines + padding
-  pdf.setDrawColor(15, 61, 107);
-  pdf.setLineWidth(2);
-  pdf.roundedRect(boxX, boxY, boxW, boxH, r, r, 'S');
-
-  // ===== Dynamic inner table frame (SUBJECT + exam columns only) =====
-// Anchor horizontally to the header/footer table box, but inset a bit so
-// the frame’s left/right lines do NOT touch those boxes.
-// ===== Dynamic inner table frame (SUBJECT + exam columns only) =====
-const SIDE_GAP = 12;
-const frameX = boxX + SIDE_GAP;           // keep inset from header/footer boxes
-const frameW = boxW - SIDE_GAP * 2;
-
-/* Vertical span:
-   - TOP: a bit further below the header rounded box bottom
-   - BOTTOM: just ABOVE the footer rounded box top (use boxY) */
-const HEADER_BOX_BOTTOM = subHeaderY + Math.ceil(subHeaderSize * 0.92); // +more conservative
-const TOP_GAP = 24;                   // was 14 → more space above
-const BOT_GAP = 12;                   // gentle gap above footer
-
-const frameY = HEADER_BOX_BOTTOM + TOP_GAP;
-// IMPORTANT: anchor to the footer box's TOP (boxY), not footerStartY
-const frameBottom = boxY - BOT_GAP;   // boxY defined in the footer box block above
-const frameH = frameBottom - frameY;
-
-pdf.setDrawColor(255, 122, 0); // orange
-pdf.setLineWidth(4);
-pdf.roundedRect(frameX, frameY, frameW, frameH, 18, 18, 'S');
-   
-// --- Vertical separators between exam groups (color = previous exam) ---
-// (stay INSIDE this block so frameY/frameBottom are in scope)
-  const subjW = widths.get('__subject') || 0;
-let xPtr = startX + subjW + gapBase + GAP_AFTER_SUBJECT;
-
-// span from header box top to footer box bottom (through subheader, rows, TOTAL & RANK)
-const padTop = 18, padBottom = 10;
-const headerTop = (groupHeaderY - (headerSize + 18)) - padTop;
-
-const footerPadY_sep = 16;
-const textHeight_sep = cellSize;
-const footerSecondY_sep = footerStartY + rowGap;
-const footerBoxY = footerStartY - (textHeight_sep + footerPadY_sep);
-const footerBoxH = (footerSecondY_sep - footerStartY) + textHeight_sep + footerPadY_sep * 2 + textHeight_sep;
-const footerBottom = footerBoxY + footerBoxH;
-
-// extra separator right after SUBJECT (color = first exam)
-const SEP_AFTER_SUBJECT_SHIFT = 16; // try 8–16 to taste
-const sepX0 = startX + subjW + (gapBase + GAP_AFTER_SUBJECT) / 2 + SEP_AFTER_SUBJECT_SHIFT;
-pdf.setDrawColor(...GREEN);   // make this separator green
-pdf.setLineWidth(2.0);        // a touch bolder
-pdf.line(sepX0, headerTop, sepX0, footerBottom);
-
-// Draw a line between each pair of consecutive exams
-for (let idx = 0; idx < groups.length - 1; idx++) {
-  const g    = groups[idx];
-  const wTot = widths.get(cols[g.startIndex].key) || 0; // TOTAL width
-  const wGr  = widths.get(cols[g.endIndex].key)  || 0; // GRADE width
-  const gW   = wTot + gapBase + wGr;
-
-  // Place the separator in the middle of the gap AFTER this exam group
-  const sepX = xPtr + gW + gapBase / 2;
-
-  // Color uses the exam BEFORE the line
-  const GCLR = EXAM_COLORS[idx % EXAM_COLORS.length];
-  pdf.setDrawColor(...GCLR);
-  pdf.setLineWidth(1.6);
-
-  // draw the separator using the precomputed headerTop / footerBottom
-  pdf.line(sepX, headerTop, sepX, footerBottom);
-
-  // Advance to next group start
-  xPtr += gW + gapBase;
-}
-  // ---- Summary row 1: TOTAL ----
-  x = startX;
-  const wSub = widths.get('__subject');
-  pdf.setTextColor(...GREEN);
-  pdf.text('TOTAL', x + 12, y, { align:'left', baseline:'alphabetic' });
-  pdf.setTextColor(0,0,0);
- x += wSub + gapBase + GAP_AFTER_SUBJECT;
-
-  for (const g of groups) {
-    const cTotKey = cols[g.startIndex].key;
-    const cGrKey  = cols[g.endIndex].key;
-    const wTot = widths.get(cTotKey);
-    const wGr  = widths.get(cGrKey);
-    const agg  = perExam.get(g.examId) || { total: '', grade: '' };
-
-    const gIdx2 = groups.indexOf(g);
-    const GCLR2 = EXAM_COLORS[gIdx2 % EXAM_COLORS.length];
-    pdf.setTextColor(...GCLR2);
-
-    // TOTAL marks
-        pdf.text(showAB(agg.total ?? ''), x + wTot/2, y, { align:'center', baseline:'alphabetic' });
-    x += wTot + gapBase;
-
-    // Grade from pct (use '-' when no pct, e.g., all AB)
-const gradeTxt = (agg && agg.pct != null) ? String(agg.grade ?? '-') : '-';
-pdf.text(gradeTxt, x + wGr/2, y, { align:'center', baseline:'alphabetic' });
-
-    x += wGr + gapBase;
-
-    pdf.setTextColor(0,0,0);
-  }
-    // --- Divider between TOTAL row and RANK / PERCENTAGE row ---
-  const MARGIN_INSET = 6;
- // lift the divider a bit so it’s farther from the RANK row
-const DIVIDER_UP = 14; // try 12–20 to taste
-const dividerY = footerStartY + Math.round(rowGap * 0.55) - DIVIDER_UP;
-  pdf.setDrawColor(15, 61, 107);
-  pdf.setLineWidth(1.6);
-  pdf.line(startX + MARGIN_INSET, dividerY, startX + sumW - MARGIN_INSET, dividerY);
-
-  y += rowGap;
-
-  // ---- Summary row 2: RANK / PERCENTAGE ----
-  x = startX;
-  pdf.setTextColor(...GREEN);
-  pdf.text('RANK / PERCENTAGE', x + 12, y, { align:'left', baseline:'alphabetic' });
-  pdf.setTextColor(0,0,0);
-  x += wSub + gapBase + GAP_AFTER_SUBJECT;
-
-  for (const g of groups) {
-    const cTotKey = cols[g.startIndex].key;
-    const cGrKey  = cols[g.endIndex].key;
-    const wTot = widths.get(cTotKey);
-    const wGr  = widths.get(cGrKey);
-    const agg  = perExam.get(g.examId) || { pct: null };
-
-    const gIdx2 = groups.indexOf(g);
-    const GCLR2 = EXAM_COLORS[gIdx2 % EXAM_COLORS.length];
-    pdf.setTextColor(...GCLR2);
-
-    // TOTAL column: Rank
-    let rankTxt = '';
-if (__ranksByExam && __ranksByExam.get(g.examId)) {
-  const r = __ranksByExam.get(g.examId).get(student.id);
-  rankTxt = (r == null ? '' : String(r));
-}
-pdf.text(rankTxt, x + wTot/2, y, { align:'center', baseline:'alphabetic' });
-    x += wTot + gapBase;
-
-    // GRADE column: Percentage
-    const pctTxt = (agg.pct == null) ? '' : `${agg.pct}%`;
-    pdf.text(pctTxt, x + wGr/2, y, { align:'center', baseline:'alphabetic' });
-    x += wGr + gapBase;
-
-    pdf.setTextColor(0,0,0);
-   }
-} 
-// === Grading Scale Legend (single-line: label BEFORE the scale) ===
-(function drawGlobalGradingLegendBox(){
-  try {
-    const scale = (typeof getActiveScale === 'function') ? getActiveScale() : null;
-    if (!Array.isArray(scale) || !scale.length) return;
-
-    // Highest → lowest; display clean integers
-    const rows = [...scale].sort((a,b)=>(b.min ?? 0) - (a.min ?? 0));
-    const toInt = v => (Number.isFinite(+v) ? Math.round(+v) : '');
-    const bands = rows.map(r => `${toInt(r.min)} - ${toInt(r.max)} (${String(r.grade || '').toUpperCase()})`);
-
-    // Page border frame (same anchors as before)
-    const W = 3509, H = 2481;
-    const borderX = 120, borderY = 120, borderW = W - 240, borderH = H - 240;
-
-    // Typography & layout (single line)
-    const labelText = 'GRADING SCALE:';
-    const labelSize = 64;
-    const bandSize  = 64;
-    const padX      = 28, padY = 22;
-    const rRadius   = 20;
-    const gapX      = 42;  // space between label ↔ first band and between bands
-
-    const textW = (t, sz) => {
-      pdf.setFont('helvetica','bold');
-      pdf.setFontSize(sz);
-      return Math.ceil(pdf.getTextWidth(String(t)));
-    };
-
-    const labelW = textW(labelText, labelSize);
-    const bandWs = bands.map(b => textW(b, bandSize));
-    const bandsW = bandWs.reduce((a,w)=>a+w,0) + gapX * Math.max(0, bands.length - 1);
-
-    const innerW = labelW + gapX + bandsW;
-
-    // Fit within margins; center; bottom anchor
-    const maxBoxW = Math.floor(borderW * 0.98);
-    const rawBoxW = innerW + padX * 2;
-    const scaleK  = rawBoxW > maxBoxW ? (maxBoxW / rawBoxW) : 1;
-
-    const boxW = Math.round(rawBoxW * scaleK);
-    const boxH = Math.round((padY + bandSize + padY) * scaleK);
-    const boxX = borderX + Math.round((borderW - boxW) / 2);
-    const boxY = borderY + borderH - boxH - 24;
-
-    // Box
-    pdf.setDrawColor(255, 122, 0);      // orange stroke
-    pdf.setFillColor(15, 61, 107);      // blue fill
-    pdf.setLineWidth(5);
-    pdf.roundedRect(boxX, boxY, boxW, boxH, rRadius, rRadius, 'FD');
-
-    // Row baseline
-    let x = boxX + Math.round(padX * scaleK);
-    const y = boxY + Math.round(padY * scaleK + bandSize * scaleK);
-
-    // Label (before the scale)
-   pdf.setFont('helvetica','bold');
-    pdf.setTextColor(255, 255, 255); // white
-    pdf.setFontSize(Math.round(labelSize * scaleK));
-    pdf.text(labelText, x, y, { align:'left', baseline:'alphabetic' });
-    x += Math.round((labelW + gapX) * scaleK);
-
-    // Bands
-   pdf.setTextColor(255, 255, 255); // white
-    pdf.setFontSize(Math.round(bandSize * scaleK));
-    bands.forEach((txt, i) => {
-      const w = Math.round(bandWs[i] * scaleK);
-      pdf.text(txt, x, y, { align:'left', baseline:'alphabetic' });
-
-      // Optional thin separators between band items (not after the label)
-      if (i < bands.length - 1) {
-        const sepX = x + w + Math.round(gapX * scaleK / 2);
-        const topY = y - Math.round(bandSize * scaleK) + Math.round(4 * scaleK);
-        const botY = y - Math.round(2 * scaleK);
-        pdf.setDrawColor(255, 255, 255); // white
-        pdf.setLineWidth(1);
-        pdf.line(sepX, topY, sepX, botY);
-        pdf.setDrawColor(255, 122, 0);   // back to orange for later strokes
-        pdf.setLineWidth(2);
-      }
-
-      x += w + Math.round(gapX * scaleK);
-    });
-
-    // reset color
-    pdf.setTextColor(0,0,0);
-  } catch(e) {
-    console.warn('Global grading legend render failed:', e);
-  }
-})();
-// === /Grading Scale Legend ===
-}  
-function drawSubjectsHeader(pdf, y) {
-  // Columns spread (SUBJECT | MAX | ... | TOTAL | GRADE)
-  const cols = computeColumns();
-
-  // Sizing
-  const schema = getExamSubtopicSchema();
-  const hSize = _subtopicHeaderFont(schema.length);
-  const lineGap = Math.round(hSize * 0.95);
-
-  // Bounds for a rounded box around the header
-  const { left: firstLeft, right: lastRight, width } = getTableBounds(30);
-  const boxHeight  = (hSize * 2) + Math.round(lineGap * 0.6) + 26;
-  const boxTopY    = Math.round(y - (boxHeight / 2));
-
-  // Header rounded box (light fill, blue border)
-  pdf.setFillColor(250, 253, 255);
-  pdf.setDrawColor(15, 61, 107);
-  pdf.setLineWidth(4);
-  pdf.roundedRect(firstLeft, boxTopY, width, boxHeight, 20, 20, 'FD');
-
-  // Helper: split to max 2 lines (first word | rest)
-  function twoLine(label) {
-    const parts = String(label || '').trim().split(/\s+/);
-    if (parts.length <= 1) return [String(label || '').toUpperCase()];
-    return [parts[0].toUpperCase(), parts.slice(1).join(' ').toUpperCase()];
-  }
-
-  // 1) SUBJECT header — left-align to match row subject text and use the same size (60),
-  //    but keep the original header color (blue).
-  const subjCol = cols.find(c => c.key === '__subject');
-  if (subjCol) {
-    const leftEdge = Math.round(subjCol.x - (subjCol.width ? subjCol.width / 2 : 0)) + 34; // same inset as rows
-    leftText(pdf, 'SUBJECT', leftEdge, y, 60, [15,61,107], 'bold');
-  }
-
-  // 2) All other headers — keep existing behavior (centered), with MAX nudged
-  for (const c of cols) {
-    if (c.key === '__subject') continue;
-    const label = c.label || '';
-    const lines = twoLine(label);
-    const x = (c.key === '__max') ? (c.x + MAX_X_OFFSET) : c.x;
-    if (lines.length === 2) {
-      centerText(pdf, lines[0], x, y - Math.round(lineGap / 2), hSize, [15,61,107], 'bold');
-      centerText(pdf, lines[1], x, y + Math.round(lineGap / 2), hSize, [15,61,107], 'bold');
-    } else {
-      if (c.key === '__subject') {
-      const leftEdge = Math.round(c.x - (c.width ? c.width / 2 : 0)) + 34; // same inset as row subjects
-      leftText(pdf, 'SUBJECT', leftEdge, y, 60, [15,61,107], 'bold');     // same size as row subjects
-      continue;
-    }
-      centerText(pdf, lines[0], x, y, hSize, [15,61,107], 'bold');
-    }
-  }
-}
-/**
- * Draw one subject row with its subtopic cells.
- * rowY is the baseline for the row text.
- * Returns nothing (caller controls vertical positions).
- */
-function drawSubjectRow(pdf, rowY, subject) {
-    // custom subjects print a header row with subtopic names
-    if (subject && subject.__rowKind === 'custom-header') {
-    drawCustomHeaderRow(pdf, rowY, subject);
-    return;
-  }
-  const cols = computeColumns();
-  drawSubjectRow.__idx = 0; // reset index for custom subtopic columns
-
-  const subArr = Array.isArray(subject.subtopics) ? subject.subtopics : [];
-  const byKey = {};
-  for (const st of subArr) {
-    const k = nkey(st?.name);
-    if (!k) continue;
-    const v = (st?.mark === 'AB' ? 'AB' : (typeof st?.mark === 'number' ? st.mark : ''));
-    byKey[k] = v;
-  }
-
-  const schemaLen = getExamSubtopicSchema().length;
-  const subCellSize = _subtopicCellFont(schemaLen);
-  const showAB = v => (v === '' || v === undefined || v === null ? 'AB' : String(v));
-
-  const { display: subjDisplay } = resolveSubjectName(subject?.name || '');
-const subjName = String(subjDisplay || '').toUpperCase();
-  const subjMax  = (typeof subject.max === 'number' ? subject.max
-                   : (subject.max === '' ? '' : subject.max));
-  const subjMode = _modeOf(subject);
-
-// total/grade: for CUSTOM compute sum of shown subtopic numbers; else use provided
-let tMarks = (subject.marks === 'AB' ? 'AB'
-              : (typeof subject.marks === 'number' ? subject.marks : ''));
-let gradeVal = String(subject.grade || '');
-
-if (subjMode === 'custom') {
-  let sum = 0, sawNum = false;
-  Object.values(byKey).forEach(v => {
-    if (typeof v === 'number') { sum += v; sawNum = true; }
-  });
-  tMarks = sawNum ? sum : 'AB';
-  const maxNum = (typeof subject.max === 'number' ? subject.max : null);
-  const pct = (maxNum && tMarks !== 'AB') ? (tMarks / maxNum) * 100 : null;
-  gradeVal = (pct != null) ? gradeFromPctUsingScale(pct, getActiveScale()) : '';
-}
-
-  for (const c of cols) {
-    switch (c.key) {
-      case '__subject': {
-        const leftEdge = Math.round(c.x - (c.width ? c.width / 2 : 0)) + 34;
-        leftText(pdf, subjName, leftEdge, rowY, 60, COLOR_GREEN, 'bold');
-        break;
-      }
-      case '__max':
-        centerText(pdf, String(subjMax ?? ''), c.x + MAX_X_OFFSET, rowY, 60, COLOR_RED, 'bold');
-        break;
-
-     case '__total': {
-  const showAB = v => (v === '' || v == null ? 'AB' : String(v));
-  const subjMax = (typeof subject.max === 'number' ? subject.max : null);
-
-  // rule: if subtopics exist → sum them; else → use flat/final mark
-  const subs = Array.isArray(subject.subtopics) ? subject.subtopics : [];
-  let tMarks;
-
-  if (subs.length > 0) {
-    let sum = 0, saw = false;
-    subs.forEach(st => {
-      const v = (st?.mark === 'AB' ? null : (Number.isFinite(+st?.mark) ? +st.mark : null));
-      if (v != null) { sum += v; saw = true; }
-    });
-    tMarks = saw ? sum : 'AB';
-  } else {
-    tMarks = (subject.marks === 'AB' ? 'AB'
-            : (Number.isFinite(+subject.marks) ? +subject.marks : 'AB'));
-  }
-
-  centerText(pdf, showAB(tMarks), c.x, rowY, 60, COLOR_GREEN, 'bold');
-
-  if (tMarks !== 'AB' && typeof tMarks === 'number' && typeof subjMax === 'number' && subjMax > 0) {
-    const pct = (tMarks / subjMax) * 100;
-    if (isFailPct(pct, getActiveScale())) {
-      pdf.setDrawColor(...COLOR_RED);
-      pdf.setLineWidth(4);
-      pdf.ellipse(c.x, rowY - 10, 55, 38, 'D');
-      pdf.setLineWidth(1);
-    }
-  }
-  break;
-}
-
-      case '__grade': {
-  const subjMax = (typeof subject.max === 'number' ? subject.max : null);
-  const subs = Array.isArray(subject.subtopics) ? subject.subtopics : [];
-
-  // compute the same TOTAL used above
-  let total;
-  if (subs.length > 0) {
-    let sum = 0, saw = false;
-    subs.forEach(st => {
-      const v = (st?.mark === 'AB' ? null : (Number.isFinite(+st?.mark) ? +st.mark : null));
-      if (v != null) { sum += v; saw = true; }
-    });
-    total = saw ? sum : null;
-  } else {
-    total = (Number.isFinite(+subject.marks) ? +subject.marks : null);
-  }
-
-  let gradeVal = '';
-  if (total != null && typeof subjMax === 'number' && subjMax > 0) {
-    const pct = (total / subjMax) * 100;
-    gradeVal = gradeFromPctUsingScale(pct, getActiveScale());
-  }
-
-  centerText(pdf, gradeVal, c.x, rowY, 60, COLOR_GRADE, 'bold');
-  break;
-}
-      default: {
-        const key = nkey(c.key);
-
-        // Mode: NONE → always "-"
-        if (subjMode === 'none') {
-          centerText(pdf, '-', c.x, rowY, subCellSize, COLOR_BLUE, 'bold');
-          break;
-        }
-
-        // Mode: CUSTOM → show only mapped keys; leave extra schema columns blank
-                if (subjMode === 'custom') {
-          if (!drawSubjectRow.__idx) drawSubjectRow.__idx = 0;
-          const idx = drawSubjectRow.__idx++;
-          const st  = Array.isArray(subArr) ? subArr[idx] : undefined;
-          const raw = st?.mark;
-          const txt = (raw === '' || raw == null) ? 'AB' : String(raw);
-          centerText(pdf, txt, c.x, rowY, subCellSize, COLOR_BLUE, 'bold');
-          break;
-        }
-
-        // Mode: COMMON (default)
-        if (subArr.length === 0) {
-          centerText(pdf, '-', c.x, rowY, subCellSize, COLOR_BLUE, 'bold');
-        } else {
-          const val = (key in byKey) ? byKey[key] : '';
-          centerText(pdf, showAB(val), c.x, rowY, subCellSize, COLOR_BLUE, 'bold');
-        }
-        break;
-      }
-    }
-  }
-}
-
-/* Draw the "Row A" for custom subjects: SUBJECT/MAX/TOTAL/GRADE blank; subtopic cells show the custom subtopic NAMES */
-function drawCustomHeaderRow(pdf, rowY, subject) {
-  const cols = computeColumns();
-  const schemaLen = getExamSubtopicSchema().length;
-  const subCellSize = _subtopicCellFont(schemaLen);
-  const subArr = Array.isArray(subject?.subtopics) ? subject.subtopics : [];
-
-  let i = 0; // index into subject's custom subtopics
-  for (const c of cols) {
-    switch (c.key) {
-      case '__subject':
-      case '__max':
-      case '__total':
-      case '__grade':
-        centerText(pdf, '', c.x, rowY, 60, COLOR_BLUE, 'bold');
-        break;
-      default: {
-        const label = subArr[i]?.name ? String(subArr[i].name) : '';
-        centerText(pdf, label.toUpperCase(), c.x, rowY, subCellSize, COLOR_BLUE, 'bold');
-        i++;
-        break;
-      }
-    }
-  }
-}
-
-    // Create a linear gradient as a dataURL for jsPDF.addImage
-function makeGradientDataURL(w, h, stops, direction = 'diag') {
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.max(2, Math.round(w));
-  canvas.height = Math.max(2, Math.round(h));
-  const ctx = canvas.getContext('2d');
-
-  let grad;
-  if (direction === 'vertical') grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
-  else if (direction === 'horizontal') grad = ctx.createLinearGradient(0, 0, canvas.width, 0);
-  else grad = ctx.createLinearGradient(0, 0, canvas.width, canvas.height); // 'diag'
-
-  (stops || []).forEach(s => grad.addColorStop(s.offset, s.color));
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  return canvas.toDataURL('image/png');
-}
-    // Build a public URL if only a Storage path is saved (e.g., "years/.../photo.jpg")
-function buildStorageUrlFromPath(path) {
-  const bucket = (firebase.app().options.storageBucket || '').replace('gs://','');
-  if (!bucket || !path) return '';
-  return `https://firebasestorage.googleapis.com/v0/b/${bucket}/o/${encodeURIComponent(path)}?alt=media`;
-}
-
-// Fetch any image URL and return a dataURL (base64) for jsPDF.addImage
-// Fetch any image URL and return a dataURL (base64) for jsPDF.addImage (cached)
-const __photoCache = new Map();
-async function urlToDataURL(url) {
-  if (!url) return '';
-  if (__photoCache.has(url)) return __photoCache.get(url);
-  const res = await fetch(url);
-  const blob = await res.blob();
-  const data = await new Promise((resolve, reject) => {
-    const r = new FileReader();
-    r.onload = e => resolve(e.target.result);
-    r.onerror = reject;
-    r.readAsDataURL(blob);
-  });
-  __photoCache.set(url, data);
-  return data;
-}
-async function drawStudentPhoto(pdf, stu) {
-  try {
-    // 1) Resolve a URL for the photo
-    let url = stu.photoUrl || stu.photoURL || '';
-    if (!url && stu.photoPath) url = buildStorageUrlFromPath(stu.photoPath);
-    if (!url) return;
-
-    // 2) Load image as dataURL (already have in your code)
-    const dataURL = await urlToDataURL(url);
-    const { x, y, w, h } = HEAD_PHOTO;
-
-    // 3) Compose rounded photo + gradient ring ON A CANVAS (no PDF clipping)
-    const border = 18;
-    const rOuter = 22;
-    const rInner = Math.max(6, rOuter - 6);
-
-    // helper: rounded rect path
-    function rr(ctx, x, y, w, h, r) {
-      const r2 = Math.min(r, w / 2, h / 2);
-      ctx.beginPath();
-      ctx.moveTo(x + r2, y);
-      ctx.lineTo(x + w - r2, y);
-      ctx.quadraticCurveTo(x + w, y, x + w, y + r2);
-      ctx.lineTo(x + w, y + h - r2);
-      ctx.quadraticCurveTo(x + w, y + h, x + w - r2, y + h);
-      ctx.lineTo(x + r2, y + h);
-      ctx.quadraticCurveTo(x, y + h, x, y + h - r2);
-      ctx.lineTo(x, y + r2);
-      ctx.quadraticCurveTo(x, y, x + r2, y);
-      ctx.closePath();
-    }
-
-    // create canvas
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.max(2, Math.round(w));
-    canvas.height = Math.max(2, Math.round(h));
-    const ctx = canvas.getContext('2d');
-
-    // 3a) draw gradient outer rounded rect
-    const grad = ctx.createLinearGradient(0, 0, w, h);
-    grad.addColorStop(0.00, '#FF6EC4');
-    grad.addColorStop(0.50, '#7C4DFF');
-    grad.addColorStop(1.00, '#4ADEDE');
-    ctx.fillStyle = grad;
-    rr(ctx, 0, 0, w, h, rOuter);
-    ctx.fill();
-
-    // 3b) “knock out” inner area to make the ring
-    ctx.globalCompositeOperation = 'destination-out';
-    rr(ctx, border, border, w - 2 * border, h - 2 * border, rInner);
-    ctx.fill();
-
-    // 3c) draw the photo inside the inner rounded rect
-    ctx.globalCompositeOperation = 'destination-over'; // draw below the transparent knockout
-    const img = new Image();
-    await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = dataURL; });
-    ctx.save();
-    rr(ctx, border, border, w - 2 * border, h - 2 * border, rInner);
-    ctx.clip();
-    ctx.drawImage(img, border, border, w - 2 * border, h - 2 * border);
-    ctx.restore();
-
-    // 4) Add the precomposed PNG to the PDF (no PDF clip at all)
-    const composedURL = canvas.toDataURL('image/png');
-    pdf.addImage(composedURL, 'PNG', x, y, w, h, undefined, 'FAST');
-  } catch (e) {
-    console.warn('Photo compose failed:', e);
-    // hard fallback: draw plain photo without any mask
-    try {
-      const dataURL = await urlToDataURL(stu.photoUrl || stu.photoURL || buildStorageUrlFromPath(stu.photoPath));
-      const { x, y, w, h } = HEAD_PHOTO;
-      pdf.addImage(dataURL, 'JPEG', x, y, w, h, undefined, 'FAST');
-    } catch {}
-  }
-}
-
-function centerText(pdf, text, x, y, size=12, color=[0,0,0], fontStyle="bold", fontName="helvetica") {
-  if (
-    (typeof text !== 'string' && typeof text !== 'number') ||
-    typeof x !== 'number' || typeof y !== 'number' || isNaN(x) || isNaN(y)
-  ) return;
-  pdf.setFont(fontName, fontStyle);
-  pdf.setFontSize(size);
-  pdf.setTextColor(...color);
-  pdf.text(String(text), x, y, {align: 'center'});
-  pdf.setFont("helvetica", "normal");
-  pdf.setTextColor(0,0,0);
-}
-function leftText(pdf, text, x, y, size=12, color=[0,0,0], fontStyle="bold", fontName="helvetica") {
-  pdf.setFont(fontName, fontStyle);
-  pdf.setFontSize(size);
-  pdf.setTextColor(...color);
-  pdf.text(String(text), x, y, {align: 'left'});
-  pdf.setFont("helvetica", "normal");
-  pdf.setTextColor(0,0,0);
-}
-    function rightText(pdf, text, x, y, size=12, color=[0,0,0], fontStyle="bold", fontName="helvetica") {
-  pdf.setFont(fontName, fontStyle);
-  pdf.setFontSize(size);
-  pdf.setTextColor(...color);
-  pdf.text(String(text), x, y, { align: 'right' });
-  pdf.setFont("helvetica", "normal");
-  pdf.setTextColor(0,0,0);
-}
- 
-// ---- Drawer for the remark box (placed below attendance table) ----
-function drawRemarkBox(pdf, text) {
-  // Box anchors
-  const x = PAGE_MARGINS.left;
-  const y = 3040;
-  const w = PAGE_MARGINS.right - PAGE_MARGINS.left;
-
-  // Heading ABOVE the box (left-aligned)
-  pdf.setFont('helvetica', 'bold');
-  pdf.setTextColor(91, 33, 182); // violet
-  pdf.setFontSize(56);
-  pdf.text('REMARKS', x, y - 16, { align: 'left', baseline: 'alphabetic' });
-
-  // Layout + typography
-  const padX = 20;
-  const padY = 16;
-  const bodyFontSize = 56;
-  const lineGap = 64;
-  const wrapWidth = w - padX * 2;
-
-  // Parse tokens: [[P:Name]] blue, [[I:Name]] green, [[F:Name]]/[[AB:Name]] red
-  function tokenize(s) {
-    const out = [];
-    const re = /\[\[(P|I|F|AB):(.+?)\]\]/g;
-    let i = 0, m;
-    while ((m = re.exec(s)) !== null) {
-      if (m.index > i) out.push({ kind: 'T', text: s.slice(i, m.index) });
-      out.push({ kind: m[1], text: m[2] });
-      i = re.lastIndex;
-    }
-    if (i < s.length) out.push({ kind: 'T', text: s.slice(i) });
-    return out;
-  }
-
-  // Split a segment into word pieces for wrapping (keeps kind)
-  function words(seg) {
-    // keep spaces so spacing renders correctly
-    return seg.text.split(/(\s+)/).filter(t => t.length).map(t => ({ kind: seg.kind, text: t }));
-  }
-
-  // measure with current font settings
-  function tw(str) {
-    return pdf.getTextWidth(String(str));
-  }
-
-  // Build lines with mixed styles
-// 1) Drop “Spoken English” & “Discipline” (incl. common misspellings) from tokens and plain text
-let cleaned = String(text || 'Assessment in progress. Details will be updated shortly.')
-  // token forms like [[P:Spoken English]], [[I:Discipline]], [[F:disciplin]]
-  .replace(/\[\[(P|I|F|AB):\s*(Spoken\s*English|Disciplin[eai]{0,2}\w*)\s*\]\]/gi, '')
-  // bare-text mentions, just in case
-  .replace(/\b(Spoken\s*English|Disciplin[eai]{0,2}\w*)\b/gi, '')
-  .replace(/\s+/g, ' ')
-  .trim();
-
-// 2) Grammar clean-ups after removals (fix dangling “and”, extra commas/spaces)
-cleaned = cleaned
-  .replace(/\bto\s+and\b/gi, 'to')           // “to and Hindi” → “to Hindi”
-  .replace(/\bwith\s+and\b/gi, 'with')       // “with and …” → “with …”
-  .replace(/\b(and|,)\s*(?=,|\.)/gi, '')     // “and ,” / “, .” → remove stray conjunction before punctuation
-  .replace(/\b(?:and\s*)+$/i, '')            // trailing “and” at end of sentence
-  .replace(/,\s*,/g, ', ')                   // double commas
-  .replace(/\s+,/g, ', ')                    // space before comma
-  .replace(/\s{2,}/g, ' ')                   // collapse double spaces
-  .replace(/\s+([.?!])/g, '$1');             // space before punctuation
-
-const segments = tokenize(cleaned);
-
-  // prebuild word pieces
-  const pieces = segments.flatMap(words);
-
-  // First pass: estimate height by simulating wraps (using normal font)
-  pdf.setFont('helvetica', 'normal');
-  pdf.setFontSize(bodyFontSize);
-
-  const lines = [];
-  let line = [];
-  let lineWidth = 0;
-
-  for (const p of pieces) {
-    // set style temporarily for width measuring
-    let weight = 'normal';
-    if (p.kind === 'P' || p.kind === 'I' || p.kind === 'F' || p.kind === 'AB') weight = 'bold';
-    pdf.setFont('helvetica', weight);
-    const wPiece = tw(p.text);
-
-    if (lineWidth + wPiece > wrapWidth && line.length) {
-      lines.push(line);
-      line = [p];
-      lineWidth = wPiece;
-    } else {
-      line.push(p);
-      lineWidth += wPiece;
-    }
-  }
-  if (line.length) lines.push(line);
-
-  const maxLines = Math.min(lines.length, 60);
-  const contentH = maxLines * lineGap;
-  const minH = 160;
-  const h = Math.max(minH, contentH + padY * 2);
-
-  // Draw box (no fill, GREEN border)
-  pdf.setDrawColor(22, 163, 74);
-  pdf.setLineWidth(4);
-  pdf.roundedRect(x, y, w, h, 14, 14, 'S');
-
-    // Second pass: render with per-piece styles (full justification except last line)
-  const startY = y + padY + bodyFontSize;
-
-  // helper: whitespace check
-  const isWS = (t) => /^\s+$/.test(t);
-
-  for (let li = 0; li < maxLines; li++) {
-    const row = lines[li];
-    const isLastLine = (li === maxLines - 1);
-
-    // Measure base widths
-    let baseWidth = 0;
-    let spacesCount = 0;
-    for (const p of row) {
-      // measure using weight (bold for P/I/F/AB, normal otherwise)
-      const weight = (p.kind === 'P' || p.kind === 'I' || p.kind === 'F' || p.kind === 'AB') ? 'bold' : 'normal';
-      pdf.setFont('helvetica', weight);
-      baseWidth += tw(p.text);
-      if (isWS(p.text)) spacesCount++;
-    }
-
-    // How much extra to distribute across spaces
-    const needed = Math.max(0, wrapWidth - baseWidth);
-    const extraPerSpace = (!isLastLine && spacesCount > 0) ? (needed / spacesCount) : 0;
-
-    // Render line
-    let cursorX = x + padX;
-    for (const p of row) {
-      const weight = (p.kind === 'P' || p.kind === 'I' || p.kind === 'F' || p.kind === 'AB') ? 'bold' : 'normal';
-
-      // color by token kind
-      let color = [0, 0, 0];
-      if (p.kind === 'P') { color = [15, 61, 107]; }         // blue (praise)
-      if (p.kind === 'I') { color = [22, 163, 74]; }         // green (improve)
-      if (p.kind === 'F' || p.kind === 'AB') { color = [220, 38, 38]; } // red (fail/absent)
-
-      pdf.setFont('helvetica', weight);
-      pdf.setFontSize(bodyFontSize);
-      pdf.setTextColor(...color);
-
-      const wPiece = tw(p.text);
-
-      if (isWS(p.text)) {
-        // advance by space width (+ justification) without drawing
-        cursorX += wPiece + extraPerSpace;
-      } else {
-        // draw the word
-        pdf.text(p.text, cursorX, startY + li * lineGap, { align: 'left', baseline: 'alphabetic' });
-        cursorX += wPiece;
-      }
-    }
-  }
-
-  // reset font state
-  pdf.setFont('helvetica', 'normal');
-  pdf.setTextColor(0, 0, 0);
-}
-function formatClass(val) {
-  if (!val) return '';
-  return val.replace(/^(\d+)(\w+)$/, (m, num, suff) => num.toUpperCase() + suff.toLowerCase());
-}
-  function formatSection(name) {
-  if (name == null) return '';
-  const s = String(name).trim();
-  return s.replace(/\bsection\b/gi, 'Section'); // "SECTION" -> "Section"
-}
-    function valueOnly(s, word){
-  return String(s || '')
-    .replace(new RegExp('\\b' + word + '\\b', 'gi'), '')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-/* ===== Back-side helpers: read any exam for a student and compute subject totals ===== */
-  // simple in-memory cache so we don't refetch the same marks repeatedly
-const __marksCache = new Map();
-
-/**
- * Read a student's marks document for a given exam.
- * Falls back to {} if missing. Results are cached per year/class/section/student/exam.
- */
-async function _readMarksDocFor(stuId, examId) {
-  const year = yearSel.value;
-  const classId = classSel.value;
-  const sectionId = sectionSel.value;
-
-  if (!year || !classId || !sectionId || !stuId || !examId) return {};
-
-  const cacheKey = `${year}/${classId}/${sectionId}/${stuId}/${examId}`;
-  if (__marksCache.has(cacheKey)) return __marksCache.get(cacheKey);
-
-  const ref = db.collection('years').doc(year)
-    .collection('classes').doc(classId)
-    .collection('sections').doc(sectionId)
-    .collection('students').doc(stuId)
-    .collection('marks').doc(examId);
-
-  const snap = await ref.get();
-  const data = snap.exists ? (snap.data() || {}) : {};
-  __marksCache.set(cacheKey, data);
-  return data;
-}
-
-async function computeRanksByExam(examIds) {
-  if (!Array.isArray(examIds) || examIds.length === 0) return new Map();
-  const out = new Map(); // examId -> Map(studentId -> rank)
-  for (const exId of (examIds || [])) {
-    const struct = await getExamStructureForExamId(exId);
-    const totals = [];
-    for (const stu of students) {
-      const marksObj = await _readMarksDocFor(stu.id, exId);
-      const subs = _extractSubjectTotalsFromMarks(marksObj, struct); // [{total,max}]
-      const sum = subs.reduce((a,s)=> a + (typeof s.total === 'number' ? s.total : 0), 0);
-      totals.push({ id: stu.id, total: sum });
-    }
-    totals.sort((a,b)=> b.total - a.total);
-    let last = null, rank = 1, lastRank = 1;
-    totals.forEach((t,i) => {
-      if (t.total !== last) { rank = i+1; last = t.total; lastRank = rank; }
-      t.rank = lastRank;
-    });
-    out.set(exId, new Map(totals.map(t => [t.id, t.rank])));
-  }
-  return out;
-}
-
-/* Build normalized subject list across multiple exams (union, stable by name) */
-function _unionSubjectsAcross(examIds, perExamSubjectsMap) {
-  const seen = new Set();
-  const out = [];
-  for (const ex of examIds) {
-    const arr = perExamSubjectsMap.get(ex) || [];
-    for (const s of arr) {
-      const raw = (s && typeof s === 'object') ? (s.name || '') : s;
-      const { key, display } = resolveSubjectName(raw);
-      if (!key || seen.has(key)) continue;
-      seen.add(key);
-      out.push(display); // ensure EVS shows exactly as "E V S"
-    }
-  }
-  return out;
-}
-
-
-/* From an exam marks object, compute subject totals.
-   RULE: if no numeric entries at all → total === 'AB'.
-         If a number exists (including 0) → sum the numbers. */
-function _extractSubjectTotalsFromMarks(marksObj, structure) {
-    const subjects = [];
-  const subsRoot = (marksObj && typeof marksObj.__subs === 'object') ? marksObj.__subs : {};
-
-  // Union subjects from structure and marks; prefer resolver display (e.g., "E V S")
-// Union subjects from structure and marks; prefer resolver display (e.g., "E V S")
-const structList = Array.isArray(structure?.subjects) ? structure.subjects.map(s => s.name) : [];
-const marksList = Object.keys(marksObj).filter(k => !/^__subs(\b|[.\[])/i.test(k) && !/^__/.test(k));
-
-const seen = new Set();
-const baseSubjects = [];
-[...structList, ...marksList].forEach(n => {
-  const { key, display } = resolveSubjectName(n);
-  if (!key || seen.has(key)) return;
-  seen.add(key);
-  baseSubjects.push(display); // ensures EVS-like names show as "E V S"
-});
-
-
-  for (const subjName of baseSubjects) {
-    // locate values for this subject
-   // Prefer "E V S" when both "EVS" and "E V S" exist
-const rootCandidates = Object.keys(marksObj).filter(k => nkey(k) === nkey(subjName));
-let keyRoot = null;
-if (rootCandidates.length) {
-  // pick the one whose resolved display is exactly "E V S"
-  keyRoot = rootCandidates.find(k => resolveSubjectName(k).display === 'E V S') || rootCandidates[0];
-}
-const subjVal = keyRoot ? marksObj[keyRoot] : marksObj[subjName];
-
-   // Prefer "E V S" inside __subs as well
-const subsCandidates = Object.keys(subsRoot || {}).filter(k => nkey(k) === nkey(subjName));
-let keySubs = null;
-if (subsCandidates.length) {
-  keySubs = subsCandidates.find(k => resolveSubjectName(k).display === 'E V S') || subsCandidates[0];
-}
-const subsObj = keySubs ? subsRoot[keySubs] : null;
-
-    let total = 0;
-    let max   = 0;
-    let sawNumeric = false; // ← our decisive flag
-
-    // Prefer __subs breakdown
-    if (subsObj && typeof subsObj === 'object') {
-      for (const [k, v] of Object.entries(subsObj)) {
-        if (typeof v === 'number' && !isNaN(v)) {      // includes 0
-          total += +v;
-          sawNumeric = true;
-        }
-        // infer max from exam structure if known
-        const subjDef = structure?.subjects?.find(s => nkey(s.name) === nkey(subjName));
-        const stDef   = subjDef?.subtopics?.find(t => nkey(t.name) === nkey(k));
-        if (typeof stDef?.max === 'number') max += stDef.max;
-      }
-      // fallback subjectMax when we couldn't sum subtopic maxes
-      if (max === 0) {
-        const subjDef = structure?.subjects?.find(s => nkey(s.name) === nkey(subjName));
-        if (typeof subjDef?.subjectMax === 'number') max = subjDef.subjectMax;
-      }
-    }
-    // Or: object stored directly at the subject key
-    else if (subjVal && typeof subjVal === 'object' && !Array.isArray(subjVal)) {
-      for (const [, v] of Object.entries(subjVal)) {
-        if (typeof v === 'number' && !isNaN(v)) {
-          total += +v;
-          sawNumeric = true;
-        }
-      }
-      // no reliable max here
-    }
-    // Or: a scalar at the subject key
-    else if (subjVal !== undefined) {
-      if (typeof subjVal === 'number' && !isNaN(subjVal)) {
-        total = +subjVal;      // 0 is valid
-        sawNumeric = true;
-      } else {
-        // explicit AB / blank → no numbers seen
-        sawNumeric = false;
-      }
-           // try structure max
-      const subjDef = structure?.subjects?.find(s => nkey(s.name) === nkey(subjName));
-    if (typeof subjDef?.subjectMax === 'number') max = subjDef.subjectMax;
-    }
-
-    // Finalize per our rule
-    const finalTotal = sawNumeric ? total : 'AB';
-
-    // only include subjects that either have a number or are AB (skip truly missing subjects)
-    if (sawNumeric || finalTotal === 'AB') {
-      subjects.push({ name: subjName, total: finalTotal, max });
-    }
-  }
-
-  return subjects;
-}
-
-/* =========================
-   REMARKS ENGINE (randomized)
-   ========================= */
-function pick(arr){ return Array.isArray(arr) && arr.length ? arr[Math.floor(Math.random()*arr.length)] : ''; }
-function formatSubjectsList(arr, limit = 3) {
-  const list = (arr || []).filter(Boolean).slice(0, limit);
-  if (!list.length) return '';
-  if (list.length === 1) return list[0];
-  if (list.length === 2) return `${list[0]} and ${list[1]}`;
-  return `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`;
-}
-
-// only wrap SUBJECT NAMES; sentences stay plain
-function joinWithAnd(arr) {
-  const list = (arr || []).filter(Boolean);
-  if (!list.length) return '';
-  if (list.length === 1) return list[0];
-  if (list.length === 2) return `${list[0]} and ${list[1]}`;
-  return `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`;
-}
-function fmtSubjects(arr, kind) {
-  const wrap = s => `[[${kind}:${s}]]`;
-  return joinWithAnd((arr || []).filter(Boolean).map(wrap));
-}
-const REMARK_POOLS = {
-  overall: {
-    ge95: [
-      "Outstanding overall performance—keep it up.",
-      "Excellent work throughout; maintain this momentum.",
-      "Best performance this term; continue in the same way.",
-      "Exceptional result; stay consistent and keep aiming high.",
-      "A top-tier performance; well done and carry this forward."
-    ],
-    ge90: [
-      "Very good overall performance; continue this progress.",
-      "A very good result—keep the pace steady.",
-      "You’re doing very well overall; stay on track.",
-      "Very good outcome; maintain regular practice."
-    ],
-    ge85: [
-      "Good overall performance; strive for even better next time.",
-      "A good result—aim a little higher in the next assessment.",
-      "Good progress; with steady practice you can reach very good.",
-      "A solid effort; push for a better score next time.",
-      "Good work overall; set a higher target and go for it."
-    ],
-    ge70: [
-      "A steady performance; regular revision will raise your score.",
-      "You are on the right track; keep practicing to do better.",
-      "Decent outcome; focus on daily review to improve.",
-      "Acceptable progress; aim for a better band next time.",
-      "Reasonable performance; consistent effort will help you move up."
-    ],
-    ge60: [
-      "Fair performance; increase practice to do better.",
-      "Results are fair; plan regular study to improve.",
-      "Some improvement is needed; revise daily and follow guidance.",
-      "Fair outcome; tighten your routine for a better result.",
-      "Progress is modest; more focused effort will lift your score."
-    ],
-    ge40: [
-      "Improvement is needed; begin daily revision with close guidance.",
-      "Put in steady effort; you can achieve a better result.",
-      "Focus on regular practice to lift your overall performance.",
-      "Begin a clear study plan; revise what was taught each day.",
-      "More effort is required; work through examples and ask for help."
-    ],
-    lt40: [
-      "Significant improvement is required; start with the basics and seek guidance.",
-      "Immediate and steady effort is needed; follow a strict daily plan.",
-      "Begin from core concepts and practice every day to recover.",
-      "Intensive revision is necessary; meet your teacher for support.",
-      "Focused work is urgently needed; rebuild step by step."
-    ]
-  },
-  praise95: [
-    "You are excellent in {SUBJECTS}.",
-    "Best performance in {SUBJECTS}—well done.",
-    "Outstanding work in {SUBJECTS}.",
-    "Top-level result in {SUBJECTS}; keep it up.",
-    "Excellent command of {SUBJECTS}; maintain this level."
-  ],
-  praise90: [
-    "Very good in {SUBJECTS}.",
-    "A very good performance in {SUBJECTS}.",
-    "You have done very well in {SUBJECTS}.",
-    "Very good result in {SUBJECTS}; continue this progress.",
-    "Very good grasp of {SUBJECTS}."
-  ],
-  praise85: [
-    "Good in {SUBJECTS}; strive to get more.",
-    "A good result in {SUBJECTS}; aim higher next time.",
-    "Good progress in {SUBJECTS}; push for very good.",
-    "A steady result in {SUBJECTS}; target a better band.",
-    "Good showing in {SUBJECTS}; keep working for the best."
-  ],
+// (…continues… the rest of your provided code up to:)
   focusLE60: [
     "Give better focus to {SUBJECTS}.",
     "Spend extra time on {SUBJECTS} to improve.",
@@ -3023,133 +1289,88 @@ const REMARK_POOLS = {
     "Work through the basics and practice {SUBJECTS} daily.",
     "Strengthen {SUBJECTS} with consistent revision and exercises."
   ],
-  focusLT50: [
-    "Marks are below 50% in {SUBJECTS}; immediate practice is needed.",
-    "{SUBJECTS} is below 50%; revise fundamentals every day.",
-    "Low score in {SUBJECTS}; focus on core topics first.",
-    "{SUBJECTS} needs urgent attention; follow a daily practice plan.",
-    "Below 50% in {SUBJECTS}; meet your teacher and clear doubts regularly."
-  ],
-  focusFail: [
-    "Failed in {SUBJECTS}; begin remedial practice without delay.",
-    "{SUBJECTS} is in the fail band; rebuild from basics and seek guidance.",
-    "Failure in {SUBJECTS}; follow a strict revision schedule and clear doubts.",
-    "{SUBJECTS} requires urgent remediation; complete all pending work.",
-    "Not passed in {SUBJECTS}; daily coaching and revision are necessary."
-  ],
-    focusAB: [
-    "You were absent in {SUBJECTS}; attend the next assessment and do not repeat this absence.",
-    "You were absent in {SUBJECTS}; be present for the next exam and avoid missing tests again.",
-    "Absent for {SUBJECTS}; ensure you appear in the next sitting—no further absences.",
-    "Absent for {SUBJECTS}; prioritise attendance and write the next paper without fail.",
-    "Did not attend {SUBJECTS}; be present next time and maintain full participation.",
-    "Absence noted in {SUBJECTS}; attend all future assessments and keep this from recurring.",
-    "Did not attend {SUBJECTS}; appear for the next assessment and avoid repetition.",
-    "Absent during {SUBJECTS}; attend the next exam and keep your record consistent.",
-    "Did not attend for {SUBJECTS}; ensure full attendance in upcoming assessments.",
-    "Absence in {SUBJECTS}; appear for the next test and prevent a repeat.",
-  ],
-
-  attendance: {
-    ge95: [
-      "Attendance is excellent at {ATT}%.",
-      "Very regular in attendance ({ATT}%).",
-      "Consistently present with {ATT}% attendance.",
-      "Excellent regularity at {ATT}%.",
-      "Attendance is commendable at {ATT}%."
-    ],
-    ge90: [
-      "Good attendance at {ATT}%.",
-      "Attendance is satisfactory ({ATT}%); keep it up.",
-      "Regular attendance at {ATT}%—maintain this habit.",
-      "{ATT}% attendance is good; stay consistent.",
-      "A steady record of {ATT}% attendance."
-    ],
-    ge75: [
-      "Attendance is {ATT}%; please be more regular.",
-      "{ATT}% attendance needs improvement to keep pace.",
-      "Raise attendance from {ATT}% to avoid learning gaps.",
-      "Attendance at {ATT}% is low; aim for better regularity.",
-      "Be more consistent—{ATT}% attendance should improve."
-    ],
-    lt75: [
-      "Attendance is low at {ATT}%—immediate improvement is necessary.",
-      "Frequent absences ({ATT}%) are affecting progress; be regular.",
-      "Very low attendance ({ATT}%)—make daily presence a priority.",
-      "{ATT}% attendance is inadequate; urgent action is required.",
-      "Attendance must improve sharply from {ATT}% to support learning."
-    ]
-  },
-    closing_high: [
-    "Excellent consistency—keep challenging yourself with higher-order questions.",
-    "Great work—maintain your pace and keep exploring beyond the syllabus.",
-    "Strong performance—keep refining speed and accuracy.",
-    "Impressive results—try a few enrichment problems each week.",
-    "Keep this momentum and mentor peers when you can; teaching deepens learning."
-  ],
-  closing_mid: [
-    "Stay regular with revision and clear doubts on time.",
-    "Daily practice and timely doubt-clearing will help you do better.",
-    "Review your notes the same day and try a few extra problems.",
-    "Set small weekly targets and track your progress consistently.",
-    "Attempt previous questions and check your steps carefully."
-  ],
-  closing_low: [
-    "Begin with core concepts and practice short sets every day.",
-    "Follow a clear daily plan and get doubts cleared without delay.",
-    "Revise examples from class first, then attempt basic worksheets.",
-    "Focus on weak topics in small chunks—steady effort matters.",
-    "Meet your teacher regularly and stick to a simple practice routine."
-  ]
+  focusLT50: [ "Marks are below 50% in {SUBJECTS}; immediate practice is needed.", "{SUBJECTS} is below 50%; revise fundamentals every day.", "Low score in {SUBJECTS}; focus on core topics first.", "{SUBJECTS} needs urgent attention; follow a daily practice plan.", "Below 50% in {SUBJECTS}; meet your teacher and clear doubts regularly." ],
+focusFail: [ "Failed in {SUBJECTS}; begin remedial practice without delay.", "{SUBJECTS} is in the fail band; rebuild from basics and seek guidance.", "Failure in {SUBJECTS}; follow a strict revision schedule and clear doubts.", "{SUBJECTS} requires urgent remediation; complete all pending work.", "Not passed in {SUBJECTS}; daily coaching and revision are necessary." ],
+focusAB: [ "You were absent in {SUBJECTS}; attend the next assessment and do not repeat this absence.", "You were absent in {SUBJECTS}; be present for the next exam and avoid missing tests again.", "Absent for {SUBJECTS}; ensure you appear in the next sitting—no further absences.", "Absent for {SUBJECTS}; prioritise attendance and write the next paper without fail.", "Did not attend {SUBJECTS}; be present next time and maintain full participation.", "Absence noted in {SUBJECTS}; attend all future assessments and keep this from recurring.", "Did not attend {SUBJECTS}; appear for the next assessment and avoid repetition.", "Absent during {SUBJECTS}; attend the next exam and keep your record consistent.", "Did not attend for {SUBJECTS}; ensure full attendance in upcoming assessments.", "Absence in {SUBJECTS}; appear for the next test and prevent a repeat.", ],
+attendance: {
+  ge95: [ "Attendance is excellent at {ATT}%.", "Very regular in attendance ({ATT}%).", "Consistently present with {ATT}% attendance.", "Excellent regularity at {ATT}%.", "Attendance is commendable at {ATT}%." ],
+  ge90: [ "Good attendance at {ATT}%.", "Attendance is satisfactory ({ATT}%); keep it up.", "Regular attendance at {ATT}%—maintain this habit.", "{ATT}% attendance is good; stay consistent.", "A steady record of {ATT}% attendance." ],
+  ge75: [ "Attendance is {ATT}%; please be more regular.", "{ATT}% attendance needs improvement to keep pace.", "Raise attendance from {ATT}% to avoid learning gaps.", "Attendance at {ATT}% is low; aim for better regularity.", "Be more consistent—{ATT}% attendance should improve." ],
+  lt75: [ "Attendance is low at {ATT}%—immediate improvement is necessary.", "Frequent absences ({ATT}%) are affecting progress; be regular.", "Very low attendance ({ATT}%)—make daily presence a priority.", "{ATT}% attendance is inadequate; urgent action is required.", "Attendance must improve sharply from {ATT}% to support learning." ]
+},
+closing_high: [
+  "Excellent consistency—keep challenging yourself with higher-order questions.",
+  "Great work—maintain your pace and keep exploring beyond the syllabus.",
+  "Strong performance—keep refining speed and accuracy.",
+  "Impressive results—try a few enrichment problems each week.",
+  "Keep this momentum and mentor peers when you can; teaching deepens learning."
+],
+closing_mid: [
+  "Stay regular with revision and clear doubts on time.",
+  "Daily practice and timely doubt-clearing will help you do better.",
+  "Review your notes the same day and try a few extra problems.",
+  "Set small weekly targets and track your progress consistently.",
+  "Attempt previous questions and check your steps carefully."
+],
+closing_low: [
+  "Begin with core concepts and practice short sets every day.",
+  "Follow a clear daily plan and get doubts cleared without delay.",
+  "Revise examples from class first, then attempt basic worksheets.",
+  "Focus on weak topics in small chunks—steady effort matters.",
+  "Meet your teacher regularly and stick to a simple practice routine."
+]
 };
+
 function buildAutoRemark(student) {
   const overallPct = Number.isFinite(+student.percentage) ? +student.percentage : null;
   const subs = Array.isArray(student.subjects) ? student.subjects : [];
+
   // Exclude these subjects from remarks
-const __EXCLUDE_REMARK_SUBJECTS = new Set(['spoken english','discipline']);
+  const __EXCLUDE_REMARK_SUBJECTS = new Set(['spoken english','discipline']);
 
-const perSub = subs
-  .filter(s => !__EXCLUDE_REMARK_SUBJECTS.has(nkey(s?.name)))
-  .map(s => {
-    const m = (s && s.marks === 'AB') ? null : (typeof s?.marks === 'number' ? s.marks : null);
-    const M = (typeof s?.max === 'number' ? s.max : null);
-    const p = (m != null && M != null && M > 0) ? (m / M) * 100 : null;
-    return {
-      name: String(s?.name || '').trim(),
-      pct: p,
-      isAB: s?.marks === 'AB',
-      isFail: (p != null) ? isFailPct(p) : false
-    };
-  });
- // --- Early exit: absent in all subjects ---
-if (perSub.length && perSub.every(x => x.isAB)) {
-  return "Absent for the entire examination; please ensure full attendance in the next assessment.";
-}
+  const perSub = subs
+    .filter(s => !__EXCLUDE_REMARK_SUBJECTS.has(nkey(s?.name)))
+    .map(s => {
+      const m = (s && s.marks === 'AB') ? null : (typeof s?.marks === 'number' ? s.marks : null);
+      const M = (typeof s?.max === 'number' ? s.max : null);
+      const p = (m != null && M != null && M > 0) ? (m / M) * 100 : null;
+      return { name: String(s?.name || '').trim(), pct: p, isAB: s?.marks === 'AB', isFail: (p != null) ? isFailPct(p) : false };
+    });
 
-  const best95   = perSub.filter(x => x.pct != null && x.pct >= 95).map(x => x.name);
-  const very90   = perSub.filter(x => x.pct != null && x.pct >= 90 && x.pct < 95).map(x => x.name);
-  const good85   = perSub.filter(x => x.pct != null && x.pct >= 85 && x.pct < 90).map(x => x.name);
+  // --- Early exit: absent in all subjects ---
+  if (perSub.length && perSub.every(x => x.isAB)) {
+    return "Absent for the entire examination; please ensure full attendance in the next assessment.";
+  }
+
+  const best95 = perSub.filter(x => x.pct != null && x.pct >= 95).map(x => x.name);
+  const very90 = perSub.filter(x => x.pct != null && x.pct >= 90 && x.pct < 95).map(x => x.name);
+  const good85 = perSub.filter(x => x.pct != null && x.pct >= 85 && x.pct < 90).map(x => x.name);
   const weakLT50 = perSub.filter(x => (x.pct != null && x.pct < 50) && !x.isFail).map(x => x.name);
   const weakLE60 = perSub.filter(x => (x.pct != null && x.pct <= 60) && !x.isFail).map(x => x.name);
   const failSubs = perSub.filter(x => x.isFail).map(x => x.name);
-  const abSubs   = perSub.filter(x => x.isAB).map(x => x.name);
+  const abSubs = perSub.filter(x => x.isAB).map(x => x.name);
 
   let work = 0, pres = 0;
-  (student.attendance || []).forEach(m => { work += Number(m.work) || 0; pres += Number(m.pres) || 0; });
+  (student.attendance || []).forEach(m => {
+    work += Number(m.work) || 0;
+    pres += Number(m.pres) || 0;
+  });
   const att = work > 0 ? Math.round((pres / work) * 100) : null;
 
   const parts = [];
+
   if (overallPct != null) {
     let pool;
-    if      (overallPct >= 95) pool = REMARK_POOLS.overall.ge95;
+    if (overallPct >= 95) pool = REMARK_POOLS.overall.ge95;
     else if (overallPct >= 90) pool = REMARK_POOLS.overall.ge90;
     else if (overallPct >= 85) pool = REMARK_POOLS.overall.ge85;
     else if (overallPct >= 70) pool = REMARK_POOLS.overall.ge70;
     else if (overallPct >= 60) pool = REMARK_POOLS.overall.ge60;
     else if (overallPct >= 40) pool = REMARK_POOLS.overall.ge40;
-    else                       pool = REMARK_POOLS.overall.lt40;
+    else pool = REMARK_POOLS.overall.lt40;
     parts.push(pick(pool));
   }
+
   if (best95.length) {
     parts.push(pick(REMARK_POOLS.praise95).replace('{SUBJECTS}', fmtSubjects(best95, 'P')));
   } else if (very90.length) {
@@ -3157,18 +1378,19 @@ if (perSub.length && perSub.every(x => x.isAB)) {
   } else if (good85.length) {
     parts.push(pick(REMARK_POOLS.praise85).replace('{SUBJECTS}', fmtSubjects(good85, 'P')));
   }
-    // --- Weakness/Fail line selection with “bottom-2” fallback (no AB; avoid praising & scolding same subject) ---
+
+  // --- Weakness/Fail line selection with “bottom-2” fallback (no AB; avoid praising & scolding same subject) ---
   const praisedSet = new Set([...best95, ...very90, ...good85].map(n => nkey(n)));
   const chooseUpToTwo = (arr) => (arr || [])
     .filter(Boolean)
-    .filter(n => !praisedSet.has(nkey(n)))   // don’t contradict praise
+    .filter(n => !praisedSet.has(nkey(n))) // don’t contradict praise
     .slice(0, 2);
 
   if (failSubs.length) {
     // If any fails → ONLY a fail line (max 2)
     const list = chooseUpToTwo(failSubs);
     if (list.length) {
-     parts.push(pick(REMARK_POOLS.focusFail).replace('{SUBJECTS}', fmtSubjects(list, 'F')));
+      parts.push(pick(REMARK_POOLS.focusFail).replace('{SUBJECTS}', fmtSubjects(list, 'F')));
     }
   } else {
     // Absolute weakness first
@@ -3186,88 +1408,45 @@ if (perSub.length && perSub.every(x => x.isAB)) {
         .sort((a, b) => a.pct - b.pct)
         .slice(0, 2)
         .map(x => x.name);
-
       if (relativeTwo.length) {
         // Use a gentle improvement tone
         parts.push(pick(REMARK_POOLS.focusLE60).replace('{SUBJECTS}', fmtSubjects(relativeTwo, 'I')));
       }
     }
-   }
+  }
 
   // AB subjects (list up to two; only when there are no failing subjects)
   if (abSubs.length && !failSubs.length) {
     const abList = abSubs.slice(0, 2);
     parts.push(
-  pick(REMARK_POOLS.focusAB)
-    .replace('{SUBJECTS}', formatSubjectsList(abSubs.map(n => `[[AB:${n}]]`)))
-);
+      pick(REMARK_POOLS.focusAB)
+        .replace('{SUBJECTS}', formatSubjectsList(abSubs.map(n => `[[AB:${n}]]`)))
+    );
   }
 
   if (att != null) {
-
     let apool;
-    if      (att >= 95) apool = REMARK_POOLS.attendance.ge95;
+    if (att >= 95) apool = REMARK_POOLS.attendance.ge95;
     else if (att >= 90) apool = REMARK_POOLS.attendance.ge90;
     else if (att >= 75) apool = REMARK_POOLS.attendance.ge75;
-    else                apool = REMARK_POOLS.attendance.lt75;
+    else apool = REMARK_POOLS.attendance.lt75;
     parts.push(pick(apool).replace('{ATT}', String(att)));
   }
+
   parts.push(pick(REMARK_POOLS.closing));
+
   const remark = parts.filter(Boolean).join(' ');
   return remark.length > 380 ? (remark.slice(0, 377) + '…') : remark;
 }
-// --- Concurrency limiter (promise pool) ---
-function pLimit(concurrency){
-  const q=[]; let active=0;
-  const next=()=>{ if(active>=concurrency||q.length===0) return;
-    active++; const {fn,resolve,reject}=q.shift();
-    Promise.resolve().then(fn).then(
-      v=>{active--; resolve(v); next();},
-      e=>{active--; reject(e); next();}
-    );
-  };
-  return fn=>new Promise((resolve,reject)=>{ q.push({fn,resolve,reject}); next(); });
-}
-
-// Build full dataset for all students in parallel (uses caches)
-async function getAllStudentFullData(){
-  // warm caches shared by all students
-  await getSectionAttendance();
-  await getExamStructure();
-
-  const limit = pLimit(8);
-  const results = await Promise.all(
-    (students || []).map(stu => limit(() => fetchStudentData(stu)))
-  );
-
-  // rank by totalMarks (dense ranking)
-  const ranked = [...results].sort((a,b)=> b.totalMarks - a.totalMarks);
-  let last = null, rank = 1, lastRank = 1;
-  ranked.forEach((d,i) => {
-    if (d.totalMarks !== last) { rank = i+1; last = d.totalMarks; lastRank = rank; }
-    d.rank = lastRank;
-  });
-
-  // restore original student order for rendering
-  results.sort((a,b)=> {
-    const aIdx = students.findIndex(s=>s.name===a.name && s.roll==a.roll);
-    const bIdx = students.findIndex(s=>s.name===b.name && s.roll==b.roll);
-    return aIdx - bIdx;
-  });
-
-  return results;
-}
-
 // ======= PDF GENERATION =========
 async function fetchStudentData(stu) {
   // 0) Resolve current selections + exam structure
   const year = yearSel.value, classId = classSel.value, sectionId = sectionSel.value, examId = examSel.value;
   const examObj = exams.find(e => e.id === examId);
+
   // Read exam structure and collapse any pre-expanded rows
-const structure = await getExamStructure(); // { subjects:[...], hasSubtopics }
-const structSubjects = Array.isArray(structure.subjects)
-  ? structure.subjects.filter(s => s.__rowKind !== 'custom-header')
-  : [];
+  const structure = await getExamStructure(); // { subjects:[...], hasSubtopics }
+  const structSubjects = Array.isArray(structure.subjects) ? structure.subjects.filter(s => s.__rowKind !== 'custom-header') : [];
 
   // 1) Read marks doc for this student
   const marksDoc = await db.collection('years').doc(year)
@@ -3276,16 +1455,16 @@ const structSubjects = Array.isArray(structure.subjects)
     .collection('students').doc(stu.id)
     .collection('marks').doc(examId).get();
   const marks = marksDoc.exists ? (marksDoc.data() || {}) : {};
+
   // Use the same subject-total extractor the back page uses
-const reconciledTotals = _extractSubjectTotalsFromMarks(marks, structure); // [{name,total,max}]
-const recByName = new Map(
-  reconciledTotals.map(r => [nkey(r.name), r])
-);
+  const reconciledTotals = _extractSubjectTotalsFromMarks(marks, structure); // [{name,total,max}]
+  const recByName = new Map(
+    reconciledTotals.map(r => [nkey(r.name), r])
+  );
 
   // 2) Helpers
-    const isNum = v => (typeof v === 'number' && !isNaN(v));
-const toNum  = v => (v === '' || v == null ? null : (Number.isFinite(+v) ? +v : null));
-
+  const isNum = v => (typeof v === 'number' && !isNaN(v));
+  const toNum = v => (v === '' || v == null ? null : (Number.isFinite(+v) ? +v : null));
 
   // 3) Build subjects with subtopics, totals and grade
   let stuSubjects = [];
@@ -3294,100 +1473,99 @@ const toNum  = v => (v === '' || v == null ? null : (Number.isFinite(+v) ? +v : 
   for (const subjDef of (structSubjects || [])) {
     const subjName = subjDef.name || '';
     const keyNorm = nkey(subjName);
-    const recHit  = recByName.get(keyNorm);
+    const recHit = recByName.get(keyNorm);
+
     const subjKey = Object.keys(marks).find(k => !/^__/.test(k) && nkey(k) === nkey(subjName));
     const subjVal = subjKey ? marks[subjKey] : marks[subjName];
 
     // Prepare subtopic list from structure
-const subtopics = Array.isArray(subjDef.subtopics) ? subjDef.subtopics.map(t => ({
-  name: t?.name || '',
-  max: (typeof t?.max === 'number' && !isNaN(t.max)) ? t.max : null,
-  mark: '' // will fill below
-})) : [];
-let subjMode = _modeOf(subjDef);
-// If structure had tagged rows as 'custom-header' / 'custom-data',
-// normalize back to 'custom' for the student-level subject.
-if (subjMode === 'custom-header' || subjMode === 'custom-data') {
-  subjMode = 'custom';
-}
+    const subtopics = Array.isArray(subjDef.subtopics) ? subjDef.subtopics.map(t => ({
+      name: t?.name || '',
+      max: (typeof t?.max === 'number' && !isNaN(t.max)) ? t.max : null,
+      mark: '' // will fill below
+    })) : [];
 
-/* TOTAL / GRADE (custom sums only its listed subtopics) */
-let subjectComputedMax = (typeof subjDef?.subjectMax === 'number') ? subjDef.subjectMax : null;
-if (subjectComputedMax == null && typeof recHit?.max === 'number') subjectComputedMax = recHit.max;
+    let subjMode = _modeOf(subjDef);
+    // If structure had tagged rows as 'custom-header' / 'custom-data',
+    // normalize back to 'custom' for the student-level subject.
+    if (subjMode === 'custom-header' || subjMode === 'custom-data') { subjMode = 'custom'; }
 
-let subjectComputedMarks = 'AB';
-let subjectComputedGrade = '';
+    /* TOTAL / GRADE (custom sums only its listed subtopics) */
+    let subjectComputedMax = (typeof subjDef?.subjectMax === 'number') ? subjDef.subjectMax : null;
+    if (subjectComputedMax == null && typeof recHit?.max === 'number') subjectComputedMax = recHit.max;
 
-{
-  const isCustom = (subjMode === 'custom');
+    let subjectComputedMarks = 'AB';
+    let subjectComputedGrade = '';
 
-  let total = 0;
-  let sawNumber = false;
+    {
+      const isCustom = (subjMode === 'custom');
+      let total = 0;
+      let sawNumber = false;
 
-  if (isCustom) {
-    // Sum only custom-defined subtopics (ignore schema extras)
-    for (const st of (subtopics || [])) {
-      const v = (st?.mark === 'AB' ? null : (Number.isFinite(+st?.mark) ? +st.mark : null));
-      if (v != null) { total += v; sawNumber = true; }
+      if (isCustom) {
+        // Sum only custom-defined subtopics (ignore schema extras)
+        for (const st of (subtopics || [])) {
+          const v = (st?.mark === 'AB' ? null : (Number.isFinite(+st?.mark) ? +st.mark : null));
+          if (v != null) { total += v; sawNumber = true; }
+        }
+      } else {
+        // Use reconciled totals if present; else sum what we have
+        if (typeof recHit?.total === 'number') {
+          total = recHit.total; sawNumber = true;
+        } else if (typeof subjVal === 'number') {
+          total = +subjVal; sawNumber = true;
+        } else if (Array.isArray(subtopics) && subtopics.length) {
+          for (const st of subtopics) {
+            const v = (st?.mark === 'AB' ? null : (Number.isFinite(+st?.mark) ? +st.mark : null));
+            if (v != null) { total += v; sawNumber = true; }
+          }
+        }
+      }
+
+      subjectComputedMarks = sawNumber ? total : 'AB';
+      const pct = (typeof subjectComputedMax === 'number' && subjectComputedMax > 0 && subjectComputedMarks !== 'AB') ? (subjectComputedMarks / subjectComputedMax) * 100 : null;
+      subjectComputedGrade = (pct != null) ? gradeFromPctUsingScale(pct) : '';
     }
-  } else {
-    // Use reconciled totals if present; else sum what we have
-    if (typeof recHit?.total === 'number') { total = recHit.total; sawNumber = true; }
-    else if (typeof subjVal === 'number')  { total = +subjVal; sawNumber = true; }
-    else if (Array.isArray(subtopics) && subtopics.length) {
-      for (const st of subtopics) {
-        const v = (st?.mark === 'AB' ? null : (Number.isFinite(+st?.mark) ? +st.mark : null));
-        if (v != null) { total += v; sawNumber = true; }
+
+    // Choose subtopic source: prefer __subs.<Subject>, fallback to object-at-root
+    const subsRoot = (marks && typeof marks.__subs === 'object') ? marks.__subs : null;
+    // try __subs.<Subject> (normalized key match)
+    const subsKey = subsRoot ? Object.keys(subsRoot).find(k => nkey(k) === keyNorm) : null;
+    let subSrc = subsKey ? subsRoot[subsKey] : null;
+    // else, if the subject value itself is an object, use that
+    if (!subSrc && subjVal && typeof subjVal === 'object' && !Array.isArray(subjVal)) {
+      subSrc = subjVal;
+    }
+
+    // If no declared subtopics but we have a subtopic object, create cells from its keys
+    // BUT NOT when mode is 'none' (we want '-' in every subtopic column)
+    if ((!subtopics.length) && subSrc && subjMode !== 'none') {
+      for (const k of Object.keys(subSrc)) {
+        subtopics.push({ name: k, max: null, mark: '' });
       }
     }
-  }
 
-  subjectComputedMarks = sawNumber ? total : 'AB';
-  const pct = (typeof subjectComputedMax === 'number' && subjectComputedMax > 0 && subjectComputedMarks !== 'AB')
-    ? (subjectComputedMarks / subjectComputedMax) * 100 : null;
-  subjectComputedGrade = (pct != null) ? gradeFromPctUsingScale(pct) : '';
-}
+    // Fill subtopic marks from the chosen source
+    // Fill subtopic marks from the chosen source
+    if (subtopics.length && subSrc) {
+      for (const st of subtopics) {
+        const k = Object.keys(subSrc).find(x => nkey(x) === nkey(st.name));
+        const raw = (k !== undefined) ? subSrc[k] : subSrc[st.name];
 
-// Choose subtopic source: prefer __subs.<Subject>, fallback to object-at-root
-const subsRoot = (marks && typeof marks.__subs === 'object') ? marks.__subs : null;
-
-// try __subs.<Subject> (normalized key match)
-const subsKey = subsRoot ? Object.keys(subsRoot).find(k => nkey(k) === keyNorm) : null;
-let subSrc = subsKey ? subsRoot[subsKey] : null;
-
-// else, if the subject value itself is an object, use that
-if (!subSrc && subjVal && typeof subjVal === 'object' && !Array.isArray(subjVal)) {
-  subSrc = subjVal;
-}
-// If no declared subtopics but we have a subtopic object, create cells from its keys
-// BUT NOT when mode is 'none' (we want '-' in every subtopic column)
-if ((!subtopics.length) && subSrc && subjMode !== 'none') {
-  for (const k of Object.keys(subSrc)) {
-    subtopics.push({ name: k, max: null, mark: '' });
-  }
-}
-
-// Fill subtopic marks from the chosen source
-if (subtopics.length && subSrc) {
-  for (const st of subtopics) {
-    const k = Object.keys(subSrc).find(x => nkey(x) === nkey(st.name));
-    const raw = (k !== undefined) ? subSrc[k] : subSrc[st.name];
-
-    // Accept numbers AND numeric strings; normalize explicit AB
-    let mark;
-    if (raw === 'AB' || String(raw).toUpperCase() === 'AB') {
-      mark = 'AB';
-    } else if (raw === '' || raw === null || raw === undefined) {
-      mark = '';                         // will render as AB later
-    } else if (Number.isFinite(+raw)) {
-      mark = +raw;                       // "0", "12.5", 0 → numbers
-    } else {
-      mark = '';                         // unknown → blank
+        // Accept numbers AND numeric strings; normalize explicit AB
+        let mark;
+        if (raw === 'AB' || String(raw).toUpperCase() === 'AB') {
+          mark = 'AB';
+        } else if (raw === '' || raw === null || raw === undefined) {
+          mark = ''; // will render as AB later
+        } else if (Number.isFinite(+raw)) {
+          mark = +raw; // "0", "12.5", 0 → numbers
+        } else {
+          mark = ''; // unknown → blank
+        }
+        st.mark = mark;
+      }
     }
-
-    st.mark = mark;
-  }
-}
 
     // If no subtopics (or subjVal is a direct mark), support direct subject mark
     let subjectTotalMarks = 0;
@@ -3404,94 +1582,85 @@ if (subtopics.length && subSrc) {
         subjectTotalMax = (sumMax > 0 ? sumMax : null);
       }
     } else {
-  // No subtopics: direct scalar mark at root.
-  // Accept numeric strings (e.g., "42") as valid marks.
-  const isAB = String(subjVal).toUpperCase() === 'AB';
-  const asNum = Number.isFinite(+subjVal) ? +subjVal : null;
-  const directMark = isAB ? 'AB' : (asNum !== null ? asNum : '');
+      // No subtopics: direct scalar mark at root.
+      // Accept numeric strings (e.g., "42") as valid marks.
+      const isAB = String(subjVal).toUpperCase() === 'AB';
+      const asNum = Number.isFinite(+subjVal) ? +subjVal : null;
+      const directMark = isAB ? 'AB' : (asNum !== null ? asNum : '');
+      subjectTotalMarks = (typeof directMark === 'number') ? directMark : 0;
 
-  subjectTotalMarks = (typeof directMark === 'number') ? directMark : 0;
+      if (subjectTotalMax == null && typeof subjDef.max === 'number' && !isNaN(subjDef.max)) {
+        subjectTotalMax = subjDef.max;
+      }
 
-  if (subjectTotalMax == null && typeof subjDef.max === 'number' && !isNaN(subjDef.max)) {
-    subjectTotalMax = subjDef.max;
-  }
-
-  // Only add a placeholder cell for non-'none' modes; 'none' must render '-' cells
-if (!subtopics.length && subjMode !== 'none') {
-  subtopics.push({
-    name: '-',
-    max: subjectTotalMax,
-    mark: (directMark === 'AB' ? 'AB' : (typeof directMark === 'number' ? directMark : ''))
-  });
-}
-}
+      // Only add a placeholder cell for non-'none' modes; 'none' must render '-' cells
+      if (!subtopics.length && subjMode !== 'none') {
+        subtopics.push({ name: '-', max: subjectTotalMax, mark: (directMark === 'AB' ? 'AB' : (typeof directMark === 'number' ? directMark : '')) });
+      }
+    }
 
     // Grade computation + SUBJECT TOTAL handling for subtopicMode === 'none'
-let grade = '';
-let displayMarks;
+    let grade = '';
+    let displayMarks;
 
-// If teacher set "none", prefer reconciled total/max (recHit)
-if (subjMode === 'none' && recHit) {
-  if (recHit.total === 'AB') {
-    displayMarks = 'AB';
-    subjectTotalMarks = 0;             // keep numeric for overall %
-  } else if (Number.isFinite(+recHit.total)) {
-    displayMarks = +recHit.total;
-    subjectTotalMarks = +recHit.total;
+    // If teacher set "none", prefer reconciled total/max (recHit)
+    if (subjMode === 'none' && recHit) {
+      if (recHit.total === 'AB') {
+        displayMarks = 'AB';
+        subjectTotalMarks = 0; // keep numeric for overall %
+      } else if (Number.isFinite(+recHit.total)) {
+        displayMarks = +recHit.total; subjectTotalMarks = +recHit.total;
+      }
+      if (subjectTotalMax == null && Number.isFinite(+recHit.max)) {
+        subjectTotalMax = +recHit.max;
+      }
+    }
+
+    // Derive grade (and final display value)
+    if (
+      displayMarks === 'AB' ||
+      (subjMode !== 'none' && subtopics.length && subtopics.every(st => st.mark === 'AB' || st.mark === ''))
+    ) {
+      grade = 'AB';
+      displayMarks = 'AB';
+    } else if (subjectTotalMax && subjectTotalMax > 0) {
+      const pct = (subjectTotalMarks / subjectTotalMax) * 100;
+      grade = gradeFromPctUsingScale(pct, getActiveScale());
+      if (displayMarks === undefined) displayMarks = subjectTotalMarks;
+    } else {
+      grade = '';
+      if (displayMarks === undefined) displayMarks = subjectTotalMarks;
+    }
+
+    // Aggregate to overall
+    if (isNum(subjectTotalMarks)) totalMarksAll += subjectTotalMarks;
+    if (isNum(subjectTotalMax)) totalMaxAll += subjectTotalMax;
+
+    // Keep backward-compatible fields (max/marks)
+    stuSubjects.push({
+      name: subjName,
+      max: subjectTotalMax ?? '',
+      marks: displayMarks,
+      grade,
+      subtopics,
+      subtopicMode: subjMode // <- keep this
+    });
   }
-  if (subjectTotalMax == null && Number.isFinite(+recHit.max)) {
-    subjectTotalMax = +recHit.max;
-  }
-}
 
-// Derive grade (and final display value)
-if (
-  displayMarks === 'AB' ||
-  (subjMode !== 'none' && subtopics.length && subtopics.every(st => st.mark === 'AB' || st.mark === ''))
-) {
-  grade = 'AB';
-  displayMarks = 'AB';
-} else if (subjectTotalMax && subjectTotalMax > 0) {
-  const pct = (subjectTotalMarks / subjectTotalMax) * 100;
-  grade = gradeFromPctUsingScale(pct, getActiveScale());
-  if (displayMarks === undefined) displayMarks = subjectTotalMarks;
-} else {
-  grade = '';
-  if (displayMarks === undefined) displayMarks = subjectTotalMarks;
-}
+  // --- build ordered subjects for front page ---
+  // Do NOT pre-expand; let _makeRowPlan create the two-row block.
+  const commonList = [];
+  const customList = [];
+  const noneList = [];
+  (stuSubjects || []).forEach(s => {
+    if (_isModeCustom(s)) customList.push(s);
+    else if (_isModeNone(s)) noneList.push(s);
+    else commonList.push(s);
+  });
+  const subjectsOrdered = [...commonList, ...customList, ...noneList];
 
-// Aggregate to overall
-if (isNum(subjectTotalMarks)) totalMarksAll += subjectTotalMarks;
-if (isNum(subjectTotalMax))   totalMaxAll   += subjectTotalMax;
-
-// Keep backward-compatible fields (max/marks)
-stuSubjects.push({
-  name: subjName,
-  max: subjectTotalMax ?? '',
-  marks: displayMarks,
-  grade,
-  subtopics,
-  subtopicMode: subjMode   // <- keep this
-});
-  }
-
- // --- build ordered subjects for front page ---
-// Do NOT pre-expand; let _makeRowPlan create the two-row block.
-const commonList = [];
-const customList = [];
-const noneList = [];
-
-(stuSubjects || []).forEach(s => {
-  if (_isModeCustom(s)) customList.push(s);
-  else if (_isModeNone(s)) noneList.push(s);
-  else commonList.push(s);
-});
-
-const subjectsOrdered = [...commonList, ...customList, ...noneList];
-
-// 4) Attendance (cached)
-const attSnap = await getSectionAttendance();
-
+  // 4) Attendance (cached)
+  const attSnap = await getSectionAttendance();
   const months = ['06','07','08','09','10','11','12','01','02','03'];
   const attArr = months.map(() => ({work:0, pres:0}));
   attSnap.forEach(doc => {
@@ -3518,14 +1687,11 @@ const attSnap = await getSectionAttendance();
     section: (sections.find(s=>s.id===sectionId)?.name) || (sectionSel.options[sectionSel.selectedIndex]?.text || ''),
     percentage,
     rank: '',
-   
-// Use this list in the returned student object
-subjects: subjectsOrdered,
+    // Use this list in the returned student object
+    subjects: subjectsOrdered,
     totalMarks: totalMarksAll,
     totalMax: totalMaxAll,
-    overallGrade: totalMaxAll
-  ? gradeFromPctUsingScale((totalMarksAll / totalMaxAll) * 100, getActiveScale())
-  : '',
+    overallGrade: totalMaxAll ? gradeFromPctUsingScale((totalMarksAll / totalMaxAll) * 100, getActiveScale()) : '',
     photoUrl: stu.photoUrl || stu.photoURL || '',
     photoPath: stu.photoPath || '',
     attendance: attArr
@@ -3533,15 +1699,14 @@ subjects: subjectsOrdered,
 }
 // Build back page rows from the *exam schema* (not from student marks).
 // AB / '-' rule:
-//  - Subject in schema but student's values blank → 'AB'
-//  - Subject not in that exam schema at all → '-'
+// - Subject in schema but student's values blank → 'AB'
+// - Subject not in that exam schema at all → '-'
 async function buildBackDataForStudent(stu) {
-  const needExamIds = Array.from(new Set(backPlan.examCols || []));
-  // use global nkey()
+  const needExamIds = Array.from(new Set(backPlan.examCols || [])); // use global nkey()
 
   // 1) Read schema (via the same builder as the front page) + student's marks
   const schemaByExam = new Map(); // exId -> { subjects:[{name,subjectMax,subtopics[]}] , maxBySubject:Map, headerMax }
-  const marksByExam  = new Map(); // exId -> raw marks doc
+  const marksByExam = new Map(); // exId -> raw marks doc
 
   for (const exId of needExamIds) {
     // use the robust, inferring structure (front-page builder)
@@ -3565,7 +1730,9 @@ async function buildBackDataForStudent(stu) {
 
     // header “(NN MARKS)”: use the first non-null subject max we know
     let headerMax = null;
-    for (const v of maxBySubject.values()) { if (typeof v === 'number' && v > 0) { headerMax = v; break; } }
+    for (const v of maxBySubject.values()) {
+      if (typeof v === 'number' && v > 0) { headerMax = v; break; }
+    }
 
     schemaByExam.set(exId, { subjNames, maxBySubject, headerMax });
 
@@ -3597,8 +1764,9 @@ async function buildBackDataForStudent(stu) {
       if (fixedMax != null) {
         // subject exists in schema → look for student's values
         const subsRoot = (mobj && typeof mobj.__subs === 'object') ? mobj.__subs : null;
-      const subsKey  = subsRoot ? Object.keys(subsRoot).find(k => nkey(k) === keyName) : null;
-const subjKey  = Object.keys(mobj).find(k => !/^__/.test(k) && nkey(k) === keyName);
+        const subsKey = subsRoot ? Object.keys(subsRoot).find(k => nkey(k) === keyName) : null;
+        const subjKey = Object.keys(mobj).find(k => !/^__/.test(k) && nkey(k) === keyName);
+
         if (subsKey && typeof subsRoot[subsKey] === 'object') {
           // sum numeric parts; if none, AB
           let sum = 0, sawNum = false;
@@ -3608,8 +1776,8 @@ const subjKey  = Object.keys(mobj).find(k => !/^__/.test(k) && nkey(k) === keyNa
           marksVal = sawNum ? sum : 'AB';
         } else if (subjKey !== undefined) {
           const v = mobj[subjKey];
-          if (typeof v === 'number' && !isNaN(v))      marksVal = v;     // allows 0
-          else if (String(v).toUpperCase() === 'AB')   marksVal = 'AB';
+          if (typeof v === 'number' && !isNaN(v)) marksVal = v; // allows 0
+          else if (String(v).toUpperCase() === 'AB') marksVal = 'AB';
           else if (v && typeof v === 'object') {
             let sum = 0, saw = false;
             for (const x of Object.values(v)) {
@@ -3620,20 +1788,19 @@ const subjKey  = Object.keys(mobj).find(k => !/^__/.test(k) && nkey(k) === keyNa
             marksVal = 'AB'; // subject present in schema but student's value blank
           }
         } else {
-          marksVal = 'AB';   // in schema, but no entry at all for student → AB
+          marksVal = 'AB'; // in schema, but no entry at all for student → AB
         }
       }
 
       // grade only when both numbers are known
       let gradeTxt = '-';
-if (typeof marksVal === 'number' && typeof fixedMax === 'number' && fixedMax > 0) {
-  const pct = (marksVal / fixedMax) * 100;
-  gradeTxt = gradeFromPctUsingScale(pct, getScaleForExamId(exId));
-}
+      if (typeof marksVal === 'number' && typeof fixedMax === 'number' && fixedMax > 0) {
+        const pct = (marksVal / fixedMax) * 100;
+        gradeTxt = gradeFromPctUsingScale(pct, getScaleForExamId(exId));
+      }
 
       row.exams[exId] = { marks: marksVal, max: fixedMax, grade: gradeTxt };
     }
-
     return row;
   });
 
@@ -3646,95 +1813,99 @@ if (typeof marksVal === 'number' && typeof fixedMax === 'number' && fixedMax > 0
   return { subjectList, rows, headerMaxByExam };
 }
 
-function showSpinner() {
-  document.getElementById('spinnerOverlay').style.display = 'flex';
-}
-function hideSpinner() {
-  document.getElementById('spinnerOverlay').style.display = 'none';
-}
+function showSpinner() { document.getElementById('spinnerOverlay').style.display = 'flex'; }
+function hideSpinner() { document.getElementById('spinnerOverlay').style.display = 'none'; }
+
 // PDF generation (multi or single)
 async function generatePDF(studentArr, isSingle) {
   let exam = examSel.options[examSel.selectedIndex].textContent;
   let examId = examSel.value;
   let examObj = exams.find(e => e.id === examId);
-  let fullDataArr = [];
-var pdf = new window.jspdf.jsPDF({orientation: "portrait", unit: "px", format: [2481, 3509]});
-if (backPlan.examCols && backPlan.examCols.length) {
-  __ranksByExam = await computeRanksByExam(backPlan.examCols);
-}
 
-// Build the dataset (prefer precomputed objects if provided)
-if (studentArr && studentArr.length && Array.isArray(studentArr[0].subjects)) {
-  // Already computed (from getAllStudentFullData or fetchStudentData)
-  fullDataArr = studentArr;
-} else if (isSingle && studentArr && studentArr.length === 1) {
-  const singleData = await fetchStudentData(studentArr[0]);
-  fullDataArr = [singleData];
-} else {
-  fullDataArr = await getAllStudentFullData();
-}
+  let fullDataArr = [];
+  var pdf = new window.jspdf.jsPDF({orientation: "portrait", unit: "px", format: [2481, 3509]});
+
+  if (backPlan.examCols && backPlan.examCols.length) {
+    __ranksByExam = await computeRanksByExam(backPlan.examCols);
+  }
+
+  // Build the dataset (prefer precomputed objects if provided)
+  if (studentArr && studentArr.length && Array.isArray(studentArr[0].subjects)) {
+    // Already computed (from getAllStudentFullData or fetchStudentData)
+    fullDataArr = studentArr;
+  } else if (isSingle && studentArr && studentArr.length === 1) {
+    const singleData = await fetchStudentData(studentArr[0]);
+    fullDataArr = [singleData];
+  } else {
+    fullDataArr = await getAllStudentFullData();
+  }
+
   for (let idx = 0; idx < fullDataArr.length; idx++) {
     let student = fullDataArr[idx];
     const memoImgData = await getMemo();
-    if (idx===0 && !isSingle) { pdf = new window.jspdf.jsPDF({orientation: "portrait", unit: "px", format: [2481, 3509]}); }
-    else if (idx > 0 || !isSingle) pdf.addPage([2481,3509], 'p');
-   pdf.addImage(memoImgData, "PNG", 0, 0, 2481, 3509);
+
+    if (idx===0 && !isSingle) {
+      pdf = new window.jspdf.jsPDF({orientation: "portrait", unit: "px", format: [2481, 3509]});
+    } else if (idx > 0 || !isSingle) pdf.addPage([2481,3509], 'p');
+
+    pdf.addImage(memoImgData, "PNG", 0, 0, 2481, 3509);
 
     /* removed front-page heading IIFE */
-const centerX = 1212;
-const boxW = 2000;                 // visual width used only for centering
-const borderX = centerX - Math.round(boxW / 2);
-
-  const borderY = 400;               // y anchor for heading
+    const centerX = 1212;
+    const boxW = 2000; // visual width used only for centering
+    const borderX = centerX - Math.round(boxW / 2);
+    const borderY = 400; // y anchor for heading
     const titleBox = { x: borderX, y: borderY, w: 0, h: 0 };
 
-/* removed runtime subheading (comes from PNG) */
-pdf.setFont('helvetica','bold');
-pdf.setTextColor(0,0,0);
-pdf.setFontSize(56);
+    /* removed runtime subheading (comes from PNG) */
+    pdf.setFont('helvetica','bold');
+    pdf.setTextColor(0,0,0);
+    pdf.setFontSize(56);
 
-// Exam Name
-centerText(pdf, exam.toUpperCase(), HEAD_EXAM[0], HEAD_EXAM[1], HEAD_EXAM[2]);
+    // Exam Name
+    centerText(pdf, exam.toUpperCase(), HEAD_EXAM[0], HEAD_EXAM[1], HEAD_EXAM[2]);
 
-// --- Labels violet, values green ---
-leftText(
-  pdf,
-  (student.name?.toUpperCase() || ''),
-  HEAD_NAME[0] + HEAD_NAME_VALUE_OFFSET,
-  HEAD_NAME[1],
-  HEAD_NAME[2],
-  COLOR_GREEN
-);
+    // --- Labels violet, values green ---
+    leftText(
+      pdf,
+      (student.name?.toUpperCase() || ''),
+      HEAD_NAME[0] + HEAD_NAME_VALUE_OFFSET,
+      HEAD_NAME[1],
+      HEAD_NAME[2],
+      COLOR_GREEN
+    );
 
-// (Father stays as-is; remove if you don’t want it)
-leftText(pdf, student.father?.toUpperCase() || '', HEAD_FATHER[0], HEAD_FATHER[1], HEAD_FATHER[2], COLOR_RED);
+    // (Father stays as-is; remove if you don’t want it)
+    leftText(pdf, student.father?.toUpperCase() || '', HEAD_FATHER[0], HEAD_FATHER[1], HEAD_FATHER[2], COLOR_RED);
 
-// CLASS / SECTION (print exactly as stored in Firestore; no extra words/casing)
-const classVal  = student.class ?? '';
-const sectionVal = student.section ?? '';
-const csValue = sectionVal ? `${classVal} / ${sectionVal}` : classVal;
-leftText(
-  pdf,
-  csValue,
-  HEAD_CLASS[0] + HEAD_CLASS_VALUE_OFFSET,
-  HEAD_CLASS[1],
-  HEAD_CLASS[2],
-  COLOR_GREEN
-);
+    // CLASS / SECTION (print exactly as stored in Firestore; no extra words/casing)
+    const classVal = student.class ?? '';
+    const sectionVal = student.section ?? '';
+    const csValue = sectionVal ? `${classVal} / ${sectionVal}` : classVal;
+    leftText(
+      pdf,
+      csValue,
+      HEAD_CLASS[0] + HEAD_CLASS_VALUE_OFFSET,
+      HEAD_CLASS[1],
+      HEAD_CLASS[2],
+      COLOR_GREEN
+    );
 
-// ROLL
-leftText(
-  pdf,
-  (student.roll?.toString() || ''),
-  HEAD_ROLL[0] + HEAD_ROLL_VALUE_OFFSET,
-  HEAD_ROLL[1],
-  HEAD_ROLL[2],
-  COLOR_GREEN
-);
+    // ROLL
+    leftText(
+      pdf,
+      (student.roll?.toString() || ''),
+      HEAD_ROLL[0] + HEAD_ROLL_VALUE_OFFSET,
+      HEAD_ROLL[1],
+      HEAD_ROLL[2],
+      COLOR_GREEN
+    );
 
-// Percentage stays green
-leftText(pdf, student.percentage, HEAD_PERCENT[0], HEAD_PERCENT[1], HEAD_PERCENT[2], COLOR_GREEN);
+    // Percentage stays green
+    leftText(pdf, student.percentage, HEAD_PERCENT[0], HEAD_PERCENT[1], HEAD_PERCENT[2], COLOR_GREEN);
+
     await drawStudentPhoto(pdf, student);
+
     // Rank Badge - 3D: white with brown border, drop shadow
     let [cx,cy,s] = HEAD_RANK;
     pdf.setFillColor(120,80,30); // shadow color (darker brown)
@@ -3747,103 +1918,97 @@ leftText(pdf, student.percentage, HEAD_PERCENT[0], HEAD_PERCENT[1], HEAD_PERCENT
     pdf.setFontSize(s);
     pdf.setFont('helvetica','bold');
     pdf.text(
-  (typeof student.rank !== "undefined" && student.rank !== null) ? student.rank.toString() : "", 
-  cx, cy+33, {align:'center'}
-);
+      (typeof student.rank !== "undefined" && student.rank !== null) ? student.rank.toString() : "",
+      cx, cy+33, {align:'center'}
+    );
     pdf.setLineWidth(1);
 
- /* --- Subject rows: dynamic with SUBTOPICS + TOTAL(M/Max) + GRADE --- */
-let rowSubs = Array.isArray(student.subjects) ? student.subjects : [];
-
-// Safety net for Individual path (compute if missing)
-if (!rowSubs.length) {
-  const rawStu = students.find(s => s.id === student.id) || student;
-  const rec = await fetchStudentData(rawStu);
-  rowSubs = Array.isArray(rec.subjects) ? rec.subjects : [];
-  if (typeof student.totalMarks !== 'number' && typeof rec.totalMarks === 'number') student.totalMarks = rec.totalMarks;
-  if (typeof student.totalMax   !== 'number' && typeof rec.totalMax   === 'number') student.totalMax   = rec.totalMax;
-  if (!student.attendance?.length && rec.attendance?.length) student.attendance = rec.attendance;
-}
-
-// Build vertical positions and draw header
-const rowPlan = _makeRowPlan(rowSubs || []);
-const { rowsY, totalY } = buildSubjectY(rowSubs);
-drawSubjectsHeader(pdf, SUBJECT_HEADER_Y);
-// move ONLY the TOTAL band down
-const totalYAdj = Math.min(totalY + TOTAL_SHIFT_PX, SUBJECT_LAYOUT.endY - 20);
-
-// Draw subject rows per plan
-rowPlan.forEach((row, i) => {
-  if (row.kind === 'custom-header') {
-    drawCustomHeaderRow(pdf, rowsY[i], row.subject);   // Row A (labels) for custom subjects
-  } else {
-    drawSubjectRow(pdf, rowsY[i], row.subject);        // normal/common/custom-data rows
-  }
-});
-
-/* removed duplicate second pass that overwrote custom header */
-
-// Totals pulled from the computed student object
-const totalMarks = (typeof student.totalMarks === "number") ? student.totalMarks : 0;
-const totalMax   = (typeof student.totalMax   === "number") ? student.totalMax   : 0;
-
-// Totals (ensure overallGrade fallback) using active grading scale
-student.overallGrade = student.overallGrade || (totalMax > 0
-  ? gradeFromPctUsingScale((totalMarks / totalMax) * 100, getActiveScale())
-  : ''
-);
-
-// Dynamic Xs from the auto-spread columns
-const xSubject = getColX('__subject');
-const xMax     = getColX('__max') + MAX_X_OFFSET;
-const xTotal   = getColX('__total');
-const xGrade   = getColX('__grade');
-
-// Totals row box spanning full table width (margins to margins)
-const tBoxHeight = 80;
-const tBoxY = totalYAdj - 55;
-pdf.setDrawColor(15, 61, 107);
-pdf.setLineWidth(4);
-const { left: tLeft, width: tWidth } = getTableBounds(30);
-pdf.roundedRect(tLeft, tBoxY, tWidth, tBoxHeight, 20, 20, 'S');
-
-// "TOTAL" label centered in SUBJECT column
-centerText(pdf, "TOTAL", xSubject, totalYAdj, 60, COLOR_GREEN);
-centerText(pdf, String(totalMax ?? ''), xMax, totalYAdj, 60, COLOR_RED);
-centerText(pdf, (totalMarks === '' || totalMarks == null ? 'AB' : String(totalMarks)), xTotal, totalYAdj, 60, COLOR_GREEN);
-centerText(pdf, student.overallGrade, xGrade, totalYAdj, 60, COLOR_GRADE);
-
-
-    // === Remarks box (below attendance, above signature) ===
-try {
-  const remark = buildAutoRemark(student);
-  drawAttendanceTable(pdf, student.attendance);
-  drawRemarkBox(pdf, remark);
-} catch(e) { console.warn('Remark box failed:', e); }
-
-       // Back page (landscape) on preview, only if there is something to show
-    try {
-      if (backPlan.examCols && backPlan.examCols.length) {
-  const backData = await buildBackDataForStudent(student);
-  pdf.addPage([3509, 2481], "l");
-  pdf.addImage(await loadMemoImg("memo-back-for-all.png"), "PNG", 0, 0, 3509, 2481); drawBackPageLandscape(pdf, backData, backPlan, exams, student);
-}
-    } catch (e) {
-      console.warn("Back page build failed (preview):", e);
+    /* --- Subject rows: dynamic with SUBTOPICS + TOTAL(M/Max) + GRADE --- */
+    let rowSubs = Array.isArray(student.subjects) ? student.subjects : [];
+    // Safety net for Individual path (compute if missing)
+    if (!rowSubs.length) {
+      const rawStu = students.find(s => s.id === student.id) || student;
+      const rec = await fetchStudentData(rawStu);
+      rowSubs = Array.isArray(rec.subjects) ? rec.subjects : [];
+      if (typeof student.totalMarks !== 'number' && typeof rec.totalMarks === 'number') student.totalMarks = rec.totalMarks;
+      if (typeof student.totalMax !== 'number' && typeof rec.totalMax === 'number') student.totalMax = rec.totalMax;
+      if (!student.attendance?.length && rec.attendance?.length) student.attendance = rec.attendance;
     }
 
-    } // ← end for loop
+    // Build vertical positions and draw header
+    const rowPlan = _makeRowPlan(rowSubs || []);
+    const { rowsY, totalY } = buildSubjectY(rowSubs);
+    drawSubjectsHeader(pdf, SUBJECT_HEADER_Y);
 
-  pdf.save(isSingle ? `progress_card_${fullDataArr[0].roll || 'student'}.pdf`
-                    : `progress_cards_${classSel.options[classSel.selectedIndex].text}_${sectionSel.options[sectionSel.selectedIndex].text}.pdf`);
+    // move ONLY the TOTAL band down
+    const totalYAdj = Math.min(totalY + TOTAL_SHIFT_PX, SUBJECT_LAYOUT.endY - 20);
+
+    // Draw subject rows per plan
+    rowPlan.forEach((row, i) => {
+      if (row.kind === 'custom-header') {
+        drawCustomHeaderRow(pdf, rowsY[i], row.subject); // Row A (labels) for custom subjects
+      } else {
+        drawSubjectRow(pdf, rowsY[i], row.subject); // normal/common/custom-data rows
+      }
+    });
+
+    /* removed duplicate second pass that overwrote custom header */
+
+    // Totals pulled from the computed student object
+    const totalMarks = (typeof student.totalMarks === "number") ? student.totalMarks : 0;
+    const totalMax = (typeof student.totalMax === "number") ? student.totalMax : 0;
+
+    // Totals (ensure overallGrade fallback) using active grading scale
+    student.overallGrade = student.overallGrade || (totalMax > 0 ? gradeFromPctUsingScale((totalMarks / totalMax) * 100, getActiveScale()) : '' );
+
+    // Dynamic Xs from the auto-spread columns
+    const xSubject = getColX('__subject');
+    const xMax = getColX('__max') + MAX_X_OFFSET;
+    const xTotal = getColX('__total');
+    const xGrade = getColX('__grade');
+
+    // Totals row box spanning full table width (margins to margins)
+    const tBoxHeight = 80;
+    const tBoxY = totalYAdj - 55;
+    pdf.setDrawColor(15, 61, 107);
+    pdf.setLineWidth(4);
+    const { left: tLeft, width: tWidth } = getTableBounds(30);
+    pdf.roundedRect(tLeft, tBoxY, tWidth, tBoxHeight, 20, 20, 'S');
+
+    // "TOTAL" label centered in SUBJECT column
+    centerText(pdf, "TOTAL", xSubject, totalYAdj, 60, COLOR_GREEN);
+    centerText(pdf, String(totalMax ?? ''), xMax, totalYAdj, 60, COLOR_RED);
+    centerText(pdf, (totalMarks === '' || totalMarks == null ? 'AB' : String(totalMarks)), xTotal, totalYAdj, 60, COLOR_GREEN);
+    centerText(pdf, student.overallGrade, xGrade, totalYAdj, 60, COLOR_GRADE);
+
+    // === Remarks box (below attendance, above signature) ===
+    try {
+      const remark = buildAutoRemark(student);
+      drawAttendanceTable(pdf, student.attendance);
+      drawRemarkBox(pdf, remark);
+    } catch(e) { console.warn('Remark box failed:', e); }
+
+    // Back page (landscape) on preview, only if there is something to show
+    try {
+      if (backPlan.examCols && backPlan.examCols.length) {
+        const backData = await buildBackDataForStudent(student);
+        pdf.addPage([3509, 2481], "l");
+        pdf.addImage(await loadMemoImg("memo-back-for-all.png"), "PNG", 0, 0, 3509, 2481);
+        drawBackPageLandscape(pdf, backData, backPlan, exams, student);
+      }
+    } catch (e) { console.warn("Back page build failed (preview):", e); }
+  } // ← end for loop
+
+  pdf.save(isSingle ? `progress_card_${fullDataArr[0].roll || 'student'}.pdf` : `progress_cards_${classSel.options[classSel.selectedIndex].text}_${sectionSel.options[sectionSel.selectedIndex].text}.pdf`);
 }
-
 // ========== PREVIEW RENDER ===============
 async function showPreviewPDF(stuArr) {
   let pdf;
+
   if (backPlan.examCols && backPlan.examCols.length) {
-  __ranksByExam = await computeRanksByExam(backPlan.examCols);
-}
+    __ranksByExam = await computeRanksByExam(backPlan.examCols);
+  }
+
   for (let idx = 0; idx < stuArr.length; idx++) {
     const student = stuArr[idx];
     const memoImgData = await getMemo();
@@ -3854,139 +2019,146 @@ async function showPreviewPDF(stuArr) {
     } else {
       pdf.addPage([2481, 3509], "p");
     }
+
     pdf.addImage(memoImgData, "PNG", 0, 0, 2481, 3509);
 
     // header
     const exam = examSel.options[examSel.selectedIndex].textContent;
-centerText(pdf, exam.toUpperCase(), HEAD_EXAM[0], HEAD_EXAM[1], HEAD_EXAM[2]);
+    centerText(pdf, exam.toUpperCase(), HEAD_EXAM[0], HEAD_EXAM[1], HEAD_EXAM[2]);
 
-// --- Labels violet, values green (preview) ---
-leftText(
-  pdf,
-  (student.name?.toUpperCase() || ''),
-  HEAD_NAME[0] + HEAD_NAME_VALUE_OFFSET,
-  HEAD_NAME[1],
-  HEAD_NAME[2],
-  COLOR_GREEN
-);
+    // --- Labels violet, values green (preview) ---
+    leftText(
+      pdf,
+      (student.name?.toUpperCase() || ''),
+      HEAD_NAME[0] + HEAD_NAME_VALUE_OFFSET,
+      HEAD_NAME[1],
+      HEAD_NAME[2],
+      COLOR_GREEN
+    );
 
-// (Father stays as-is; remove if you don’t want it)
-leftText(pdf, student.father?.toUpperCase() || "", HEAD_FATHER[0], HEAD_FATHER[1], HEAD_FATHER[2], COLOR_RED);
+    // (Father stays as-is; remove if you don’t want it)
+    leftText(pdf, student.father?.toUpperCase() || "", HEAD_FATHER[0], HEAD_FATHER[1], HEAD_FATHER[2], COLOR_RED);
 
-// CLASS / SECTION (print exactly as stored in Firestore; no extra words/casing)
-const classVal  = student.class ?? '';
-const sectionVal = student.section ?? '';
-const csValue = sectionVal ? `${classVal} / ${sectionVal}` : classVal;
-leftText(
-  pdf,
-  csValue,
-  HEAD_CLASS[0] + HEAD_CLASS_VALUE_OFFSET,
-  HEAD_CLASS[1],
-  HEAD_CLASS[2],
-  COLOR_GREEN
-);
-// ROLL
-leftText(
-  pdf,
-  (student.roll?.toString() || ''),
-  HEAD_ROLL[0] + HEAD_ROLL_VALUE_OFFSET,
-  HEAD_ROLL[1],
-  HEAD_ROLL[2],
-  COLOR_GREEN
-);
-// Percentage stays green
-leftText(pdf, student.percentage, HEAD_PERCENT[0], HEAD_PERCENT[1], HEAD_PERCENT[2], COLOR_GREEN);
+    // CLASS / SECTION (print exactly as stored in Firestore; no extra words/casing)
+    const classVal = student.class ?? '';
+    const sectionVal = student.section ?? '';
+    const csValue = sectionVal ? `${classVal} / ${sectionVal}` : classVal;
+    leftText(
+      pdf,
+      csValue,
+      HEAD_CLASS[0] + HEAD_CLASS_VALUE_OFFSET,
+      HEAD_CLASS[1],
+      HEAD_CLASS[2],
+      COLOR_GREEN
+    );
+
+    // ROLL
+    leftText(
+      pdf,
+      (student.roll?.toString() || ''),
+      HEAD_ROLL[0] + HEAD_ROLL_VALUE_OFFSET,
+      HEAD_ROLL[1],
+      HEAD_ROLL[2],
+      COLOR_GREEN
+    );
+
+    // Percentage stays green
+    leftText(pdf, student.percentage, HEAD_PERCENT[0], HEAD_PERCENT[1], HEAD_PERCENT[2], COLOR_GREEN);
+
     await drawStudentPhoto(pdf, student);
 
     // rank badge
     const [cx, cy, s] = HEAD_RANK;
-    pdf.setFillColor(120, 80, 30); pdf.ellipse(cx+10, cy+15, 55, 40, "F");
-    pdf.setFillColor(255, 255, 255); pdf.setDrawColor(...COLOR_BROWN); pdf.setLineWidth(8);
-    pdf.ellipse(cx, cy, 52, 35, "FD"); pdf.setTextColor(0,0,0); pdf.setFontSize(s); pdf.setFont("helvetica", "bold");
+    pdf.setFillColor(120, 80, 30);
+    pdf.ellipse(cx+10, cy+15, 55, 40, "F");
+    pdf.setFillColor(255, 255, 255);
+    pdf.setDrawColor(...COLOR_BROWN);
+    pdf.setLineWidth(8);
+    pdf.ellipse(cx, cy, 52, 35, "FD");
+    pdf.setTextColor(0,0,0);
+    pdf.setFontSize(s);
+    pdf.setFont("helvetica", "bold");
     pdf.text((student.rank ?? "").toString(), cx, cy + 33, { align: "center" });
     pdf.setLineWidth(1);
 
     /* --- Subject rows: dynamic with SUBTOPICS + TOTAL(M/Max) + GRADE (preview) --- */
-let rowSubs = Array.isArray(student.subjects) ? student.subjects : [];
-if (!rowSubs.length) {
-  const rec = await fetchStudentData(student);
-  rowSubs = Array.isArray(rec.subjects) ? rec.subjects : [];
-  if (typeof student.totalMarks !== "number" && typeof rec.totalMarks === "number") student.totalMarks = rec.totalMarks;
-  if (typeof student.totalMax   !== "number" && typeof rec.totalMax   === "number") student.totalMax   = rec.totalMax;
-  if (!student.attendance?.length && rec.attendance?.length) student.attendance = rec.attendance;
-}
+    let rowSubs = Array.isArray(student.subjects) ? student.subjects : [];
+    if (!rowSubs.length) {
+      const rec = await fetchStudentData(student);
+      rowSubs = Array.isArray(rec.subjects) ? rec.subjects : [];
+      if (typeof student.totalMarks !== "number" && typeof rec.totalMarks === "number") student.totalMarks = rec.totalMarks;
+      if (typeof student.totalMax !== "number" && typeof rec.totalMax === "number") student.totalMax = rec.totalMax;
+      if (!student.attendance?.length && rec.attendance?.length) student.attendance = rec.attendance;
+    }
 
-const rowPlan = _makeRowPlan(rowSubs || []);
-const { rowsY, totalY } = buildSubjectY(rowSubs);
-drawSubjectsHeader(pdf, SUBJECT_HEADER_Y);
+    const rowPlan = _makeRowPlan(rowSubs || []);
+    const { rowsY, totalY } = buildSubjectY(rowSubs);
+    drawSubjectsHeader(pdf, SUBJECT_HEADER_Y);
 
-const totalYAdj = Math.min(totalY + TOTAL_SHIFT_PX, SUBJECT_LAYOUT.endY - 20);
+    const totalYAdj = Math.min(totalY + TOTAL_SHIFT_PX, SUBJECT_LAYOUT.endY - 20);
 
-// Draw subject rows per plan
-rowPlan.forEach((row, i) => {
-  if (row.kind === 'custom-header') {
-    drawCustomHeaderRow(pdf, rowsY[i], row.subject);   // Row A (labels) for custom subjects
-  } else {
-    drawSubjectRow(pdf, rowsY[i], row.subject);        // normal/common/custom-data rows
-  }
-});
+    // Draw subject rows per plan
+    rowPlan.forEach((row, i) => {
+      if (row.kind === 'custom-header') {
+        drawCustomHeaderRow(pdf, rowsY[i], row.subject); // Row A (labels) for custom subjects
+      } else {
+        drawSubjectRow(pdf, rowsY[i], row.subject); // normal/common/custom-data rows
+      }
+    });
 
-// Totals pulled from the computed student object
-const totalMarks = (typeof student.totalMarks === "number") ? student.totalMarks : 0;
-const totalMax   = (typeof student.totalMax   === "number") ? student.totalMax   : 0;
+    // Totals pulled from the computed student object
+    const totalMarks = (typeof student.totalMarks === "number") ? student.totalMarks : 0;
+    const totalMax = (typeof student.totalMax === "number") ? student.totalMax : 0;
 
-// Totals (ensure overallGrade fallback) using active grading scale
-student.overallGrade = student.overallGrade || (totalMax > 0
-  ? gradeFromPctUsingScale((totalMarks / totalMax) * 100, getActiveScale())
-  : ''
-);
+    // Totals (ensure overallGrade fallback) using active grading scale
+    student.overallGrade = student.overallGrade || (totalMax > 0 ? gradeFromPctUsingScale((totalMarks / totalMax) * 100) : '' );
 
-// Dynamic Xs from the auto-spread columns
-const xSubject = getColX('__subject');
-const xMax     = getColX('__max') + MAX_X_OFFSET;
-const xTotal   = getColX('__total');
-const xGrade   = getColX('__grade');
+    // Dynamic Xs from the auto-spread columns
+    const xSubject = getColX('__subject');
+    const xMax = getColX('__max') + MAX_X_OFFSET;
+    const xTotal = getColX('__total');
+    const xGrade = getColX('__grade');
 
-// Totals row box spanning full table width (margins to margins)
-const tBoxHeight = 80;
-const tBoxY = totalYAdj - 45;
-pdf.setDrawColor(15, 61, 107);
-pdf.setLineWidth(4);
-const { left: pLeft, width: pWidth } = getTableBounds(30);
-pdf.roundedRect(pLeft, tBoxY, pWidth, tBoxHeight, 20, 20, 'S');
+    // Totals row box spanning full table width (margins to margins)
+    const tBoxHeight = 80;
+    const tBoxY = totalYAdj - 45;
+    pdf.setDrawColor(15, 61, 107);
+    pdf.setLineWidth(4);
+    const { left: pLeft, width: pWidth } = getTableBounds(30);
+    pdf.roundedRect(pLeft, tBoxY, pWidth, tBoxHeight, 20, 20, 'S');
 
-// "TOTAL" label centered in SUBJECT column
-centerText(pdf, "TOTAL", xSubject, totalYAdj, 60, COLOR_GREEN);
-centerText(pdf, String(totalMax ?? ''), xMax, totalYAdj, 60, COLOR_RED);
-centerText(pdf, (totalMarks === '' || totalMarks == null ? 'AB' : String(totalMarks)), xTotal, totalYAdj, 60, COLOR_GREEN);
-centerText(pdf, student.overallGrade, xGrade, totalYAdj, 60, COLOR_GRADE);
-  
-// === Remarks box (below attendance, above signature) ===
-try {
-  const remark = buildAutoRemark(student);
-  drawAttendanceTable(pdf, student.attendance);
-  drawRemarkBox(pdf, remark);
-} catch(e) { console.warn('Remark box failed:', e); }
+    // "TOTAL" label centered in SUBJECT column
+    centerText(pdf, "TOTAL", xSubject, totalYAdj, 60, COLOR_GREEN);
+    centerText(pdf, String(totalMax ?? ''), xMax, totalYAdj, 60, COLOR_RED);
+    centerText(pdf, (totalMarks === '' || totalMarks == null ? 'AB' : String(totalMarks)), xTotal, totalYAdj, 60, COLOR_GREEN);
+    centerText(pdf, student.overallGrade, xGrade, totalYAdj, 60, COLOR_GRADE);
 
-// ⇣ Add back page (landscape) to PREVIEW when at least one exam column is chosen
-try {
-  if (backPlan.examCols && backPlan.examCols.length) {
-    const backData = await buildBackDataForStudent(student);
-    pdf.addPage([3509, 2481], "l");
-    pdf.addImage(
-      await loadMemoImg("memo-back-for-all.png"),
-      "PNG",
-      0, 0, 3509, 2481
-    );
-    drawBackPageLandscape(pdf, backData, backPlan, exams, student);
-  }
-} catch (e) {
-  console.warn("Back page build failed (preview):", e);
-}
+    // === Remarks box (below attendance, above signature) ===
+    try {
+      const remark = buildAutoRemark(student);
+      drawAttendanceTable(pdf, student.attendance);
+      drawRemarkBox(pdf, remark);
+    } catch(e) { console.warn('Remark box failed:', e); }
+
+    // ⇣ Add back page (landscape) to PREVIEW when at least one exam column is chosen
+    try {
+      if (backPlan.examCols && backPlan.examCols.length) {
+        const backData = await buildBackDataForStudent(student);
+        pdf.addPage([3509, 2481], "l");
+        pdf.addImage(
+          await loadMemoImg("memo-back-for-all.png"),
+          "PNG", 0, 0, 3509, 2481
+        );
+        drawBackPageLandscape(pdf, backData, backPlan, exams, student);
+      }
+    } catch (e) { console.warn("Back page build failed (preview):", e); }
   } // ← end for loop
 
   // SAFETY: if no pages were created
-  if (!pdf) { pdfPreview.innerHTML = ""; return; }
+  if (!pdf) {
+    pdfPreview.innerHTML = "";
+    return;
+  }
 
   // Render the built PDF to canvases
   const data = pdf.output("arraybuffer");
@@ -3999,28 +2171,37 @@ try {
         const canvas = document.createElement("canvas");
         const ctx = canvas.getContext("2d");
         canvas.height = viewport.height;
-        canvas.width  = viewport.width;
-       pdfPreview.appendChild(canvas);
-page.render({ canvasContext: ctx, viewport });
+        canvas.width = viewport.width;
+        pdfPreview.appendChild(canvas);
+        page.render({ canvasContext: ctx, viewport });
       });
     }
   });
 }
+
 // INIT
 (async function() {
   await loadYears();
   renderBackCols();
 })();
-  </script>
-  <div id="spinnerOverlay" style="
-  display:none; position:fixed; top:0; left:0; width:100vw; height:100vh;
-  background:rgba(255,255,255,0.65); z-index:99999; align-items:center; justify-content:center;
+</script>
+
+<div id="spinnerOverlay" style="
+  display:none;
+  position:fixed;
+  top:0; left:0;
+  width:100vw; height:100vh;
+  background:rgba(255,255,255,0.65);
+  z-index:99999;
+  align-items:center;
+  justify-content:center;
 ">
   <div style="text-align:center">
     <div class="lds-dual-ring"></div>
     <div style="margin-top:14px; color:#195084; font-size:1.14em;">Downloading...</div>
   </div>
 </div>
+
 <script>
 /* === Custom dropdown creator (same behavior as bank.html) === */
 (function(){
@@ -4031,9 +2212,11 @@ page.render({ canvasContext: ctx, viewport });
     // container
     const wrap = document.createElement('div');
     wrap.className = 'custom-dropdown';
+
     // visible label
     const selected = document.createElement('div');
     selected.className = 'selected-option';
+
     // options popup
     const popup = document.createElement('div');
     popup.className = 'dropdown-options';
@@ -4057,13 +2240,16 @@ page.render({ canvasContext: ctx, viewport });
       closeAll();
       wrap.classList.toggle('open');
     });
+
     popup.addEventListener('click', function(e){
       const t = e.target.closest('div[data-value]');
       if(!t) return;
       const val = t.getAttribute('data-value');
+
       // sync back to native select
       sel.value = val;
       sel.dispatchEvent(new Event('change', { bubbles:true }));
+
       // update visible label
       selected.textContent = t.textContent;
       wrap.classList.remove('open');
@@ -4071,6 +2257,7 @@ page.render({ canvasContext: ctx, viewport });
 
     wrap.appendChild(selected);
     wrap.appendChild(popup);
+
     // place *after* the native select
     sel.insertAdjacentElement('afterend', wrap);
   }
@@ -4089,32 +2276,4 @@ page.render({ canvasContext: ctx, viewport });
 </script>
 </body>
 </html>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
