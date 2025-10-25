@@ -2305,24 +2305,28 @@ if (subjMode === 'custom') {
         centerText(pdf, String(subjMax ?? ''), c.x + MAX_X_OFFSET, rowY, 60, COLOR_RED, 'bold');
         break;
 
-      case '__total': {
+     case '__total': {
   const showAB = v => (v === '' || v == null ? 'AB' : String(v));
-  let tMarks = (subject.marks === 'AB' ? 'AB'
-              : (typeof subject.marks === 'number' ? subject.marks : ''));
   const subjMax = (typeof subject.max === 'number' ? subject.max : null);
-  const subjMode = _modeOf(subject);
 
-  if (subjMode === 'custom') {
-    // sum only mapped subtopic numbers in this custom subject
+  // rule: if subtopics exist → sum them; else → use flat/final mark
+  const subs = Array.isArray(subject.subtopics) ? subject.subtopics : [];
+  let tMarks;
+
+  if (subs.length > 0) {
     let sum = 0, saw = false;
-    (Array.isArray(subject.subtopics)?subject.subtopics:[]).forEach(st=>{
+    subs.forEach(st => {
       const v = (st?.mark === 'AB' ? null : (Number.isFinite(+st?.mark) ? +st.mark : null));
       if (v != null) { sum += v; saw = true; }
     });
     tMarks = saw ? sum : 'AB';
+  } else {
+    tMarks = (subject.marks === 'AB' ? 'AB'
+            : (Number.isFinite(+subject.marks) ? +subject.marks : 'AB'));
   }
 
   centerText(pdf, showAB(tMarks), c.x, rowY, 60, COLOR_GREEN, 'bold');
+
   if (tMarks !== 'AB' && typeof tMarks === 'number' && typeof subjMax === 'number' && subjMax > 0) {
     const pct = (tMarks / subjMax) * 100;
     if (isFailPct(pct, getActiveScale())) {
@@ -2336,19 +2340,26 @@ if (subjMode === 'custom') {
 }
 
       case '__grade': {
-  let gradeVal = String(subject.grade || '');
   const subjMax = (typeof subject.max === 'number' ? subject.max : null);
-  const subjMode = _modeOf(subject);
+  const subs = Array.isArray(subject.subtopics) ? subject.subtopics : [];
 
-  if (subjMode === 'custom') {
-    // recompute grade off the summed custom total
+  // compute the same TOTAL used above
+  let total;
+  if (subs.length > 0) {
     let sum = 0, saw = false;
-    (Array.isArray(subject.subtopics)?subject.subtopics:[]).forEach(st=>{
+    subs.forEach(st => {
       const v = (st?.mark === 'AB' ? null : (Number.isFinite(+st?.mark) ? +st.mark : null));
       if (v != null) { sum += v; saw = true; }
     });
-    const pct = (saw && subjMax > 0) ? (sum / subjMax) * 100 : null;
-    gradeVal = (pct != null) ? gradeFromPctUsingScale(pct, getActiveScale()) : '';
+    total = saw ? sum : null;
+  } else {
+    total = (Number.isFinite(+subject.marks) ? +subject.marks : null);
+  }
+
+  let gradeVal = '';
+  if (total != null && typeof subjMax === 'number' && subjMax > 0) {
+    const pct = (total / subjMax) * 100;
+    gradeVal = gradeFromPctUsingScale(pct, getActiveScale());
   }
 
   centerText(pdf, gradeVal, c.x, rowY, 60, COLOR_GRADE, 'bold');
@@ -4058,6 +4069,7 @@ page.render({ canvasContext: ctx, viewport });
 </script>
 </body>
 </html>
+
 
 
 
