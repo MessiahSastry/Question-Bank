@@ -360,6 +360,16 @@ function nkey(s) {
     .toLowerCase();
 }
 
+// Canonical subject resolver: use this for matching & display
+function resolveSubjectName(name) {
+  const key = nkey(name);
+  // Collapse EVS variants and display as "E V S"
+  if (key.replace(/\./g,'') === 'evs') {
+    return { key: 'evs', display: 'E V S' };
+  }
+  return { key, display: String(name || '').trim() };
+}
+
 /* ---- Subtopic mode helpers ---- */
 function _modeOf(subject) {
   return String(subject?.subtopicMode || subject?.subtopicsMode || subject?.mode || '')
@@ -1147,7 +1157,10 @@ async function buildExamStructure(examObj, { year, classId, sectionId } = {}) {
       const subtopicMode = String(s?.subtopicMode || s?.subtopicsMode || s?.mode || '')
         .trim().toLowerCase();
 
-      return { name, subtopics, subjectMax, subtopicMode, max: s?.max };
+     {
+  const { display } = resolveSubjectName(name);
+  return { name: display, subtopics, subjectMax, subtopicMode, max: s?.max };
+}
     });
   }
 
@@ -1236,15 +1249,18 @@ async function buildExamStructure(examObj, { year, classId, sectionId } = {}) {
   }
 
   // 3) Finalize: ensure stable arrays/fields
-  const normSubjects = (subjects || []).map(s => ({
+  const normSubjects = (subjects || []).map(s => {
+  const { display } = resolveSubjectName(s?.name || '');
+  return {
     ...s,
-    name: s?.name || '',
+    name: display, // <- render as "E V S"
     subtopics: Array.isArray(s?.subtopics) ? s.subtopics : [],
     max: (Number.isFinite(+s?.max) ? +s.max
         : (Number.isFinite(+s?.subjectMax) ? +s.subjectMax : null)),
     subtopicMode: String(s?.subtopicMode || s?.subtopicsMode || s?.mode || '')
       .trim().toLowerCase()
-  }));
+  };
+});
 
   return { subjects: normSubjects, hasSubtopics: !!hasSubtopics };
 }
@@ -2258,7 +2274,8 @@ function drawSubjectRow(pdf, rowY, subject) {
   const subCellSize = _subtopicCellFont(schemaLen);
   const showAB = v => (v === '' || v === undefined || v === null ? 'AB' : String(v));
 
-  const subjName = String(subject.name || '').toUpperCase();
+  const { display: subjDisplay } = resolveSubjectName(subject?.name || '');
+const subjName = String(subjDisplay || '').toUpperCase();
   const subjMax  = (typeof subject.max === 'number' ? subject.max
                    : (subject.max === '' ? '' : subject.max));
   const subjMode = _modeOf(subject);
@@ -2764,14 +2781,16 @@ function _unionSubjectsAcross(examIds, perExamSubjectsMap) {
   for (const ex of examIds) {
     const arr = perExamSubjectsMap.get(ex) || [];
     for (const s of arr) {
-      const key = nkey(s.name || s);
+      const raw = (s && typeof s === 'object') ? (s.name || '') : s;
+      const { key, display } = resolveSubjectName(raw);
       if (!key || seen.has(key)) continue;
       seen.add(key);
-      out.push(s.name || s);
+      out.push(display); // ensure EVS shows exactly as "E V S"
     }
   }
   return out;
 }
+
 
 /* From an exam marks object, compute subject totals.
    RULE: if no numeric entries at all → total === 'AB'.
@@ -2786,11 +2805,22 @@ function _extractSubjectTotalsFromMarks(marksObj, structure) {
 );
   for (const subjName of baseSubjects) {
     // locate values for this subject
-    const keyRoot = Object.keys(marksObj).find(k => nkey(k) === nkey(subjName));
-    const subjVal = keyRoot ? marksObj[keyRoot] : marksObj[subjName];
+   // Prefer "E V S" when both "EVS" and "E V S" exist
+const rootCandidates = Object.keys(marksObj).filter(k => nkey(k) === nkey(subjName));
+let keyRoot = null;
+if (rootCandidates.length) {
+  // pick the one whose resolved display is exactly "E V S"
+  keyRoot = rootCandidates.find(k => resolveSubjectName(k).display === 'E V S') || rootCandidates[0];
+}
+const subjVal = keyRoot ? marksObj[keyRoot] : marksObj[subjName];
 
-    const keySubs = Object.keys(subsRoot || {}).find(k => nkey(k) === nkey(subjName));
-    const subsObj = keySubs ? subsRoot[keySubs] : null;
+   // Prefer "E V S" inside __subs as well
+const subsCandidates = Object.keys(subsRoot || {}).filter(k => nkey(k) === nkey(subjName));
+let keySubs = null;
+if (subsCandidates.length) {
+  keySubs = subsCandidates.find(k => resolveSubjectName(k).display === 'E V S') || subsCandidates[0];
+}
+const subsObj = keySubs ? subsRoot[keySubs] : null;
 
     let total = 0;
     let max   = 0;
@@ -4021,6 +4051,7 @@ page.render({ canvasContext: ctx, viewport });
 </script>
 </body>
 </html>
+
 
 
 
