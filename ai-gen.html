@@ -697,7 +697,7 @@ body.chat-lock { overflow: hidden; height: 100vh; }
           "Biology", "Biology NEET", "Social"
         ]
       },
-      questionTypes: ["MCQ (Single)", "MCQ (Multiple)", "Descriptive"],
+      questionTypes: ["MCQ (Single)", "MCQ (Multiple)", "Descriptive", "Text Book (MCQ Single)", "Text Book (MCQ Multiple)"],
       getSubjectsForClass: function (className) {
         return this.subjectMappings[className] || [];
       }
@@ -1209,6 +1209,10 @@ async function proceedWithGeneration(originalPrompt, sessionParams) {
   const chatPromptInput = document.getElementById('chat-prompt-input');
   const sendBtn        = document.getElementById('chat-send-btn');
 
+  // Flags for Text Book modes
+  const isTextBookSingle   = sessionParams.questionType === "Text Book (MCQ Single)";
+  const isTextBookMultiple = sessionParams.questionType === "Text Book (MCQ Multiple)";
+
   // We need to check this again
   const didSendFile = stagedFile !== null;
 
@@ -1221,10 +1225,16 @@ async function proceedWithGeneration(originalPrompt, sessionParams) {
   try {
     let result;
 
+// Text Book requires a file (PDF/image)
+if ((sessionParams.questionType === "Text Book (MCQ Single)" || sessionParams.questionType === "Text Book (MCQ Multiple)") && !stagedFile) {
+  __qb_toast('Attach a PDF or image for Test Book mode.');
+  throw new Error('No file attached for Test Book mode.');
+}
+
     if (stagedFile) {
       let extractPrompt;
 
-      if (sessionParams.questionType === "MCQ (Single)") {
+      if (sessionParams.questionType === "MCQ (Single)" || sessionParams.questionType === "Text Book (MCQ Single)") {
         extractPrompt = `
 Class: ${sessionParams.class}, Subject: ${sessionParams.subject}, Chapter: ${sessionParams.chapter}.
 
@@ -1269,7 +1279,7 @@ Ans: <A), B), C), or D) — only one>
 
 List all MCQ (Single) questions in the order they appear in the file, without any headings, extra text, or explanation. Do not add or change any question content — extract exactly as found. If any meta information is missing, do not reject the question. Insert the appropriate Level (using the definitions above) and "1 Mark" wherever needed. Output only the extracted questions in this format. Do not include any introduction, heading, or explanation.
 `;
-      } else if (sessionParams.questionType === "MCQ (Multiple)") {
+      } else if (sessionParams.questionType === "MCQ (Multiple)" || sessionParams.questionType === "Text Book (MCQ Multiple)") {
         extractPrompt = `
 Class: ${sessionParams.class}, Subject: ${sessionParams.subject}, Chapter: ${sessionParams.chapter}.
 
@@ -1344,9 +1354,18 @@ List all descriptive questions in the order they appear in the file, without any
 `;
       }
 
-      const formData = new FormData();
-      formData.append('imageFile', stagedFile);
-      formData.append('prompt', extractPrompt);
+      /* For Text Book modes, switch the meta tag to [Text MCQ (...)] */
+if (isTextBookSingle) {
+  extractPrompt = extractPrompt.replace(/\[MCQ \(Single\)\]/g, '[Text MCQ (Single)]');
+}
+if (isTextBookMultiple) {
+  extractPrompt = extractPrompt.replace(/\[MCQ \(Multiple\)\]/g, '[Text MCQ (Multiple)]');
+}
+
+const formData = new FormData();
+formData.append('imageFile', stagedFile);
+formData.append('prompt', extractPrompt);
+
 
       const response = await fetch(`${API_BASE_URL}/api/v1/extract-from-image`, {
         method: 'POST',
@@ -1378,7 +1397,7 @@ ${focusInstruction}
 User request: "${userPrompt}".
 `;
 
-      if (sessionParams.questionType === "MCQ (Single)") {
+            if (sessionParams.questionType === "MCQ (Single)" || isTextBookSingle) {
         fullPromptForAI = `
 ${baseInfo}
 Strictly follow these level definitions for every question:
@@ -1425,7 +1444,7 @@ Each question MUST follow this strict format:
 
 Provide ONLY the questions in this exact format. Do not add any other text, explanation, or introduction.
 `;
-      } else if (sessionParams.questionType === "MCQ (Multiple)") {
+      } else if (sessionParams.questionType === "MCQ (Multiple)" || isTextBookMultiple) {
         fullPromptForAI = `
 ${baseInfo}
 Strictly follow these level definitions for every question:
@@ -1807,7 +1826,7 @@ async function saveSessionQuestions(sessionParams) {
         timestamp: firebase.firestore.FieldValue.serverTimestamp()
       };
 
-      if (sessionParams.questionType.startsWith('MCQ')) {
+          if (sessionParams.questionType.startsWith('MCQ') || sessionParams.questionType.startsWith('Text Book')) {
         toSave.question = wrappedQuestion;
         toSave.options  = wrappedOptions; // keep as array
         toSave.answer   = qData.parsedAnswer; // letters unchanged
@@ -2022,7 +2041,9 @@ function buildChatGptGenerationPrompt(sessionParams) {
   const cls   = sessionParams.class || '';
   const subj  = sessionParams.subject || '';
   const chap  = sessionParams.chapter || '';
-  const qtype = sessionParams.questionType || 'MCQ (Single)';
+  let qtype = sessionParams.questionType || 'MCQ (Single)';
+if (qtype === 'Text Book (MCQ Single)')   qtype = 'MCQ (Single)';
+if (qtype === 'Text Book (MCQ Multiple)') qtype = 'MCQ (Multiple)';
   const plan  = (sessionParams.levelPlan || '').trim();
   const count = sessionParams.numQuestions || 20;
 
@@ -2321,7 +2342,7 @@ function parseFinalSetIntoQuestions(text, sessionParams) {
       parsedBody: ''
     };
 
-    if (sessionParams.questionType.startsWith('MCQ')) {
+   if (sessionParams.questionType.startsWith('MCQ') || sessionParams.questionType.startsWith('Text Book')) {
       // split body into Q text, options, and Ans
       const ansMatch = body.match(/Ans\s*:\s*.*$/im);
       const ansLine = ansMatch ? ansMatch[0].trim() : null;
@@ -2373,7 +2394,10 @@ function parseFinalSetIntoQuestions(text, sessionParams) {
   }
 
   // Normalize meta to our UI style (Level, Marks, Type); renumber later in rerender
-  const TYPE = sessionParams.questionType;
+  let TYPE = sessionParams.questionType;
+if (TYPE === 'Text Book (MCQ Single)')   TYPE = 'Text MCQ (Single)';
+if (TYPE === 'Text Book (MCQ Multiple)') TYPE = 'Text MCQ (Multiple)';
+
 
   for (let i = 0; i < out.length; i++) {
     const m = out[i].parsedMeta;
@@ -2443,13 +2467,16 @@ function parseAndDisplayAiQuestions(responseText, messagesArea, sessionParams) {
       marks = sessionParams.questionType.startsWith("MCQ") ? "1 Mark" : "";
     }
 
-    questionData.parsedMeta = `Q${currentSessionQuestions.length + 1}: ${level}, ${marks} [${sessionParams.questionType}]`;
+    const metaType = (sessionParams.questionType === 'Text Book (MCQ Single)') ? 'Text MCQ (Single)'
+               : (sessionParams.questionType === 'Text Book (MCQ Multiple)') ? 'Text MCQ (Multiple)'
+               : sessionParams.questionType;
+questionData.parsedMeta = `Q${currentSessionQuestions.length + 1}: ${level}, ${marks} [${metaType}]`;
 
     let rawBody = qText.substring(originalMeta.length).trim();
     const answerRegex = /(.*)(Ans:\s*.*)/s;
     const answerMatch = rawBody.match(answerRegex);
 
-    if (sessionParams.questionType.startsWith('MCQ')) {
+    if (sessionParams.questionType.startsWith('MCQ') || sessionParams.questionType.startsWith('Text Book')) {
       if (answerMatch) {
         const questionAndOptions = answerMatch[1].trim();
         const lines = questionAndOptions
@@ -2818,6 +2845,7 @@ function showEditPopupForQuestion(index) {
 </script> 
 </body> 
 </html>
+
 
 
 
