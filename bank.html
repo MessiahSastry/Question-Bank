@@ -271,8 +271,8 @@
       "MCQ (Single)",
       "MCQ (Multiple)",
       "Descriptive",
-      "Only Text Book (Single)",
-      "Only Text Book (Multiple)"
+      "Text Book (MCQ Single)",
+      "Text Book (MCQ Multiple)"
     ],
       marks: Array.from({ length: 10 }, (_, i) => i + 1),
       levels: ["Level 1", "Level 2", "Level 3"]
@@ -1151,6 +1151,24 @@ query = query.orderBy("questionNumber");
           if (Array.isArray(data.options)) {
             console.log("Options for", doc.id, data.options);
           }
+          // --- normalize mcqType & detect textbook flag (used later) ---
+const __rt  = data.mcqType
+  ? String(data.mcqType)
+  : (Array.isArray(data.options) && data.options.length === 4 ? 'MCQ (Single)' : 'Descriptive');
+
+const __rtl = __rt.toLowerCase();
+const __normType =
+  __rtl.includes('multiple') ? 'MCQ (Multiple)'
+  : __rtl.includes('single') ? 'MCQ (Single)'
+  : __rt;
+
+const __isTextbook =
+  __rtl.includes('text') || __rtl.includes('book') ||
+  String(data.source || data.tag || data.origin || '')
+    .toLowerCase()
+    .match(/textbook|text book|book/) ||
+  data.isTextbook === true || data.textbook === true;
+
           /* --- Client-side filters for multi-select --- */
 
 // Chapter (if multiple chosen)
@@ -1172,39 +1190,31 @@ if (selMarks.length > 0) {
   if (!wanted.has(m)) return;
 }
 
-// Question Type (supports "Only Text Book (Single/Multiple)")
+// Question Type (supports MCQ/Desc + Text Book (MCQ Single/Multiple))
 if (selQtypes.length > 0) {
-  const inferredType = (data.mcqType
-    ? data.mcqType
-    : (Array.isArray(data.options) && data.options.length === 4 ? 'MCQ (Single)' : 'Descriptive'));
+  const wantsTBS = selQtypes.includes('Text Book (MCQ Single)');
+  const wantsTBM = selQtypes.includes('Text Book (MCQ Multiple)');
 
-  // detect textbook origin (adjust keys/values if you use different ones)
-  const rawSource = (data.source || data.tag || data.origin || '').toString().toLowerCase();
-  const isTextbookFlag =
-    rawSource.includes('textbook') ||
-    rawSource.includes('text book') ||
-    rawSource.includes('book') ||
-    data.isTextbook === true ||
-    data.textbook === true;
-
-  const wantsTextbookSingle   = selQtypes.includes('Only Text Book (Single)');
-  const wantsTextbookMultiple = selQtypes.includes('Only Text Book (Multiple)');
-
-  if (wantsTextbookSingle || wantsTextbookMultiple) {
+  // If user chose textbook variants, enforce both type and textbook flag
+  if (wantsTBS || wantsTBM) {
     const ok =
-      (wantsTextbookSingle   && inferredType === 'MCQ (Single)'   && isTextbookFlag) ||
-      (wantsTextbookMultiple && inferredType === 'MCQ (Multiple)' && isTextbookFlag);
+      (wantsTBS && __normType === 'MCQ (Single)'   && __isTextbook) ||
+      (wantsTBM && __normType === 'MCQ (Multiple)' && __isTextbook);
     if (!ok) return;
   } else {
-    if (!selQtypes.includes(inferredType)) return;
+    // Otherwise, match plain types normally
+    if (!selQtypes.includes(__normType) && !(selQtypes.includes('Descriptive') && __normType === 'Descriptive')) {
+      return;
+    }
   }
 }
+
           questionCount++;
           questionsHTML += `
            <div class="question-item"
      data-id="${doc.id}"
      data-level="${data.difficulty || data.level || ''}"
-     data-type="${(data.mcqType ? data.mcqType : (Array.isArray(data.options) && data.options.length === 4 ? 'MCQ (Single)' : 'Descriptive'))}"
+     data-type="${__normType}" data-textbook="${__isTextbook ? 'true' : 'false'}"
      data-chapter="${data.chapter || ''}"
      data-marks="${(data.marks ?? '')}"
      style="position:relative;">
@@ -1756,6 +1766,7 @@ All the Best`;
   </div>
 </body>
 </html>
+
 
 
 
