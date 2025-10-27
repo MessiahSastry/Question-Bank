@@ -245,7 +245,12 @@
 
 <!-- NEW: optional worksheet attachment (PDF only) -->
 <label>Attach Worksheet (PDF)</label>
-<input id="hw-file" type="file" accept="application/pdf" style="width:100%;padding:10px 13px;border:1.5px solid #bcd6ef;border-radius:8px;background:#f7fafd;color:#12416c;font-size:1.04em;margin-bottom:10px;">
+<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+  <input id="hw-file" type="file" accept="application/pdf"
+    style="flex:1;padding:10px 13px;border:1.5px solid #bcd6ef;border-radius:8px;background:#f7fafd;color:#12416c;font-size:1.04em;margin-bottom:0;">
+  <button type="button" id="hw-file-clear" title="Remove file" aria-label="Remove file"
+    style="display:none;align-items:center;justify-content:center;width:36px;height:36px;border:1.5px solid #bcd6ef;border-radius:8px;background:#fff;color:#0f3d6b;font-weight:700;cursor:pointer;">✕</button>
+</div>
 <div id="hw-file-name" style="font-size:.95em;color:#19599e;margin:-6px 0 16px 2px;"></div>
 
     <button class="main-btn" id="hw-save-btn"><i class="fa-solid fa-floppy-disk"></i> Save Homework</button>
@@ -723,6 +728,14 @@ function sanitizeFileName(name) {
     .replace(/\s+/g, ' ')            // collapse spaces
     .trim();
 }
+
+// NEW: make each Storage path segment safe (no slashes/control)
+function sanitizePathPart(s) {
+  return String(s || '')
+    .replace(/[^\p{L}\p{N}\s.&()+\-_,]/gu, '_') // keep letters, numbers & common symbols
+    .replace(/[\/\\]+/g, '_')                   // no slashes in path parts
+    .trim();
+}
     // Remove any leading numbering/bullets, repeatedly.
 // Handles: "1.", "1)", "(1)", "१.", "I.", "(i)", "A)", "-", "•", "—", etc.
 // Also removes chains like "1. 1.) (i) ".
@@ -920,12 +933,24 @@ document.addEventListener('DOMContentLoaded', function () {
   });
   if (d1) d1.addEventListener('change', fetchAndShowExistingHomework);
 
-  // show chosen filename
+  // show chosen filename + clear (✕) button
 const hwFile = document.getElementById('hw-file');
 const hwFileName = document.getElementById('hw-file-name');
+const hwFileClear = document.getElementById('hw-file-clear');
+
+function updateFileUI() {
+  const hasFile = !!(hwFile?.files?.[0]);
+  hwFileName.textContent = hasFile ? `Selected: ${hwFile.files[0].name}` : '';
+  if (hwFileClear) hwFileClear.style.display = hasFile ? 'inline-flex' : 'none';
+}
+
 if (hwFile && hwFileName) {
-  hwFile.addEventListener('change', () => {
-    hwFileName.textContent = hwFile.files?.[0]?.name ? `Selected: ${hwFile.files[0].name}` : '';
+  hwFile.addEventListener('change', updateFileUI);
+}
+if (hwFileClear && hwFile) {
+  hwFileClear.addEventListener('click', () => {
+    hwFile.value = '';
+    updateFileUI();
   });
 }
 
@@ -978,6 +1003,7 @@ async function fetchAndShowExistingHomework() {
     if (!btn) return;
    btn.onclick = async function () {
   const user = firebase.auth().currentUser;
+  btn.disabled = true;  // NEW
   if (!user) { alert("You are not logged in. Please sign in first."); return; }
 
   const year      = (document.getElementById('hw-year-value')||{}).value?.trim();
@@ -995,23 +1021,35 @@ async function fetchAndShowExistingHomework() {
   }
 
   // optional upload
-  let attachmentUrl = '';
-  let attachmentName = '';
-  try {
-    if (file) {
-      if (file.type !== 'application/pdf') { alert('Only PDF files allowed.'); return; }
-      const safeName = sanitizeFileName(file.name || 'worksheet.pdf');
-      const path = `homework/${year}/${className}/${campus}/${dateStr}/${subject}/${safeName}`;
-      const ref = firebase.storage().ref(path);
-      await ref.put(file);
-      attachmentUrl = await ref.getDownloadURL();
-      attachmentName = safeName;
-    }
-  } catch (e) {
-    console.error(e);
-    alert('Upload failed. Homework text will still be saved without the file.');
-  }
+let attachmentUrl = '';
+let attachmentName = '';
+try {
+  if (file) {
+    // Accept real PDFs even if browser reports empty or octet-stream type
+    const nameOk = /\.pdf$/i.test(file.name || '');
+    const typeOk = (file.type === 'application/pdf') || (file.type === '') || (file.type === 'application/octet-stream');
+    if (!(nameOk || typeOk)) { alert('Only PDF files allowed.'); return; }
 
+    const safeName   = sanitizeFileName(file.name || 'worksheet.pdf');
+    const partYear   = sanitizePathPart(year);
+    const partClass  = sanitizePathPart(className);
+    const partCampus = sanitizePathPart(campus);
+    const partDate   = sanitizePathPart(dateStr);
+    const partSubj   = sanitizePathPart(subject);
+
+    const path = `homework/${partYear}/${partClass}/${partCampus}/${partDate}/${partSubj}/${safeName}`;
+    const ref = firebase.storage().ref(path);
+
+    // Provide metadata to help some browsers
+    await ref.put(file, { contentType: 'application/pdf' });
+
+    attachmentUrl = await ref.getDownloadURL();
+    attachmentName = safeName;
+  }
+} catch (e) {
+  console.error(e);
+  alert('Upload failed. Homework text will still be saved without the file.');
+}
   try {
     const snap = await db.collection("homework")
       .where("year","==",year)
@@ -1044,13 +1082,19 @@ async function fetchAndShowExistingHomework() {
       });
     }
 
-    showSavedMessage("Homework saved!");
-    // clear file input after successful save
-    if (fileEl) { fileEl.value = ''; const n = document.getElementById('hw-file-name'); if (n) n.textContent=''; }
-    await fetchAndShowExistingHomework();
+   showSavedMessage("Homework saved!");
+// clear file input after successful save
+if (fileEl) {
+  fileEl.value = '';
+  const n = document.getElementById('hw-file-name'); if (n) n.textContent='';
+  const c = document.getElementById('hw-file-clear'); if (c) c.style.display='none';
+}
+await fetchAndShowExistingHomework();
+btn.disabled = false;
   } catch (e) {
-    console.error(e); alert("Error saving. Try again.");
-  }
+  console.error(e); alert("Error saving. Try again.");
+  btn.disabled = false;
+}
 };
   });
 
@@ -1176,6 +1220,7 @@ const items = subjectOrder.map(s => {
 
 </body>
 </html>
+
 
 
 
