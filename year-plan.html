@@ -241,7 +241,12 @@
     <input id="hw-date" type="date" style="width:100%;padding:10px 13px;border:1.5px solid #bcd6ef;border-radius:8px;background:#f7fafd;color:#12416c;font-size:1.04em;margin-bottom:16px;">
 
     <label>Homework</label>
-    <textarea id="hw-text" placeholder="TYPE HOMEWORK HERE... (supports English/Telugu/Hindi)"></textarea>
+<textarea id="hw-text" placeholder="TYPE HOMEWORK HERE... (supports English/Telugu/Hindi)"></textarea>
+
+<!-- NEW: optional worksheet attachment (PDF only) -->
+<label>Attach Worksheet (PDF)</label>
+<input id="hw-file" type="file" accept="application/pdf" style="width:100%;padding:10px 13px;border:1.5px solid #bcd6ef;border-radius:8px;background:#f7fafd;color:#12416c;font-size:1.04em;margin-bottom:10px;">
+<div id="hw-file-name" style="font-size:.95em;color:#19599e;margin:-6px 0 16px 2px;"></div>
 
     <button class="main-btn" id="hw-save-btn"><i class="fa-solid fa-floppy-disk"></i> Save Homework</button>
   </div>
@@ -314,9 +319,10 @@
     </button>
   </div>
   <!-- Firebase (v9 compat) -->
-  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+ <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script>
     
@@ -841,6 +847,12 @@ const itemsHTML = items.map(it => {
 </div>
       <div class="sb-line" style="margin-left:22px; white-space: normal; word-break: break-word;">
   ${renderMixedList(text)}
+  ${ (it.attachmentUrl ? `<div style="margin-top:6px;">
+      <span style="font-weight:700;">Worksheet:</span>
+      <a href="${escapeHTML(it.attachmentUrl)}" target="_blank" rel="noopener" style="text-decoration:underline;">
+        ${escapeHTML(it.attachmentName || 'Open PDF')}
+      </a>
+    </div>` : '') }
 </div>
     </div>
   `;
@@ -908,8 +920,17 @@ document.addEventListener('DOMContentLoaded', function () {
   });
   if (d1) d1.addEventListener('change', fetchAndShowExistingHomework);
 
-  // initial load after defaults are set
-  fetchAndShowExistingHomework();
+  // show chosen filename
+const hwFile = document.getElementById('hw-file');
+const hwFileName = document.getElementById('hw-file-name');
+if (hwFile && hwFileName) {
+  hwFile.addEventListener('change', () => {
+    hwFileName.textContent = hwFile.files?.[0]?.name ? `Selected: ${hwFile.files[0].name}` : '';
+  });
+}
+
+// initial load after defaults are set
+fetchAndShowExistingHomework();
 });
 
  // === HOMEWORK: auto-load existing text when selectors change ===
@@ -955,52 +976,82 @@ async function fetchAndShowExistingHomework() {
   document.addEventListener('DOMContentLoaded', function() {
     const btn = document.getElementById('hw-save-btn');
     if (!btn) return;
-    btn.onclick = async function () {
-      const user = firebase.auth().currentUser;
-      if (!user) { alert("You are not logged in. Please sign in first."); return; }
+   btn.onclick = async function () {
+  const user = firebase.auth().currentUser;
+  if (!user) { alert("You are not logged in. Please sign in first."); return; }
 
-           const year      = (document.getElementById('hw-year-value')||{}).value?.trim();
-      const className = (document.getElementById('hw-class-value')||{}).value?.trim();
-      const campus    = (document.getElementById('hw-campus-value')||{}).value?.trim();
-      const subject   = (document.getElementById('hw-subject-value')||{}).value?.trim();
-      const dateStr   = (document.getElementById('hw-date')||{}).value?.trim();
-      const text      = (document.getElementById('hw-text')||{}).value?.trim();
+  const year      = (document.getElementById('hw-year-value')||{}).value?.trim();
+  const className = (document.getElementById('hw-class-value')||{}).value?.trim();
+  const campus    = (document.getElementById('hw-campus-value')||{}).value?.trim();
+  const subject   = (document.getElementById('hw-subject-value')||{}).value?.trim();
+  const dateStr   = (document.getElementById('hw-date')||{}).value?.trim();
+  const text      = (document.getElementById('hw-text')||{}).value?.trim();
+  const fileEl    = document.getElementById('hw-file');
+  const file      = fileEl?.files?.[0] || null;
 
-      if (!year || !className || !campus || !subject || !dateStr || !text) {
-        alert("Please fill all fields before saving.");
-        return;
-      }
+  if (!year || !className || !campus || !subject || !dateStr || !text) {
+    alert("Please fill all fields before saving.");
+    return;
+  }
 
-      try {
-            const snap = await db.collection("homework")
-          .where("year","==",year)
-          .where("class","==",className)
-          .where("campus","==",campus)
-          .where("subject","==",subject)
-          .where("date","==",dateStr)
-          .limit(1).get();
+  // optional upload
+  let attachmentUrl = '';
+  let attachmentName = '';
+  try {
+    if (file) {
+      if (file.type !== 'application/pdf') { alert('Only PDF files allowed.'); return; }
+      const safeName = sanitizeFileName(file.name || 'worksheet.pdf');
+      const path = `homework/${year}/${className}/${campus}/${dateStr}/${subject}/${safeName}`;
+      const ref = firebase.storage().ref(path);
+      await ref.put(file);
+      attachmentUrl = await ref.getDownloadURL();
+      attachmentName = safeName;
+    }
+  } catch (e) {
+    console.error(e);
+    alert('Upload failed. Homework text will still be saved without the file.');
+  }
 
-        if (!snap.empty) {
-          await db.collection("homework").doc(snap.docs[0].id).update({
-            text, updated: new Date()
-          });
-        } else {
-                   await db.collection("homework").add({
-            year,
-            class: className,
-            campus,
-            subject,
-            date: dateStr,
-            text,
-            created: new Date()
-          });
-        }
-        showSavedMessage("Homework saved!");
-        await fetchAndShowExistingHomework();
-      } catch (e) {
-        console.error(e); alert("Error saving. Try again.");
-      }
+  try {
+    const snap = await db.collection("homework")
+      .where("year","==",year)
+      .where("class","==",className)
+      .where("campus","==",campus)
+      .where("subject","==",subject)
+      .where("date","==",dateStr)
+      .limit(1).get();
+
+    const payload = {
+      year,
+      class: className,
+      campus,
+      subject,
+      date: dateStr,
+      text
     };
+    if (attachmentUrl) {
+      payload.attachmentUrl = attachmentUrl;
+      payload.attachmentName = attachmentName;
+    }
+
+    if (!snap.empty) {
+      await db.collection("homework").doc(snap.docs[0].id).update({
+        ...payload, updated: new Date()
+      });
+    } else {
+      await db.collection("homework").add({
+        ...payload, created: new Date()
+      });
+    }
+
+    showSavedMessage("Homework saved!");
+    // clear file input after successful save
+    if (fileEl) { fileEl.value = ''; const n = document.getElementById('hw-file-name'); if (n) n.textContent=''; }
+    await fetchAndShowExistingHomework();
+  } catch (e) {
+    console.error(e); alert("Error saving. Try again.");
+  }
+};
   });
 
   // ===== HOMEWORK: download aggregated PDF by class+date =====
@@ -1031,15 +1082,28 @@ async function fetchAndShowExistingHomework() {
         ];
 
         const map = {};
-        snap.forEach(d => {
-          const x = d.data();
-          map[(x.subject||'').trim().toLowerCase()] = x.text || '';
-        });
+const attMap = {};
+snap.forEach(d => {
+  const x = d.data();
+  const k = (x.subject||'').trim().toLowerCase();
+  map[k] = x.text || '';
+  attMap[k] = {
+    url:  (x.attachmentUrl || ''),
+    name: (x.attachmentName || '')
+  };
+});
 
-        const items = subjectOrder.map(s => {
-          const k = s.trim().toLowerCase();
-          return map[k] ? { subject: s, syllabus: map[k] } : null;
-        }).filter(Boolean);
+const items = subjectOrder.map(s => {
+  const k = s.trim().toLowerCase();
+  if (!map[k]) return null;
+  const att = attMap[k] || {};
+  return {
+    subject: s,
+    syllabus: map[k],
+    attachmentUrl: att.url || '',
+    attachmentName: att.name || ''
+  };
+}).filter(Boolean);
 
         const hasIndic = items.some(d =>
           /[\u0900-\u097F\u0C00-\u0C7F]/.test(d.syllabus||'') || /[\u0900-\u097F\u0C00-\u0C7F]/.test(d.subject||'')
@@ -1072,13 +1136,27 @@ async function fetchAndShowExistingHomework() {
           doc.text(`${className.toUpperCase()} - HOMEWORK`, pageWidth/2, y, {align:'center'}); y+=11;
 
           items.forEach(d => {
-            doc.setFont(undefined, 'bold'); doc.text(`${d.subject}:`, 10, y); y += 7;
-            doc.setFont(undefined, 'normal');
-            const lines = doc.splitTextToSize(normalizeSyllabus(d.syllabus || ''), 180);
-            doc.text(lines, 16, y);
-            y += lines.length * 7 + 2;
-            if (y > 270) { doc.addPage(); y = 14; }
-          });
+  doc.setFont(undefined, 'bold'); doc.text(`${d.subject}:`, 10, y); y += 7;
+  doc.setFont(undefined, 'normal');
+  const lines = doc.splitTextToSize(normalizeSyllabus(d.syllabus || ''), 180);
+  doc.text(lines, 16, y);
+  y += lines.length * 7 + 2;
+
+  // NEW: clickable link if attachment exists
+  if (d.attachmentUrl) {
+    const label = `Worksheet: ${d.attachmentName || 'Open PDF'}`;
+    // draw link text
+    doc.setFont(undefined, 'bold');
+    doc.text(label, 16, y);
+    // make it clickable (approximate width box)
+    const w = doc.getTextWidth(label) + 2;
+    doc.link(16, y - 5, w, 7, { url: d.attachmentUrl });
+    doc.setFont(undefined, 'normal');
+    y += 8;
+  }
+
+  if (y > 270) { doc.addPage(); y = 14; }
+});
            doc.save(`${className}_${campus}_${dateStr}_homework.pdf`);
         }
       } catch(e) {
@@ -1098,6 +1176,7 @@ async function fetchAndShowExistingHomework() {
 
 </body>
 </html>
+
 
 
 
