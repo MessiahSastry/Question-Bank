@@ -896,13 +896,62 @@ const opt = {
   wrap.remove();
 }
     // ===== HOMEWORK: auto-fill today =====
-  document.addEventListener('DOMContentLoaded', function () {
-    const today = new Date().toISOString().slice(0,10);
-    const d1 = document.getElementById('hw-date');   if (d1 && !d1.value) d1.value = today;
-    const d2 = document.getElementById('hwdl-date'); if (d2 && !d2.value) d2.value = today;
-  });
+document.addEventListener('DOMContentLoaded', function () {
+  const today = new Date().toISOString().slice(0,10);
+  const d1 = document.getElementById('hw-date');   if (d1 && !d1.value) d1.value = today;
+  const d2 = document.getElementById('hwdl-date'); if (d2 && !d2.value) d2.value = today;
 
-  // ===== HOMEWORK: save (upsert by year,class,subject,date) =====
+  // wire change listeners to auto-load existing homework
+  ['hw-year-value','hw-class-value','hw-campus-value','hw-subject-value'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('change', fetchAndShowExistingHomework);
+  });
+  if (d1) d1.addEventListener('change', fetchAndShowExistingHomework);
+
+  // initial load after defaults are set
+  fetchAndShowExistingHomework();
+});
+
+ // === HOMEWORK: auto-load existing text when selectors change ===
+async function fetchAndShowExistingHomework() {
+  const year      = (document.getElementById('hw-year-value')||{}).value?.trim();
+  const className = (document.getElementById('hw-class-value')||{}).value?.trim();
+  const campus    = (document.getElementById('hw-campus-value')||{}).value?.trim();
+  const subject   = (document.getElementById('hw-subject-value')||{}).value?.trim();
+  const dateStr   = (document.getElementById('hw-date')||{}).value?.trim();
+  const ta        = document.getElementById('hw-text');
+
+  if (!ta) return;
+  if (!(year && className && campus && subject && dateStr)) { ta.value = ''; return; }
+
+  try {
+    // primary (with campus)
+    let snap = await db.collection('homework')
+      .where('year','==',year)
+      .where('class','==',className)
+      .where('campus','==',campus)
+      .where('subject','==',subject)
+      .where('date','==',dateStr)
+      .limit(1).get();
+
+    // fallback for legacy rows without campus
+    if (snap.empty) {
+      snap = await db.collection('homework')
+        .where('year','==',year)
+        .where('class','==',className)
+        .where('subject','==',subject)
+        .where('date','==',dateStr)
+        .limit(1).get();
+    }
+
+    ta.value = !snap.empty ? (snap.docs[0].data().text || '') : '';
+  } catch (e) {
+    console.error(e);
+    ta.value = '';
+  }
+}
+
+// ===== HOMEWORK: save (upsert by year,class,subject,date) =====
   document.addEventListener('DOMContentLoaded', function() {
     const btn = document.getElementById('hw-save-btn');
     if (!btn) return;
@@ -947,7 +996,7 @@ const opt = {
           });
         }
         showSavedMessage("Homework saved!");
-        const ta = document.getElementById('hw-text'); if (ta) ta.value = "";
+        await fetchAndShowExistingHomework();
       } catch (e) {
         console.error(e); alert("Error saving. Try again.");
       }
@@ -1049,6 +1098,7 @@ const opt = {
 
 </body>
 </html>
+
 
 
 
