@@ -245,13 +245,26 @@
 
 <!-- NEW: optional worksheet attachment (PDF only) -->
 <label>Attach Worksheets (PDFs)</label>
-<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
-  <input id="hw-file" type="file" accept="application/pdf" multiple
-    style="flex:1;padding:10px 13px;border:1.5px solid #bcd6ef;border-radius:8px;background:#f7fafd;color:#12416c;font-size:1.04em;margin-bottom:0;">
-  <button type="button" id="hw-file-clear" title="Remove files" aria-label="Remove files"
-    style="display:none;align-items:center;justify-content:center;width:36px;height:36px;border:1.5px solid #bcd6ef;border-radius:8px;background:#fff;color:#0f3d6b;font-weight:700;cursor:pointer;">✕</button>
-</div>
-<div id="hw-file-name" style="font-size:.95em;color:#19599e;margin:-6px 0 16px 2px;"></div>
+
+<!-- List of file rows -->
+<div id="hw-files-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px;"></div>
+
+<!-- Hidden template for a single row -->
+<template id="hw-file-row-tpl">
+  <div class="hw-file-row" style="display:flex;align-items:center;gap:8px;">
+    <input type="file" accept="application/pdf"
+      style="flex:1;padding:10px 13px;border:1.5px solid #bcd6ef;border-radius:8px;background:#f7fafd;color:#12416c;font-size:1.04em;margin-bottom:0;">
+    <button type="button" class="hw-row-remove" title="Remove" aria-label="Remove"
+      style="align-items:center;justify-content:center;width:36px;height:36px;border:1.5px solid #bcd6ef;border-radius:8px;background:#fff;color:#b3261e;font-weight:700;cursor:pointer;display:none;">✕</button>
+  </div>
+  <div class="hw-row-msg" style="font-size:.92em;color:#b3261e;margin:-4px 0 0 2px;display:none;"></div>
+</template>
+
+<!-- Add another file -->
+<button type="button" id="hw-file-add"
+  style="margin:6px 0 14px 0;padding:8px 12px;border:1px solid #bcd6ef;border-radius:8px;background:#fff;color:#0f3d6b;font-weight:600;cursor:pointer;">
+  + Add another file
+</button>
 
 <!-- Existing attachments list -->
 <div id="hw-existing-attachment" style="display:none;margin:-6px 0 16px 2px;font-size:.95em;color:#19599e;">
@@ -379,7 +392,6 @@
     // Track current Homework doc & attachments
 let currentHWDocId = null;
 let currentAttachments = []; // [{url,name}]
-let pendingUploads = [];     // File[] staged across multiple chooser opens
 
 // ====== Helper: Setup Custom Dropdown ======
     function setupDropdown(containerId, options, initialValue, onChange) {
@@ -960,40 +972,62 @@ document.addEventListener('DOMContentLoaded', function () {
   });
   if (d1) d1.addEventListener('change', fetchAndShowExistingHomework);
 
- // show chosen filenames + clear (✕) button, accumulating across opens
-const hwFile = document.getElementById('hw-file');
-const hwFileName = document.getElementById('hw-file-name');
-const hwFileClear = document.getElementById('hw-file-clear');
+// Dynamic “Add another file” rows
+const hwFilesList = document.getElementById('hw-files-list');
+const hwRowTpl    = document.getElementById('hw-file-row-tpl');
+const hwAddBtn    = document.getElementById('hw-file-add');
 
-function renderPendingUploads() {
-  if (!pendingUploads.length) {
-    hwFileName.textContent = '';
-    if (hwFileClear) hwFileClear.style.display = 'none';
-    return;
-  }
-  hwFileName.textContent = pendingUploads.length === 1
-    ? `Selected: ${pendingUploads[0].name}`
-    : `Selected (${pendingUploads.length}): ${pendingUploads.map(f=>f.name).join(', ')}`;
-  if (hwFileClear) hwFileClear.style.display = 'inline-flex';
+function addFileRow() {
+  const node = hwRowTpl.content.cloneNode(true);
+  const row  = node.querySelector('.hw-file-row');
+  const inp  = node.querySelector('input[type=file]');
+  const rm   = node.querySelector('.hw-row-remove');
+  const msg  = node.querySelector('.hw-row-msg');
+
+  // show remove button only if more than 1 row exists
+  const updateRemoveVis = () => {
+    const total = hwFilesList.querySelectorAll('.hw-file-row').length;
+    rm.style.display = total > 1 ? 'inline-flex' : 'none';
+  };
+
+  // validate PDF per row
+  inp.addEventListener('change', () => {
+    msg.style.display = 'none';
+    msg.textContent = '';
+    const f = inp.files?.[0];
+    if (!f) return;
+    const nameOk = /\.pdf$/i.test(f.name || '');
+    const typeOk = (f.type === 'application/pdf') || (f.type === '') || (f.type === 'application/octet-stream');
+    if (!(nameOk || typeOk)) {
+      msg.textContent = 'Only PDF files allowed.';
+      msg.style.display = 'block';
+      inp.value = '';
+    }
+  });
+
+  rm.addEventListener('click', () => {
+    const rows = hwFilesList.querySelectorAll('.hw-file-row');
+    if (rows.length > 1) {
+      row.nextElementSibling?.remove(); // remove msg div
+      row.remove();
+      updateRemoveVis();
+    } else {
+      // last row: just clear
+      inp.value = '';
+      msg.style.display = 'none';
+      msg.textContent = '';
+    }
+  });
+
+  hwFilesList.appendChild(node);
+  updateRemoveVis();
 }
 
-if (hwFile && hwFileName) {
-  hwFile.addEventListener('change', () => {
-    const files = Array.from(hwFile?.files || []);
-    if (files.length) pendingUploads = pendingUploads.concat(files);
-    // clear the input so user can open it again and add more
-    hwFile.value = '';
-    renderPendingUploads();
-  });
-  renderPendingUploads();
-}
-if (hwFileClear) {
-  hwFileClear.addEventListener('click', () => {
-    pendingUploads = [];
-    if (hwFile) hwFile.value = '';
-    renderPendingUploads();
-  });
-}
+// initialize with one empty row
+addFileRow();
+
+// add more rows on click
+if (hwAddBtn) hwAddBtn.addEventListener('click', addFileRow);
 
 // initial load after defaults are set
 fetchAndShowExistingHomework();
@@ -1145,12 +1179,15 @@ btn.innerHTML = `<span class="fa-solid fa-spinner fa-spin"></span> Saving...`;
       }
 
       // optional upload
-     // optional uploads (multiple)
+    // collect files from ALL visible rows and upload
 let newAttachments = [];
 try {
-  const files = Array.from(pendingUploads || []);
-  for (const f of files) {
+  const rows = Array.from(document.querySelectorAll('#hw-files-list .hw-file-row'));
+  for (const r of rows) {
+    const input = r.querySelector('input[type=file]');
+    const f = input?.files?.[0];
     if (!f) continue;
+
     const nameOk = /\.pdf$/i.test(f.name || '');
     const typeOk = (f.type === 'application/pdf') || (f.type === '') || (f.type === 'application/octet-stream');
     if (!(nameOk || typeOk)) { alert('Only PDF files allowed.'); return; }
@@ -1202,10 +1239,11 @@ payload.attachmentPath = firebase.firestore.FieldValue.delete();
       }
 
       showSavedMessage("Homework saved!");
-      pendingUploads = [];
-if (fileEl) fileEl.value = '';
-const n = document.getElementById('hw-file-name'); if (n) n.textContent='';
-const c = document.getElementById('hw-file-clear'); if (c) c.style.display='none';
+     // reset rows: remove all, leave one empty row
+      const list = document.getElementById('hw-files-list');
+      if (list) list.innerHTML = '';
+      addFileRow();
+      
       await fetchAndShowExistingHomework();
     } catch (e) {
       console.error(e);
@@ -1337,6 +1375,7 @@ if (Array.isArray(d.attachments) && d.attachments.length) {
 
 </body>
 </html>
+
 
 
 
