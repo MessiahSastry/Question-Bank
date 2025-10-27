@@ -204,7 +204,71 @@
     <textarea id="syllabus" placeholder="ENTER SYLLABUS OR PORTIONS FOR THIS EXAM..." style="text-transform:uppercase"></textarea>
     <button class="main-btn" id="save-btn"><i class="fa-solid fa-floppy-disk"></i>Save Year Plan</button>
   </div>
+   <!-- ⬇⬇⬇ HOMEWORK ENTRY ⬇⬇⬇ -->
+  <div class="section-container">
+    <h2><i class="fa-solid fa-calendar"></i> Homework Entry</h2>
+
+    <label>Academic Year</label>
+    <div id="hw-year-dropdown" class="custom-dropdown">
+      <input type="hidden" id="hw-year-value" value="">
+      <div class="selected-option">Loading...</div>
+      <div class="dropdown-options"></div>
+    </div>
+
+    <label>Class</label>
+    <div id="hw-class-dropdown" class="custom-dropdown">
+      <input type="hidden" id="hw-class-value" value="3rd Class">
+      <div class="selected-option"></div>
+      <div class="dropdown-options"></div>
+    </div>
+
+    <label>Subject</label>
+    <div id="hw-subject-dropdown" class="custom-dropdown">
+      <input type="hidden" id="hw-subject-value" value="">
+      <div class="selected-option">Select Subject</div>
+      <div class="dropdown-options"></div>
+    </div>
+
+    <label>Homework Date</label>
+    <input id="hw-date" type="date" style="width:100%;padding:10px 13px;border:1.5px solid #bcd6ef;border-radius:8px;background:#f7fafd;color:#12416c;font-size:1.04em;margin-bottom:16px;">
+
+    <label>Homework</label>
+    <textarea id="hw-text" placeholder="TYPE HOMEWORK HERE... (supports English/Telugu/Hindi)"></textarea>
+
+    <button class="main-btn" id="hw-save-btn"><i class="fa-solid fa-floppy-disk"></i> Save Homework</button>
+  </div>
+  <!-- ⬆⬆⬆ HOMEWORK ENTRY ⬆⬆⬆ -->
+
   <hr>
+
+  <!-- ⬇⬇⬇ HOMEWORK PDF DOWNLOAD ⬇⬇⬇ -->
+  <div class="section-container">
+    <h2><i class="fa-solid fa-download"></i> Download Homework PDF</h2>
+
+    <label>Academic Year</label>
+    <div id="hwdl-year-dropdown" class="custom-dropdown">
+      <input type="hidden" id="hwdl-year-value" value="">
+      <div class="selected-option">Loading...</div>
+      <div class="dropdown-options"></div>
+    </div>
+
+    <label>Class</label>
+    <div id="hwdl-class-dropdown" class="custom-dropdown">
+      <input type="hidden" id="hwdl-class-value" value="3rd Class">
+      <div class="selected-option">3rd Class</div>
+      <div class="dropdown-options"></div>
+    </div>
+
+    <label>Homework Date</label>
+    <input id="hwdl-date" type="date" style="width:100%;padding:10px 13px;border:1.5px solid #bcd6ef;border-radius:8px;background:#f7fafd;color:#12416c;font-size:1.04em;margin-bottom:16px;">
+
+    <button class="main-btn green" id="hw-download-btn">
+      <i class="fa-solid fa-file-pdf"></i> Download Homework PDF
+    </button>
+  </div>
+  <!-- ⬆⬆⬆ HOMEWORK PDF DOWNLOAD ⬆⬆⬆ -->
+
+<hr>
   <div class="section-container">
     <h2><i class="fa-solid fa-download"></i> Download Exam Syllabus PDF</h2>
     <!-- Academic Year -->
@@ -346,10 +410,24 @@ document.addEventListener('DOMContentLoaded', function() {
       }
       onYearPlanClassChange(aiGeneratorConfig.classes[0]);
 
-      // --- PDF DOWNLOAD SECTION ---
+           // --- PDF DOWNLOAD SECTION ---
       setupDropdown('pdf-year-dropdown', years, years.length > 0 ? years[0] : "");
       setupDropdown('pdf-class-dropdown', aiGeneratorConfig.classes, aiGeneratorConfig.classes[0]);
       setupDropdown('pdf-exam-dropdown', aiGeneratorConfig.exams, aiGeneratorConfig.exams[0]);
+
+      // --- HOMEWORK ENTRY ---
+      setupDropdown('hw-year-dropdown', years, years.length > 0 ? years[0] : "");
+      setupDropdown('hw-class-dropdown', aiGeneratorConfig.classes, aiGeneratorConfig.classes[0], onHWClassChange);
+      function onHWClassChange(selClass) {
+        const subjects = aiGeneratorConfig.subjectMappings[selClass];
+        setupDropdown('hw-subject-dropdown', subjects, subjects[0]);
+      }
+      onHWClassChange(aiGeneratorConfig.classes[0]);
+
+      // --- HOMEWORK DOWNLOAD ---
+      setupDropdown('hwdl-year-dropdown', years, years.length > 0 ? years[0] : "");
+      setupDropdown('hwdl-class-dropdown', aiGeneratorConfig.classes, aiGeneratorConfig.classes[0]);
+
      } 
       // ====== DOMContentLoaded Startup ======
     document.addEventListener('DOMContentLoaded', function() {
@@ -785,6 +863,138 @@ const opt = {
   await html2pdf().set(opt).from(wrap.querySelector('#indic-pdf-root')).save();
   wrap.remove();
 }
+    // ===== HOMEWORK: auto-fill today =====
+  document.addEventListener('DOMContentLoaded', function () {
+    const today = new Date().toISOString().slice(0,10);
+    const d1 = document.getElementById('hw-date');   if (d1 && !d1.value) d1.value = today;
+    const d2 = document.getElementById('hwdl-date'); if (d2 && !d2.value) d2.value = today;
+  });
+
+  // ===== HOMEWORK: save (upsert by year,class,subject,date) =====
+  document.addEventListener('DOMContentLoaded', function() {
+    const btn = document.getElementById('hw-save-btn');
+    if (!btn) return;
+    btn.onclick = async function () {
+      const user = firebase.auth().currentUser;
+      if (!user) { alert("You are not logged in. Please sign in first."); return; }
+
+      const year      = (document.getElementById('hw-year-value')||{}).value?.trim();
+      const className = (document.getElementById('hw-class-value')||{}).value?.trim();
+      const subject   = (document.getElementById('hw-subject-value')||{}).value?.trim();
+      const dateStr   = (document.getElementById('hw-date')||{}).value?.trim();
+      const text      = (document.getElementById('hw-text')||{}).value?.trim();
+
+      if (!year || !className || !subject || !dateStr || !text) {
+        alert("Please fill all fields before saving.");
+        return;
+      }
+
+      try {
+        const snap = await db.collection("homework")
+          .where("year","==",year).where("class","==",className)
+          .where("subject","==",subject).where("date","==",dateStr)
+          .limit(1).get();
+
+        if (!snap.empty) {
+          await db.collection("homework").doc(snap.docs[0].id).update({
+            text, updated: new Date()
+          });
+        } else {
+          await db.collection("homework").add({
+            year, class: className, subject, date: dateStr, text, created: new Date()
+          });
+        }
+        showSavedMessage("Homework saved!");
+        const ta = document.getElementById('hw-text'); if (ta) ta.value = "";
+      } catch (e) {
+        console.error(e); alert("Error saving. Try again.");
+      }
+    };
+  });
+
+  // ===== HOMEWORK: download aggregated PDF by class+date =====
+  document.addEventListener('DOMContentLoaded', function() {
+    const btn = document.getElementById('hw-download-btn');
+    if (!btn) return;
+    btn.onclick = async function () {
+      showPdfSpinner();
+      const year      = (document.getElementById('hwdl-year-value')||{}).value?.trim();
+      const className = (document.getElementById('hwdl-class-value')||{}).value?.trim();
+      const dateStr   = (document.getElementById('hwdl-date')||{}).value?.trim();
+      if (!year || !className || !dateStr) { alert('Select year, class and date.'); hidePdfSpinner(); return; }
+
+      try {
+        const snap = await db.collection('homework')
+          .where('year','==',year)
+          .where('class','==',className)
+          .where('date','==',dateStr)
+          .get();
+
+        if (snap.empty) { alert('No homework found for this selection.'); hidePdfSpinner(); return; }
+
+        const subjectOrder = [
+          "Telugu","Hindi","English","English 1","English 2","Math","Math 1 IIT","Math 1","Math 2 IIT","Math 2",
+          "Science","Physics IIT & NEET","Physics","Chemistry IIT & NEET","Chemistry","Biology NEET","Biology","Social"
+        ];
+
+        const map = {};
+        snap.forEach(d => {
+          const x = d.data();
+          map[(x.subject||'').trim().toLowerCase()] = x.text || '';
+        });
+
+        const items = subjectOrder.map(s => {
+          const k = s.trim().toLowerCase();
+          return map[k] ? { subject: s, syllabus: map[k] } : null;
+        }).filter(Boolean);
+
+        const hasIndic = items.some(d =>
+          /[\u0900-\u097F\u0C00-\u0C7F]/.test(d.syllabus||'') || /[\u0900-\u097F\u0C00-\u0C7F]/.test(d.subject||'')
+        );
+
+        if (hasIndic) {
+          await renderSyllabusWithHTML2PDF({
+            school: "St. Patrick's School",
+            subtitle: "IIT & NEET Foundation",
+            className: className + " - HOMEWORK",
+            exam: dateStr,
+            items
+          });
+        } else {
+          const { jsPDF } = window.jspdf;
+          const doc = new jsPDF();
+          let pageWidth = doc.internal.pageSize.getWidth();
+          let y = 18;
+
+          doc.setFontSize(18); doc.setFont(undefined, 'bold');
+          doc.text("St. Patrick's School", pageWidth/2, y, {align:'center'}); y+=9;
+
+          doc.setFontSize(14); doc.setFont(undefined, 'normal');
+          doc.text("IIT & NEET Foundation", pageWidth/2, y, {align:'center'}); y+=8;
+
+          doc.setFontSize(13); doc.setFont(undefined, 'bold');
+          doc.text(`${dateStr}`, pageWidth/2, y, {align:'center'}); y+=11;
+
+          doc.setFontSize(13);
+          doc.text(`${className.toUpperCase()} - HOMEWORK`, pageWidth/2, y, {align:'center'}); y+=11;
+
+          items.forEach(d => {
+            doc.setFont(undefined, 'bold'); doc.text(`${d.subject}:`, 10, y); y += 7;
+            doc.setFont(undefined, 'normal');
+            const lines = doc.splitTextToSize(normalizeSyllabus(d.syllabus || ''), 180);
+            doc.text(lines, 16, y);
+            y += lines.length * 7 + 2;
+            if (y > 270) { doc.addPage(); y = 14; }
+          });
+          doc.save(`${className}_${dateStr}_homework.pdf`);
+        }
+      } catch(e) {
+        console.error(e); alert('Error generating PDF.');
+      } finally {
+        hidePdfSpinner();
+      }
+    };
+  });
   </script>
   <div id="pdf-spinner" style="position:fixed; inset:0; background:rgba(15,61,107,.12); backdrop-filter:saturate(120%) blur(1px); display:none; align-items:center; justify-content:center; z-index:99999;">
   <div style="background:#0f3d6b; color:#fff; padding:14px 18px; border-radius:10px; box-shadow:0 6px 24px #0f3d6b33; display:flex; align-items:center; gap:10px;">
@@ -795,6 +1005,7 @@ const opt = {
 
 </body>
 </html>
+
 
 
 
