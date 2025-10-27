@@ -1227,10 +1227,13 @@ async function proceedWithGeneration(originalPrompt, sessionParams) {
 
 // Text Book requires a file (PDF/image)
 if ((sessionParams.questionType === "Text Book (MCQ Single)" || sessionParams.questionType === "Text Book (MCQ Multiple)") && !stagedFile) {
-  __qb_toast('Attach a PDF or image for Test Book mode.');
-  throw new Error('No file attached for Test Book mode.');
+  __qb_toast('Please upload an image or PDF of the textbook page.');
+  appendChatMessage('Please upload an image or PDF of the textbook page, then tap “Get Questions” again.', 'system-message', messagesArea);
+  // restore send button state and exit gracefully
+  sendBtn.innerHTML = `<i class="fas fa-paper-plane"></i>`;
+  updateSendButtonState(chatPromptInput, sendBtn);
+  return;
 }
-
     if (stagedFile) {
       let extractPrompt;
 
@@ -2041,8 +2044,11 @@ function buildChatGptGenerationPrompt(sessionParams) {
   const cls   = sessionParams.class || '';
   const subj  = sessionParams.subject || '';
   const chap  = sessionParams.chapter || '';
-  let qtype = sessionParams.questionType || 'MCQ (Single)';
-const isTextbook = /Text Book/i.test(sessionParams.questionType);
+  const rawType = sessionParams.questionType || 'MCQ (Single)';
+const isTextbook = /Text Book/i.test(rawType);
+const isMultiple = /Multiple/i.test(rawType);
+const qtypeForFormat = isMultiple ? 'MCQ (Multiple)' : 'MCQ (Single)';
+let qtype = rawType;
 const transcribeNote = isTextbook ? `
 TEXT BOOK MODE — IMPORTANT:
 • You will receive a page image or PDF from the school textbook.
@@ -2109,7 +2115,7 @@ STRICT ACCURACY (applies to all):
   // MCQ format
   const mcqFormat = `
 Output EXACTLY ${count} questions. Format each question EXACTLY as:
-Q<num>: Level <1/2/3>, 1 Mark [${qtype}]
+Q<num>: Level <1/2/3>, 1 Mark [${qtypeForFormat}]
 <Question text>
 A) <Option A>
 B) <Option B>
@@ -2166,14 +2172,15 @@ ${descFormat}`
   }
 
   // MCQ (Single or Multiple)
-  const levelBlock = isCBSE ? cbseLevels : foundationLevels;
-  const multiNote  = /Multiple/i.test(qtype) ? `\n${multiBlockRule}` : '';
+const levelBlock = isCBSE ? cbseLevels : foundationLevels;
+const multiNote  = /Multiple/i.test(qtype) ? `\n${multiBlockRule}` : '';
 
-  return (
-  `${header}
+return (
+`${header}
 ${levelBlock}
 ${transcribeNote}
-${descFormat}`
+${mcqFormat}
+${multiNote}`.trim()
 );
 }
 
@@ -2853,6 +2860,7 @@ function showEditPopupForQuestion(index) {
 </script> 
 </body> 
 </html>
+
 
 
 
