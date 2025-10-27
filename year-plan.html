@@ -379,6 +379,7 @@
     // Track current Homework doc & attachments
 let currentHWDocId = null;
 let currentAttachments = []; // [{url,name}]
+let pendingUploads = [];     // File[] staged across multiple chooser opens
 
 // ====== Helper: Setup Custom Dropdown ======
     function setupDropdown(containerId, options, initialValue, onChange) {
@@ -959,32 +960,38 @@ document.addEventListener('DOMContentLoaded', function () {
   });
   if (d1) d1.addEventListener('change', fetchAndShowExistingHomework);
 
- // show chosen filenames + clear (✕) button
+ // show chosen filenames + clear (✕) button, accumulating across opens
 const hwFile = document.getElementById('hw-file');
 const hwFileName = document.getElementById('hw-file-name');
 const hwFileClear = document.getElementById('hw-file-clear');
 
-function updateFileUI() {
-  const files = Array.from(hwFile?.files || []);
-  if (!files.length) {
+function renderPendingUploads() {
+  if (!pendingUploads.length) {
     hwFileName.textContent = '';
     if (hwFileClear) hwFileClear.style.display = 'none';
     return;
   }
-  hwFileName.textContent = files.length === 1
-    ? `Selected: ${files[0].name}`
-    : `Selected (${files.length}): ${files.map(f=>f.name).join(', ')}`;
+  hwFileName.textContent = pendingUploads.length === 1
+    ? `Selected: ${pendingUploads[0].name}`
+    : `Selected (${pendingUploads.length}): ${pendingUploads.map(f=>f.name).join(', ')}`;
   if (hwFileClear) hwFileClear.style.display = 'inline-flex';
 }
 
 if (hwFile && hwFileName) {
-  hwFile.addEventListener('change', updateFileUI);
-  updateFileUI(); // reflect initial state on load
-}
-if (hwFileClear && hwFile) {
-  hwFileClear.addEventListener('click', () => {
+  hwFile.addEventListener('change', () => {
+    const files = Array.from(hwFile?.files || []);
+    if (files.length) pendingUploads = pendingUploads.concat(files);
+    // clear the input so user can open it again and add more
     hwFile.value = '';
-    updateFileUI();
+    renderPendingUploads();
+  });
+  renderPendingUploads();
+}
+if (hwFileClear) {
+  hwFileClear.addEventListener('click', () => {
+    pendingUploads = [];
+    if (hwFile) hwFile.value = '';
+    renderPendingUploads();
   });
 }
 
@@ -1141,7 +1148,7 @@ btn.innerHTML = `<span class="fa-solid fa-spinner fa-spin"></span> Saving...`;
      // optional uploads (multiple)
 let newAttachments = [];
 try {
-  const files = Array.from(fileEl?.files || []);
+  const files = Array.from(pendingUploads || []);
   for (const f of files) {
     if (!f) continue;
     const nameOk = /\.pdf$/i.test(f.name || '');
@@ -1195,11 +1202,10 @@ payload.attachmentPath = firebase.firestore.FieldValue.delete();
       }
 
       showSavedMessage("Homework saved!");
-      if (fileEl) {
-        fileEl.value = '';
-        const n = document.getElementById('hw-file-name'); if (n) n.textContent='';
-        const c = document.getElementById('hw-file-clear'); if (c) c.style.display='none';
-      }
+      pendingUploads = [];
+if (fileEl) fileEl.value = '';
+const n = document.getElementById('hw-file-name'); if (n) n.textContent='';
+const c = document.getElementById('hw-file-clear'); if (c) c.style.display='none';
       await fetchAndShowExistingHomework();
     } catch (e) {
       console.error(e);
@@ -1331,6 +1337,7 @@ if (Array.isArray(d.attachments) && d.attachments.length) {
 
 </body>
 </html>
+
 
 
 
