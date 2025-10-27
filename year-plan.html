@@ -215,10 +215,18 @@
       <div class="dropdown-options"></div>
     </div>
 
-    <label>Class</label>
+        <label>Class</label>
     <div id="hw-class-dropdown" class="custom-dropdown">
       <input type="hidden" id="hw-class-value" value="3rd Class">
       <div class="selected-option"></div>
+      <div class="dropdown-options"></div>
+    </div>
+
+    <!-- NEW: Campus -->
+    <label>Campus</label>
+    <div id="hw-campus-dropdown" class="custom-dropdown">
+      <input type="hidden" id="hw-campus-value" value="Main Campus">
+      <div class="selected-option">Main Campus</div>
       <div class="dropdown-options"></div>
     </div>
 
@@ -252,10 +260,18 @@
       <div class="dropdown-options"></div>
     </div>
 
-    <label>Class</label>
+      <label>Class</label>
     <div id="hwdl-class-dropdown" class="custom-dropdown">
       <input type="hidden" id="hwdl-class-value" value="3rd Class">
       <div class="selected-option">3rd Class</div>
+      <div class="dropdown-options"></div>
+    </div>
+
+    <!-- NEW: Campus -->
+    <label>Campus</label>
+    <div id="hwdl-campus-dropdown" class="custom-dropdown">
+      <input type="hidden" id="hwdl-campus-value" value="Main Campus">
+      <div class="selected-option">Main Campus</div>
       <div class="dropdown-options"></div>
     </div>
 
@@ -327,6 +343,9 @@
         "Formative Assessment 1", "Formative Assessment 2", "Summative Assessment 1", "Formative Assessment 3", "Formative Assessment 4", "Revision Test 1", "Revision Test 2", "Revision Test 3"
       ]
     };
+
+     // ⬇ NEW: campuses
+    const CAMPUSES = ["Main Campus","IPD Campus"];
 
     // ====== Firebase Config ======
     const firebaseConfig = {
@@ -422,7 +441,11 @@ document.addEventListener('DOMContentLoaded', function() {
         const subjects = aiGeneratorConfig.subjectMappings[selClass];
         setupDropdown('hw-subject-dropdown', subjects, subjects[0]);
       }
-      onHWClassChange(aiGeneratorConfig.classes[0]);
+            onHWClassChange(aiGeneratorConfig.classes[0]);
+
+      // NEW: campus dropdowns
+      setupDropdown('hw-campus-dropdown',   CAMPUSES, CAMPUSES[0]);
+      setupDropdown('hwdl-campus-dropdown', CAMPUSES, CAMPUSES[0]);
 
       // --- HOMEWORK DOWNLOAD ---
       setupDropdown('hwdl-year-dropdown', years, years.length > 0 ? years[0] : "");
@@ -878,21 +901,25 @@ const opt = {
       const user = firebase.auth().currentUser;
       if (!user) { alert("You are not logged in. Please sign in first."); return; }
 
-      const year      = (document.getElementById('hw-year-value')||{}).value?.trim();
+           const year      = (document.getElementById('hw-year-value')||{}).value?.trim();
       const className = (document.getElementById('hw-class-value')||{}).value?.trim();
+      const campus    = (document.getElementById('hw-campus-value')||{}).value?.trim();
       const subject   = (document.getElementById('hw-subject-value')||{}).value?.trim();
       const dateStr   = (document.getElementById('hw-date')||{}).value?.trim();
       const text      = (document.getElementById('hw-text')||{}).value?.trim();
 
-      if (!year || !className || !subject || !dateStr || !text) {
+      if (!year || !className || !campus || !subject || !dateStr || !text) {
         alert("Please fill all fields before saving.");
         return;
       }
 
       try {
-        const snap = await db.collection("homework")
-          .where("year","==",year).where("class","==",className)
-          .where("subject","==",subject).where("date","==",dateStr)
+            const snap = await db.collection("homework")
+          .where("year","==",year)
+          .where("class","==",className)
+          .where("campus","==",campus)
+          .where("subject","==",subject)
+          .where("date","==",dateStr)
           .limit(1).get();
 
         if (!snap.empty) {
@@ -900,8 +927,14 @@ const opt = {
             text, updated: new Date()
           });
         } else {
-          await db.collection("homework").add({
-            year, class: className, subject, date: dateStr, text, created: new Date()
+                   await db.collection("homework").add({
+            year,
+            class: className,
+            campus,
+            subject,
+            date: dateStr,
+            text,
+            created: new Date()
           });
         }
         showSavedMessage("Homework saved!");
@@ -918,18 +951,19 @@ const opt = {
     if (!btn) return;
     btn.onclick = async function () {
       showPdfSpinner();
-      const year      = (document.getElementById('hwdl-year-value')||{}).value?.trim();
+            const year      = (document.getElementById('hwdl-year-value')||{}).value?.trim();
       const className = (document.getElementById('hwdl-class-value')||{}).value?.trim();
+      const campus    = (document.getElementById('hwdl-campus-value')||{}).value?.trim();
       const dateStr   = (document.getElementById('hwdl-date')||{}).value?.trim();
-      if (!year || !className || !dateStr) { alert('Select year, class and date.'); hidePdfSpinner(); return; }
+      if (!year || !className || !campus || !dateStr) { alert('Select year, class, campus and date.'); hidePdfSpinner(); return; }
 
       try {
-        const snap = await db.collection('homework')
+               const snap = await db.collection('homework')
           .where('year','==',year)
           .where('class','==',className)
+          .where('campus','==',campus)
           .where('date','==',dateStr)
           .get();
-
         if (snap.empty) { alert('No homework found for this selection.'); hidePdfSpinner(); return; }
 
         const subjectOrder = [
@@ -986,7 +1020,7 @@ const opt = {
             y += lines.length * 7 + 2;
             if (y > 270) { doc.addPage(); y = 14; }
           });
-          doc.save(`${className}_${dateStr}_homework.pdf`);
+           doc.save(`${className}_${campus}_${dateStr}_homework.pdf`);
         }
       } catch(e) {
         console.error(e); alert('Error generating PDF.');
@@ -1005,6 +1039,7 @@ const opt = {
 
 </body>
 </html>
+
 
 
 
