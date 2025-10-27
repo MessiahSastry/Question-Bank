@@ -946,6 +946,7 @@ function updateFileUI() {
 
 if (hwFile && hwFileName) {
   hwFile.addEventListener('change', updateFileUI);
+  updateFileUI(); // reflect initial state on load
 }
 if (hwFileClear && hwFile) {
   hwFileClear.addEventListener('click', () => {
@@ -999,105 +1000,94 @@ async function fetchAndShowExistingHomework() {
 
 // ===== HOMEWORK: save (upsert by year,class,subject,date) =====
   document.addEventListener('DOMContentLoaded', function() {
-    const btn = document.getElementById('hw-save-btn');
-    if (!btn) return;
+  const btn = document.getElementById('hw-save-btn');
+  if (!btn) return;
   btn.onclick = async function () {
-  const user = firebase.auth().currentUser;
-  if (!user) { alert("You are not logged in. Please sign in first."); return; }
-  btn.disabled = true;  // disable only after login check
+    // always re-enable in finally
+    try {
+      const user = firebase.auth().currentUser;
+      if (!user) { alert("You are not logged in. Please sign in first."); return; }
 
-  const year      = (document.getElementById('hw-year-value')||{}).value?.trim();
-  const className = (document.getElementById('hw-class-value')||{}).value?.trim();
-  const campus    = (document.getElementById('hw-campus-value')||{}).value?.trim();
-  const subject   = (document.getElementById('hw-subject-value')||{}).value?.trim();
-  const dateStr   = (document.getElementById('hw-date')||{}).value?.trim();
-  const text      = (document.getElementById('hw-text')||{}).value?.trim();
-  const fileEl    = document.getElementById('hw-file');
-  const file      = fileEl?.files?.[0] || null;
+      const year      = (document.getElementById('hw-year-value')||{}).value?.trim();
+      const className = (document.getElementById('hw-class-value')||{}).value?.trim();
+      const campus    = (document.getElementById('hw-campus-value')||{}).value?.trim();
+      const subject   = (document.getElementById('hw-subject-value')||{}).value?.trim();
+      const dateStr   = (document.getElementById('hw-date')||{}).value?.trim();
+      const text      = (document.getElementById('hw-text')||{}).value?.trim();
+      const fileEl    = document.getElementById('hw-file');
+      const file      = fileEl?.files?.[0] || null;
 
- if (!year || !className || !campus || !subject || !dateStr || !text) {
-  alert("Please fill all fields before saving.");
-  btn.disabled = false;
-  return;
-}
+      // disable only after we know user is logged in
+      btn.disabled = true;
 
-  // optional upload
-let attachmentUrl = '';
-let attachmentName = '';
-try {
-  if (file) {
-    // Accept real PDFs even if browser reports empty or octet-stream type
-    const nameOk = /\.pdf$/i.test(file.name || '');
-    const typeOk = (file.type === 'application/pdf') || (file.type === '') || (file.type === 'application/octet-stream');
-   if (!(nameOk || typeOk)) { alert('Only PDF files allowed.'); btn.disabled = false; return; }
+      if (!year || !className || !campus || !subject || !dateStr || !text) {
+        alert("Please fill all fields before saving.");
+        return; // re-enabled by finally
+      }
 
-    const safeName   = sanitizeFileName(file.name || 'worksheet.pdf');
-    const partYear   = sanitizePathPart(year);
-    const partClass  = sanitizePathPart(className);
-    const partCampus = sanitizePathPart(campus);
-    const partDate   = sanitizePathPart(dateStr);
-    const partSubj   = sanitizePathPart(subject);
+      // optional upload
+      let attachmentUrl = '';
+      let attachmentName = '';
+      try {
+        if (file) {
+          const nameOk = /\.pdf$/i.test(file.name || '');
+          const typeOk = (file.type === 'application/pdf') || (file.type === '') || (file.type === 'application/octet-stream');
+          if (!(nameOk || typeOk)) { alert('Only PDF files allowed.'); return; }
 
-    const path = `homework/${partYear}/${partClass}/${partCampus}/${partDate}/${partSubj}/${safeName}`;
-    const ref = firebase.storage().ref(path);
+          const safeName   = sanitizeFileName(file.name || 'worksheet.pdf');
+          const partYear   = sanitizePathPart(year);
+          const partClass  = sanitizePathPart(className);
+          const partCampus = sanitizePathPart(campus);
+          const partDate   = sanitizePathPart(dateStr);
+          const partSubj   = sanitizePathPart(subject);
 
-    // Provide metadata to help some browsers
-    await ref.put(file, { contentType: 'application/pdf' });
+          const path = `homework/${partYear}/${partClass}/${partCampus}/${partDate}/${partSubj}/${safeName}`;
+          const ref = firebase.storage().ref(path);
+          await ref.put(file, { contentType: 'application/pdf' });
+          attachmentUrl = await ref.getDownloadURL();
+          attachmentName = safeName;
+        }
+      } catch (e) {
+        console.error(e);
+        alert('Upload failed. Homework text will still be saved without the file.');
+        // continue to save text without file
+      }
 
-    attachmentUrl = await ref.getDownloadURL();
-    attachmentName = safeName;
-  }
-} catch (e) {
-  console.error(e);
-  alert('Upload failed. Homework text will still be saved without the file.');
-}
-  try {
-    const snap = await db.collection("homework")
-      .where("year","==",year)
-      .where("class","==",className)
-      .where("campus","==",campus)
-      .where("subject","==",subject)
-      .where("date","==",dateStr)
-      .limit(1).get();
+      const snap = await db.collection("homework")
+        .where("year","==",year)
+        .where("class","==",className)
+        .where("campus","==",campus)
+        .where("subject","==",subject)
+        .where("date","==",dateStr)
+        .limit(1).get();
 
-    const payload = {
-      year,
-      class: className,
-      campus,
-      subject,
-      date: dateStr,
-      text
-    };
-    if (attachmentUrl) {
-      payload.attachmentUrl = attachmentUrl;
-      payload.attachmentName = attachmentName;
+      const payload = { year, class: className, campus, subject, date: dateStr, text };
+      if (attachmentUrl) {
+        payload.attachmentUrl = attachmentUrl;
+        payload.attachmentName = attachmentName;
+      }
+
+      if (!snap.empty) {
+        await db.collection("homework").doc(snap.docs[0].id).update({ ...payload, updated: new Date() });
+      } else {
+        await db.collection("homework").add({ ...payload, created: new Date() });
+      }
+
+      showSavedMessage("Homework saved!");
+      if (fileEl) {
+        fileEl.value = '';
+        const n = document.getElementById('hw-file-name'); if (n) n.textContent='';
+        const c = document.getElementById('hw-file-clear'); if (c) c.style.display='none';
+      }
+      await fetchAndShowExistingHomework();
+    } catch (e) {
+      console.error(e);
+      alert("Error saving. Try again.");
+    } finally {
+      btn.disabled = false;
     }
-
-    if (!snap.empty) {
-      await db.collection("homework").doc(snap.docs[0].id).update({
-        ...payload, updated: new Date()
-      });
-    } else {
-      await db.collection("homework").add({
-        ...payload, created: new Date()
-      });
-    }
-
-   showSavedMessage("Homework saved!");
-// clear file input after successful save
-if (fileEl) {
-  fileEl.value = '';
-  const n = document.getElementById('hw-file-name'); if (n) n.textContent='';
-  const c = document.getElementById('hw-file-clear'); if (c) c.style.display='none';
-}
-await fetchAndShowExistingHomework();
-btn.disabled = false;
-  } catch (e) {
-  console.error(e); alert("Error saving. Try again.");
-  btn.disabled = false;
-}
-};
-  });
+  };
+});
 
   // ===== HOMEWORK: download aggregated PDF by class+date =====
   document.addEventListener('DOMContentLoaded', function() {
@@ -1221,6 +1211,7 @@ const items = subjectOrder.map(s => {
 
 </body>
 </html>
+
 
 
 
