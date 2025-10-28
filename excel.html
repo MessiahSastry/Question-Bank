@@ -694,6 +694,7 @@ XlsxPopulate.fromBlankAsync().then(workbook => {
   sheet.row(5).height(34); // for wrapped R/W/P/ST/TOTAL
 
   // Download
+    // Download
   return workbook.outputAsync().then(blob => {
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
@@ -704,6 +705,8 @@ XlsxPopulate.fromBlankAsync().then(workbook => {
     a.remove();
     statusDiv.textContent = "LEAP Excel downloaded!";
   });
+}); 
+
   // ---------- Copy Subject for LEAP (TSV block: R W P ST Total) ----------
 copyLeapBtn.onclick = function(){
   if (!selectedExamObj){
@@ -821,7 +824,119 @@ compactViewBtn.onclick = function(){
   statusDiv.textContent = "Error generating LEAP Excel: " + err.message;
 });
 };
+// ---------- Copy Subject for LEAP (TSV block: R W P ST Total) ----------
+copyLeapBtn.onclick = function(){
+  if (!selectedExamObj){
+    selectedExam = examSelected.dataset.value;
+    selectedExamObj = examMap[selectedExam];
+  }
+  if (!selectedExamObj){ statusDiv.textContent = "Select an exam."; return; }
 
+  const subjectsLeap = mapToLeapTotals(selectedExamObj, className, {}).map(x => x.name);
+  const subjectOptions = subjectsLeap.map((s,i)=>`<option value="${i}">${s}</option>`).join('');
+
+  const body = `
+    <div style="margin-bottom:10px;">
+      <label class="form-label">Subject:</label>
+      <select id="copyLeapSubject" class="select-inline">${subjectOptions}</select>
+      <button id="renderCopyLeap" class="copy-btn" style="margin-left:8px;">Render</button>
+    </div>
+    <textarea id="copyLeapArea" class="textarea-block" readonly placeholder="Select subject and click Render"></textarea>
+  `;
+  const footer = `<button id="copyLeapCopyBtn" class="copy-btn" disabled>Copy</button>`;
+
+  openModal('Copy Subject for LEAP', body, footer);
+
+  const sel = document.getElementById('copyLeapSubject');
+  const renderBtn = document.getElementById('renderCopyLeap');
+  const ta = document.getElementById('copyLeapArea');
+  const copyBtn = document.getElementById('copyLeapCopyBtn');
+
+  function buildTSVFor(idx){
+    const lines = [];
+    // lines.push('R\tW\tP\tST\tTOTAL'); // optional header row
+    for (const stu of students){
+      const marks = marksMap[stu.id][selectedExamObj.id] || {};
+      const mapped = mapToLeapTotals(selectedExamObj, className, marks);
+      const subj = mapped[idx];
+      const t50 = passFloor50(subj.total50);
+      const parts = splitToTools(t50, stu.roll); // [R,W,P,ST,Total]
+      lines.push(`${parts[0]}\t${parts[1]}\t${parts[2]}\t${parts[3]}\t${parts[4]}`);
+    }
+    return lines.join('\n');
+  }
+
+  renderBtn.onclick = ()=>{
+    const idx = parseInt(sel.value,10) || 0;
+    ta.value = buildTSVFor(idx);
+    copyBtn.disabled = false;
+  };
+  copyBtn.onclick = ()=>{
+    ta.select(); ta.setSelectionRange(0, ta.value.length);
+    document.execCommand('copy');
+    copyBtn.textContent = 'Copied!';
+    setTimeout(()=>copyBtn.textContent='Copy', 1200);
+  };
+};
+
+// ---------- Compact Phone View (one-student-per-card) ----------
+compactViewBtn.onclick = function(){
+  if (!selectedExamObj){
+    selectedExam = examSelected.dataset.value;
+    selectedExamObj = examMap[selectedExam];
+  }
+  if (!selectedExamObj){ statusDiv.textContent = "Select an exam."; return; }
+
+  const subjectsLeap = mapToLeapTotals(selectedExamObj, className, {}).map(x => x.name);
+  const subjectOptions = subjectsLeap.map((s,i)=>`<option value="${i}">${s}</option>`).join('');
+
+  const body = `
+    <div style="margin-bottom:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+      <label class="form-label" style="margin:0;">Subject:</label>
+      <select id="compactSubject" class="select-inline">${subjectOptions}</select>
+      <button id="refreshCompact" class="copy-btn">Show</button>
+    </div>
+    <div id="cardWrap" class="card-wrap"></div>
+  `;
+  const footer = `<button class="copy-btn" onclick="closeModal()">Close</button>`;
+
+  openModal('Compact Phone View', body, footer);
+
+  const sel = document.getElementById('compactSubject');
+  const showBtn = document.getElementById('refreshCompact');
+  const wrap = document.getElementById('cardWrap');
+
+  function renderCards(idx){
+    wrap.innerHTML = '';
+    for (const stu of students){
+      const marks = marksMap[stu.id][selectedExamObj.id] || {};
+      const mapped = mapToLeapTotals(selectedExamObj, className, marks);
+      const subj = mapped[idx];
+      const t50 = passFloor50(subj.total50);
+      const [r,w,p,st,total] = splitToTools(t50, stu.roll);
+      const card = document.createElement('div');
+      card.className = 'student-card';
+      card.innerHTML = `
+        <div class="card-title">${stu.roll}. ${stu.name}</div>
+        <div class="badges">
+          <span class="badge"><span class="lbl">R</span><span class="val">${r}</span></span>
+          <span class="badge"><span class="lbl">W</span><span class="val">${w}</span></span>
+          <span class="badge"><span class="lbl">P</span><span class="val">${p}</span></span>
+          <span class="badge"><span class="lbl">ST</span><span class="val">${st}</span></span>
+          <span class="badge"><span class="lbl">TOTAL</span><span class="val">${total}</span></span>
+        </div>
+      `;
+      wrap.appendChild(card);
+    }
+  }
+
+  showBtn.onclick = ()=>{
+    const idx = parseInt(sel.value,10) || 0;
+    renderCards(idx);
+  };
+  // initial render
+  renderCards(0);
+};
     excelBtn.onclick = function(){
       if (!selectedExamObj){
         selectedExam = examSelected.dataset.value;
@@ -1137,6 +1252,7 @@ compactViewBtn.onclick = function(){
   </script>
 </body>
 </html>
+
 
 
 
