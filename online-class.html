@@ -251,7 +251,15 @@
       return { classDocId: cDoc.id, sectionDocId: sSnap.docs[0].id };
     }
 
-    // ======= Meeting Load =======
+   // ======= Auth (anonymous) =======
+async function ensureAuth() {
+  return new Promise((resolve) => {
+    const done = () => resolve();
+    firebase.auth().onAuthStateChanged(u => { if (u) done(); });
+    try { firebase.auth().signInAnonymously().catch(() => done()); } catch(e){ done(); }
+  });
+}
+// ======= Meeting Load =======
     async function loadMeeting(){
       if (!meetingId) { $('#meeting-info').textContent='Invalid link. Meeting id missing.'; return; }
       showSpin(true);
@@ -516,27 +524,31 @@
     }
 
     // ======= Wiring =======
-    window.onload = function(){
-      // Make sure header/container are outside modal
-      try{
-        const modal = $('#quiz-auth-modal');
-        const header = $('#main-header');
-        const container = $('.container');
-        if (modal && header && modal.contains(header)) document.body.appendChild(header);
-        if (modal && container && modal.contains(container)) document.body.appendChild(container);
-      }catch(e){}
+   window.onload = async function(){
+  // Make sure header/container are outside modal
+  try{
+    const modal = $('#quiz-auth-modal');
+    const header = $('#main-header');
+    const container = $('.container');
+    if (modal && header && modal.contains(header)) document.body.appendChild(header);
+    if (modal && container && modal.contains(container)) document.body.appendChild(container);
+  }catch(e){}
 
-      // Inputs
-      const phoneEl = $('#student-phone');
-      ['input','change','blur','paste'].forEach(evt => phoneEl.addEventListener(evt, fetchAndShowStudentName));
-      attachPINEyes();
-      $('#activate-btn').onclick = handleActivate;
-      $('#login-btn').onclick = handleLogin;
-      $('#join-btn').onclick = joinZoom;
+  // Inputs
+  const phoneEl = $('#student-phone');
+  ['input','change','blur','paste'].forEach(evt => phoneEl.addEventListener(evt, fetchAndShowStudentName));
+  attachPINEyes();
+  $('#activate-btn').onclick = handleActivate;
+  $('#login-btn').onclick = handleLogin;
+  $('#join-btn').onclick = joinZoom;
 
-      // Load meeting
-      loadMeeting();
-    };
+  // Ensure anonymous auth before first Firestore read
+  await ensureAuth();
+
+  // Load meeting
+  loadMeeting();
+};
   </script>
 </body>
 </html>
+
