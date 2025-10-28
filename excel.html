@@ -39,6 +39,22 @@
     .download-btn:hover:not(:disabled) { background:#164b7d; }
     .status { color:#e26c17; margin-top:18px; font-size:1.09em; min-height:25px; }
     @media (max-width:560px){ .setup-form-container{padding:13px 2vw 24px;} }
+    .modal-backdrop{position:fixed;inset:0;background:#0008;display:none;align-items:center;justify-content:center;z-index:999;}
+.modal{background:#fff;border-radius:12px;max-width:720px;width:92vw;max-height:80vh;overflow:auto;box-shadow:0 8px 28px rgba(0,0,0,.25);}
+.modal-header{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid #e6eef7;}
+.modal-title{font-weight:700;color:#0f3d6b;}
+.modal-body{padding:12px 16px;}
+.modal-footer{padding:10px 16px;border-top:1px solid #e6eef7;display:flex;gap:10px;justify-content:flex-end;}
+.close-x{border:none;background:transparent;font-size:20px;cursor:pointer;color:#1762a7;}
+.select-inline{border:1px solid #1467b7;border-radius:7px;padding:8px 10px;background:#f7fafd;color:#12416c;}
+.textarea-block{width:100%;min-height:240px;border:1px solid #cfe1f8;border-radius:10px;padding:10px;font-family:monospace;white-space:pre;}
+.card-wrap{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;}
+.student-card{border:1px solid #e5eef9;border-radius:12px;padding:12px;background:#f8fbff;}
+.card-title{font-weight:700;color:#0f3d6b;margin-bottom:8px;}
+.badge{display:inline-block;border:1px solid #cfe1f8;border-radius:8px;padding:6px 8px;margin:4px 4px 0 0;background:#fff;font-weight:700;min-width:64px;text-align:center;}
+.badge .lbl{display:block;font-size:11px;color:#185496;font-weight:600;}
+.badge .val{display:block;font-size:18px;}
+.copy-btn{background:#1762a7;color:#fff;border:none;border-radius:8px;padding:8px 14px;cursor:pointer;font-weight:600;}
   </style>
 </head>
 <body>
@@ -70,13 +86,31 @@
       </button>
       
       <button class="download-btn" id="pdfBtn" disabled>
-        <i class="fa-solid fa-file-pdf"></i> Download PDF
-      </button>
+  <i class="fa-solid fa-file-pdf"></i> Download PDF
+</button>
 
+<button class="download-btn" id="copyLeapBtn" disabled>
+  <i class="fa-solid fa-copy"></i> Copy Subject for LEAP
+</button>
+
+<button class="download-btn" id="compactViewBtn" disabled>
+  <i class="fa-solid fa-mobile-screen-button"></i> Compact Phone View
+</button>
 
         <div class="status" id="status"></div>
       </div>
-    </main>
+      <!-- Modal (reused for both features) -->
+  <div class="modal-backdrop" id="utilModalBackdrop" role="dialog" aria-modal="true" aria-hidden="true">
+    <div class="modal" role="document">
+      <div class="modal-header">
+        <div class="modal-title" id="utilModalTitle">Tools</div>
+        <button class="close-x" id="utilModalClose" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body" id="utilModalBody"></div>
+      <div class="modal-footer" id="utilModalFooter"></div>
+    </div>
+  </div>
+</main>
   </div>
 
   <script>
@@ -164,8 +198,16 @@ const examList = document.getElementById('examList');
 const excelBtn = document.getElementById('excelBtn');
 const leapBtn = document.getElementById('leapBtn');
 const pdfBtn = document.getElementById('pdfBtn');
+const copyLeapBtn = document.getElementById('copyLeapBtn');
+const compactViewBtn = document.getElementById('compactViewBtn');
 const statusDiv = document.getElementById('status');
 const headerYear = document.getElementById('header-year');
+
+const utilModal = document.getElementById('utilModalBackdrop');
+const utilModalTitle = document.getElementById('utilModalTitle');
+const utilModalBody = document.getElementById('utilModalBody');
+const utilModalFooter = document.getElementById('utilModalFooter');
+const utilModalClose = document.getElementById('utilModalClose');
 
     // -- Get session/class/section from storage --
     let academicYear = localStorage.getItem('sp_selectedYear') || '';
@@ -184,7 +226,7 @@ const headerYear = document.getElementById('header-year');
     auth.onAuthStateChanged(function(user){
       if (!user){
         statusDiv.textContent = "Please login.";
-pdfBtn.disabled = excelBtn.disabled = leapBtn.disabled = true;
+pdfBtn.disabled = excelBtn.disabled = leapBtn.disabled = copyLeapBtn.disabled = compactViewBtn.disabled = true;
         return;
       }
       loadExams();
@@ -196,7 +238,7 @@ pdfBtn.disabled = excelBtn.disabled = leapBtn.disabled = true;
       examSelected.dataset.value = '';
       examList.innerHTML = '';
       examSelected.classList.add('disabled');
-      excelBtn.disabled = pdfBtn.disabled = leapBtn.disabled = true;
+     excelBtn.disabled = pdfBtn.disabled = leapBtn.disabled = copyLeapBtn.disabled = compactViewBtn.disabled = true;
       statusDiv.textContent = "";
 
       if (!academicYear || !classId || !sectionId){
@@ -263,13 +305,13 @@ pdfBtn.disabled = excelBtn.disabled = leapBtn.disabled = true;
         }
 
         statusDiv.textContent = "";
-excelBtn.disabled = pdfBtn.disabled = leapBtn.disabled = false;
+excelBtn.disabled = pdfBtn.disabled = leapBtn.disabled = copyLeapBtn.disabled = compactViewBtn.disabled = false;
 
       } catch(err){
         statusDiv.textContent = "Error: " + err.message;
         examSelected.textContent = "--Select--";
         examSelected.classList.add('disabled');
-        leapBtn.disabled = true;
+        leapBtn.disabled = copyLeapBtn.disabled = compactViewBtn.disabled = true;
       }
     }
 
@@ -417,7 +459,22 @@ function splitToTools(total50, roll){
 
   return [...floors, floors.reduce((a,b)=>a+b,0)]; // [T1,T2,T3,T4,Total]
 }
-
+// ---------- Modal helpers ----------
+function openModal(title, bodyHTML, footerHTML=''){
+  utilModalTitle.textContent = title || '';
+  utilModalBody.innerHTML = bodyHTML || '';
+  utilModalFooter.innerHTML = footerHTML || '';
+  utilModal.style.display = 'flex';
+  utilModal.setAttribute('aria-hidden','false');
+}
+function closeModal(){
+  utilModal.style.display = 'none';
+  utilModal.setAttribute('aria-hidden','true');
+}
+utilModalClose.onclick = closeModal;
+utilModal.addEventListener('click', (e)=>{
+  if (e.target === utilModal) closeModal();
+});
     // ------------- EXCEL EXPORT -------------
     // ------------- EXCEL for LEAP EXPORT -------------
 leapBtn.onclick = function(){
@@ -647,6 +704,119 @@ XlsxPopulate.fromBlankAsync().then(workbook => {
     a.remove();
     statusDiv.textContent = "LEAP Excel downloaded!";
   });
+  // ---------- Copy Subject for LEAP (TSV block: R W P ST Total) ----------
+copyLeapBtn.onclick = function(){
+  if (!selectedExamObj){
+    selectedExam = examSelected.dataset.value;
+    selectedExamObj = examMap[selectedExam];
+  }
+  if (!selectedExamObj){ statusDiv.textContent = "Select an exam."; return; }
+
+  const subjectsLeap = mapToLeapTotals(selectedExamObj, className, {}).map(x => x.name);
+  const subjectOptions = subjectsLeap.map((s,i)=>`<option value="${i}">${s}</option>`).join('');
+
+  const body = `
+    <div style="margin-bottom:10px;">
+      <label class="form-label">Subject:</label>
+      <select id="copyLeapSubject" class="select-inline">${subjectOptions}</select>
+      <button id="renderCopyLeap" class="copy-btn" style="margin-left:8px;">Render</button>
+    </div>
+    <textarea id="copyLeapArea" class="textarea-block" readonly placeholder="Select subject and click Render"></textarea>
+  `;
+  const footer = `<button id="copyLeapCopyBtn" class="copy-btn" disabled>Copy</button>`;
+
+  openModal('Copy Subject for LEAP', body, footer);
+
+  const sel = document.getElementById('copyLeapSubject');
+  const renderBtn = document.getElementById('renderCopyLeap');
+  const ta = document.getElementById('copyLeapArea');
+  const copyBtn = document.getElementById('copyLeapCopyBtn');
+
+  function buildTSVFor(idx){
+    const lines = [];
+    // Header row (optional): uncomment if you want it included in paste
+    // lines.push('R\tW\tP\tST\tTOTAL');
+    for (const stu of students){
+      const marks = marksMap[stu.id][selectedExamObj.id] || {};
+      const mapped = mapToLeapTotals(selectedExamObj, className, marks);
+      const subj = mapped[idx];
+      const t50 = passFloor50(subj.total50);
+      const parts = splitToTools(t50, stu.roll); // [R,W,P,ST,Total]
+      lines.push(`${parts[0]}\t${parts[1]}\t${parts[2]}\t${parts[3]}\t${parts[4]}`);
+    }
+    return lines.join('\n');
+  }
+
+  renderBtn.onclick = ()=>{
+    const idx = parseInt(sel.value,10) || 0;
+    ta.value = buildTSVFor(idx);
+    copyBtn.disabled = false;
+  };
+  copyBtn.onclick = ()=>{
+    ta.select(); ta.setSelectionRange(0, ta.value.length);
+    document.execCommand('copy');
+    copyBtn.textContent = 'Copied!';
+    setTimeout(()=>copyBtn.textContent='Copy', 1200);
+  };
+};
+  // ---------- Compact Phone View (one-student-per-card) ----------
+compactViewBtn.onclick = function(){
+  if (!selectedExamObj){
+    selectedExam = examSelected.dataset.value;
+    selectedExamObj = examMap[selectedExam];
+  }
+  if (!selectedExamObj){ statusDiv.textContent = "Select an exam."; return; }
+
+  const subjectsLeap = mapToLeapTotals(selectedExamObj, className, {}).map(x => x.name);
+  const subjectOptions = subjectsLeap.map((s,i)=>`<option value="${i}">${s}</option>`).join('');
+
+  const body = `
+    <div style="margin-bottom:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+      <label class="form-label" style="margin:0;">Subject:</label>
+      <select id="compactSubject" class="select-inline">${subjectOptions}</select>
+      <button id="refreshCompact" class="copy-btn">Show</button>
+    </div>
+    <div id="cardWrap" class="card-wrap"></div>
+  `;
+  const footer = `<button class="copy-btn" onclick="closeModal()">Close</button>`;
+
+  openModal('Compact Phone View', body, footer);
+
+  const sel = document.getElementById('compactSubject');
+  const showBtn = document.getElementById('refreshCompact');
+  const wrap = document.getElementById('cardWrap');
+
+  function renderCards(idx){
+    wrap.innerHTML = '';
+    for (const stu of students){
+      const marks = marksMap[stu.id][selectedExamObj.id] || {};
+      const mapped = mapToLeapTotals(selectedExamObj, className, marks);
+      const subj = mapped[idx];
+      const t50 = passFloor50(subj.total50);
+      const [r,w,p,st,total] = splitToTools(t50, stu.roll);
+      const card = document.createElement('div');
+      card.className = 'student-card';
+      card.innerHTML = `
+        <div class="card-title">${stu.roll}. ${stu.name}</div>
+        <div class="badges">
+          <span class="badge"><span class="lbl">R</span><span class="val">${r}</span></span>
+          <span class="badge"><span class="lbl">W</span><span class="val">${w}</span></span>
+          <span class="badge"><span class="lbl">P</span><span class="val">${p}</span></span>
+          <span class="badge"><span class="lbl">ST</span><span class="val">${st}</span></span>
+          <span class="badge"><span class="lbl">TOTAL</span><span class="val">${total}</span></span>
+        </div>
+      `;
+      wrap.appendChild(card);
+    }
+  }
+
+  showBtn.onclick = ()=>{
+    const idx = parseInt(sel.value,10) || 0;
+    renderCards(idx);
+  };
+  // initial render
+  renderCards(0);
+};
 }).catch(err => {
   statusDiv.textContent = "Error generating LEAP Excel: " + err.message;
 });
@@ -967,6 +1137,7 @@ XlsxPopulate.fromBlankAsync().then(workbook => {
   </script>
 </body>
 </html>
+
 
 
 
