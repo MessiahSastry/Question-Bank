@@ -221,17 +221,26 @@
     });
 
     async function preloadTeacherProfile(){
-      try {
-        const userDoc = await db.collection('users').doc(auth.currentUser.uid).get();
-        const displayName = userDoc.exists ? (userDoc.data().displayName || "") : "";
-        if (displayName) $('#teacherName').value = displayName;
+  try {
+    // Try users doc
+    let displayName = "";
+    const udoc = await db.collection('users').doc(auth.currentUser.uid).get();
+    if (udoc.exists) displayName = (udoc.data().displayName || "").trim();
 
-        // default Zoom link
-        const pref = await db.collection('users').doc(auth.currentUser.uid).collection('settings').doc('zoom').get();
-        const link = pref.exists ? (pref.data().link || "") : "";
-        if (link) $('#zoomLink').value = link;
-      } catch(e){ console.warn(e); }
-    }
+    // If empty, try Auth profile
+    if (!displayName) displayName = (auth.currentUser.displayName || "").trim();
+
+    if (displayName) $('#teacherName').value = displayName;
+
+    // default Zoom link
+    const pref = await db.collection('users').doc(auth.currentUser.uid)
+      .collection('settings').doc('zoom').get();
+    const link = pref.exists ? (pref.data().link || "") : "";
+    if (link) $('#zoomLink').value = link;
+  } catch(e){
+    console.warn(e);
+  }
+}
 
     async function loadClasses(pre = {}){
       const year = getActiveYear();
@@ -324,10 +333,19 @@
 
       showSpin(true);
       try {
-        // save teacher default link
-        if ($('#saveDefault').checked) {
-          await db.collection('users').doc(auth.currentUser.uid).collection('settings').doc('zoom').set({ link: zoom }, { merge: true });
-        }
+       // save teacher default link
+if ($('#saveDefault').checked) {
+  await db.collection('users').doc(auth.currentUser.uid)
+    .collection('settings').doc('zoom')
+    .set({ link: zoom }, { merge: true });
+}
+
+// ALSO persist the teacher's display name so it loads next time
+await db.collection('users').doc(auth.currentUser.uid)
+  .set({ displayName: teacherName }, { merge: true });
+
+// Keep Firebase Auth profile in sync (no-op if not allowed)
+try { await auth.currentUser.updateProfile({ displayName: teacherName }); } catch(_) {}
 
         // create meeting
         const ref = await db.collection('meetings').add({
@@ -439,4 +457,5 @@ ${studentLink}
   </script>
 </body>
 </html>
+
 
