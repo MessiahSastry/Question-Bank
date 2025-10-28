@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Create Online Class (Zoom) | St. Patrick's School</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <style>
+    body { background:#f4f8fc; margin:0; font-family:'Segoe UI', Arial, sans-serif; color:#0f2a49; }
+    /* Header (match your quiz) */
+    #main-header{
+      background:linear-gradient(90deg,#1762a7,#0f3d6b);
+      color:#fff;
+      border-bottom-left-radius:28px; border-bottom-right-radius:28px;
+      min-height:86px; display:flex; flex-direction:column; align-items:center; justify-content:center;
+      padding:15px 10px 18px 10px; box-sizing:border-box; position:fixed; top:0; left:0; width:100vw; z-index:100;
+    }
+    .school-title{ font-size:1.7em; font-weight:bold; margin:0; }
+    .subtitle{ font-size:1.04em; color:#e0eaff; margin-top:4px; }
+
+    /* Card */
+    .container {
+      background:#fff; max-width:520px; margin:28px auto 0 auto;
+      box-shadow:0 4px 16px #0f3d6b22; border-radius:18px; padding:24px 20px 20px 20px;
+      margin-top:110px;
+    }
+    .title { font-size:1.28em; color:#1762a7; font-weight:bold; text-align:center; margin: -6px 0 12px 0; }
+    .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+    label { font-weight:600; color:#185496; }
+    input, select, button, textarea {
+      width:100%; padding:12px; border-radius:10px; border:1.3px solid #bcd6ef; font-size:1.02em; box-sizing:border-box;
+    }
+    input, select, textarea { background:#f7fafd; color:#12416c; }
+    button {
+      background:#1762a7; color:#fff; border:none; font-weight:700; cursor:pointer;
+      box-shadow:0 2px 10px #1762a733; letter-spacing:.02em;
+    }
+    button.ghost{ background:#fff; color:#1762a7; border:1px solid #1762a7; box-shadow:none; }
+    .muted{ color:#51729d; } .small{ font-size:.95em; } .success{ color:#126c30; } .danger{ color:#c82333; }
+    .btns { display:flex; gap:10px; flex-wrap:wrap; margin-top:8px; }
+    .hint { font-size:.9em; color:#6b89b3; margin-top:4px; }
+
+    /* Spinner */
+    #page-spinner{
+      display:none; position:fixed; inset:0; background:rgba(0,0,0,0.15);
+      z-index:9999; align-items:center; justify-content:center;
+    }
+    #page-spinner > div{
+      background:#fff; padding:28px 24px; border-radius:16px; box-shadow:0 4px 24px #0f3d6b25; display:flex; flex-direction:column; align-items:center;
+    }
+
+    /* Share modal (quiz style) */
+    .share-modal{
+      position:fixed; inset:0; background:rgba(12,29,68,0.12); z-index:9999; display:flex; align-items:center; justify-content:center;
+    }
+    .share-card{
+      background:#fff; padding:28px 22px 18px 22px; border-radius:14px; max-width:94vw; width:410px; box-shadow:0 6px 22px rgba(23,98,167,0.14);
+      display:flex; flex-direction:column; align-items:center;
+    }
+    textarea.msg{
+      width:100%; height:230px; font-size:1.05em; padding:10px 8px; border-radius:8px; border:1.1px solid #bcd6ef; background:#f9fcff; resize:none; margin-bottom:18px;
+      font-family:'Times New Roman', Times, serif; text-align:left;
+    }
+  </style>
+
+  <!-- Firebase compat (matches your other pages) -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+</head>
+<body>
+  <div id="page-spinner">
+    <div>
+      <i class="fa fa-spinner fa-spin" style="font-size:2.2em;color:#1762a7;margin-bottom:10px;"></i>
+      <div style="color:#1762a7;font-weight:bold;">Loading…</div>
+    </div>
+  </div>
+
+  <header id="main-header">
+    <h1 class="school-title">St. Patrick's School</h1>
+    <div class="subtitle">IIT & NEET FOUNDATION</div>
+  </header>
+
+  <div class="container">
+    <div class="title">Create Online Class (Zoom)</div>
+
+    <div class="row">
+      <div style="flex:1 1 48%;">
+        <label>Class</label>
+        <select id="classSel"><option value="">Loading…</option></select>
+      </div>
+      <div style="flex:1 1 48%;">
+        <label>Section</label>
+        <select id="sectionSel" disabled><option value="">Select Class first</option></select>
+      </div>
+    </div>
+
+    <div class="row" style="margin-top:10px;">
+      <div style="flex:1 1 100%;">
+        <label>Teacher Name</label>
+        <input id="teacherName" placeholder="Teacher name" />
+      </div>
+    </div>
+
+    <div class="row" style="margin-top:10px;">
+      <div style="flex:1 1 100%;">
+        <label>Subject</label>
+        <input id="subject" placeholder="e.g., English 1 / Physics" />
+      </div>
+    </div>
+
+    <div class="row" style="margin-top:10px;">
+      <div style="flex:1 1 100%;">
+        <label>Topic</label>
+        <input id="topic" placeholder="e.g., Reported Speech / Motion in a Straight Line" />
+      </div>
+    </div>
+
+    <div class="row" style="margin-top:10px;">
+      <div style="flex:1 1 100%;">
+        <label>Date & Time</label>
+        <input id="when" type="datetime-local" />
+      </div>
+    </div>
+
+    <div class="row" style="margin-top:10px;">
+      <div style="flex:1 1 100%;">
+        <label>Zoom Link</label>
+        <input id="zoomLink" placeholder="Paste Zoom invite URL (https://zoom.us/j/... or us06web.zoom.us/...)" />
+        <div class="hint"><input type="checkbox" id="saveDefault" checked /> Save this as my default Zoom link</div>
+      </div>
+    </div>
+
+    <div class="btns">
+      <button id="saveBtn"><i class="fa fa-floppy-disk"></i>&nbsp; Save</button>
+      <button id="waBtn" class="ghost" disabled><i class="fa-brands fa-whatsapp"></i>&nbsp; Send WhatsApp</button>
+      <button id="startBtn" class="ghost" disabled><i class="fa fa-video"></i>&nbsp; Start Meeting</button>
+    </div>
+
+    <div id="status" class="hint" style="min-height:22px;margin-top:8px;"></div>
+  </div>
+
+  <script>
+    // ==================== CONFIG ====================
+    const firebaseConfig = {
+      apiKey: "AIzaSyAszVhWXUUOYLQ7VimKmPKf1yEu_CI9RCE",
+      authDomain: "stpatricks-questionbank.firebaseapp.com",
+      projectId: "stpatricks-questionbank",
+      storageBucket: "stpatricks-questionbank.appspot.com",
+      messagingSenderId: "917615322861",
+      appId: "1:917615322861:web:c6c890aa2184dd395b8ee4"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+    const auth = firebase.auth();
+
+    // ==================== UTILS =====================
+    const $ = s => document.querySelector(s);
+    function showSpin(on){ $('#page-spinner').style.display = on ? 'flex' : 'none'; }
+    function b64(s){ try{ return btoa(unescape(encodeURIComponent(s||""))); }catch(e){ return ""; } }
+    function fmt(d){ try{ return new Date(d).toLocaleString(); }catch(e){ return d; } }
+    function getAcademicYear(startMonthIdx = 5) { // June start
+      const now = new Date(); const y = now.getFullYear(); const m = now.getMonth();
+      const startYear = (m >= startMonthIdx) ? y : (y - 1);
+      const nextShort = String((startYear + 1) % 100).padStart(2,'0');
+      return `${startYear}-${nextShort}`; // e.g. 2025-26
+    }
+    function getActiveYear(){
+      // 1) ?year=YYYY-YY; 2) sp_selectedYear; 3) computed
+      const q = new URLSearchParams(location.search).get('year');
+      if (q && /^\d{4}-\d{2}$/.test(q)) return q;
+      const stored = localStorage.getItem('sp_selectedYear');
+      if (stored && /^\d{4}-\d{2}$/.test(stored)) return stored;
+      return getAcademicYear();
+    }
+    // Pull current context from localStorage (set by student.html)
+    function getPreselectedContext(){
+      return {
+        classId:     localStorage.getItem('sp_selectedClassId')     || '',
+        className:   localStorage.getItem('sp_selectedClassName')   || '',
+        sectionId:   localStorage.getItem('sp_selectedSectionId')   || '',
+        sectionName: localStorage.getItem('sp_selectedSectionName') || ''
+      };
+    }
+    // Convert any Zoom invite URL -> Zoom Web Client join URL
+    function toWebClientUrl(normalUrl) {
+      try {
+        const u = new URL(normalUrl);
+        // path may be /j/<id> or /wc/<id>/join; normalize to /wc/<id>/join
+        const parts = u.pathname.split('/').filter(Boolean);
+        let id = parts.pop();
+        if (id === 'join' || id === 'start') id = parts.pop();
+        const pwd = u.searchParams.get('pwd') || '';
+        const base = `https://zoom.us/wc/${id}/join`;
+        return pwd ? `${base}?pwd=${pwd}` : base;
+      } catch(e){ return ""; }
+    }
+
+    // ==================== STATE =====================
+    let currentUser = null;
+    let savedMeetingId = null;
+    let zoomWebUrl = "";  // for Start button
+
+    // ==================== INIT ======================
+    auth.onAuthStateChanged(async (u)=>{
+      if(!u){ alert("Please sign in first."); return; }
+      currentUser = u;
+      await preloadTeacherProfile();
+
+      const ctx = getPreselectedContext();
+      await loadClasses(ctx); // preselect class/section from localStorage
+
+      // If both class & section are present, lock them
+      if (ctx.classId && ctx.className) $('#classSel').disabled = true;
+      if (ctx.sectionId && ctx.sectionName) $('#sectionSel').disabled = true;
+
+      // Prefill teacher name from email if empty
+      if (!$('#teacherName').value && currentUser.email) {
+        $('#teacherName').value = currentUser.email;
+      }
+    });
+
+    async function preloadTeacherProfile(){
+      try {
+        const userDoc = await db.collection('users').doc(auth.currentUser.uid).get();
+        const displayName = userDoc.exists ? (userDoc.data().displayName || "") : "";
+        if (displayName) $('#teacherName').value = displayName;
+
+        // default Zoom link
+        const pref = await db.collection('users').doc(auth.currentUser.uid).collection('settings').doc('zoom').get();
+        const link = pref.exists ? (pref.data().link || "") : "";
+        if (link) $('#zoomLink').value = link;
+      } catch(e){ console.warn(e); }
+    }
+
+    async function loadClasses(pre = {}){
+      const year = getActiveYear();
+      const ctx = pre || {};
+      $('#classSel').innerHTML = `<option value="">Loading…</option>`;
+      $('#sectionSel').innerHTML = `<option value="">Select Class first</option>`;
+      $('#sectionSel').disabled = true;
+
+      try {
+        const snap = await db.collection('years').doc(year).collection('classes').orderBy('name').get();
+        const opts = [`<option value="">Select Class</option>`];
+        let classValueToSelect = '';
+        snap.forEach(d => {
+          const name = (d.data().name || '').trim();
+          const val  = `${d.id}::${name}`;
+          opts.push(`<option value="${val}">${name}</option>`);
+          if (!classValueToSelect) {
+            if (ctx.classId && d.id === ctx.classId) classValueToSelect = val;
+            else if (!ctx.classId && ctx.className && name === ctx.className) classValueToSelect = val;
+          }
+        });
+        $('#classSel').innerHTML = opts.join('');
+
+        // If we have a preselected class, set it and load sections immediately
+        if (classValueToSelect) {
+          $('#classSel').value = classValueToSelect;
+          await loadSectionsForSelectedClass(ctx);
+        }
+      } catch (e) {
+        $('#classSel').innerHTML = `<option value="">(Error loading classes)</option>`;
+      }
+    }
+
+    $('#classSel').addEventListener('change', async ()=>{
+      await loadSectionsForSelectedClass({});
+    });
+
+    async function loadSectionsForSelectedClass(pre = {}){
+      const val = $('#classSel').value;
+      $('#sectionSel').innerHTML = `<option value="">Loading…</option>`;
+      $('#sectionSel').disabled = true;
+      if (!val) { $('#sectionSel').innerHTML = `<option value="">Select Class first</option>`; return; }
+
+      const [classId, className] = val.split('::');
+      try{
+        const year = getActiveYear();
+        const snap = await db.collection('years').doc(year)
+          .collection('classes').doc(classId)
+          .collection('sections').orderBy('name').get();
+
+        const options = [`<option value="">Select Section</option>`];
+        let sectionValueToSelect = '';
+        snap.forEach(d => {
+          const n = (d.data().name || '').trim();
+          const val2 = `${d.id}::${n}`;
+          options.push(`<option value="${val2}">${n}</option>`);
+          if (!sectionValueToSelect) {
+            if (pre.sectionId && d.id === pre.sectionId) sectionValueToSelect = val2;
+            else if (!pre.sectionId && pre.sectionName && n === pre.sectionName) sectionValueToSelect = val2;
+          }
+        });
+        $('#sectionSel').innerHTML = options.join('');
+        $('#sectionSel').disabled = false;
+
+        if (sectionValueToSelect) $('#sectionSel').value = sectionValueToSelect;
+      }catch(e){
+        $('#sectionSel').innerHTML = `<option value="">(Error loading sections)</option>`;
+      }
+    }
+
+    // ==================== SAVE ======================
+    $('#saveBtn').addEventListener('click', async ()=>{
+      const classVal = $('#classSel').value;
+      const sectionVal = $('#sectionSel').value;
+      const teacherName = ($('#teacherName').value || '').trim();
+      const subject = ($('#subject').value || '').trim();
+      const topic = ($('#topic').value || '').trim();
+      const when = $('#when').value;
+      const zoom = ($('#zoomLink').value || '').trim();
+
+      if (!classVal || !sectionVal || !teacherName || !subject || !topic || !when || !zoom) {
+        setStatus('Please fill all fields.', true); return;
+      }
+
+      const [, className] = classVal.split('::');
+      const [, sectionName] = sectionVal.split('::');
+
+      const webUrl = toWebClientUrl(zoom);
+      if (!webUrl) { setStatus('Invalid Zoom link.', true); return; }
+
+      showSpin(true);
+      try {
+        // save teacher default link
+        if ($('#saveDefault').checked) {
+          await db.collection('users').doc(auth.currentUser.uid).collection('settings').doc('zoom').set({ link: zoom }, { merge: true });
+        }
+
+        // create meeting
+        const ref = await db.collection('meetings').add({
+          class: className,
+          section: sectionName,
+          subject,
+          topic,
+          teacherId: auth.currentUser.uid,
+          teacherName,
+          startAt: new Date(when),
+          zoomJoinUrl: zoom,
+          zoomWebUrl: webUrl,
+          createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+          updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+        savedMeetingId = ref.id;
+        zoomWebUrl = webUrl;
+
+        setStatus('Saved. You can now send WhatsApp or start the meeting.', false);
+        $('#waBtn').disabled = false;
+        $('#startBtn').disabled = false;
+
+        // clear only subject/topic/when for next time (keep teacher + zoom)
+        $('#subject').value = '';
+        $('#topic').value = '';
+        $('#when').value = '';
+
+        // open share modal automatically
+        openShareModal({
+          className, sectionName, subject, topic, when, meetingId: savedMeetingId
+        });
+
+      } catch(e){
+        setStatus('Save failed: ' + (e && e.message ? e.message : e), true);
+      } finally {
+        showSpin(false);
+      }
+    });
+
+    function setStatus(t, isErr){
+      const el = $('#status');
+      el.textContent = t || '';
+      el.className = 'hint ' + (isErr ? 'danger' : 'success');
+    }
+
+    // ==================== SHARE ====================
+    function openShareModal({className, sectionName, subject, topic, when, meetingId}){
+      document.querySelectorAll('.share-modal').forEach(el=>el.remove());
+
+      const basePath = location.pathname.replace(/[^/]+$/,''); // folder of this file
+      const studentLink = `${location.origin}${basePath}online-class.html?m=${meetingId}`;
+      const msg =
+`*ST. PATRICK'S SCHOOL*
+*IIT & NEET FOUNDATION*
+*ONLINE CLASS (ZOOM)*
+
+*• Class:* ${className}-${sectionName}
+*• Subject:* ${subject}
+*• Topic:* ${topic}
+*• Time:* ${fmt(when)}
+
+Click to join at the scheduled time:
+${studentLink}
+
+Note: Enter your phone number when asked. You may be asked a PIN during class for attendance.`;
+
+      const div = document.createElement('div');
+      div.className = 'share-modal';
+      div.innerHTML = `
+        <div class="share-card">
+          <div style="font-weight:bold;font-size:1.05em;color:#175799;text-align:center;margin-bottom:16px;">Share this message with students</div>
+          <textarea class="msg" id="shareText" readonly>${msg}</textarea>
+          <button id="copyBtn" style="padding:10px 24px;font-size:1em;border:none;border-radius:7px;background:#1762a7;color:#fff;font-weight:600;cursor:pointer;margin-bottom:8px;">Copy</button>
+          <a id="waOpen" target="_blank" style="text-decoration:none;margin-bottom:8px" href="https://wa.me/?text=${encodeURIComponent(msg)}">
+            <button style="padding:9px 16px;border-radius:7px;border:1px solid #25D366;color:#0b4d2a;background:#eafff2;font-weight:600;cursor:pointer;">Open WhatsApp</button>
+          </a>
+          <button id="closeShare" class="ghost" style="padding:7px 20px;">Close</button>
+        </div>`;
+      document.body.appendChild(div);
+
+      $('#copyBtn').onclick = () => {
+        const ta = $('#shareText'); ta.select(); ta.setSelectionRange(0, 99999);
+        document.execCommand('copy');
+        $('#copyBtn').textContent = 'Copied!';
+        setTimeout(()=>{ $('#copyBtn').textContent = 'Copy'; }, 1300);
+      };
+      $('#closeShare').onclick = () => div.remove();
+
+      // Also enable main page WA button to open same text later
+      $('#waBtn').onclick = () => { window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank'); };
+    }
+
+    // ==================== START ====================
+    $('#startBtn').addEventListener('click', ()=>{
+      if (!zoomWebUrl) { setStatus('No Zoom link yet. Save first.', true); return; }
+      try {
+        const u = new URL(zoomWebUrl);
+        // Prefill teacher name in web client (optional)
+        u.searchParams.set('prefer','1');
+        u.searchParams.set('un', b64($('#teacherName').value || 'Teacher'));
+        location.href = u.toString(); // open in same tab (mobile-friendly)
+      } catch(e) {
+        location.href = zoomWebUrl;
+      }
+    });
+  </script>
+</body>
+</html>
