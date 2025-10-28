@@ -62,12 +62,17 @@
         </div>
 
         <button class="download-btn" id="excelBtn" disabled>
-          <i class="fa-solid fa-file-excel"></i> Download Excel
-        </button>
+        <i class="fa-solid fa-file-excel"></i> Download Excel
+      </button>
+      
+      <button class="download-btn" id="leapBtn" disabled>
+        <i class="fa-solid fa-file-excel"></i> Excel for LEAP
+      </button>
+      
+      <button class="download-btn" id="pdfBtn" disabled>
+        <i class="fa-solid fa-file-pdf"></i> Download PDF
+      </button>
 
-        <button class="download-btn" id="pdfBtn" disabled>
-          <i class="fa-solid fa-file-pdf"></i> Download PDF
-        </button>
 
         <div class="status" id="status"></div>
       </div>
@@ -154,12 +159,13 @@
 
     // -- DOM refs --
     const examDropdown = document.getElementById('examDropdown');
-    const examSelected = document.getElementById('examSelected');
-    const examList = document.getElementById('examList');
-    const excelBtn = document.getElementById('excelBtn');
-    const pdfBtn = document.getElementById('pdfBtn');
-    const statusDiv = document.getElementById('status');
-    const headerYear = document.getElementById('header-year');
+const examSelected = document.getElementById('examSelected');
+const examList = document.getElementById('examList');
+const excelBtn = document.getElementById('excelBtn');
+const leapBtn = document.getElementById('leapBtn');
+const pdfBtn = document.getElementById('pdfBtn');
+const statusDiv = document.getElementById('status');
+const headerYear = document.getElementById('header-year');
 
     // -- Get session/class/section from storage --
     let academicYear = localStorage.getItem('sp_selectedYear') || '';
@@ -178,7 +184,7 @@
     auth.onAuthStateChanged(function(user){
       if (!user){
         statusDiv.textContent = "Please login.";
-        pdfBtn.disabled = excelBtn.disabled = true;
+pdfBtn.disabled = excelBtn.disabled = leapBtn.disabled = true;
         return;
       }
       loadExams();
@@ -190,7 +196,7 @@
       examSelected.dataset.value = '';
       examList.innerHTML = '';
       examSelected.classList.add('disabled');
-      excelBtn.disabled = pdfBtn.disabled = true;
+      excelBtn.disabled = pdfBtn.disabled = leapBtn.disabled = true;
       statusDiv.textContent = "";
 
       if (!academicYear || !classId || !sectionId){
@@ -257,12 +263,13 @@
         }
 
         statusDiv.textContent = "";
-        excelBtn.disabled = pdfBtn.disabled = false;
+excelBtn.disabled = pdfBtn.disabled = leapBtn.disabled = false;
 
       } catch(err){
         statusDiv.textContent = "Error: " + err.message;
         examSelected.textContent = "--Select--";
         examSelected.classList.add('disabled');
+        leapBtn.disabled = true;
       }
     }
 
@@ -281,8 +288,215 @@
       selectedExam = opt.dataset.id;
       selectedExamObj = examMap[selectedExam];
     };
+    // -------- LEAP helpers (mapping + splitting) --------
+function classBand6to7(name){
+  // Normalize class name to number when possible
+  const m = String(name || '').match(/\d+/);
+  const n = m ? parseInt(m[0],10) : null;
+  return n && n >= 6 && n <= 7;
+}
+function classBand8to10(name){
+  const m = String(name || '').match(/\d+/);
+  const n = m ? parseInt(m[0],10) : null;
+  return n && n >= 8 && n <= 10;
+}
+
+function subjMaxByName(selExamObj, subjName){
+  const s = (selExamObj.subjects || []).find(x => x.name === subjName);
+  return s ? (s.max || 50) : 50;
+}
+
+// Normalize a raw subject score to a /50 scale using its configured max
+function normTo50(selExamObj, subjName, raw){
+  const mx = subjMaxByName(selExamObj, subjName);
+  if (typeof raw !== 'number' || isNaN(raw)) return null;
+  if (!mx || isNaN(mx)) return null;
+  return (raw / mx) * 50;
+}
+
+// Average of available (non-null) values
+function avgAvailable(arr){
+  const vals = arr.filter(v => typeof v === 'number' && !isNaN(v));
+  if (!vals.length) return null;
+  return vals.reduce((a,b)=>a+b,0) / vals.length;
+}
+
+// Map app subjects to LEAP subject list and compute total /50 per LEAP subject
+// returns [{name:'Telugu', total50:number|null}, ...] in LEAP order for this class band
+function mapToLeapTotals(selExamObj, className, marksPerSubject){
+  const is67 = classBand6to7(className);
+  const is810 = classBand8to10(className);
+
+  // App subjects present (names)
+  const appSubs = (selExamObj.subjects || []).map(s => s.name);
+
+  function getNorm(subj){
+    const raw = marksPerSubject[subj];
+    return normTo50(selExamObj, subj, raw);
+  }
+
+  if (is67){
+    // LEAP order: Telugu, Hindi, English, Math, Science, Social
+    const english = avgAvailable([getNorm('English 1'), getNorm('English 2')]);
+    const math    = avgAvailable([getNorm('Math 1'), getNorm('Math 2')]);
+    const science = avgAvailable([getNorm('Physical Science'), getNorm('Physics'), getNorm('Chemistry'), getNorm('Biology')].filter((_,i)=>true)); // support either PS+Chem+Bio or Phy+Chem+Bio
+    return [
+      { name:'Telugu',  total50:getNorm('Telugu') },
+      { name:'Hindi',   total50:getNorm('Hindi') },
+      { name:'English', total50:english },
+      { name:'Math',    total50:math },
+      { name:'Science', total50:science },
+      { name:'Social',  total50:getNorm('Social') },
+    ];
+  }
+
+  // default to 8–10 mapping (Telugu, Hindi, English, Math, Physics, Biology, Social)
+  const english = avgAvailable([getNorm('English 1'), getNorm('English 2')]);
+  const math    = avgAvailable([getNorm('Math 1'), getNorm('Math 2')]);
+  const physics = avgAvailable([getNorm('Physical Science'), getNorm('Physics'), getNorm('Chemistry')]);
+  const biology = getNorm('Biology');
+
+  return [
+    { name:'Telugu',  total50:getNorm('Telugu') },
+    { name:'Hindi',   total50:getNorm('Hindi') },
+    { name:'English', total50:english },
+    { name:'Math',    total50:math },
+    { name:'Physics', total50:physics },
+    { name:'Biology', total50:biology },
+    { name:'Social',  total50:getNorm('Social') },
+  ];
+}
+
+// Apply pass floor and cap to [0,50]
+function passFloor50(v){
+  if (v === null) return 18; // treat missing as pass-floor per instruction
+  const x = Math.max(18, Math.min(50, v));
+  return x;
+}
+
+// Split a /50 total into Tools [5,5,5,35] using percent and rotating remainders
+// roll: student roll number (used for rotation start)
+function splitToTools(total50, roll){
+  const T = Math.round(total50); // keep integer total after mapping/flooring logic
+  const p = T / 50;
+
+  const caps = [5,5,5,35];
+  const raws = [5*p, 5*p, 5*p, 35*p];         // proportional
+  const floors = raws.map(v => Math.floor(v));
+  const sumFloors = floors.reduce((a,b)=>a+b,0);
+  let R = T - sumFloors;
+
+  // rotation start (0..3)
+  let start = 0;
+  if (typeof roll === 'number' && !isNaN(roll) && roll > 0){
+    start = (roll - 1) % 4;
+  }
+
+  // Add +1 in rotating order until remainder is distributed
+  let idx = start, safety = 10;
+  while (R > 0 && safety-- > 0){
+    if (floors[idx] < caps[idx]){
+      floors[idx] += 1;
+      R -= 1;
+    }
+    idx = (idx + 1) % 4;
+  }
+
+  // Ensure caps
+  for (let i=0;i<4;i++){
+    if (floors[i] > caps[i]) floors[i] = caps[i];
+    if (floors[i] < 0) floors[i] = 0;
+  }
+  // Final fix if rounding drifted (rare): adjust tool-4 within cap
+  const diff = T - floors.reduce((a,b)=>a+b,0);
+  if (diff !== 0){
+    const t4Room = caps[3] - floors[3];
+    const adj = Math.max(-floors[3], Math.min(diff, t4Room));
+    floors[3] += adj;
+  }
+
+  return [...floors, floors.reduce((a,b)=>a+b,0)]; // [T1,T2,T3,T4,Total]
+}
 
     // ------------- EXCEL EXPORT -------------
+    // ------------- EXCEL for LEAP EXPORT -------------
+leapBtn.onclick = function(){
+  if (!selectedExamObj){
+    selectedExam = examSelected.dataset.value;
+    selectedExamObj = examMap[selectedExam];
+  }
+  if (!selectedExamObj){ statusDiv.textContent = "Select an exam."; return; }
+
+  statusDiv.textContent = "Preparing LEAP Excel...";
+
+  // Build LEAP subject order for this class
+  // Use first student's marks map as shape reference; actual values per student vary
+  const dataRows = [];
+  const subjectsLeap = (function(){
+    // create a fake empty marks map to just get names in order
+    return mapToLeapTotals(selectedExamObj, className, {}).map(x => x.name);
+  })();
+
+  // Header rows
+  const row1 = ['Roll','Name'];
+  const row2 = ['',''];
+  for (const sub of subjectsLeap){
+    row1.push(sub, '', '', '', '');
+    row2.push('Responses (5)','Written Work (5)','Project Work (5)','Slip Test (35)','Total (50)');
+  }
+
+  // Student rows
+  for (const stu of students){
+    const marks = marksMap[stu.id][selectedExamObj.id] || {};
+
+    // Compute mapped totals (/50) for this student
+    const mapped = mapToLeapTotals(selectedExamObj, className, marks).map(x=>{
+      const t50 = passFloor50(x.total50);
+      return splitToTools(t50, stu.roll); // [5,5,5,35,Total(50)]
+    });
+
+    const row = [stu.roll, stu.name];
+    for (const arr of mapped){
+      row.push(...arr);
+    }
+    dataRows.push(row);
+  }
+
+  // Make sheet
+  const aoa = [row1, row2, ...dataRows];
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+
+  // Build merges for subject blocks in Row 1
+  const merges = [];
+  // Merge "Roll" and "Name" vertically across the two header rows
+  merges.push({ s:{r:0,c:0}, e:{r:1,c:0} });
+  merges.push({ s:{r:0,c:1}, e:{r:1,c:1} });
+
+  // For each subject, merge top header across 5 columns
+  // Row 0, starting col = 2
+  let c = 2;
+  for (let i=0;i<subjectsLeap.length;i++){
+    merges.push({ s:{r:0,c}, e:{r:0,c+4} });
+    c += 5;
+  }
+  ws['!merges'] = merges;
+
+  // Auto column widths
+  const colWidths = [];
+  for (let i=0;i<aoa[0].length;i++){
+    colWidths.push({ wch: i<2 ? 16 : 12 });
+  }
+  ws['!cols'] = colWidths;
+
+  // Write file
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "LEAP");
+  const fname = `LEAP_Marks_${className}_${sectionName}_${selectedExamObj.name}_${academicYear}.xlsx`;
+  XLSX.writeFile(wb, fname);
+
+  statusDiv.textContent = "LEAP Excel downloaded!";
+};
+
     excelBtn.onclick = function(){
       if (!selectedExamObj){
         selectedExam = examSelected.dataset.value;
@@ -598,3 +812,4 @@
   </script>
 </body>
 </html>
+
