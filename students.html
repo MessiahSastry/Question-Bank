@@ -4736,10 +4736,11 @@ function formatDate(dateStr) {
     <div class="popup-title">Upload Students (Excel)</div>
     <input type="file" id="studentFileInput" accept=".xlsx,.csv" style="margin-bottom:15px;" />
     <div style="font-size:0.97em; color:#555; margin-bottom:10px;">
-      Please upload an Excel (.xlsx) or CSV file with columns: <b>Roll, Name, Father, ParentPhone</b>.
+      Please upload an Excel (.xlsx) or CSV file with columns:
+      <b>Roll, Name, Father, Child ID, ParentPhone</b>. (Child ID and ParentPhone are optional)
     </div>
     <div class="popup-btn-row">
-      <button type="button" class="popup-cancel-btn">Cancel</button>
+      <button type="button" class="popup-cancel-btn" onclick="closePopup()">Cancel</button>
       <button type="button" class="popup-action-btn" id="doBulkUploadBtn">Upload</button>
     </div>
   `);
@@ -4752,53 +4753,100 @@ function formatDate(dateStr) {
     }
     const file = fileInput.files[0];
     const reader = new FileReader();
+
     reader.onload = function(e) {
-      let data = new Uint8Array(e.target.result);
-      let workbook = XLSX.read(data, {type: 'array'});
-      let sheet = workbook.Sheets[workbook.SheetNames[0]];
-      let rows = XLSX.utils.sheet_to_json(sheet, {header:1, defval: ''});
-      let headers = rows[0].map(x => x.toString().toLowerCase().trim());
-      let nameIdx = headers.findIndex(h => h === 'name');
-      let rollIdx = headers.findIndex(h => h === 'roll');
-      let fatherIdx = headers.findIndex(h => h === 'father');
-      let phoneIdx = headers.findIndex(h => h.includes('phone'));
-      if (nameIdx < 0 || rollIdx < 0 || fatherIdx < 0) {
-        alert('Excel must have headers: Roll, Name, Father, ParentPhone');
-        return;
-      }
-      let students = [];
-      for (let i=1; i<rows.length; i++) {
-        let row = rows[i];
-        if (!row[nameIdx]) continue;
-        students.push({
-          name: row[nameIdx].toString().trim(),
-          father: row[fatherIdx].toString().trim(),
-          roll: parseInt(row[rollIdx]),
-          parentPhone: phoneIdx >= 0 ? row[phoneIdx].toString().trim() : ""
+      try {
+        const data = new Uint8Array(e.target.result);
+        const workbook = XLSX.read(data, { type: 'array' });
+        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+
+        if (!rows.length) {
+          alert('Empty file.');
+          return;
+        }
+
+        // Normalize headers
+        const headers = rows[0].map(x => x.toString().trim().toLowerCase());
+
+        const nameIdx   = headers.findIndex(h => h === 'name');
+        const rollIdx   = headers.findIndex(h => h === 'roll');
+        const fatherIdx = headers.findIndex(h => h === 'father');
+        const childIdx  = headers.findIndex(h => h === 'child id' || h === 'childid');
+        const phoneIdx  = headers.findIndex(h => h.includes('phone'));
+
+        if (nameIdx < 0 || rollIdx < 0 || fatherIdx < 0) {
+          alert('Excel must have headers at least: Roll, Name, Father. Optional: Child ID, ParentPhone');
+          return;
+        }
+
+        const students = [];
+        for (let i = 1; i < rows.length; i++) {
+          const row = rows[i];
+          // Skip completely blank lines
+          const hasAny = row.some(cell => (cell !== null && cell !== undefined && String(cell).trim() !== ''));
+          if (!hasAny) continue;
+
+          const name = (row[nameIdx] ?? '').toString().trim();
+          const father = (row[fatherIdx] ?? '').toString().trim();
+          const rollRaw = row[rollIdx];
+          const roll = (rollRaw === null || rollRaw === undefined) ? '' : rollRaw.toString().trim();
+          const childId = childIdx >= 0 ? (row[childIdx] ?? '').toString().trim() : '';
+          const parentPhone = phoneIdx >= 0 ? (row[phoneIdx] ?? '').toString().trim() : '';
+
+          if (!name || !father || !roll) {
+            // Soft-skip invalid row
+            console.warn(`Row ${i+1} skipped: missing required fields (Roll, Name, Father).`);
+            continue;
+          }
+
+          // If you prefer numeric roll, uncomment next line:
+          // const rollNum = Number.isFinite(parseInt(roll, 10)) ? parseInt(roll, 10) : roll;
+
+          students.push({
+            name,
+            father,
+            childId,       // NEW
+            roll,          // keep as string to avoid XLSX numeric formatting issues
+            parentPhone
+          });
+        }
+
+        if (students.length === 0) {
+          alert('No valid students found!');
+          return;
+        }
+
+        // Firestore batch save
+        const batch = db.batch();
+        const sectionRef = db
+          .collection('years').doc(academicYear)
+          .collection('classes').doc(currentClassId)
+          .collection('sections').doc(currentSectionId)
+          .collection('students');
+
+        students.forEach(stu => {
+          const ref = sectionRef.doc();
+          batch.set(ref, stu);
         });
+
+        batch.commit()
+          .then(() => {
+            alert('All students uploaded!');
+            closePopup();
+            renderStudentList && renderStudentList();
+          })
+          .catch(e => {
+            alert('Error uploading students: ' + e.message);
+          });
+
+      } catch (err) {
+        alert('Failed to read the file: ' + err.message);
       }
-      if (students.length === 0) {
-        alert('No valid students found!');
-        return;
-      }
-      // Upload students in batch
-      let batch = db.batch();
-      let sectionRef = db.collection('years').doc(academicYear).collection('classes').doc(currentClassId)
-        .collection('sections').doc(currentSectionId).collection('students');
-      students.forEach(stu => {
-        let ref = sectionRef.doc();
-        batch.set(ref, stu);
-      });
-      batch.commit().then(() => {
-        alert("All students uploaded!");
-        closePopup();
-        renderStudentList();
-      }).catch(e => {
-        alert("Error uploading students: " + e.message);
-      });
     };
+
     reader.readAsArrayBuffer(file);
-  }
+  };
 }
     // ---- Absentees Modal Open/Close ----
 function openAbsenteesModal() {
@@ -5258,6 +5306,7 @@ if (marksFileInput) {
 </script>
 </body>
 </html>
+
 
 
 
