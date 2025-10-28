@@ -12,7 +12,7 @@
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+  <script src="https://unpkg.com/xlsx-populate/browser/xlsx-populate.min.js"></script>
 
   <style>
     :root { --primary:#0f3d6b; --secondary:#1762a7; --alt1:#f8fbff; --alt2:#eaf1fa; }
@@ -174,8 +174,8 @@ const headerYear = document.getElementById('header-year');
     let sectionId = localStorage.getItem('sp_selectedSectionId') || '';
     let sectionName = localStorage.getItem('sp_selectedSectionName') || '';
 
-    document.getElementById('classSectionHeading').textContent =
-      className + (sectionName ? ' – ' + sectionName + ' Section' : '');
+   document.getElementById('classSectionHeading').textContent =
+  className + (sectionName ? ' – ' + sectionName : '');
 
     // FIX: template literal
     headerYear.textContent = academicYear ? `${academicYear}` : '';
@@ -476,7 +476,7 @@ title2[0] = "IIT & NEET FOUNDATION";
 
 // Row 2: Class & Section
 const title3 = Array(totalCols).fill('');
-const classSecText = sectionName ? `${className} – ${sectionName} Section` : `${className}`;
+const classSecText = sectionName ? `${className} – ${sectionName}` : `${className}`;
 title3[0] = classSecText;
 
 // Build final sheet data (titles + headers + data)
@@ -534,13 +534,122 @@ for (let i = 0; i < totalCols; i++) {
 }
 ws['!cols'] = colWidths;
 
-// Write file
-const wb = XLSX.utils.book_new();
-XLSX.utils.book_append_sheet(wb, ws, "LEAP");
-const fname = `LEAP_Marks_${className}_${sectionName}_${selectedExamObj.name}_${academicYear}.xlsx`;
-XLSX.writeFile(wb, fname);
+// ---- Write styled file with XlsxPopulate ----
 
-statusDiv.textContent = "LEAP Excel downloaded!";
+// helper: 1->A, 2->B ...
+function colLetter(n){
+  let s = "";
+  while (n > 0){
+    const m = (n - 1) % 26;
+    s = String.fromCharCode(65 + m) + s;
+    n = Math.floor((n - 1) / 26);
+  }
+  return s;
+}
+
+const fname = `LEAP_Marks_${className}_${sectionName}_${selectedExamObj.name}_${academicYear}.xlsx`;
+
+// Build workbook
+XlsxPopulate.fromBlankAsync().then(workbook => {
+  const sheet = workbook.sheet(0).name("LEAP");
+
+  // Write all values from AOA
+  for (let r = 0; r < aoa.length; r++){
+    const row = aoa[r];
+    for (let c = 0; c < row.length; c++){
+      const addr = `${colLetter(c+1)}${r+1}`;
+      sheet.cell(addr).value(row[c]);
+    }
+  }
+
+  // Apply merges
+  if (ws['!merges'] && Array.isArray(ws['!merges'])){
+    ws['!merges'].forEach(m => {
+      const tl = `${colLetter(m.s.c+1)}${m.s.r+1}`;
+      const br = `${colLetter(m.e.c+1)}${m.e.r+1}`;
+      sheet.range(tl + ":" + br).merged(true);
+    });
+  }
+
+  // Column widths
+  if (ws['!cols'] && Array.isArray(ws['!cols'])){
+    ws['!cols'].forEach((col, idx) => {
+      const width = (col && col.wch) ? col.wch : 12;
+      sheet.column(idx+1).width(width);
+    });
+  }
+
+  // Styles
+  const totalCols = aoa[0].length;
+
+  // Titles: rows 1–3 (big, bold, centered, fill)
+  const titleFill = "FFE6F0FF"; // light blue
+  for (let r = 1; r <= 3; r++){
+    const rng = sheet.range(`A${r}:${colLetter(totalCols)}${r}`);
+    rng.style({
+      bold: true,
+      horizontalAlignment: "center",
+      verticalAlignment: "center",
+      fontSize: r === 1 ? 16 : (r === 2 ? 13 : 12),
+      fill: titleFill
+    });
+    // extra emphasis for school name
+    if (r === 1) rng.style({ fontColor: "002F6C" });
+  }
+
+  // Subject names row (now row 4)
+  // Center + bold + darker fill
+  const subjectsRow = 4;
+  sheet.range(`A${subjectsRow}:${colLetter(totalCols)}${subjectsRow}`).style({
+    bold: true,
+    horizontalAlignment: "center",
+    verticalAlignment: "center",
+    fill: "FFDDEBF7" // light steel blue
+  });
+
+  // R/W/P/ST/TOTAL labels row (row 5): center + wrap + gray fill
+  const labelsRow = 5;
+  sheet.range(`A${labelsRow}:${colLetter(totalCols)}${labelsRow}`).style({
+    horizontalAlignment: "center",
+    verticalAlignment: "center",
+    wrapText: true,
+    fill: "FFF2F2F2"
+  });
+
+  // Also center Roll/Name headers (rows 4–5, cols A:B)
+  sheet.range(`A${subjectsRow}:B${labelsRow}`).style({
+    horizontalAlignment: "center",
+    verticalAlignment: "center",
+    bold: true
+  });
+
+  // Add thin borders around entire table (from row 4 to end)
+  const lastRow = aoa.length;
+  sheet.range(`A${subjectsRow}:` + colLetter(totalCols) + `${lastRow}`).style({
+    border: true
+  });
+
+  // Slight row heights for header rows
+  sheet.row(1).height(24);
+  sheet.row(2).height(20);
+  sheet.row(3).height(18);
+  sheet.row(4).height(22);
+  sheet.row(5).height(34); // for wrapped R/W/P/ST/TOTAL
+
+  // Download
+  return workbook.outputAsync().then(blob => {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = fname;
+    document.body.appendChild(a);
+    a.click();
+    URL.revokeObjectURL(a.href);
+    a.remove();
+    statusDiv.textContent = "LEAP Excel downloaded!";
+  });
+}).catch(err => {
+  statusDiv.textContent = "Error generating LEAP Excel: " + err.message;
+});
 };
 
     excelBtn.onclick = function(){
@@ -858,6 +967,7 @@ statusDiv.textContent = "LEAP Excel downloaded!";
   </script>
 </body>
 </html>
+
 
 
 
