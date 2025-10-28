@@ -438,12 +438,13 @@ leapBtn.onclick = function(){
   })();
 
   // Header rows
-  const row1 = ['Roll','Name'];
-  const row2 = ['',''];
-  for (const sub of subjectsLeap){
-    row1.push(sub, '', '', '', '');
-    row2.push('Responses (5)','Written Work (5)','Project Work (5)','Slip Test (35)','Total (50)');
-  }
+const row1 = ['Roll','Name'];
+const row2 = ['',''];
+for (const sub of subjectsLeap){
+  row1.push(sub, '', '', '', '');
+  // Abbreviated labels with wrapped numbers
+  row2.push('R\n(5)', 'W\n(5)', 'P\n(5)', 'ST\n(35)', 'TOTAL\n(50)');
+}
 
   // Student rows
   for (const stu of students){
@@ -462,39 +463,84 @@ leapBtn.onclick = function(){
     dataRows.push(row);
   }
 
-  // Make sheet
-  const aoa = [row1, row2, ...dataRows];
-  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  // ------- Title rows (centered across all columns) + Make sheet -------
+const totalCols = row1.length;
 
-  // Build merges for subject blocks in Row 1
-  const merges = [];
-  // Merge "Roll" and "Name" vertically across the two header rows
-  merges.push({ s:{r:0,c:0}, e:{r:1,c:0} });
-  merges.push({ s:{r:0,c:1}, e:{r:1,c:1} });
+// Row 0: School name
+const title1 = Array(totalCols).fill('');
+title1[0] = "St. Patrick's School";
 
-  // For each subject, merge top header across 5 columns
-  // Row 0, starting col = 2
-  let c = 2;
-  for (let i=0;i<subjectsLeap.length;i++){
-  merges.push({ s:{ r:0, c: c }, e:{ r:0, c: c + 4 } });
+// Row 1: Subheading
+const title2 = Array(totalCols).fill('');
+title2[0] = "IIT & NEET FOUNDATION";
+
+// Row 2: Class & Section
+const title3 = Array(totalCols).fill('');
+const classSecText = sectionName ? `${className} – ${sectionName} Section` : `${className}`;
+title3[0] = classSecText;
+
+// Build final sheet data (titles + headers + data)
+const aoa = [title1, title2, title3, row1, row2, ...dataRows];
+const ws = XLSX.utils.aoa_to_sheet(aoa);
+
+// ------- Merges -------
+const merges = [];
+
+// Merge each title row across ALL columns
+merges.push({ s:{ r:0, c:0 }, e:{ r:0, c: totalCols - 1 } }); // title1
+merges.push({ s:{ r:1, c:0 }, e:{ r:1, c: totalCols - 1 } }); // title2
+merges.push({ s:{ r:2, c:0 }, e:{ r:2, c: totalCols - 1 } }); // title3
+
+// Merge "Roll" and "Name" vertically across the two header rows (now rows 3 & 4)
+merges.push({ s:{ r:3, c:0 }, e:{ r:4, c:0 } });
+merges.push({ s:{ r:3, c:1 }, e:{ r:4, c:1 } });
+
+// For each subject, merge the subject name across its 5 sub-columns at row 3
+let c = 2;
+for (let i = 0; i < subjectsLeap.length; i++) {
+  merges.push({ s:{ r:3, c: c }, e:{ r:3, c: c + 4 } });
   c += 5;
 }
-  ws['!merges'] = merges;
+ws['!merges'] = merges;
 
-  // Auto column widths
-  const colWidths = [];
-  for (let i=0;i<aoa[0].length;i++){
-    colWidths.push({ wch: i<2 ? 16 : 12 });
-  }
-  ws['!cols'] = colWidths;
+// ------- Styles: center titles & subject names; wrap row-4 labels -------
+function setHeaderStyle(r, c) {
+  const addr = XLSX.utils.encode_cell({ r, c });
+  if (!ws[addr]) ws[addr] = { t: 's', v: '' };
+  ws[addr].s = Object.assign({}, ws[addr].s, {
+    alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
+    font: { bold: (r <= 4) } // bold titles + headers
+  });
+}
 
-  // Write file
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, "LEAP");
-  const fname = `LEAP_Marks_${className}_${sectionName}_${selectedExamObj.name}_${academicYear}.xlsx`;
-  XLSX.writeFile(wb, fname);
+// Center all three title rows
+for (let r = 0; r <= 2; r++) {
+  for (let cc = 0; cc < totalCols; cc++) setHeaderStyle(r, cc);
+}
 
-  statusDiv.textContent = "LEAP Excel downloaded!";
+// Row 3: merged subject titles start at col 2 (center them)
+for (let cc = 2; cc < totalCols; cc += 5) setHeaderStyle(3, cc);
+// Also center the top of the Roll/Name merged headers
+setHeaderStyle(3, 0);
+setHeaderStyle(3, 1);
+
+// Row 4: R/W/P/ST/TOTAL labels — wrapText and center
+for (let cc = 0; cc < totalCols; cc++) setHeaderStyle(4, cc);
+
+// Auto column widths
+const colWidths = [];
+for (let i = 0; i < totalCols; i++) {
+  colWidths.push({ wch: i < 2 ? 18 : 12 });
+}
+ws['!cols'] = colWidths;
+
+// Write file
+const wb = XLSX.utils.book_new();
+XLSX.utils.book_append_sheet(wb, ws, "LEAP");
+const fname = `LEAP_Marks_${className}_${sectionName}_${selectedExamObj.name}_${academicYear}.xlsx`;
+XLSX.writeFile(wb, fname);
+
+statusDiv.textContent = "LEAP Excel downloaded!";
 };
 
     excelBtn.onclick = function(){
@@ -812,5 +858,6 @@ leapBtn.onclick = function(){
   </script>
 </body>
 </html>
+
 
 
