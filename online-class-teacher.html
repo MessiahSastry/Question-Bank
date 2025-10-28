@@ -132,10 +132,9 @@
     </div>
 
     <div class="btns">
-      <button id="saveBtn"><i class="fa fa-floppy-disk"></i>&nbsp; Save</button>
-      <button id="waBtn" class="ghost" disabled><i class="fa-brands fa-whatsapp"></i>&nbsp; Send WhatsApp</button>
-      <button id="startBtn" class="ghost" disabled><i class="fa fa-video"></i>&nbsp; Start Meeting</button>
-    </div>
+  <button id="waBtn"><i class="fa-brands fa-whatsapp"></i>&nbsp; Send WhatsApp</button>
+  <button id="startBtn" class="ghost" disabled><i class="fa fa-video"></i>&nbsp; Start Meeting</button>
+</div>
 
     <div id="status" class="hint" style="min-height:22px;margin-top:8px;"></div>
   </div>
@@ -183,18 +182,65 @@
       };
     }
     // Convert any Zoom invite URL -> Zoom Web Client join URL
-    function toWebClientUrl(normalUrl) {
-      try {
-        const u = new URL(normalUrl);
-        // path may be /j/<id> or /wc/<id>/join; normalize to /wc/<id>/join
-        const parts = u.pathname.split('/').filter(Boolean);
-        let id = parts.pop();
-        if (id === 'join' || id === 'start') id = parts.pop();
-        const pwd = u.searchParams.get('pwd') || '';
-        const base = `https://zoom.us/wc/${id}/join`;
-        return pwd ? `${base}?pwd=${pwd}` : base;
-      } catch(e){ return ""; }
+    // Build a student-friendly web join URL only for real meeting links
+function toWebClientUrl(normalUrl) {
+  try {
+    const u = new URL((normalUrl || '').trim());
+    const path = u.pathname.replace(/\/+/g, '/');
+
+    // /j/<digits>
+    let m = path.match(/\/j\/(\d{9,13})/);
+    if (m) {
+      const id = m[1];
+      const pwd = u.searchParams.get('pwd') || '';
+      return `https://zoom.us/wc/${id}/join${pwd ? `?pwd=${pwd}` : ''}`;
     }
+
+    // already web client join /wc/<digits>/join
+    m = path.match(/\/wc\/(\d{9,13})\/join/);
+    if (m) {
+      const id = m[1];
+      const pwd = u.searchParams.get('pwd') || '';
+      return `https://zoom.us/wc/${id}/join${pwd ? `?pwd=${pwd}` : ''}`;
+    }
+
+    // personal link /my/<handle>
+    m = path.match(/\/my\/([^/]+)/);
+    if (m) return `https://zoom.us/wc/${m[1]}/join`;
+
+    // anything else (e.g., /launch/chat, recordings) → invalid
+    return '';
+  } catch (e) {
+    return '';
+  }
+}
+
+// Build a host "start" URL for the same meeting
+function toWebClientStartUrl(normalUrl){
+  try {
+    const u = new URL((normalUrl || '').trim());
+    const path = u.pathname.replace(/\/+/g,'/');
+
+    // /j/<digits> → /wc/<id>/start
+    let m = path.match(/\/j\/(\d{9,13})/);
+    if (m) return `https://zoom.us/wc/${m[1]}/start`;
+
+    // /wc/<digits>/join → /wc/<id>/start
+    m = path.match(/\/wc\/(\d{9,13})\/join/);
+    if (m) return `https://zoom.us/wc/${m[1]}/start`;
+
+    // personal link /my/<handle> → /wc/<handle>/start
+    m = path.match(/\/my\/([^/]+)/);
+    if (m) return `https://zoom.us/wc/${m[1]}/start`;
+
+    // if it already looks like a start URL, keep as-is
+    if (/\/wc\/.+\/start/.test(path) || path.startsWith('/s/')) return u.toString();
+
+    return '';
+  } catch(e){ 
+    return ''; 
+  }
+}
 
     // ==================== STATE =====================
     let currentUser = null;
@@ -232,11 +278,12 @@
 
     if (displayName) $('#teacherName').value = displayName;
 
-    // default Zoom link
-    const pref = await db.collection('users').doc(auth.currentUser.uid)
-      .collection('settings').doc('zoom').get();
-    const link = pref.exists ? (pref.data().link || "") : "";
-    if (link) $('#zoomLink').value = link;
+    // default Zoom link + last subject
+const pref = await db.collection('users').doc(auth.currentUser.uid).collection('settings').doc('zoom').get();
+const link = pref.exists ? (pref.data().link || "") : "";
+const lastSubject = pref.exists ? (pref.data().lastSubject || "") : "";
+if (link) $('#zoomLink').value = link;
+if (lastSubject) $('#subject').value = lastSubject;
   } catch(e){
     console.warn(e);
   }
@@ -312,78 +359,84 @@
     }
 
     // ==================== SAVE ======================
-    $('#saveBtn').addEventListener('click', async ()=>{
-      const classVal = $('#classSel').value;
-      const sectionVal = $('#sectionSel').value;
-      const teacherName = ($('#teacherName').value || '').trim();
-      const subject = ($('#subject').value || '').trim();
-      const topic = ($('#topic').value || '').trim();
-      const when = $('#when').value;
-      const zoom = ($('#zoomLink').value || '').trim();
+   async function saveAndShare(openWhatsApp){
+  const classVal = $('#classSel').value;
+  const sectionVal = $('#sectionSel').value;
+  const teacherName = ($('#teacherName').value || '').trim();
+  const subject = ($('#subject').value || '').trim();
+  const topic = ($('#topic').value || '').trim();
+  const when = $('#when').value;
+  const zoom = ($('#zoomLink').value || '').trim();
 
-      if (!classVal || !sectionVal || !teacherName || !subject || !topic || !when || !zoom) {
-        setStatus('Please fill all fields.', true); return;
-      }
+  if (!classVal || !sectionVal || !teacherName || !subject || !topic || !when || !zoom) {
+    setStatus('Please fill all fields.', true); return;
+  }
 
-      const [, className] = classVal.split('::');
-      const [, sectionName] = sectionVal.split('::');
+  const [, className] = classVal.split('::');
+  const [, sectionName] = sectionVal.split('::');
 
-      const webUrl = toWebClientUrl(zoom);
-      if (!webUrl) { setStatus('Invalid Zoom link.', true); return; }
+  const webUrl = toWebClientUrl(zoom);
+  const startUrl = (typeof toWebClientStartUrl === 'function') ? toWebClientStartUrl(zoom) : '';
+  if (!webUrl) { setStatus('Invalid Zoom link.', true); return; }
 
-      showSpin(true);
-      try {
-       // save teacher default link
-if ($('#saveDefault').checked) {
-  await db.collection('users').doc(auth.currentUser.uid)
-    .collection('settings').doc('zoom')
-    .set({ link: zoom }, { merge: true });
+  showSpin(true);
+  try {
+    // save teacher default link
+    if ($('#saveDefault').checked) {
+      await db.collection('users').doc(auth.currentUser.uid)
+  .collection('settings').doc('zoom')
+  .set({ link: zoom, lastSubject: subject }, { merge: true });
+    }
+
+    // persist teacher displayName (safe no-op if already set)
+    try {
+      await db.collection('users').doc(auth.currentUser.uid).set({ displayName: teacherName }, { merge: true });
+      try { await auth.currentUser.updateProfile({ displayName: teacherName }); } catch(_){}
+    } catch(_){}
+
+    // create meeting
+    const ref = await db.collection('meetings').add({
+      class: className,
+      section: sectionName,
+      subject,
+      topic,
+      teacherId: auth.currentUser.uid,
+      teacherName,
+      startAt: new Date(when),
+      zoomJoinUrl: zoom,
+      zoomWebUrl: webUrl,
+      zoomStartWebUrl: startUrl || '',
+      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    savedMeetingId = ref.id;
+    zoomWebUrl = startUrl || webUrl;
+
+    setStatus('Saved.', false);
+    $('#startBtn').disabled = false;
+
+    // clear only subject/topic/when for next time (keep teacher + zoom)
+    $('#subject').value = '';
+    $('#topic').value = '';
+    $('#when').value = '';
+
+    // open share modal automatically
+    openShareModal({ className, sectionName, subject, topic, when, meetingId: savedMeetingId, teacherName });
+
+    if (openWhatsApp) {
+      // click the main WA button again (openShareModal rebinds it to open the WA link)
+      const btn = $('#waBtn');
+      if (btn && typeof btn.onclick === 'function') btn.onclick();
+    }
+  } catch(e){
+    setStatus('Save failed: ' + (e && e.message ? e.message : e), true);
+  } finally {
+    showSpin(false);
+  }
 }
 
-// ALSO persist the teacher's display name so it loads next time
-await db.collection('users').doc(auth.currentUser.uid)
-  .set({ displayName: teacherName }, { merge: true });
-
-// Keep Firebase Auth profile in sync (no-op if not allowed)
-try { await auth.currentUser.updateProfile({ displayName: teacherName }); } catch(_) {}
-
-        // create meeting
-        const ref = await db.collection('meetings').add({
-          class: className,
-          section: sectionName,
-          subject,
-          topic,
-          teacherId: auth.currentUser.uid,
-          teacherName,
-          startAt: new Date(when),
-          zoomJoinUrl: zoom,
-          zoomWebUrl: webUrl,
-          createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-          updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-        });
-        savedMeetingId = ref.id;
-        zoomWebUrl = webUrl;
-
-        setStatus('Saved. You can now send WhatsApp or start the meeting.', false);
-        $('#waBtn').disabled = false;
-        $('#startBtn').disabled = false;
-
-        // clear only subject/topic/when for next time (keep teacher + zoom)
-        $('#subject').value = '';
-        $('#topic').value = '';
-        $('#when').value = '';
-
-        // open share modal automatically
-        openShareModal({
-          className, sectionName, subject, topic, when, meetingId: savedMeetingId
-        });
-
-      } catch(e){
-        setStatus('Save failed: ' + (e && e.message ? e.message : e), true);
-      } finally {
-        showSpin(false);
-      }
-    });
+// Wire WhatsApp button to save + popup + open WA
+$('#waBtn').addEventListener('click', async ()=>{ await saveAndShare(true); });
 
     function setStatus(t, isErr){
       const el = $('#status');
@@ -392,7 +445,7 @@ try { await auth.currentUser.updateProfile({ displayName: teacherName }); } catc
     }
 
     // ==================== SHARE ====================
-    function openShareModal({className, sectionName, subject, topic, when, meetingId}){
+   function openShareModal({className, sectionName, subject, topic, when, meetingId, teacherName}){
       document.querySelectorAll('.share-modal').forEach(el=>el.remove());
 
       const basePath = location.pathname.replace(/[^/]+$/,''); // folder of this file
@@ -403,6 +456,7 @@ try { await auth.currentUser.updateProfile({ displayName: teacherName }); } catc
 *ONLINE CLASS*
 
 *• Class:* ${className}-${sectionName}
+*• Teacher:* ${teacherName}
 *• Subject:* ${subject}
 *• Topic:* ${topic}
 *• Time:* ${fmt(when)}
@@ -442,20 +496,20 @@ ${studentLink}
     }
 
     // ==================== START ====================
-    $('#startBtn').addEventListener('click', ()=>{
-      if (!zoomWebUrl) { setStatus('No Zoom link yet. Save first.', true); return; }
-      try {
-        const u = new URL(zoomWebUrl);
-        // Prefill teacher name in web client (optional)
-        u.searchParams.set('prefer','1');
-        u.searchParams.set('un', b64($('#teacherName').value || 'Teacher'));
-        location.href = u.toString(); // open in same tab (mobile-friendly)
-      } catch(e) {
-        location.href = zoomWebUrl;
-      }
-    });
+    $('#startBtn').addEventListener('click', () => {
+  if (!zoomWebUrl) { setStatus('No Zoom link yet. Save first.', true); return; }
+  try {
+    const u = new URL(zoomWebUrl);
+    u.searchParams.set('prefer','1');
+    u.searchParams.set('un', b64($('#teacherName').value || 'Teacher'));
+    location.href = u.toString();      // same tab (good on mobile)
+  } catch (e) {
+    try { window.open(zoomWebUrl, '_blank'); } catch(_) {}
+  }
+});
   </script>
 </body>
 </html>
+
 
 
