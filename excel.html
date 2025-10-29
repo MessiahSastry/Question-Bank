@@ -47,7 +47,16 @@
 @keyframes bounce { to { transform:translateY(-6px); opacity:.7; } }
     @media (max-width:560px){ .setup-form-container{padding:13px 2vw 24px;} }
     .modal-backdrop{position:fixed;inset:0;background:#0008;display:none;align-items:center;justify-content:center;z-index:999;}
-.modal{background:#fff;border-radius:12px;max-width:720px;width:92vw;max-height:80vh;overflow:auto;box-shadow:0 8px 28px rgba(0,0,0,.25);}
+.modal{
+  background:#fff;
+  border-radius:12px;
+  max-width:720px;
+  width:92vw;
+  max-height:80vh;
+  overflow:auto;
+  box-shadow:0 8px 28px rgba(0,0,0,.25);
+  -webkit-overflow-scrolling: touch;
+}
 .modal-header{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid #e6eef7;}
 .modal-title{font-weight:700;color:#0f3d6b;}
 .modal-body{padding:12px 16px;}
@@ -210,6 +219,14 @@ const leapBtn = document.getElementById('leapBtn');
 const pdfBtn = document.getElementById('pdfBtn');
 const copyLeapBtn = document.getElementById('copyLeapBtn');
 const copyCSEBtn  = document.getElementById('copyCSEBtn');
+  // Mobile tap fallback to ensure the click path fires on touch devices
+copyCSEBtn.addEventListener('touchend', (ev) => {
+  ev.preventDefault();
+  // guard: avoid double-trigger if the browser also fires click
+  if (Date.now() - __modalOpenedAt < 50) return;
+  copyCSEBtn.click();
+}, { passive: false });
+
 const compactViewBtn = document.getElementById('compactViewBtn');
 const statusDiv = document.getElementById('status');
 const headerYear = document.getElementById('header-year');
@@ -533,12 +550,20 @@ function splitToTools(total50, roll){
   return [...floors, floors.reduce((a,b)=>a+b,0)]; // [T1,T2,T3,T4,Total]
 }
 // ---------- Modal helpers ----------
+let __modalOpenedAt = 0;
 function openModal(title, bodyHTML, footerHTML=''){
   utilModalTitle.textContent = title || '';
   utilModalBody.innerHTML = bodyHTML || '';
   utilModalFooter.innerHTML = footerHTML || '';
   utilModal.style.display = 'flex';
   utilModal.setAttribute('aria-hidden','false');
+  __modalOpenedAt = Date.now();
+  // stop clicks inside the card from reaching the backdrop
+  const inner = document.querySelector('#utilModalBackdrop .modal');
+  if (inner) {
+    inner.addEventListener('click', (ev) => ev.stopPropagation(), { passive: true });
+    inner.addEventListener('touchend', (ev) => ev.stopPropagation(), { passive: true });
+  }
 }
 function closeModal(){
   utilModal.style.display = 'none';
@@ -546,6 +571,8 @@ function closeModal(){
 }
 utilModalClose.onclick = closeModal;
 utilModal.addEventListener('click', (e)=>{
+  // ignore clicks that happen immediately after opening (same tap)
+  if (Date.now() - __modalOpenedAt < 200) return;
   if (e.target === utilModal) closeModal();
 });
     // ------------- EXCEL EXPORT -------------
@@ -1395,6 +1422,7 @@ compactViewBtn.onclick = function(){
   </script>
 </body>
 </html>
+
 
 
 
