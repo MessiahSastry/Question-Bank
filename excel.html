@@ -875,42 +875,59 @@ copyCSEBtn.onclick = function(){
   const is67 = classBand6to7(className);
   const is810 = classBand8to10(className);
 
-  // Build output row for a given student (returns array of strings/numbers ready for TSV)
+    // Build output row: 4 tool parts (R,W,P,ST) per subject, no totals.
   function buildCSERowForStudent(stu){
     const marks = marksMap[stu.id][selectedExamObj.id] || {};
 
-    function finalize(x){
-      // Apply LEAP pass-floor & cap then round to integer
-      const floored = passFloor50(x); // null -> 18, clamp to [18,50]
-      return Math.round(floored);
+    // Normalize → floor 18 → cap 50, then split into [R,W,P,ST,Total]; use first 4 only
+    function partsFromNorm(norm50){
+      const t50 = Math.round(passFloor50(norm50));     // integer 18..50
+      const arr = splitToTools(t50, stu.roll).slice(0,4); // [R,W,P,ST]
+      return arr;
     }
 
     if (is67){
-      // 6 slots: Math, Science, Social, Telugu, Hindi, English (all LEAP-normalized)
-      const math      = finalize( mathNorm(marks) );
-      const science   = finalize( physSciNorm(marks) || nVal(marks,'Biology') ); // include bio part in physSciNorm already
-      const social    = finalize( socialNorm(marks) );
-      const telugu    = finalize( nVal(marks,'Telugu') );
-      const hindi     = finalize( nVal(marks,'Hindi') );
-      const english   = finalize( preferEnglish(marks) );
-      return [math, science, social, telugu, hindi, english];
+      // CSE (6–7): Telugu, Hindi, English, Math, Science, Social — each as 4 parts
+      const telugu  = partsFromNorm( nVal(marks,'Telugu') );
+      const hindi   = partsFromNorm( nVal(marks,'Hindi') );
+      const english = partsFromNorm( preferEnglish(marks) );
+      const math    = partsFromNorm( mathNorm(marks) );
+      const science = partsFromNorm( physSciNorm(marks) || nVal(marks,'Biology') );
+      const social  = partsFromNorm( socialNorm(marks) );
+
+      return [
+        ...telugu, ...hindi, ...english,
+        ...math, ...science, ...social
+      ];
     } else {
-      // 8 slots for 8–10 in strict CSE order with the special Telugu rule
-      const math      = finalize( mathNorm(marks) );
-      const phys      = finalize( physSciNorm(marks) );
-      const bio       = finalize( biologyNorm(marks) );
-      const social    = finalize( socialNorm(marks) );
-      const compTel   = finalize( nVal(marks,'Telugu') ); // SLOT 5: Telugu marks (your rule)
-      const compTelSk = '';                                // SLOT 6: keep EMPTY (your rule)
-      const hindi     = finalize( nVal(marks,'Hindi') );
-      const english   = finalize( preferEnglish(marks) );
-      return [math, phys, bio, social, compTel, compTelSk, hindi, english];
+      // CSE (8–10) strict order with Telugu/Sanskrit rule
+      const math      = partsFromNorm( mathNorm(marks) );
+      const phys      = partsFromNorm( physSciNorm(marks) );
+      const bio       = partsFromNorm( biologyNorm(marks) );
+      const social    = partsFromNorm( socialNorm(marks) );
+      const compTel   = partsFromNorm( nVal(marks,'Telugu') );   // Slot 5 → Telugu-derived parts
+      const compTelSk = ['', '', '', ''];                        // Slot 6 → all four empty
+      const hindi     = partsFromNorm( nVal(marks,'Hindi') );
+      const english   = partsFromNorm( preferEnglish(marks) );
+
+      return [
+        ...math, ...phys, ...bio, ...social,
+        ...compTel, ...compTelSk,
+        ...hindi, ...english
+      ];
     }
   }
 
   // Modal UI
-  const labels67 = ['Mathematics','Science','Social Studies','Telugu','Hindi','English'];
-  const labels810 = ['Mathematics','Physical Science','Biological Science','Social Studies','Composite Telugu','Composite Telugu (Sanskrit)','Hindi','English'];
+    const TOOL4 = ['R','W','P','ST'];
+
+  // Build label sets: Subject × [R,W,P,ST]
+  const labels67 = ['Telugu','Hindi','English','Mathematics','Science','Social Studies']
+    .flatMap(s => TOOL4.map(t => `${s} ${t}`));
+
+  const labels810 = ['Mathematics','Physical Science','Biological Science','Social Studies','Composite Telugu','Composite Telugu (Sanskrit)','Hindi','English']
+    .flatMap(s => TOOL4.map(t => `${s} ${t}`));
+
   const labels = is67 ? labels67 : labels810;
 
   // Build student options (roll order)
@@ -920,7 +937,7 @@ copyCSEBtn.onclick = function(){
     .map((s,i)=>`<option value="${i}">${String(s.roll).padStart(2,'0')} - ${s.name}</option>`)
     .join('');
 
-  const body = `
+    const body = `
     <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:10px;">
       <label class="form-label" style="margin:0;">Student:</label>
       <select id="cseStudentSel" class="select-inline" style="min-width:260px;">${studentOptions}</select>
@@ -929,8 +946,8 @@ copyCSEBtn.onclick = function(){
       <button id="cseRefresh" class="copy-btn" type="button">Show</button>
     </div>
     <div style="margin:8px 0 10px;color:#185496;font-size:.95em;">
-      Output is a <b>single tab-separated row</b> (${labels.length} values) in CSE order for this student.
-      8–10: Slot 5 = Telugu, Slot 6 = empty (as per your rule).
+      Output is a <b>single tab-separated row</b> — <b>4 tool parts (R, W, P, ST) for each subject</b> in strict CSE order.
+      For 8–10, <b>Composite Telugu</b> uses Telugu marks; <b>Composite Telugu (Sanskrit)</b> four slots are left blank.
     </div>
     <div id="csePreview" style="border:1px solid #cfe1f8;border-radius:10px;padding:10px;margin-bottom:10px;background:#f8fbff;">
       <div style="font-weight:700;color:#0f3d6b;margin-bottom:6px;">Preview</div>
@@ -940,11 +957,10 @@ copyCSEBtn.onclick = function(){
     <textarea id="cseRow" class="textarea-block" readonly placeholder="Press Show to generate"></textarea>
   `;
   const footer = `
-    <button id="cseCopyRow" class="copy-btn" disabled>Copy Row (TSV)</button>
-    <button id="cseCopyVert" class="copy-btn" disabled>Copy Vertical</button>
-    <button class="copy-btn" onclick="closeModal()">Close</button>
-  `;
-
+  <button id="cseCopyRow" class="copy-btn" disabled>Copy Row (TSV)</button>
+  <button id="cseCopyVert" class="copy-btn" disabled>Copy Vertical</button>
+  <button class="copy-btn" onclick="closeModal()">Close</button>
+`;
   openModal('Copy for CSE (Student)', body, footer);
 
   // Wire up modal elements
@@ -1379,6 +1395,7 @@ compactViewBtn.onclick = function(){
   </script>
 </body>
 </html>
+
 
 
 
