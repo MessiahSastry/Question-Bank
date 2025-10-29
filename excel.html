@@ -92,6 +92,9 @@
 <button class="download-btn" id="copyLeapBtn" disabled>
   <i class="fa-solid fa-copy"></i> Copy Subject for LEAP
 </button>
+<button class="download-btn" id="copyCSEBtn" disabled>
+  <i class="fa-solid fa-copy"></i> Copy for CSE (Student)
+</button>
 
 <button class="download-btn" id="compactViewBtn" disabled>
   <i class="fa-solid fa-mobile-screen-button"></i> Compact Phone View
@@ -199,6 +202,7 @@ const excelBtn = document.getElementById('excelBtn');
 const leapBtn = document.getElementById('leapBtn');
 const pdfBtn = document.getElementById('pdfBtn');
 const copyLeapBtn = document.getElementById('copyLeapBtn');
+const copyCSEBtn  = document.getElementById('copyCSEBtn');
 const compactViewBtn = document.getElementById('compactViewBtn');
 const statusDiv = document.getElementById('status');
 const headerYear = document.getElementById('header-year');
@@ -226,7 +230,7 @@ const utilModalClose = document.getElementById('utilModalClose');
     auth.onAuthStateChanged(function(user){
       if (!user){
         statusDiv.textContent = "Please login.";
-pdfBtn.disabled = excelBtn.disabled = leapBtn.disabled = copyLeapBtn.disabled = compactViewBtn.disabled = true;
+pdfBtn.disabled = excelBtn.disabled = leapBtn.disabled = copyLeapBtn.disabled = copyCSEBtn.disabled = compactViewBtn.disabled = true;
         return;
       }
       loadExams();
@@ -238,7 +242,7 @@ pdfBtn.disabled = excelBtn.disabled = leapBtn.disabled = copyLeapBtn.disabled = 
       examSelected.dataset.value = '';
       examList.innerHTML = '';
       examSelected.classList.add('disabled');
-     excelBtn.disabled = pdfBtn.disabled = leapBtn.disabled = copyLeapBtn.disabled = compactViewBtn.disabled = true;
+    excelBtn.disabled = pdfBtn.disabled = leapBtn.disabled = copyLeapBtn.disabled = copyCSEBtn.disabled = compactViewBtn.disabled = true;
       statusDiv.textContent = "";
 
       if (!academicYear || !classId || !sectionId){
@@ -305,13 +309,13 @@ pdfBtn.disabled = excelBtn.disabled = leapBtn.disabled = copyLeapBtn.disabled = 
         }
 
         statusDiv.textContent = "";
-excelBtn.disabled = pdfBtn.disabled = leapBtn.disabled = copyLeapBtn.disabled = compactViewBtn.disabled = false;
+excelBtn.disabled = pdfBtn.disabled = leapBtn.disabled = copyLeapBtn.disabled = copyCSEBtn.disabled = compactViewBtn.disabled = false;
 
       } catch(err){
         statusDiv.textContent = "Error: " + err.message;
         examSelected.textContent = "--Select--";
         examSelected.classList.add('disabled');
-        leapBtn.disabled = copyLeapBtn.disabled = compactViewBtn.disabled = true;
+        leapBtn.disabled = copyLeapBtn.disabled = copyCSEBtn.disabled = compactViewBtn.disabled = true;
       }
     }
 
@@ -391,7 +395,51 @@ function mapToLeapTotals(selExamObj, className, marksPerSubject){
       { name:'Social',  total50:getNorm('Social') },
     ];
   }
+// ------- CSE subject order helper (Student paste: single column per subject) -------
+function getSubjectsInCSEOrder(selExamObj){
+  // Desired portal order:
+  const desired = [
+    'Mathematics',
+    'Physical Science',
+    'Biological Science',
+    'Social Studies',
+    'Composite Telugu',
+    'Composite Telugu (Sanskrit)',
+    'Hindi',
+    'English'
+  ];
 
+  // Available subjects in the exam (as entered in app)
+  const avail = (selExamObj.subjects || []).map(s => s.name);
+
+  // For each desired slot, pick first matching available alias
+  const aliases = {
+    'Mathematics': ['Mathematics','Math','Math 1','Math 2'],
+    'Physical Science': ['Physical Science','Physics'], // if separate Physics/Chemistry exist, user will pick column per subject later
+    'Biological Science': ['Biological Science','Biology'],
+    'Social Studies': ['Social Studies','Social'],
+    'Composite Telugu': ['Composite Telugu'],
+    'Composite Telugu (Sanskrit)': ['Composite Telugu (Sanskrit)','Composite Telugu(Sanskrit)'],
+    'Hindi': ['Hindi'],
+    'English': ['English','English 1','English 2']
+  };
+
+  const list = [];
+  for (const want of desired){
+    const opts = aliases[want] || [want];
+    const found = opts.find(x => avail.includes(x));
+    if (found){
+      // If "English" not present but both E1/E2 present, include both where English would appear
+      if (want === 'English' && !avail.includes('English')){
+        if (avail.includes('English 1')) list.push('English 1');
+        if (avail.includes('English 2')) list.push('English 2');
+      } else {
+        list.push(found);
+      }
+    }
+  }
+  return list;
+}
   // default to 8–10 mapping (Telugu, Hindi, English, Math, Physics, Biology, Social)
   const english = avgAvailable([getNorm('English 1'), getNorm('English 2')]);
   const math    = avgAvailable([getNorm('Math 1'), getNorm('Math 2')]);
@@ -758,6 +806,75 @@ copyLeapBtn.onclick = function(){
     ta.value = buildTSVFor(idx);
     copyBtn.disabled = false;
   };
+  copyBtn.onclick = ()=>{
+    ta.select(); ta.setSelectionRange(0, ta.value.length);
+    document.execCommand('copy');
+    copyBtn.textContent = 'Copied!';
+    setTimeout(()=>copyBtn.textContent='Copy', 1200);
+  };
+};
+    // ---------- Copy for CSE (Student): one subject = one column (one value per line) ----------
+copyCSEBtn.onclick = function(){
+  if (!selectedExamObj){
+    selectedExam = examSelected.dataset.value;
+    selectedExamObj = examMap[selectedExam];
+  }
+  if (!selectedExamObj){ statusDiv.textContent = "Select an exam."; return; }
+
+  // Build subject list in strict CSE order
+  const cseSubjects = getSubjectsInCSEOrder(selectedExamObj);
+  if (!cseSubjects.length){
+    statusDiv.textContent = "No matching subjects for CSE order in this exam.";
+    return;
+  }
+
+  const subjectOptions = cseSubjects.map((s,i)=>`<option value="${i}">${s}</option>`).join('');
+
+  const body = `
+    <div style="margin-bottom:10px;">
+      <label class="form-label">Subject (CSE order):</label>
+      <select id="copyCSESubject" class="select-inline">${subjectOptions}</select>
+      <button id="renderCopyCSE" class="copy-btn" style="margin-left:8px;">Render</button>
+    </div>
+    <div style="margin:6px 0 10px;color:#185496;font-size:.95em;">
+      Output is <b>one mark per line</b> (single column) for direct paste into the CSE portal.
+      Missing marks are kept blank.
+    </div>
+    <textarea id="copyCSEArea" class="textarea-block" readonly placeholder="Select subject and click Render"></textarea>
+  `;
+  const footer = `<button id="copyCSECopyBtn" class="copy-btn" disabled>Copy</button>`;
+
+  openModal('Copy for CSE (Student)', body, footer);
+
+  const sel = document.getElementById('copyCSESubject');
+  const renderBtn = document.getElementById('renderCopyCSE');
+  const ta = document.getElementById('copyCSEArea');
+  const copyBtn = document.getElementById('copyCSECopyBtn');
+
+  function buildColumnFor(subjName){
+    const lines = [];
+    for (const stu of students){
+      const marks = (marksMap[stu.id][selectedExamObj.id] || {});
+      const v = marks[subjName];
+      // Keep blank for Absent/missing (portal usually accepts blanks)
+      if (typeof v === 'number' && !isNaN(v)) {
+        lines.push(String(v));
+      } else if (v === 'Ab') {
+        lines.push(''); // blank for Ab
+      } else {
+        lines.push('');
+      }
+    }
+    return lines.join('\\n');
+  }
+
+  renderBtn.onclick = ()=>{
+    const idx = parseInt(sel.value,10) || 0;
+    const subjName = cseSubjects[idx];
+    ta.value = buildColumnFor(subjName);
+    copyBtn.disabled = false;
+  };
+
   copyBtn.onclick = ()=>{
     ta.select(); ta.setSelectionRange(0, ta.value.length);
     document.execCommand('copy');
@@ -1138,6 +1255,7 @@ compactViewBtn.onclick = function(){
   </script>
 </body>
 </html>
+
 
 
 
