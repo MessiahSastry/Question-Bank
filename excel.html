@@ -29,10 +29,10 @@
     h2 { color:#0f3d6b; margin:0 0 12px; font-size:1.2em; letter-spacing:.01em; }
     .form-row { margin-bottom:18px; display:flex; flex-direction:column; gap:7px; }
     .form-label { text-align:left; font-weight:600; color:#185496; margin-bottom:3px; }
-    .custom-dropdown { border:1.4px solid #1467b7; border-radius:7px; background:#f7fafd; margin-bottom:15px; width:100%; position:relative; font-size:1.09em; min-width:170px; display:inline-block; }
-    .dropdown-selected { padding:13px 14px; cursor:pointer; user-select:none; border-radius:7px; font-weight:500; color:#12416c; background:#f7fafd; }
-    .dropdown-list { position:absolute; top:100%; left:0; right:0; background:#fff; border:1.2px solid #1467b7; border-top:none; border-radius:0 0 7px 7px; box-shadow:0 8px 24px #1467b720; z-index:9; max-height:220px; overflow-y:auto; display:none; }
-    .dropdown-option { padding:13px 14px; cursor:pointer; color:#1762a7; font-size:1.05em; background:#fff; transition:background .15s; }
+    .custom-dropdown { border:1px solid #1467b7; border-radius:7px; background:#f7fafd; margin-bottom:15px; width:100%; position:relative; min-width:0; display:block; }
+   .dropdown-selected { padding:10px 12px; cursor:pointer; user-select:none; border-radius:7px; background:#f7fafd; text-align:left; font:600 14px 'Segoe UI', Arial, sans-serif; color:#12416c; }
+   .dropdown-list { position:absolute; top:100%; left:0; right:0; background:#fff; border:1px solid #1467b7; border-top:none; border-radius:0 0 7px 7px; box-shadow:0 8px 24px #1467b720; z-index:9; max-height:220px; overflow-y:auto; display:none; text-align:left; font:600 14px 'Segoe UI', Arial, sans-serif; }
+    .dropdown-option { padding:10px 12px; cursor:pointer; color:#1762a7; background:#fff; transition:background .15s; font:600 14px 'Segoe UI', Arial, sans-serif; }
     .dropdown-option:hover { background:#e3f2fd; }
     .dropdown-selected.disabled { color:#b6b6b6!important; background:#f0f0f0!important; pointer-events:none; }
     .download-btn { width:100%; background:var(--primary); color:#fff; font-size:1.14em; font-weight:bold; border:none; border-radius:9px; padding:13px 0; cursor:pointer; margin-top:19px; margin-bottom:7px; transition:background .18s; box-shadow:0 2px 10px #0f3d6b1a; }
@@ -85,20 +85,22 @@
 
     <main>
       <div class="setup-form-container">
-        <h2 id="classSectionHeading">Class & Section</h2>
         <div class="form-row">
   <div class="form-label">Select Class:</div>
-  <select id="classSel" class="select-inline" style="width:100%">
-    <option value="" disabled selected>Loading…</option>
-  </select>
+  <div class="custom-dropdown" id="classDropdown" tabindex="0">
+    <div class="dropdown-selected" id="classSelected" data-value="">--Select--</div>
+    <div class="dropdown-list" id="classList"></div>
+  </div>
 </div>
 
 <div class="form-row">
   <div class="form-label">Select Section:</div>
-  <select id="sectionSel" class="select-inline" style="width:100%" disabled>
-    <option value="" disabled selected>Select class first</option>
-  </select>
+  <div class="custom-dropdown" id="sectionDropdown" tabindex="0">
+    <div class="dropdown-selected disabled" id="sectionSelected" data-value="">Select class first</div>
+    <div class="dropdown-list" id="sectionList"></div>
+  </div>
 </div>
+
         <div class="form-row">
           <div class="form-label">Select Exam:</div>
           <div class="custom-dropdown" id="examDropdown" tabindex="0" style="margin-bottom: 18px;">
@@ -177,43 +179,54 @@ async function ensureCurrentYearId() {
 // Load Classes -> Sections like memos.html
 async function loadClassesIntoSelect() {
   const yearId = await ensureCurrentYearId();
-  const sel = document.getElementById('classSel');
-  sel.innerHTML = `<option value="" disabled selected>Select class</option>`;
+  classSelected.textContent = 'Loading…';
+  classSelected.dataset.value = '';
+  classList.innerHTML = '';
 
   const snap = await db.collection('years').doc(yearId).collection('classes')
-    .orderBy('order','asc').get().catch(() => db.collection('years').doc(yearId).collection('classes').get());
+    .orderBy('order','asc').get().catch(() =>
+      db.collection('years').doc(yearId).collection('classes').get()
+    );
 
+  const items = [];
   snap.forEach(doc => {
     const d = doc.data();
-    const opt = document.createElement('option');
-    opt.value = doc.id;
-    opt.textContent = d?.name || d?.title || doc.id;
-    sel.appendChild(opt);
+    items.push({ id: doc.id, name: d?.name || d?.title || doc.id });
   });
+
+  classList.innerHTML = items.map(it =>
+    `<div class="dropdown-option" data-id="${it.id}" data-name="${it.name}">${it.name}</div>`
+  ).join('');
+
+  classSelected.textContent = '--Select--';
 }
 
 async function loadSectionsIntoSelect(classId) {
   const yearId = await ensureCurrentYearId();
-  const sel = document.getElementById('sectionSel');
-  sel.disabled = true;
-  sel.innerHTML = `<option value="" disabled selected>Loading…</option>`;
+  sectionSelected.classList.add('disabled');
+  sectionSelected.textContent = 'Loading…';
+  sectionSelected.dataset.value = '';
+  sectionList.innerHTML = '';
 
   const snap = await db.collection('years').doc(yearId)
     .collection('classes').doc(classId).collection('sections')
     .orderBy('name','asc').get().catch(() =>
-      db.collection('years').doc(yearId).collection('classes')
-        .doc(classId).collection('sections').get()
+      db.collection('years').doc(yearId).collection('classes').doc(classId)
+        .collection('sections').get()
     );
 
-  sel.innerHTML = `<option value="" disabled selected>Select section</option>`;
+  const items = [];
   snap.forEach(doc => {
     const d = doc.data();
-    const opt = document.createElement('option');
-    opt.value = doc.id;
-    opt.textContent = d?.name || doc.id;
-    sel.appendChild(opt);
+    items.push({ id: doc.id, name: d?.name || doc.id });
   });
-  sel.disabled = false;
+
+  sectionList.innerHTML = items.map(it =>
+    `<div class="dropdown-option" data-id="${it.id}" data-name="${it.name}">${it.name}</div>`
+  ).join('');
+
+  sectionSelected.textContent = '--Select--';
+  sectionSelected.classList.remove('disabled');
 }
 
 // Load Exams like memos.html (years/{year}/exams)
@@ -242,35 +255,72 @@ async function initFilters() {
   await ensureCurrentYearId();
   await loadClassesIntoSelect();
 
- const classSel   = document.getElementById('classSel');
-const sectionSel = document.getElementById('sectionSel');
-// (no native examSel anymore — we use the custom exam dropdown)
+ const classDropdown   = document.getElementById('classDropdown');
+const classSelected   = document.getElementById('classSelected');
+const classList       = document.getElementById('classList');
+const sectionDropdown = document.getElementById('sectionDropdown');
+const sectionSelected = document.getElementById('sectionSelected');
+const sectionList     = document.getElementById('sectionList');
 
-  classSel.addEventListener('change', async (e) => {
-  window.selClassId = e.target.value;
-  window.selClassName = e.target.options[e.target.selectedIndex]?.textContent || null;
+ // --- Class dropdown interactions ---
+classSelected.onclick = (e) => {
+  classList.style.display = (classList.style.display === 'block') ? 'none' : 'block';
+  e.stopPropagation();
+};
+document.addEventListener('click', () => { classList.style.display = 'none'; });
 
-  // keep your existing globals in sync
+classList.onclick = async (e) => {
+  const opt = e.target.closest('.dropdown-option'); if (!opt) return;
+  classSelected.textContent = opt.dataset.name;
+  classSelected.dataset.value = opt.dataset.id;
+  classList.style.display = 'none';
+
+  window.selClassId = opt.dataset.id;
+  window.selClassName = opt.dataset.name || '';
   classId = window.selClassId;
   className = window.selClassName || '';
 
-  // persist
   localStorage.setItem('sp_selectedClassId', classId || '');
   localStorage.setItem('sp_selectedClassName', className || '');
 
-  // refresh sections for class
-  if (window.selClassId) {
-    await loadSectionsIntoSelect(window.selClassId);
-    // Reset section selection
-    window.selSectionId = null; window.selSectionName = null;
-    localStorage.removeItem('sp_selectedSectionId');
-    localStorage.removeItem('sp_selectedSectionName');
-    document.getElementById('classSectionHeading').textContent =
-      className || 'Class & Section';
-  }
+  // reset section
+  window.selSectionId = null; window.selSectionName = null;
+  localStorage.removeItem('sp_selectedSectionId');
+  localStorage.removeItem('sp_selectedSectionName');
+  sectionSelected.textContent = 'Loading…';
+  sectionSelected.classList.add('disabled');
+  sectionList.innerHTML = '';
 
   document.dispatchEvent(new CustomEvent('filters-changed', {detail:{kind:'class'}}));
-});
+
+  if (window.selClassId) await loadSectionsIntoSelect(window.selClassId);
+};
+
+// --- Section dropdown interactions ---
+sectionSelected.onclick = (e) => {
+  if (sectionSelected.classList.contains('disabled')) return;
+  sectionList.style.display = (sectionList.style.display === 'block') ? 'none' : 'block';
+  e.stopPropagation();
+};
+document.addEventListener('click', () => { sectionList.style.display = 'none'; });
+
+sectionList.onclick = (e) => {
+  const opt = e.target.closest('.dropdown-option'); if (!opt) return;
+  sectionSelected.textContent = opt.dataset.name;
+  sectionSelected.dataset.value = opt.dataset.id;
+  sectionList.style.display = 'none';
+
+  window.selSectionId = opt.dataset.id;
+  window.selSectionName = opt.dataset.name || '';
+  sectionId = window.selSectionId;
+  sectionName = window.selSectionName || '';
+
+  localStorage.setItem('sp_selectedSectionId', sectionId || '');
+  localStorage.setItem('sp_selectedSectionName', sectionName || '');
+
+  document.dispatchEvent(new CustomEvent('filters-changed', {detail:{kind:'section'}}));
+  loadExams(); // refresh exams + data after section chosen
+};
   sectionSel.addEventListener('change', (e) => {
   window.selSectionId = e.target.value;
   window.selSectionName = e.target.options[e.target.selectedIndex]?.textContent || null;
@@ -282,10 +332,7 @@ const sectionSel = document.getElementById('sectionSel');
   localStorage.setItem('sp_selectedSectionName', sectionName || '');
 
   // update heading
-  document.getElementById('classSectionHeading').textContent =
-    sectionName ? `${className} – ${sectionName}` : (className || 'Class & Section');
-
-  document.dispatchEvent(new CustomEvent('filters-changed', {detail:{kind:'section'}}));
+    document.dispatchEvent(new CustomEvent('filters-changed', {detail:{kind:'section'}}));
     loadExams();
 });
 
@@ -408,10 +455,7 @@ let __modalOpenedAt = 0; // declare early so the touch handler can see it safely
     let sectionId = localStorage.getItem('sp_selectedSectionId') || '';
     let sectionName = localStorage.getItem('sp_selectedSectionName') || '';
 
-   document.getElementById('classSectionHeading').textContent =
-  className + (sectionName ? ' – ' + sectionName : '');
-
-    // FIX: template literal
+      // FIX: template literal
     headerYear.textContent = academicYear ? `${academicYear}` : '';
 
     // Helper: toggle loading spinner and button states
@@ -1689,6 +1733,7 @@ compactViewBtn.onclick = function(){
   </script>
 </body>
 </html>
+
 
 
 
