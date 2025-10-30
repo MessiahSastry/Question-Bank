@@ -13,6 +13,7 @@
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
   <script src="https://unpkg.com/xlsx-populate/browser/xlsx-populate.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 
   <style>
     :root { --primary:#0f3d6b; --secondary:#1762a7; --alt1:#f8fbff; --alt2:#eaf1fa; }
@@ -96,18 +97,20 @@
         <button class="download-btn" id="excelBtn" disabled>
         <i class="fa-solid fa-file-excel"></i> Download Excel
       </button>
-      
-      <button class="download-btn" id="leapBtn" disabled>
-        <i class="fa-solid fa-file-excel"></i> Excel for LEAP
+
+         <button class="download-btn" id="pdfBtn" disabled>
+        <i class="fa-solid fa-file-pdf"></i> Download PDF
       </button>
       
-      <button class="download-btn" id="pdfBtn" disabled>
-  <i class="fa-solid fa-file-pdf"></i> Download PDF
-</button>
+      <button class="download-btn" id="leapBtn" disabled>
+      <i class="fa-solid fa-file-excel"></i> Excel for LEAP
+    </button>
+    
+    <button class="download-btn" id="leapPdfBtn" disabled>
+      <i class="fa-solid fa-file-pdf"></i> PDF for LEAP
+    </button>
+         
 
-<button class="download-btn" id="copyLeapBtn" disabled>
-  <i class="fa-solid fa-copy"></i> Copy Subject for LEAP
-</button>
 <button class="download-btn" id="copyCSEBtn" disabled>
   <i class="fa-solid fa-copy"></i> Copy for CSE (Student)
 </button>
@@ -215,9 +218,9 @@
 const examSelected = document.getElementById('examSelected');
 const examList = document.getElementById('examList');
 const excelBtn = document.getElementById('excelBtn');
-const leapBtn = document.getElementById('leapBtn');
 const pdfBtn = document.getElementById('pdfBtn');
-const copyLeapBtn = document.getElementById('copyLeapBtn');
+const leapBtn = document.getElementById('leapBtn');
+const leapPdfBtn = document.getElementById('leapPdfBtn');
 const copyCSEBtn  = document.getElementById('copyCSEBtn');
   // Mobile tap fallback to ensure the click path fires on touch devices
 copyCSEBtn.addEventListener('touchend', (ev) => {
@@ -236,6 +239,7 @@ const utilModalTitle = document.getElementById('utilModalTitle');
 const utilModalBody = document.getElementById('utilModalBody');
 const utilModalFooter = document.getElementById('utilModalFooter');
 const utilModalClose = document.getElementById('utilModalClose');
+let __modalOpenedAt = 0; // declare early so the touch handler can see it safely
 
     // -- Get session/class/section from storage --
     let academicYear = localStorage.getItem('sp_selectedYear') || '';
@@ -255,12 +259,12 @@ function setLoading(on){
   if (on){
     statusDiv.classList.add('loading');
     statusDiv.innerHTML = `<span>Loading data…</span><span class="dot"></span><span class="dot"></span><span class="dot"></span>`;
-    excelBtn.disabled = pdfBtn.disabled = leapBtn.disabled = copyLeapBtn.disabled = copyCSEBtn.disabled = compactViewBtn.disabled = true;
+    excelBtn.disabled = pdfBtn.disabled = leapBtn.disabled = copyCSEBtn.disabled = compactViewBtn.disabled = true;
     examSelected.classList.add('disabled');
   } else {
     statusDiv.classList.remove('loading');
     statusDiv.textContent = "";
-    excelBtn.disabled = pdfBtn.disabled = leapBtn.disabled = copyLeapBtn.disabled = copyCSEBtn.disabled = compactViewBtn.disabled = false;
+   excelBtn.disabled = pdfBtn.disabled = leapBtn.disabled = copyCSEBtn.disabled = compactViewBtn.disabled = false;
     examSelected.classList.remove('disabled');
   }
 }
@@ -269,7 +273,7 @@ function setLoading(on){
     auth.onAuthStateChanged(function(user){
       if (!user){
         statusDiv.textContent = "Please login.";
-pdfBtn.disabled = excelBtn.disabled = leapBtn.disabled = copyLeapBtn.disabled = copyCSEBtn.disabled = compactViewBtn.disabled = true;
+pdfBtn.disabled = excelBtn.disabled = leapBtn.disabled = copyCSEBtn.disabled = compactViewBtn.disabled = true;
         return;
       }
       loadExams();
@@ -355,7 +359,7 @@ examSelected.classList.add('disabled');
 setLoading(false); // removes spinner
 // keep actions disabled on error
 excelBtn.disabled = pdfBtn.disabled = true;
-leapBtn.disabled = copyLeapBtn.disabled = copyCSEBtn.disabled = compactViewBtn.disabled = true;
+leapBtn.disabled = copyCSEBtn.disabled = compactViewBtn.disabled = true;
       }
     }
 
@@ -564,7 +568,7 @@ function splitToTools(total50, roll){
   return [...floors, floors.reduce((a,b)=>a+b,0)]; // [T1,T2,T3,T4,Total]
 }
 // ---------- Modal helpers ----------
-let __modalOpenedAt = 0;
+__modalOpenedAt = __modalOpenedAt || 0; // already declared above
 function openModal(title, bodyHTML, footerHTML=''){
   utilModalTitle.textContent = title || '';
   utilModalBody.innerHTML = bodyHTML || '';
@@ -645,31 +649,37 @@ title1[0] = "St. Patrick's School";
 const title2 = Array(totalCols).fill('');
 title2[0] = "IIT & NEET FOUNDATION";
 
-// Row 2: Class & Section
+// Row 2: Exam name
 const title3 = Array(totalCols).fill('');
+const examTitle = selectedExamObj?.name ? String(selectedExamObj.name) : "";
+title3[0] = examTitle;
+
+// Row 3: Class & Section
+const title4 = Array(totalCols).fill('');
 const classSecText = sectionName ? `${className} – ${sectionName}` : `${className}`;
-title3[0] = classSecText;
+title4[0] = classSecText;
 
 // Build final sheet data (titles + headers + data)
-const aoa = [title1, title2, title3, row1, row2, ...dataRows];
+const aoa = [title1, title2, title3, title4, row1, row2, ...dataRows];
 const ws = XLSX.utils.aoa_to_sheet(aoa);
 
 // ------- Merges -------
 const merges = [];
 
 // Merge each title row across ALL columns
-merges.push({ s:{ r:0, c:0 }, e:{ r:0, c: totalCols - 1 } }); // title1
-merges.push({ s:{ r:1, c:0 }, e:{ r:1, c: totalCols - 1 } }); // title2
-merges.push({ s:{ r:2, c:0 }, e:{ r:2, c: totalCols - 1 } }); // title3
+merges.push({ s:{ r:0, c:0 }, e:{ r:0, c: totalCols - 1 } }); // title1 (School)
+merges.push({ s:{ r:1, c:0 }, e:{ r:1, c: totalCols - 1 } }); // title2 (Subheading)
+merges.push({ s:{ r:2, c:0 }, e:{ r:2, c: totalCols - 1 } }); // title3 (Exam)
+merges.push({ s:{ r:3, c:0 }, e:{ r:3, c: totalCols - 1 } }); // title4 (Class & Section)
 
-// Merge "Roll" and "Name" vertically across the two header rows (now rows 3 & 4)
-merges.push({ s:{ r:3, c:0 }, e:{ r:4, c:0 } });
-merges.push({ s:{ r:3, c:1 }, e:{ r:4, c:1 } });
+// Merge "Roll" and "Name" vertically across the two header rows (now rows 4 & 5)
+merges.push({ s:{ r:4, c:0 }, e:{ r:5, c:0 } });
+merges.push({ s:{ r:4, c:1 }, e:{ r:5, c:1 } });
 
-// For each subject, merge the subject name across its 5 sub-columns at row 3
+// For each subject, merge the subject name across its 5 sub-columns at row 4
 let c = 2;
 for (let i = 0; i < subjectsLeap.length; i++) {
-  merges.push({ s:{ r:3, c: c }, e:{ r:3, c: c + 4 } });
+  merges.push({ s:{ r:4, c: c }, e:{ r:4, c: c + 4 } });
   c += 5;
 }
 ws['!merges'] = merges;
@@ -680,23 +690,24 @@ function setHeaderStyle(r, c) {
   if (!ws[addr]) ws[addr] = { t: 's', v: '' };
   ws[addr].s = Object.assign({}, ws[addr].s, {
     alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
-    font: { bold: (r <= 4) } // bold titles + headers
+    font: { bold: (r <= 5) } // bold titles + both header rows
   });
 }
 
-// Center all three title rows
-for (let r = 0; r <= 2; r++) {
+// Center all four title rows
+for (let r = 0; r <= 3; r++) {
   for (let cc = 0; cc < totalCols; cc++) setHeaderStyle(r, cc);
 }
 
-// Row 3: merged subject titles start at col 2 (center them)
-for (let cc = 2; cc < totalCols; cc += 5) setHeaderStyle(3, cc);
+// Row 4: merged subject titles start at col 2 (center them)
+for (let cc = 2; cc < totalCols; cc += 5) setHeaderStyle(4, cc);
 // Also center the top of the Roll/Name merged headers
-setHeaderStyle(3, 0);
-setHeaderStyle(3, 1);
+setHeaderStyle(4, 0);
+setHeaderStyle(4, 1);
 
-// Row 4: R/W/P/ST/TOTAL labels — wrapText and center
-for (let cc = 0; cc < totalCols; cc++) setHeaderStyle(4, cc);
+// Row 5: R/W/P/ST/TOTAL labels — wrapText and center
+for (let cc = 0; cc < totalCols; cc++) setHeaderStyle(5, cc);
+
 
 // Auto column widths
 const colWidths = [];
@@ -823,62 +834,113 @@ XlsxPopulate.fromBlankAsync().then(workbook => {
   statusDiv.textContent = "Error generating LEAP Excel: " + err.message;
 });
 }; // end of leapBtn.onclick
-
-// ---------- Copy Subject for LEAP (TSV block: R W P ST Total) ----------
-copyLeapBtn.onclick = function(){
+// ------------- PDF for LEAP (uses same mapping/splitting as Excel for LEAP) -------------
+leapPdfBtn.onclick = function(){
   if (!selectedExamObj){
     selectedExam = examSelected.dataset.value;
     selectedExamObj = examMap[selectedExam];
   }
   if (!selectedExamObj){ statusDiv.textContent = "Select an exam."; return; }
 
+  statusDiv.textContent = "Preparing LEAP PDF...";
+
+  // Build LEAP subject order (names only) using the same logic as Excel for LEAP
   const subjectsLeap = mapToLeapTotals(selectedExamObj, className, {}).map(x => x.name);
-  const subjectOptions = subjectsLeap.map((s,i)=>`<option value="${i}">${s}</option>`).join('');
 
-  const body = `
-    <div style="margin-bottom:10px;">
-      <label class="form-label">Subject:</label>
-      <select id="copyLeapSubject" class="select-inline">${subjectOptions}</select>
-      <button id="renderCopyLeap" class="copy-btn" style="margin-left:8px;">Render</button>
-    </div>
-    <textarea id="copyLeapArea" class="textarea-block" readonly placeholder="Select subject and click Render"></textarea>
-  `;
-  const footer = `<button id="copyLeapCopyBtn" class="copy-btn" disabled>Copy</button>`;
+  // Build THEAD with Roll/Name + each subject’s 5 columns (R,W,P,ST,TOTAL)
+  const thead =
+    `<tr style="background:#1762a7;color:#fff;font-weight:700;">
+       <th>ROLL</th><th style="text-align:left;padding-left:10px;min-width:120px;">NAME</th>
+       ${
+         subjectsLeap.map(sub =>
+           `<th>${sub} R</th><th>${sub} W</th><th>${sub} P</th><th>${sub} ST</th><th>${sub} TOTAL</th>`
+         ).join('')
+       }
+     </tr>`;
 
-  openModal('Copy Subject for LEAP', body, footer);
+  // Build TBODY rows: roll order
+  const tbodyRows = [];
+  for (const stu of students){
+    const marks = marksMap[stu.id][selectedExamObj.id] || {};
+    const mapped = mapToLeapTotals(selectedExamObj, className, marks).map(x=>{
+      const t50 = passFloor50(x.total50);
+      return splitToTools(t50, stu.roll); // [R,W,P,ST,TOTAL]
+    });
 
-  const sel = document.getElementById('copyLeapSubject');
-  const renderBtn = document.getElementById('renderCopyLeap');
-  const ta = document.getElementById('copyLeapArea');
-  const copyBtn = document.getElementById('copyLeapCopyBtn');
+    let tds = `<td style="font-weight:600;">${stu.roll ?? ''}</td>` +
+              `<td style="text-align:left;padding-left:10px;">${stu.name ?? ''}</td>`;
 
-  function buildTSVFor(idx){
-    const lines = [];
-    // Header row (optional): uncomment if you want it included in paste
-    // lines.push('R\tW\tP\tST\tTOTAL');
-    for (const stu of students){
-      const marks = marksMap[stu.id][selectedExamObj.id] || {};
-      const mapped = mapToLeapTotals(selectedExamObj, className, marks);
-      const subj = mapped[idx];
-      const t50 = passFloor50(subj.total50);
-      const parts = splitToTools(t50, stu.roll); // [R,W,P,ST,Total]
-      lines.push(`${parts[0]}\t${parts[1]}\t${parts[2]}\t${parts[3]}\t${parts[4]}`);
+    for (const arr of mapped){
+      const [r,w,p,st,total] = arr;
+      tds += `<td>${r}</td><td>${w}</td><td>${p}</td><td>${st}</td><td>${total}</td>`;
     }
-    return lines.join('\n');
+    tbodyRows.push(`<tr>${tds}</tr>`);
   }
 
-  renderBtn.onclick = ()=>{
-    const idx = parseInt(sel.value,10) || 0;
-    ta.value = buildTSVFor(idx);
-    copyBtn.disabled = false;
-  };
-  copyBtn.onclick = ()=>{
-    ta.select(); ta.setSelectionRange(0, ta.value.length);
-    document.execCommand('copy');
-    copyBtn.textContent = 'Copied!';
-    setTimeout(()=>copyBtn.textContent='Copy', 1200);
-  };
+  // ---- Heading block (Exam name after subheading) ----
+  const schoolName = "St. Patrick's School";
+  const subHeading = "IIT & NEET FOUNDATION";
+  const examTitle  = selectedExamObj?.name ? String(selectedExamObj.name) : "";
+  const classSecText = sectionName ? `${className} – ${sectionName}` : `${className}`;
+
+  const headingHtml =
+    `<div style="width:100%;text-align:center;margin-bottom:6px;">
+       <div style="display:inline-flex;align-items:center;justify-content:center;">
+         <img src="schoollogo1.png" style="height:90px;width:auto;border-radius:8px;margin-right:10px;" onerror="this.style.display='none';">
+         <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;line-height:1.12;">
+           <span style="font-size:1.9em;font-weight:800;color:#c81929;">${schoolName}</span>
+           <span style="font-size:1.15em;font-weight:700;color:#224a74;">${subHeading}</span>
+           <span style="font-size:1.1em;font-weight:700;color:#185496;">${examTitle}</span>
+           <span style="font-size:1.05em;font-weight:700;color:#187141;">${classSecText}</span>
+         </div>
+         <img src="schoollogo2.png" style="height:90px;width:auto;border-radius:8px;margin-left:10px;" onerror="this.style.display='none';">
+       </div>
+     </div>`;
+
+  // ---- Table HTML (LEAP layout) ----
+  const tableHtml =
+    `<table cellspacing="0" cellpadding="0" style="border-collapse:collapse;width:100%;max-width:100%;text-align:center;font-size:0.86em;line-height:1.15;">
+       <thead>${thead}</thead>
+       <tbody>
+         ${tbodyRows.join('')}
+       </tbody>
+     </table>`;
+
+  // Wrap for PDF
+  const pdfHTML =
+    `<div style="font-family:'Times New Roman', Times, serif; color:#1a1a1a; margin:0; padding:0;">
+       <style>
+         td, th { border: 1px solid #444; padding: 2px 4px; white-space: nowrap; }
+         thead { display: table-header-group; }
+         tr { page-break-inside: avoid; }
+       </style>
+       ${headingHtml}
+       ${tableHtml}
+     </div>`;
+
+  const printable = document.createElement('div');
+  printable.innerHTML = pdfHTML;
+  document.body.appendChild(printable);
+
+  const fname = `LEAP_Marks_${className}_${sectionName}_${selectedExamObj.name}_${academicYear}.pdf`;
+  html2pdf().set({
+      margin: [1.27, 1, 1.27, 1],
+      filename: fname,
+      html2canvas: { scale: 2, useCORS: true },
+      jsPDF: { unit: 'cm', format: 'a4', orientation: 'landscape' }
+    })
+    .from(printable)
+    .save()
+    .then(() => {
+      document.body.removeChild(printable);
+      statusDiv.textContent = "LEAP PDF downloaded!";
+    })
+    .catch(err => {
+      document.body.removeChild(printable);
+      statusDiv.textContent = "Error generating LEAP PDF: " + err;
+    });
 };
+
    // ---------- Copy for CSE (Student): one student -> CSE row (LEAP-style normalize) ----------
 copyCSEBtn.onclick = function(){
   if (!selectedExamObj){
@@ -1436,6 +1498,7 @@ compactViewBtn.onclick = function(){
   </script>
 </body>
 </html>
+
 
 
 
