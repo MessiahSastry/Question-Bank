@@ -73,8 +73,36 @@
 .badge .val{display:block;font-size:18px;}
 .copy-btn{background:#1762a7;color:#fff;border:none;border-radius:8px;padding:8px 14px;cursor:pointer;font-weight:600;}
   </style>
+<style>
+  .filters-bar{
+    display:flex; gap:10px; align-items:center; flex-wrap:wrap;
+    padding:10px 12px; background:#f6f8fc; border-bottom:1px solid #e6eef7;
+    position:sticky; top:0; z-index:5;
+  }
+  .filters-bar select{
+    padding:8px 10px; border:1px solid #cdd9ea; border-radius:8px; background:#fff;
+    font: 600 14px 'Segoe UI', Arial, sans-serif; min-width:160px; outline: none;
+  }
+  .filters-bar .pill{font:600 13px/1.2 'Segoe UI'; color:#175799}
+  @media (max-width: 640px){
+    .filters-bar{position:sticky; top:0}
+    .filters-bar select{min-width:120px; font-size:13px}
+  }
+</style>
 </head>
 <body>
+  <!-- Firestore-driven filters like memos.html -->
+  <div class="filters-bar">
+    <span class="pill">Class</span>
+    <select id="classSel"><option value="" disabled selected>Loading…</option></select>
+
+    <span class="pill">Section</span>
+    <select id="sectionSel" disabled><option value="" disabled selected>Select class first</option></select>
+
+    <span class="pill">Exam</span>
+    <select id="examSel"><option value="" disabled selected>Loading…</option></select>
+  </div>
+
   <div class="page-wrapper">
     <div class="fixed-header" id="header">
       <div class="school-title">St. Patrick's School</div>
@@ -136,6 +164,163 @@
   </div>
 
   <script>
+   // --- Firestore refs like memos.html ---
+// (db is created AFTER firebase.initializeApp below)
+let currentYearId = window.currentYearId || null;
+
+// Expose selections for your existing buttons (no logic changed)
+window.selClassId = null;   window.selClassName = null;
+window.selSectionId = null; window.selSectionName = null;
+window.selExamId = null;    window.selExamName = null;
+
+// Prefer an app-provided currentYearId; otherwise pick the latest from /years
+async function ensureCurrentYearId() {
+  if (currentYearId) return currentYearId;
+  const saved = localStorage.getItem('sp_selectedYear');
+  if (saved) { currentYearId = saved; return currentYearId; }
+  const yrs = await db.collection('years').orderBy('name','desc').limit(1).get();
+  if (!yrs.empty) {
+    currentYearId = yrs.docs[0].id;
+    localStorage.setItem('sp_selectedYear', currentYearId);
+  } else {
+    throw new Error('No "years" found in Firestore.');
+  }
+  return currentYearId;
+}
+
+
+// Load Classes -> Sections like memos.html
+async function loadClassesIntoSelect() {
+  const yearId = await ensureCurrentYearId();
+  const sel = document.getElementById('classSel');
+  sel.innerHTML = `<option value="" disabled selected>Select class</option>`;
+
+  const snap = await db.collection('years').doc(yearId).collection('classes')
+    .orderBy('order','asc').get().catch(() => db.collection('years').doc(yearId).collection('classes').get());
+
+  snap.forEach(doc => {
+    const d = doc.data();
+    const opt = document.createElement('option');
+    opt.value = doc.id;
+    opt.textContent = d?.name || d?.title || doc.id;
+    sel.appendChild(opt);
+  });
+}
+
+async function loadSectionsIntoSelect(classId) {
+  const yearId = await ensureCurrentYearId();
+  const sel = document.getElementById('sectionSel');
+  sel.disabled = true;
+  sel.innerHTML = `<option value="" disabled selected>Loading…</option>`;
+
+  const snap = await db.collection('years').doc(yearId)
+    .collection('classes').doc(classId).collection('sections')
+    .orderBy('name','asc').get().catch(() =>
+      db.collection('years').doc(yearId).collection('classes')
+        .doc(classId).collection('sections').get()
+    );
+
+  sel.innerHTML = `<option value="" disabled selected>Select section</option>`;
+  snap.forEach(doc => {
+    const d = doc.data();
+    const opt = document.createElement('option');
+    opt.value = doc.id;
+    opt.textContent = d?.name || doc.id;
+    sel.appendChild(opt);
+  });
+  sel.disabled = false;
+}
+
+// Load Exams like memos.html (years/{year}/exams)
+async function loadExamsIntoSelect() {
+  const yearId = await ensureCurrentYearId();
+  const sel = document.getElementById('examSel');
+  sel.innerHTML = `<option value="" disabled selected>Loading…</option>`;
+
+  const snap = await db.collection('years').doc(yearId).collection('exams')
+    .orderBy('order','asc').get().catch(() =>
+      db.collection('years').doc(yearId).collection('exams').get()
+    );
+
+  sel.innerHTML = `<option value="" disabled selected>Select exam</option>`;
+  snap.forEach(doc => {
+    const d = doc.data();
+    const opt = document.createElement('option');
+    opt.value = doc.id;
+    opt.textContent = d?.name || d?.title || doc.id;
+    sel.appendChild(opt);
+  });
+}
+
+// Wire events (no changes to your download/copy logic)
+async function initFilters() {
+  await ensureCurrentYearId();
+  await Promise.all([loadClassesIntoSelect(), loadExamsIntoSelect()]);
+
+  const classSel   = document.getElementById('classSel');
+  const sectionSel = document.getElementById('sectionSel');
+  const examSel    = document.getElementById('examSel');
+
+  classSel.addEventListener('change', async (e) => {
+  window.selClassId = e.target.value;
+  window.selClassName = e.target.options[e.target.selectedIndex]?.textContent || null;
+
+  // keep your existing globals in sync
+  classId = window.selClassId;
+  className = window.selClassName || '';
+
+  // persist
+  localStorage.setItem('sp_selectedClassId', classId || '');
+  localStorage.setItem('sp_selectedClassName', className || '');
+
+  // refresh sections for class
+  if (window.selClassId) {
+    await loadSectionsIntoSelect(window.selClassId);
+    // Reset section selection
+    window.selSectionId = null; window.selSectionName = null;
+    localStorage.removeItem('sp_selectedSectionId');
+    localStorage.removeItem('sp_selectedSectionName');
+    document.getElementById('classSectionHeading').textContent =
+      className || 'Class & Section';
+  }
+
+  document.dispatchEvent(new CustomEvent('filters-changed', {detail:{kind:'class'}}));
+});
+  sectionSel.addEventListener('change', (e) => {
+  window.selSectionId = e.target.value;
+  window.selSectionName = e.target.options[e.target.selectedIndex]?.textContent || null;
+
+  // keep globals + storage
+  sectionId = window.selSectionId;
+  sectionName = window.selSectionName || '';
+  localStorage.setItem('sp_selectedSectionId', sectionId || '');
+  localStorage.setItem('sp_selectedSectionName', sectionName || '');
+
+  // update heading
+  document.getElementById('classSectionHeading').textContent =
+    sectionName ? `${className} – ${sectionName}` : (className || 'Class & Section');
+
+  document.dispatchEvent(new CustomEvent('filters-changed', {detail:{kind:'section'}}));
+});
+
+ examSel.addEventListener('change', (e) => {
+  window.selExamId = e.target.value;
+  window.selExamName = e.target.options[e.target.selectedIndex]?.textContent || null;
+
+  // persist year (from ensureCurrentYearId) to header + storage if missing
+  ensureCurrentYearId().then((yr)=>{
+    localStorage.setItem('sp_selectedYear', yr);
+    academicYear = yr;
+    const headerYear = document.getElementById('header-year');
+    if (headerYear) headerYear.textContent = academicYear ? `${academicYear}` : '';
+  });
+
+  document.dispatchEvent(new CustomEvent('filters-changed', {detail:{kind:'exam'}}));
+});
+
+  // Let the page know filters exist (for any existing hooks)
+  document.dispatchEvent(new CustomEvent('filters-ready'));
+}
     // Firebase config
     const firebaseConfig = {
       apiKey: "AIzaSyAszVhWXUUOYLQ7VimKmPKf1yEu_CI9RCE",
@@ -148,6 +333,9 @@
     firebase.initializeApp(firebaseConfig);
     const db = firebase.firestore();
     const auth = firebase.auth();
+  document.addEventListener('DOMContentLoaded', async () => {
+  try { await initFilters(); } catch (e) { console.warn('Filters init failed:', e); }
+});
 
     // --- Util Maps ---
     const CLASS_GROUP_MAP = {
@@ -1529,6 +1717,7 @@ compactViewBtn.onclick = function(){
   </script>
 </body>
 </html>
+
 
 
 
