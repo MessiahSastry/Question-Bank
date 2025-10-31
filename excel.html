@@ -321,21 +321,7 @@ sectionList.onclick = (e) => {
   document.dispatchEvent(new CustomEvent('filters-changed', {detail:{kind:'section'}}));
   loadExams(); // refresh exams + data after section chosen
 };
-  sectionSel.addEventListener('change', (e) => {
-  window.selSectionId = e.target.value;
-  window.selSectionName = e.target.options[e.target.selectedIndex]?.textContent || null;
-
-  // keep globals + storage
-  sectionId = window.selSectionId;
-  sectionName = window.selSectionName || '';
-  localStorage.setItem('sp_selectedSectionId', sectionId || '');
-  localStorage.setItem('sp_selectedSectionName', sectionName || '');
-
-  // update heading
-    document.dispatchEvent(new CustomEvent('filters-changed', {detail:{kind:'section'}}));
-    loadExams();
-});
-
+  /* removed obsolete sectionSel listener */
 
   // Let the page know filters exist (for any existing hooks)
   document.dispatchEvent(new CustomEvent('filters-ready'));
@@ -1110,11 +1096,12 @@ const thead =
   // Build a fixed colgroup: Roll, Name, then 5 columns per subject
 const colgroup = (() => {
   // % widths so the table expands/shrinks with subject count
-  const namePct = 16;    // NAME column %
-  const rollPct = 4;     // ROLL column %
-  const toolsPerSubj = 5;
-  const restPct = 100 - namePct - rollPct;
-  const perToolPct = restPct / (subjectsLeap.length * toolsPerSubj);
+  const namePct = 16;
+const rollPct = 4;
+const toolsPerSubj = 5;
+const safety = 0.986; // keep total under printable width
+const restPct = (100 - namePct - rollPct) * safety;
+const perToolPct = restPct / (subjectsLeap.length * toolsPerSubj);
 
   const cols = [];
   cols.push(`<col style="width:${rollPct}%">`);   // ROLL
@@ -1130,8 +1117,8 @@ const colgroup = (() => {
 
 const tableHtml =
   `<table cellspacing="0" cellpadding="0"
-   style="border-collapse:collapse;width:100%;
-          text-align:center;font-size:0.86em;line-height:1.12;table-layout:fixed;margin-top:0;">
+   style="border-collapse:collapse;width:99.2%;
+          text-align:center;font-size:0.84em;line-height:1.12;table-layout:fixed;margin-top:0;"
      ${colgroup}
      <thead>${thead}</thead>
      <tbody>
@@ -1144,16 +1131,16 @@ const tableHtml =
     `<div style="font-family:'Times New Roman', Times, serif; color:#1a1a1a; margin:0; padding:0;">
    <style>
   * { box-sizing: border-box; }
-  table { width:100%; border-collapse:collapse; table-layout:fixed; }
+  table { width:99.2%; border-collapse:collapse; table-layout:fixed; }
   thead { display: table-header-group; }
   tfoot { display: table-footer-group; }
   tr { page-break-inside: avoid; }
-  td, th { border: 1px solid #444; padding: 2px 3px; white-space: nowrap; vertical-align: middle; }
+  td, th { border: 1px solid #444; padding: 1px 2px; white-space: nowrap; vertical-align: middle; }
   .hdr1 th { font-weight:700; }
-  .hdr2 th, .hdr3 th { font-size:0.9em; line-height:1.05; }
+  .hdr2 th, .hdr3 th { font-size:0.86em; line-height:1.02; }
   tbody td:nth-child(2) { text-align:left; padding-left:10px; overflow:hidden; text-overflow:ellipsis; }
   /* pull content closer to top without clipping logos */
-  .pull-up-first { margin-top:-60px; }
+  .pull-up-first { margin-top:0; }
 </style>
        ${headingHtml}
        ${tableHtml}
@@ -1166,23 +1153,33 @@ printable.innerHTML = pdfHTML;
 document.body.appendChild(printable);
 
   const fname = `LEAP_Marks_${className}_${sectionName}_${selectedExamObj.name}_${academicYear}.pdf`;
-html2pdf().set({
-      margin: [0.2, 0.6, 0.8, 0.6],                 // less top gap + a bit more width
-      filename: fname,
-      html2canvas: { scale: 2, useCORS: true },
-      jsPDF: { unit: 'cm', format: 'a3', orientation: 'landscape' },
-      pagebreak: { mode: ['css','legacy'] }         // paginate long tables
-    })
-    .from(printable)
-    .save()
-    .then(() => {
-      document.body.removeChild(printable);
-      statusDiv.textContent = "LEAP PDF downloaded!";
-    })
-    .catch(err => {
-      document.body.removeChild(printable);
-      statusDiv.textContent = "Error generating LEAP PDF: " + err;
-    });
+
+html2canvas(printable, { scale: 2, useCORS: true }).then(canvas => {
+  const imgData = canvas.toDataURL('image/jpeg', 0.95);
+  const PDF = (window.jspdf && window.jspdf.jsPDF) ? window.jspdf.jsPDF : jsPDF;
+  const pdf = new PDF({ unit: 'cm', format: 'a3', orientation: 'landscape' });
+
+  const pageW = pdf.internal.pageSize.getWidth();
+  const pageH = pdf.internal.pageSize.getHeight();
+  const margin = 0.6;
+  const maxW = pageW - margin*2;
+  const maxH = pageH - margin*2;
+
+  const ratio = canvas.width / canvas.height;
+  let drawW = maxW, drawH = maxW / ratio;
+  if (drawH > maxH) { drawH = maxH; drawW = maxH * ratio; }
+
+  const x = (pageW - drawW) / 2;
+  const y = margin; // top-align to remove large top gap
+
+  pdf.addImage(imgData, 'JPEG', x, y, drawW, drawH, undefined, 'FAST');
+  pdf.save(fname);
+  document.body.removeChild(printable);
+  statusDiv.textContent = "LEAP PDF downloaded!";
+}).catch(err => {
+  document.body.removeChild(printable);
+  statusDiv.textContent = "Error generating LEAP PDF: " + err;
+});
 };
 
    // ---------- Copy for CSE (Student): one student -> CSE row (LEAP-style normalize) ----------
@@ -1742,6 +1739,7 @@ compactViewBtn.onclick = function(){
   </script>
 </body>
 </html>
+
 
 
 
