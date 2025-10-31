@@ -1631,213 +1631,253 @@ compactViewBtn.onclick = function(){
     };
 
     // --------- PDF EXPORT -----------
-    pdfBtn.onclick = function(){
-      if (!selectedExamObj){
-        selectedExam = examSelected.dataset.value;
-        selectedExamObj = examMap[selectedExam];
+   pdfBtn.onclick = function(){
+  if (!selectedExamObj){
+    selectedExam = examSelected.dataset.value;
+    selectedExamObj = examMap[selectedExam];
+  }
+  if (!selectedExamObj){ statusDiv.textContent = "Select an exam."; return; }
+
+  statusDiv.textContent = "Preparing PDF...";
+
+  const subjectObjs = (selectedExamObj.subjects || []);
+  const subjects = subjectObjs.map(s => s.name);
+  const subjMaxs = subjectObjs.map(s => s.max || 100);
+
+  // ----- Build rows exactly like before (NO logic change) -----
+  const totalArr = [];
+  students.forEach(stu => {
+    const marks = marksMap[stu.id][selectedExamObj.id] || {};
+    const row = [stu.roll, stu.name];
+
+    let total = 0, tmax = 0, allAbsent = true;
+    for (let i=0;i<subjects.length;i++){
+      const subj = subjects[i];
+      const v = marks[subj];
+      if (v !== undefined && v !== null && v !== '' && typeof v === 'number' && !isNaN(v)) allAbsent = false;
+      row.push((v !== undefined && v !== null && v !== '') ? v : 'Ab');
+      const mmax = subjMaxs[i];
+      if (typeof v === 'number' && !isNaN(v)){ total += mmax ? v : 0; tmax += mmax; }
+      else { tmax += mmax; }
+    }
+
+    const percent = tmax ? (total / tmax) * 100 : 0;
+    const grade = allAbsent ? '-' : getGrade(percent);
+    const totalDisplay = allAbsent ? '-' : total;
+    row.push(totalDisplay, grade, ''); // rank placeholder; fill after rank calc
+    totalArr.push({ id:stu.id, total:totalDisplay, percent, allAbsent, row });
+  });
+
+  // Ranks (unchanged)
+  const ranks = {};
+  const valid = totalArr.filter(x=>x.total!=='-').sort((a,b)=>Number(b.total)-Number(a.total));
+  let currRank=0, prevTotal=null, countSeen=0;
+  for (const item of valid){
+    countSeen += 1;
+    if (item.total !== prevTotal){ currRank = countSeen; prevTotal = item.total; }
+    ranks[item.id] = currRank;
+  }
+  totalArr.filter(x=>x.total==='-').forEach(x=>{ ranks[x.id] = '-'; });
+  for (const x of totalArr) x.row[x.row.length-1] = ranks[x.id];
+
+  // Final sort by rank (unchanged)
+  const rankedRows = totalArr.sort((a,b)=>{
+    const rA = ranks[a.id], rB = ranks[b.id];
+    if (rA==='-' && rB!=='-') return 1;
+    if (rA!=='-' && rB==='-') return -1;
+    if (rA==='-' && rB==='-') return 0;
+    return rA - rB;
+  }).map(x=>x.row);
+
+  // ----- SINGLE-PAGE renderer (like LEAP): compose one DOM, html2canvas → jsPDF -----
+
+  // Column widths: a bit wider for NAME and TOTAL so letters never clip
+  const rollPct = 4.5;
+  const namePct = 16.5;
+  const tailCols = 3; // TOTAL, GRADE, RANK
+  const restPct = 100 - rollPct - namePct;
+  const perCol = restPct / (subjects.length + tailCols);
+
+  // very soft green-ish tints per subject (cycled)
+  const SOFTS = ['#f3fbf5','#eefaf2','#eaf8ef','#e5f7ec','#e1f5e9','#dcf4e6','#d8f2e3','#d3f1e0','#cff0dd','#caeed9'];
+
+  // Build THEAD
+  const headCells =
+    `<th>ROLL</th><th style="text-align:left;padding-left:10px;">NAME</th>` +
+    subjects.map((s,i)=>`<th class="subj-h" data-idx="${i}">${(s||'').toUpperCase()}</th>`).join('') +
+    `<th class="subj-h" data-idx="TOTAL">TOTAL</th><th class="subj-h" data-idx="GRADE">GRADE</th><th class="subj-h" data-idx="RANK">RANK</th>`;
+
+  // Build TBODY (alternate light-green rows; per-subject soft tint)
+  function tdFor(row, j){
+    // j: 0=ROLL, 1=NAME, 2..(2+subjects-1)=subjects, then TOTAL/GRADE/RANK
+    if (j===0){
+      return `<td class="roll">${row[j]}</td>`;
+    } else if (j===1){
+      const name = row[j] || '';
+      return `<td class="name">${name}</td>`;
+    } else if (j >= 2 && j < 2 + subjects.length){
+      const idx = j - 2;
+      const bg = SOFTS[idx % SOFTS.length];
+      const v = row[j];
+      const mmax = subjMaxs[idx];
+      const isNum = (v!==undefined && v!==null && v!=="" && typeof v==="number" && !isNaN(v));
+      const under40 = isNum && mmax && ((v/mmax)*100) < 40;
+      if (under40){
+        return `<td class="subj" style="background:${bg};">
+                  <div class="under40">
+                    <span class="mark">${v}</span>
+                    <span class="ring">◯</span>
+                  </div>
+                </td>`;
       }
-      if (!selectedExamObj){ statusDiv.textContent = "Select an exam."; return; }
+      return `<td class="subj" style="background:${bg};">${(v!==undefined && v!==null && v!=="") ? v : 'Ab'}</td>`;
+    } else {
+      // TOTAL / GRADE / RANK
+      return `<td class="tail">${row[j]}</td>`;
+    }
+  }
 
-      statusDiv.textContent = "Preparing PDF...";
+  const tbodyHtml = rankedRows.map((row, idx)=>{
+    const tds = row.map((_,j)=>tdFor(row,j)).join('');
+    return `<tr class="${idx%2 ? 'even' : 'odd'}">${tds}</tr>`;
+  }).join('');
 
-      const subjectObjs = (selectedExamObj.subjects || []);
-      const subjects = subjectObjs.map(s => s.name);
-      const subjectShorts = subjectObjs.map(s => getShortSubjectName(s.name));
-      const subjMaxs = (selectedExamObj.subjects || []).map(s => s.max || 100);
+  // COLGROUP
+  const colgroup = (() => {
+    const cols = [];
+    cols.push(`<col style="width:${rollPct}%">`);
+    cols.push(`<col style="width:${namePct}%">`);
+    for (let i=0;i<subjects.length;i++){
+      cols.push(`<col style="width:${perCol}%">`);
+    }
+    // widen TOTAL slightly to avoid clipping the trailing “L”
+    cols.push(`<col style="width:${(perCol*1.25)}%">`);
+    cols.push(`<col style="width:${perCol}%">`);
+    cols.push(`<col style="width:${perCol}%">`);
+    return `<colgroup>${cols.join('')}</colgroup>`;
+  })();
 
-      const totalArr = [];
+  // Heading block (green theme)
+  const schoolName = "St. Patrick's School";
+  const subHeading = "IIT & NEET FOUNDATION";
+  const classSecText = sectionName ? `${className} – ${sectionName}` : `${className}`;
+  const examTitle  = selectedExamObj?.name ? String(selectedExamObj.name) : "";
 
-      students.forEach(stu => {
-        const marks = marksMap[stu.id][selectedExamObj.id] || {};
-        const row = [stu.roll, stu.name];
+  const headingHtml =
+    `<div class="heading">
+       <div class="head-wrap">
+         <img src="schoollogo1.png" class="logo" onerror="this.style.display='none';">
+         <div class="htext">
+           <span class="h1">${schoolName}</span>
+           <span class="h2">${subHeading}</span>
+           <span class="h3">${examTitle}</span>
+           <span class="h4">${classSecText}</span>
+         </div>
+         <img src="schoollogo2.png" class="logo" onerror="this.style.display='none';">
+       </div>
+     </div>`;
 
-        let total=0, tmax=0, allAbsent=true;
-        for (let i=0;i<subjects.length;i++){
-          const subj = subjects[i];
-          const v = marks[subj];
-          if (v !== undefined && v !== null && v !== '' && typeof v === 'number' && !isNaN(v)) allAbsent = false;
-          row.push((v !== undefined && v !== null && v !== '') ? v : 'Ab');
-          const mmax = subjMaxs[i];
-          if (typeof v === 'number' && !isNaN(v)){ total += mmax ? v : 0; tmax += mmax; }
-          else { tmax += mmax; }
-        }
+  // Table HTML (single table)
+  const tableHtml =
+    `<table class="marks">
+       ${colgroup}
+       <thead><tr class="hdr">${headCells}</tr></thead>
+       <tbody>${tbodyHtml}</tbody>
+     </table>`;
 
-        const percent = tmax ? (total / tmax) * 100 : 0;
-        const grade = allAbsent ? '-' : getGrade(percent);
-        const totalDisplay = allAbsent ? '-' : total;
-        row.push(totalDisplay, grade, ''); // rank later
-        totalArr.push({ id:stu.id, total:totalDisplay, percent, allAbsent, row });
-      });
+  // Compose printable container with inline CSS (green theme)
+  const html =
+  `<div id="printable" style="width:100%;overflow:visible;font-family:'Times New Roman', Times, serif;">
+     <style>
+       *{box-sizing:border-box}
+       .heading{width:100%;text-align:center;margin:0 0 4px 0}
+       .head-wrap{display:inline-flex;align-items:center;justify-content:center}
+       .logo{height:80px;width:auto;border-radius:8px;margin:0 10px}
+       .htext{display:flex;flex-direction:column;align-items:center;line-height:1.1}
+       .h1{font-size:1.9em;font-weight:800;color:#0b6b3a}
+       .h2{font-size:1.1em;font-weight:700;color:#0b6b3a}
+       .h3{font-size:1.05em;font-weight:700;color:#0b6b3a}
+       .h4{font-size:1.02em;font-weight:700;color:#0b6b3a}
 
-      // Ranks
-      const ranks = {};
-      const valid = totalArr.filter(x=>x.total!=='-').sort((a,b)=>Number(b.total)-Number(a.total));
-      let currRank=0, prevTotal=null, countSeen=0;
-      for (const item of valid){
-        countSeen += 1;
-        if (item.total !== prevTotal){ currRank = countSeen; prevTotal = item.total; }
-        ranks[item.id] = currRank;
-      }
-      totalArr.filter(x=>x.total==='-').forEach(x=>{ ranks[x.id] = '-'; });
-      for (const x of totalArr) x.row[x.row.length-1] = ranks[x.id];
+       table.marks{border-collapse:collapse;width:99.2%;table-layout:fixed;font-size:0.92em;line-height:1.12;margin-top:0}
+       thead{display:table-header-group}
+       td,th{border:1px solid #2b6e44;padding:0 3px;white-space:nowrap;vertical-align:middle;overflow:hidden;text-overflow:clip}
 
-      const rankedRows = totalArr.sort((a,b)=>{
-        const rA = ranks[a.id], rB = ranks[b.id];
-        if (rA==='-' && rB!=='-') return 1;
-        if (rA!=='-' && rB==='-') return -1;
-        if (rA==='-' && rB==='-') return 0;
-        return rA - rB;
-      }).map(x=>x.row);
+       /* Header row green with white text */
+       .hdr th{
+         background:#0b6b3a;color:#ffffff;font-weight:700;
+         text-align:center;letter-spacing:.02em;padding:2px 0
+       }
 
-      // Header cells for table
-      const tableHeaders =
-        `<th>ROLL</th><th style="text-align:left;padding-left:10px;min-width:110px;">NAME</th>` +
-        subjects.map(s => s === "Spoken English"
-          ? `<th><span>SPOKEN</span><br><span>ENGLISH</span></th>`
-          : `<th>${s.toUpperCase()}</th>`
-        ).join('') +
-        `<th>TOTAL</th><th>GRADE</th><th>RANK</th>`;
+       /* ROLL & NAME columns green with white text + white horizontal row lines */
+       tbody td.roll, tbody td.name{
+         background:#0b6b3a !important;color:#ffffff !important;font-weight:700
+       }
+       tbody td.name{ text-align:left; padding-left:10px; white-space:normal; word-break:break-word; hyphens:auto; font-weight:600 }
 
-      // Row builder
-      function buildRowHtml(row, idx, rowPx){
-        const nameShrink = (name) => {
-          let f="1.14em";
-          if (name.length>22) f="1.05em";
-          if (name.length>32) f="0.93em";
-          if (name.length>40) f="0.83em";
-          if (name.length>48) f="0.73em";
-          if (name.length>55) f="0.62em";
-          if (name.length>65) f="0.54em";
-          if (name.length>75) f="0.47em";
-          return f;
-        };
-        let tds = '';
-        for (let j=0;j<row.length;j++){
-          if (j===0){
-            tds += `<td style="font-size:1.25em;font-weight:600;min-height:${rowPx}px;height:${rowPx}px;">${row[j]}</td>`;
-          } else if (j===1){
-            const name = row[j] || '';
-            const fsize = nameShrink(name);
-            tds += `<td style="text-align:left;padding-left:10px;font-size:${fsize};white-space:nowrap;min-height:${rowPx}px;height:${rowPx}px;">${name}</td>`;
-          } else if (j>=2 && j<2+subjects.length){
-            const v = row[j];
-            const subjMax = subjMaxs[j-2];
-            if (v!==undefined && v!==null && v!=="" && typeof v==="number" && !isNaN(v) && subjMax && ((v/subjMax)*100) < 40){
-              tds += `<td style="padding:0;vertical-align:middle;font-size:1.19em;min-height:${rowPx}px;height:${rowPx}px;">
-                        <div style="display:flex;align-items:center;justify-content:center;position:relative;min-height:${rowPx}px;min-width:${Math.max(24,rowPx)}px;">
-                          <span style="font-weight:bold;z-index:2;font-size:1.08em;">${v}</span>
-                          <span style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-size:1.24em;color:#c81929;z-index:1;">◯</span>
-                        </div>
-                      </td>`;
-            } else {
-              tds += `<td style="font-size:1.19em;min-height:${rowPx}px;height:${rowPx}px;">${(v!==undefined && v!==null && v!=="") ? v : 'Ab'}</td>`;
-            }
-          } else if (j===row.length-3 || j===row.length-2 || j===row.length-1){
-            tds += `<td style="font-size:1.19em;font-weight:600;min-height:${rowPx}px;height:${rowPx}px;">${row[j]}</td>`;
-          } else {
-            tds += `<td style="min-height:${rowPx}px;height:${rowPx}px;">${row[j]}</td>`;
-          }
-        }
-        const bgcolor = idx % 2 ? "#eaf1fa" : "#f8fbff";
-        return `<tr style="background:${bgcolor};min-height:${rowPx}px;height:${rowPx}px;">${tds}</tr>`;
-      }
+       /* White row lines only for Roll & Name cells */
+       tbody td.roll, tbody td.name{
+         border-top:1px solid #ffffff !important;
+         border-bottom:1px solid #ffffff !important;
+       }
 
-      // Pagination constants
-      const CM_TO_PX = 37.795;
-      const pageContentHeightPx = (29.7 - 1.27 - 1.27) * CM_TO_PX;
-      const tableHeaderPx = 28;
-      const headingBlockPx = 140;
+       /* Alternate body rows: very light green */
+       tbody tr.odd  { background:#ffffff }
+       tbody tr.even { background:#eef9f0 }
 
-      // Row height based on count
-      const studentCount = students.length;
-      let rowHeight = 26;
-      if (studentCount<=35) rowHeight=26;
-      else if (studentCount<=40) rowHeight=17;
-      else if (studentCount<=45) rowHeight=13;
-      else if (studentCount<=50) rowHeight=9.5;
-      else if (studentCount<=60) rowHeight=7.6;
-      else rowHeight=5.8;
+       /* Subject cells default style (column soft tints set inline) */
+       tbody td.subj{ text-align:center }
 
-      const rowPx = Math.max(24, rowHeight);
-      const rowsOnFirstPage = Math.max(1, Math.floor((pageContentHeightPx - headingBlockPx - tableHeaderPx) / rowPx));
-      const rowsOnNextPages = Math.max(1, Math.floor((pageContentHeightPx - tableHeaderPx) / rowPx));
+       /* Under-40 ring indicator (same as before) */
+       .under40{ position:relative; display:flex; align-items:center; justify-content:center; min-height:22px }
+       .under40 .mark{ font-weight:700; z-index:2 }
+       .under40 .ring{ position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); color:#c81929; z-index:1 }
 
-      const pagesHtml = [];
-      let start = 0, pageIndex = 0;
+       /* Tail columns (TOTAL/GRADE/RANK) emphasis; TOTAL bold to avoid 'L' clipping */
+       tbody td.tail{ font-weight:600 }
+     </style>
+     ${headingHtml}
+     ${tableHtml}
+   </div>`;
 
-      while (start < rankedRows.length){
-        const perPage = pageIndex===0 ? rowsOnFirstPage : rowsOnNextPages;
-        const slice = rankedRows.slice(start, start+perPage);
-        const rowsHtml = slice.map((row, idx) => buildRowHtml(row, start+idx, rowPx)).join('');
+  const printable = document.createElement('div');
+  printable.style.width = '100%';
+  printable.style.overflow = 'visible';
+  printable.innerHTML = html;
+  document.body.appendChild(printable);
 
-        const tableHtml =
-          `<table cellspacing="0" cellpadding="0" style="border-collapse:collapse;width:100%;max-width:100%;font-size:0.70em;margin-top:8px;text-align:center;line-height:1.12;table-layout:auto;word-break:break-word;margin-bottom:10px;">
-             <thead>
-               <tr style="background:#1762a7;color:#fff;font-weight:bold;">${tableHeaders}</tr>
-             </thead>
-             <tbody>${rowsHtml}</tbody>
-           </table>`;
+  // One-page capture like LEAP
+  html2canvas(printable, { scale: 2, useCORS: true }).then(canvas => {
+    const imgData = canvas.toDataURL('image/jpeg', 0.95);
+    const PDF = (window.jspdf && window.jspdf.jsPDF) ? window.jspdf.jsPDF : jsPDF;
+    const pdf = new PDF({ unit: 'cm', format: 'a3', orientation: 'landscape' });
 
-        const headingBlockHtml = (pageIndex===0)
-          ? `<div style="width:100%;text-align:center;margin-bottom:2px;">
-               <div style="display:inline-flex;align-items:center;justify-content:center;">
-                 <img src="schoollogo1.png" style="height:110px;width:auto;max-width:140px;border-radius:8px;margin-right:10px;" onerror="this.style.display='none';">
-                 <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:110px;line-height:1.09;">
-                   <span style="font-size:2.19em;font-weight:bold;letter-spacing:0.01em;font-family:'Times New Roman', Times, serif;color:#c81929;line-height:1.08;">St. Patrick's School</span>
-                   <span style="font-size:1.19em;font-weight:700;color:#224a74;letter-spacing:0.01em;line-height:1.06;">IIT & NEET FOUNDATION</span>
-                   <span style="font-size:1.17em;font-weight:bold;letter-spacing:0.01em;color:#187141;line-height:1.05;">${className}${sectionName ? ' - ' + sectionName : ''}</span>
-                   <span style="font-size:1.12em;font-weight:bold;color:#b80000;letter-spacing:0.01em;line-height:1.05;">${selectedExamObj.name} Results</span>
-                 </div>
-                 <img src="schoollogo2.png" style="height:110px;width:auto;max-width:140px;border-radius:8px;margin-left:10px;" onerror="this.style.display='none';">
-               </div>
-             </div>`
-          : '';
+    const pageW = pdf.internal.pageSize.getWidth();
+    const pageH = pdf.internal.pageSize.getHeight();
+    const margin = 0.6; // small top gap
+    const maxW = pageW - margin*2;
+    const maxH = pageH - margin*2;
 
-        pagesHtml.push(
-          `<div class="pdf-page" style="${start + perPage < rankedRows.length ? 'page-break-after:always;' : ''}">
-             ${headingBlockHtml}
-             ${tableHtml}
-           </div>`
-        );
+    const ratio = canvas.width / canvas.height;
+    let drawW = maxW, drawH = maxW / ratio;
+    if (drawH > maxH) { drawH = maxH; drawW = maxH * ratio; }
 
-        start += perPage; pageIndex += 1;
-      }
+    const x = (pageW - drawW) / 2;
+    const y = margin;
 
-      const pdfHTML =
-        `<div style="font-family:'Times New Roman', Times, serif; color:#1a1a1a; margin:0; padding:0;">
-           <style>
-             tr { page-break-inside: avoid !important; }
-             thead { display: table-header-group; }
-             tfoot { display: table-footer-group; }
-             td, th { border: 1px solid #444 !important; padding: 0 1px; white-space: nowrap; font-size:0.98em; }
-           </style>
-           ${pagesHtml.join('')}
-         </div>`;
-
-      const printable = document.createElement('div');
-      printable.innerHTML = pdfHTML;
-      document.body.appendChild(printable);
-
-      html2pdf().set({
-        margin: [1.27, 1, 1.27, 1],
-        filename: `Marks_${className}_${sectionName}_${selectedExamObj.name}_${academicYear}.pdf`,
-        html2canvas: { scale: 2, useCORS: true },
-        jsPDF: { unit: 'cm', format: 'a3', orientation: 'landscape' }
-      })
-      .from(printable)
-      .save()
-      .then(() => {
-        document.body.removeChild(printable);
-        statusDiv.textContent = "PDF downloaded!";
-      })
-      .catch(err => {
-        document.body.removeChild(printable);
-        statusDiv.textContent = "Error generating PDF: " + err;
-      });
-    };
+    pdf.addImage(imgData, 'JPEG', x, y, drawW, drawH, undefined, 'FAST');
+    pdf.save(`Marks_${className}_${sectionName}_${selectedExamObj.name}_${academicYear}.pdf`);
+    document.body.removeChild(printable);
+    statusDiv.textContent = "PDF downloaded!";
+  }).catch(err => {
+    document.body.removeChild(printable);
+    statusDiv.textContent = "Error generating PDF: " + err;
+  });
+};
   </script>
 </body>
 </html>
+
 
 
 
