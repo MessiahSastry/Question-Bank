@@ -1,648 +1,141 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta charset="utf-8" />
   <title>OMR Scanner | St. Patrick's School</title>
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" />
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Segoe+UI:wght@400;600;700&display=swap" />
-  <!-- Firebase (compat) -->
-  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
-  <!-- jsPDF for PDF generation -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-  <!-- QR generation (for embedding examId/class/section in the OMR) -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-  <!-- QR reading (from camera frames) -->
-  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css"/>
+
   <style>
     :root{
       --brand:#0f3d6b;
-      --brand-2:#1762a7;
-      --accent:#fdc600;
-      --bg:#ffffff;
-      --ink:#222;
-      --muted:#6b7280;
-      --ok:#10b981;
-      --warn:#f59e0b;
-      --bad:#ef4444;
-      --radius:16px;
+      --text:#111;
+      --muted:#6b7a90;
     }
     *{box-sizing:border-box}
-    html,body{height:100%}
-    body{
-      margin:0; font-family:"Segoe UI",system-ui,-apple-system,Segoe UI,Roboto; color:var(--ink); background:var(--bg);
+    html,body{height:100%;margin:0;font-family:"Segoe UI",system-ui,-apple-system,Roboto,Arial,sans-serif;background:#f4f8fc;color:var(--text)}
+    body{display:flex;flex-direction:column}
+
+    /* Top blue school header */
+    .header{
+      background:var(--brand);
+      color:#fff;
+      padding:10px 12px 12px;
+      box-shadow:0 2px 6px rgba(0,0,0,.15);
     }
-    header{
-     .fixed-header{
-  background:#0f3d6b;
-  color:#fff;
-  text-align:center;
-  padding:18px 0 8px 0;
-  border-bottom-left-radius:14px;
-  border-bottom-right-radius:14px;
-  position:fixed;
-  top:0; left:0; right:0;
-  z-index:100;
-  width:100%;
-}
-.fixed-header .school-title{ color:#fff; font-size:1.5em; margin:0; }
-.fixed-header .subtitle{ color:#c9e4ff; font-size:.99em; font-weight:400; margin:0; }
-.fixed-header .ac-year{ color:#cfe7ff; font-size:.98em; font-weight:600; margin:6px 0 0 0; }
-.fixed-header #header-exam{ font-size:1.13em; font-weight:bold; color:#fdc600; margin:6px 0 0 0; }
+    .bar{
+      display:flex;align-items:center;gap:8px;
+    }
+    .school{
+      display:flex;flex-direction:column;line-height:1.15;
+    }
+    .school .name{
+      font-weight:800;letter-spacing:.5px;font-size:16px;text-transform:uppercase;
+      text-align:center;width:100%;
+    }
+    .school .sub{
+      font-weight:600;font-size:12px;opacity:.9;text-align:center;width:100%;
+    }
+
+    /* Right utility buttons (open/refresh) */
+    .actions{margin-left:auto;display:flex;gap:8px}
     .btn{
-      display:inline-flex; align-items:center; gap:8px; border:0; border-radius:12px; padding:10px 14px; font-weight:600; cursor:pointer;
-      background:#fff; color:var(--brand); box-shadow:0 2px 6px rgba(0,0,0,.08);
+      border:0;background:rgba(255,255,255,.16);color:#fff;
+      padding:8px 10px;border-radius:10px;font-size:13px;
+      display:inline-flex;gap:6px;align-items:center
     }
-    .btn i{font-size:14px}
-    .btn.primary{background:var(--accent); color:#1b2a41}
-    .btn.ghost{background:transparent; color:#fff; border:1px solid rgba(255,255,255,.35)}
-    .wrap{padding:16px; max-width:1100px; margin:0 auto}
-    .card{background:#fff; border:1px solid #e5e7eb; border-radius:var(--radius); padding:14px; box-shadow:0 2px 8px rgba(0,0,0,.04)}
-    .toolbar{display:flex; flex-wrap:wrap; gap:10px}
-    .grid{display:grid; gap:12px}
-    .grid.cols-3{grid-template-columns:repeat(3,minmax(0,1fr))}
-    @media (max-width:900px){.grid.cols-3{grid-template-columns:1fr}}
-    .label{font-size:12px; color:var(--muted); margin-bottom:6px}
-    .dropdown{position:relative}
-    .select{width:100%; border:1px solid #e5e7eb; border-radius:12px; padding:10px 12px; background:#fff; font-weight:600}
+    .btn:active{transform:scale(.98)}
+    .btn-link{color:#fff;text-decoration:none}
 
-    .sectionTitle{font-weight:700; font-size:14px; color:#111827; display:flex; align-items:center; gap:8px; margin:6px 0 8px}
-    .hr{height:1px; background:#e5e7eb; margin:8px 0}
+    /* White page title strip */
+    .title{
+      background:#fff;color:#000;border-radius:10px;
+      margin:10px auto 0; padding:10px 14px; width:fit-content;
+      font-weight:700; letter-spacing:.4px; box-shadow:0 1px 4px rgba(0,0,0,.08);
+    }
 
-    .videoWrap{position:relative; overflow:hidden; border-radius:12px; border:1px solid #e5e7eb}
-    video{width:100%; display:block; background:#000}
-    canvas{max-width:100%}
+    /* Content area with iframe filling remaining height */
+    .content{
+      position:relative;flex:1;min-height:0; /* allow child to size */
+      display:flex;flex-direction:column;
+    }
+    .frame-wrap{
+      position:relative;flex:1;min-height:0;border-top:1px solid #e8eef7;
+      background:#fff;
+    }
+    iframe{
+      position:absolute;inset:0;border:0;width:100%;height:100%;
+      display:block;background:#fff;
+    }
 
-    .status{font-size:12px; color:var(--muted)}
-    .pill{display:inline-block; padding:4px 8px; border-radius:999px; font-size:12px; font-weight:700}
-    .pill.ok{background:#ecfdf5; color:#065f46}
-    .pill.bad{background:#fef2f2; color:#7f1d1d}
+    /* Safe area padding for notches */
+    .pad{padding-left:env(safe-area-inset-left);padding-right:env(safe-area-inset-right)}
+    .pad-top{padding-top:env(safe-area-inset-top)}
+    .pad-bottom{padding-bottom:env(safe-area-inset-bottom)}
 
-    dialog{border:none; border-radius:16px; padding:0; box-shadow:0 15px 40px rgba(0,0,0,.2)}
-    dialog::backdrop{background:rgba(0,0,0,.35)}
-    .modal{width:min(880px,96vw); max-height:90vh; overflow:auto}
-    .modal header{position:sticky; top:0; border-radius:16px 16px 0 0}
-    .modal .content{padding:16px}
-
-    table.slim{width:100%; border-collapse:separate; border-spacing:0 8px}
-    table.slim th, table.slim td{padding:8px 10px; text-align:left; font-size:13px}
-    table.slim thead th{color:#6b7280; font-weight:700; text-transform:uppercase; font-size:11px}
-    table.slim tbody tr{background:#fff; border:1px solid #e5e7eb; border-radius:10px}
-
-    .kbd{font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; background:#f3f4f6; padding:2px 6px; border-radius:6px; font-size:12px}
+    /* Small screens tweaks */
+    @media (max-width:480px){
+      .btn .text{display:none}
+      .title{font-size:14px}
+      .school .name{font-size:14px}
+      .school .sub{font-size:11px}
+    }
   </style>
 </head>
 <body>
-  <div class="fixed-header" id="header">
-  <div class="school-title">St. Patrick's School</div>
-  <div class="subtitle">IIT &amp; NEET FOUNDATION</div>
-  <div class="subtitle ac-year" id="header-year"></div>
-  <div class="subtitle" id="header-exam" style="font-weight:600;"></div>
-</div>
+  <!-- School Header -->
+  <header class="header pad pad-top">
+    <div class="bar">
+      <!-- Back -->
+      <button class="btn" onclick="history.back()" aria-label="Back">
+        <i class="fa fa-arrow-left"></i><span class="text">Back</span>
+      </button>
 
-  <main class="wrap grid" style="gap:14px; margin-top:88px">
-    <!-- Page heading -->
-    <div style="text-align:center; margin:6px 0 8px;">
-      <div style="font-size:22px; font-weight:700; letter-spacing:.3px;">OMR SCANNER</div>
+      <!-- Centered school title block -->
+      <div class="school" style="flex:1">
+        <div class="name">ST. PATRICK'S SCHOOL</div>
+        <div class="sub">IIT &amp; NEET FOUNDATION</div>
+      </div>
+
+      <!-- Right actions -->
+      <div class="actions">
+        <button class="btn" onclick="document.getElementById('evalbee').contentWindow.location.reload()" aria-label="Refresh">
+          <i class="fa fa-rotate-right"></i><span class="text">Refresh</span>
+        </button>
+        <a class="btn btn-link" href="https://evalbee.com/" target="_blank" rel="noopener">
+          <i class="fa fa-up-right-from-square"></i><span class="text">Open App</span>
+        </a>
+      </div>
     </div>
 
-    <!-- Left-aligned Exam Settings button -->
-    <div class="toolbar" style="justify-content:flex-start; margin-top:2px; margin-bottom:6px;">
-      <button class="btn" id="btnExamSettings"><i class="fa fa-sliders"></i> Exam Settings</button>
+    <!-- White OMR title strip -->
+    <div class="title">OMR SCANNER</div>
+  </header>
+
+  <!-- Iframe area -->
+  <main class="content pad-bottom">
+    <div class="frame-wrap">
+      <!-- Change src to a specific Evalbee route if needed -->
+      <iframe
+        id="evalbee"
+        src="https://evalbee.com/"
+        allow="camera; microphone; clipboard-write; fullscreen"
+        referrerpolicy="strict-origin-when-cross-origin"
+        sandbox="allow-forms allow-modals allow-popups allow-presentation allow-same-origin allow-scripts">
+      </iframe>
     </div>
-    <section class="card">
-      <div class="sectionTitle"><i class="fa fa-database"></i> Pick Class / Section / Exam</div>
-      <div class="grid cols-3">
-        <div>
-          <div class="label">Class</div>
-          <select id="classSel" class="select"></select>
-        </div>
-        <div>
-          <div class="label">Section</div>
-          <select id="sectionSel" class="select"></select>
-        </div>
-        <div>
-          <div class="label">Exam</div>
-          <select id="examSel" class="select"></select>
-        </div>
-      </div>
-      </div>
-      <!-- Place these UNDER the Exam dropdown -->
-      <div class="toolbar" style="margin-top:10px">
-        <button class="btn" id="btnKey"><i class="fa fa-key"></i> Set Answer Key</button>
-        <button class="btn primary" id="btnScan"><i class="fa fa-camera"></i> Scan & Save</button>
-      </div>
-      <div class="hr"></div>
-      <div class="status" id="pickStatus">Select to load template / save path.</div>
-    </section>
-
-    <section class="card">
-      <div class="sectionTitle"><i class="fa fa-file-pdf"></i> Template Preview & Download</div>
-      <div class="toolbar">
-        <button class="btn" id="btnGenerate"><i class="fa fa-file-export"></i> Generate OMR (PDF)</button>
-        <span class="status" id="tplStatus">No template yet.</span>
-      </div>
-      <div class="hr"></div>
-      <div id="pdfPreview" class="status">(Preview image will show after generation)</div>
-    </section>
-
-    <section class="card">
-      <div class="sectionTitle"><i class="fa fa-camera"></i> Camera</div>
-      <div class="videoWrap">
-        <video id="video" playsinline></video>
-      </div>
-      <div class="toolbar" style="margin-top:10px">
-        <button class="btn" id="btnStartCam"><i class="fa fa-play"></i> Start Camera</button>
-        <button class="btn" id="btnStopCam"><i class="fa fa-stop"></i> Stop</button>
-        <button class="btn" id="btnCapture"><i class="fa fa-scan"></i> Capture & Recognize</button>
-        <span class="status" id="scanStatus">Idle.</span>
-      </div>
-      <canvas id="frameCanvas" style="display:none"></canvas>
-    </section>
   </main>
 
-  <!-- Exam Settings Modal -->
-  <dialog id="dlgExam" class="modal">
-    <header>
-      <div class="title">
-        <div class="h1">Exam Settings</div>
-        <div class="sub">Define roll digits, sections, bubble size, QR</div>
-      </div>
-      <div class="actions">
-        <button class="btn ghost" onclick="document.getElementById('dlgExam').close()"><i class="fa fa-xmark"></i> Close</button>
-      </div>
-    </header>
-    <div class="content">
-      <div class="grid cols-3">
-        <div>
-          <div class="label">Roll No. digits (2–6)</div>
-          <input id="inpRollDigits" type="number" min="2" max="6" value="4" class="select" />
-        </div>
-        <div>
-          <div class="label">Bubble size (mm)</div>
-          <input id="inpBubbleSize" type="number" min="4" max="8" step="0.5" value="5.5" class="select" />
-        </div>
-        <div>
-          <div class="label">QR on sheet</div>
-          <select id="selQr" class="select"><option value="on">On</option><option value="off">Off</option></select>
-        </div>
-      </div>
-      <div class="hr"></div>
-      <div class="sectionTitle"><i class="fa fa-layer-group"></i> Subjects / Sections</div>
-      <table class="slim" id="tblSections">
-        <thead>
-          <tr>
-  <th>Subject / Section</th>
-  <th>No. of Questions</th>
-  <th>Question Type</th>
-  <th>Correct Marks</th>
-  <th>Incorrect Marks</th>
-  <th></th>
-</tr>
-        </thead>
-        <tbody></tbody>
-      </table>
-      <div class="toolbar" style="margin-top:6px">
-        <button class="btn" id="btnAddSection"><i class="fa fa-plus"></i> Add Section</button>
-        <button class="btn primary" id="btnSaveExam"><i class="fa fa-floppy-disk"></i> Save Settings</button>
-      </div>
-    </div>
-  </dialog>
-
-  <!-- Answer Key Modal -->
-  <dialog id="dlgKey" class="modal">
-    <header>
-      <div class="title">
-        <div class="h1">Set Answer Key</div>
-        <div class="sub">Single or Multiple correct; CSV import supported</div>
-      </div>
-      <div class="actions">
-        <button class="btn" id="btnKeyImport"><i class="fa fa-file-import"></i> Import CSV</button>
-        <button class="btn primary" id="btnKeySave"><i class="fa fa-save"></i> Save Key</button>
-        <button class="btn ghost" onclick="document.getElementById('dlgKey').close()"><i class="fa fa-xmark"></i> Close</button>
-      </div>
-    </header>
-    <div class="content" id="keyContent">(Key grid appears after template is saved)</div>
-  </dialog>
-
   <script>
-    // ===== FIREBASE INIT (replace with your actual config) =====
-    const firebaseConfig = {
-      // TODO: paste your firebase config here
-    };
-    if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
-    const db = firebase.firestore();
-
-// --- Header: set Academic Year line dynamically ---
-(function(){
-  const yEl = document.getElementById('header-year');
-  if(yEl){
-    const now = new Date();             // Asia/Kolkata local
-    const m = now.getMonth();           // 0=Jan
-    const start = (m >= 3) ? now.getFullYear() : now.getFullYear() - 1; // AY starts in April
-    const end = start + 1;
-    yEl.textContent = `Academic Year: ${start}–${String(end).slice(-2)}`;
-  }
-})();
-
-    // ===== STATE =====
-    let current = { classId:null, sectionId:null, examId:null, isSubtopic:false, parentExamId:null };
-    let tpl = {
-      rollDigits:4,
-      bubbleSizeMm:5.5,
-      qrEnabled:true,
-      sections:[ /* {name, count, options:4|5, mark, negative} */ ],
-      // computed ROIs saved after generation for deterministic scan
-      rois:null,
-    };
-    let answerKey = { /* sectionName -> { qIndex: ["A","C"] } */ };
-
-    const $ = sel => document.querySelector(sel);
-    const el = id => document.getElementById(id);
-
-    // ===== UI: load dropdowns from your Firestore structure =====
-    async function loadClasses(){
-      const snap = await db.collection('classes').orderBy('name').get();
-      el('classSel').innerHTML = '<option value="">Select Class</option>' + snap.docs.map(d=>`<option value="${d.id}">${d.data().name||d.id}</option>`).join('');
+    // Ensure full-height on mobile with dynamic viewport units fallback
+    // (Some Android/iOS versions handle 100vh/100dvh oddly with toolbars)
+    function fixHeight(){
+      const vh = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+      document.querySelector('.content').style.height = `calc(${vh}px - ${document.querySelector('.header').offsetHeight}px)`;
     }
-    async function loadSections(classId){
-      if(!classId){ el('sectionSel').innerHTML=''; return; }
-      const snap = await db.collection('classes').doc(classId).collection('sections').orderBy('name').get();
-      el('sectionSel').innerHTML = '<option value="">Select Section</option>' + snap.docs.map(d=>`<option value="${d.id}">${d.data().name||d.id}</option>`).join('');
-    }
-    async function loadExams(classId, sectionId){
-      if(!classId||!sectionId){ el('examSel').innerHTML=''; return; }
-      // Adjust to your schema; here we assume exams are under classes/{class}/sections/{section}/exams
-      const snap = await db.collection('classes').doc(classId).collection('sections').doc(sectionId).collection('exams').orderBy('name').get();
-      el('examSel').innerHTML = '<option value="">Select Exam</option>' + snap.docs.map(d=>`<option value="${d.id}">${d.data().name||d.id}</option>`).join('');
-    }
-
-    el('classSel').addEventListener('change', async e=>{
-      current.classId = e.target.value || null; current.sectionId = null; current.examId = null;
-      await loadSections(current.classId); el('examSel').innerHTML='';
-      el('pickStatus').textContent = 'Class picked. Choose Section and Exam.';
-    });
-    el('sectionSel').addEventListener('change', async e=>{
-      current.sectionId = e.target.value || null; current.examId = null;
-      await loadExams(current.classId,current.sectionId);
-      el('pickStatus').textContent = 'Section picked. Choose Exam.';
-    });
-    el('examSel').addEventListener('change', async e=>{
-      current.examId = e.target.value || null;
-      if(current.examId){
-        el('pickStatus').innerHTML = `Exam selected: <span class="kbd">${current.examId}</span>`;
-        await loadTemplate();
-      }
-    });
-
-    // ===== TEMPLATE UI =====
-    el('btnExamSettings').onclick = ()=>{
-      // populate fields from tpl
-      el('inpRollDigits').value = tpl.rollDigits;
-      el('inpBubbleSize').value = tpl.bubbleSizeMm;
-      el('selQr').value = tpl.qrEnabled? 'on':'off';
-      renderSectionRows();
-      el('dlgExam').showModal();
-    }
-
-    el('btnAddSection').onclick = ()=>{
-      tpl.sections.push({name:`Part-${tpl.sections.length+1}`, count:10, options:4, mark:1, negative:0});
-      renderSectionRows();
-    }
-
-    function renderSectionRows(){
-      const tbody = el('tblSections').querySelector('tbody');
-      tbody.innerHTML = '';
-      tpl.sections.forEach((s,idx)=>{
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
-          <td><input data-k="name" data-i="${idx}" class="select" value="${s.name}"></td>
-          <td><input data-k="count" data-i="${idx}" type="number" min="1" class="select" value="${s.count}"></td>
-          <td>
-            <select data-k="options" data-i="${idx}" class="select">
-              <option value="4" ${s.options==4?'selected':''}>A–D</option>
-              <option value="5" ${s.options==5?'selected':''}>A–E</option>
-            </select>
-          </td>
-          <td><input data-k="mark" data-i="${idx}" type="number" step="0.25" class="select" value="${s.mark}"></td>
-          <td><input data-k="negative" data-i="${idx}" type="number" step="0.25" class="select" value="${s.negative}"></td>
-          <td><button class="btn" data-del="${idx}"><i class="fa fa-trash"></i></button></td>`;
-        tbody.appendChild(tr);
-      });
-      tbody.querySelectorAll('input,select').forEach(inp=>{
-        inp.addEventListener('input', (e)=>{
-          const i = +e.target.dataset.i; const k = e.target.dataset.k; let v = e.target.value;
-          if(['count','options','mark','negative'].includes(k)) v = Number(v);
-          tpl.sections[i][k] = v;
-        });
-      });
-      tbody.querySelectorAll('button[data-del]').forEach(b=>{
-        b.onclick = ()=>{ tpl.sections.splice(+b.dataset.del,1); renderSectionRows(); }
-      })
-    }
-
-    el('btnSaveExam').onclick = async ()=>{
-      tpl.rollDigits = Math.max(2, Math.min(6, Number(el('inpRollDigits').value)||4));
-      tpl.bubbleSizeMm = Number(el('inpBubbleSize').value)||5.5;
-      tpl.qrEnabled = (el('selQr').value==='on');
-      // save template shell (ROIs computed when generating PDF)
-      await saveTemplate();
-      el('dlgExam').close();
-      await buildKeyUI();
-      el('tplStatus').textContent = 'Settings saved. Generate PDF to compute ROIs.';
-    }
-
-    async function saveTemplate(){
-      if(!current.examId) return alert('Pick Class/Section/Exam first');
-      const docRef = db.collection('omrTemplates').doc(current.examId);
-      await docRef.set({
-        classId: current.classId,
-        sectionId: current.sectionId,
-        examId: current.examId,
-        rollDigits: tpl.rollDigits,
-        bubbleSizeMm: tpl.bubbleSizeMm,
-        qrEnabled: tpl.qrEnabled,
-        sections: tpl.sections,
-        rois: tpl.rois||null,
-        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-      }, {merge:true});
-    }
-
-    async function loadTemplate(){
-      const doc = await db.collection('omrTemplates').doc(current.examId).get();
-      if(doc.exists){
-        const d = doc.data();
-        tpl.rollDigits = d.rollDigits||4; tpl.bubbleSizeMm = d.bubbleSizeMm||5.5; tpl.qrEnabled = !!d.qrEnabled;
-        tpl.sections = Array.isArray(d.sections)? d.sections:[]; tpl.rois = d.rois||null;
-        answerKey = d.answerKey||{};
-        el('tplStatus').textContent = tpl.rois? 'Template & ROIs loaded.' : 'Template loaded (no ROIs yet).';
-        await buildKeyUI();
-      } else {
-        tpl.sections = []; tpl.rois=null; answerKey={};
-        el('tplStatus').textContent = 'No template saved for this exam yet.';
-        el('keyContent').textContent = '(Key grid appears after template is saved)';
-      }
-    }
-
-    // ===== ANSWER KEY UI =====
-    el('btnKey').onclick = async ()=>{ await buildKeyUI(); el('dlgKey').showModal(); }
-
-    async function buildKeyUI(){
-      if(!tpl.sections.length){ el('keyContent').textContent='(Add sections in Exam Settings first)'; return; }
-      if(!answerKey || typeof answerKey!== 'object') answerKey={};
-      const host = document.createElement('div');
-      tpl.sections.forEach(sec=>{
-        if(!answerKey[sec.name]) answerKey[sec.name] = {};
-        const box = document.createElement('div');
-        box.className='card';
-        box.style.marginBottom='12px';
-        box.innerHTML = `<div class="sectionTitle"><i class="fa fa-key"></i> ${sec.name} — ${sec.count} Qs (${sec.options===4?'A–D':'A–E'})</div>`;
-        const tbl = document.createElement('table');
-        tbl.className='slim';
-        const thead = document.createElement('thead'); thead.innerHTML = '<tr><th>#</th><th>Correct choice(s)</th></tr>'; tbl.appendChild(thead);
-        const tbody = document.createElement('tbody');
-        for(let q=1;q<=sec.count;q++){
-          const tr=document.createElement('tr');
-          const cell1=`<td style="width:60px"><span class="kbd">${q}</span></td>`;
-          const options = ['A','B','C','D','E'].slice(0,sec.options).map(op=>{
-            const id = `${sec.name}__${q}__${op}`.replace(/\s+/g,'_');
-            const checked = (answerKey[sec.name][q]||[]).includes(op)? 'checked':'';
-            return `<label style="margin-right:8px"><input type="checkbox" data-sec="${sec.name}" data-q="${q}" value="${op}" ${checked}/> ${op}</label>`;
-          }).join('');
-          tr.innerHTML = cell1 + `<td>${options}</td>`; tbody.appendChild(tr);
-        }
-        tbl.appendChild(tbody); box.appendChild(tbl); host.appendChild(box);
-      });
-      const kc = el('keyContent'); kc.innerHTML=''; kc.appendChild(host);
-      kc.querySelectorAll('input[type=checkbox]').forEach(chk=>{
-        chk.addEventListener('change', (e)=>{
-          const sec = e.target.dataset.sec; const q = Number(e.target.dataset.q); const v = e.target.value;
-          if(!answerKey[sec][q]) answerKey[sec][q]=[];
-          if(e.target.checked){ if(!answerKey[sec][q].includes(v)) answerKey[sec][q].push(v); }
-          else { answerKey[sec][q] = answerKey[sec][q].filter(x=>x!==v); }
-        })
-      })
-    }
-
-    el('btnKeySave').onclick = async ()=>{
-      if(!current.examId) return alert('Pick Class/Section/Exam first');
-      await db.collection('omrTemplates').doc(current.examId).set({ answerKey }, {merge:true});
-      alert('Answer Key saved.');
-    }
-
-    // CSV import: expects rows like: Section, QNo, Answers (e.g., "A" or "A;C")
-    el('btnKeyImport').onclick = ()=>{
-      const inp = document.createElement('input'); inp.type='file'; inp.accept='.csv';
-      inp.onchange = async ()=>{
-        const file = inp.files[0]; if(!file) return;
-        const txt = await file.text();
-        txt.split(/\r?\n/).forEach(line=>{
-          const [sec, qStr, ans] = line.split(',').map(s=>s&&s.trim());
-          if(!sec||!qStr||!ans) return;
-          const q = Number(qStr); const arr = ans.split(/;|\s+/).filter(Boolean);
-          if(!answerKey[sec]) answerKey[sec] = {}; answerKey[sec][q] = arr;
-        })
-        await buildKeyUI();
-        alert('CSV imported into key (not yet saved). Click Save Key.');
-      };
-      inp.click();
-    }
-
-    // ===== PDF GENERATION (with ROIs) =====
-    el('btnGenerate').onclick = async ()=>{
-      if(!current.examId) return alert('Pick Class/Section/Exam first');
-      if(!tpl.sections.length) return alert('Add at least one section in Exam Settings');
-      const { jsPDF } = window.jspdf;
-      const doc = new jsPDF({ unit:'mm', format:'a4' });
-      const W = 210, H=297; // A4 portrait in mm
-      const margin = 12; const cx = W/2;
-
-      // Header
-      doc.setFont('helvetica','bold'); doc.setFontSize(14);
-      doc.text('ST. PATRICK\'S SCHOOL', cx, margin, {align:'center'});
-      doc.setFont('helvetica','normal'); doc.setFontSize(11);
-      doc.text('OMR – '+ (current.examId||'Exam'), cx, margin+6, {align:'center'});
-
-      // Fiducials (squares at 4 corners ~10mm)
-      const fid = 10;
-      doc.rect(margin, margin, fid, fid); // TL
-      doc.rect(W-margin-fid, margin, fid, fid); // TR
-      doc.rect(margin, H-margin-fid, fid, fid); // BL
-      doc.rect(W-margin-fid, H-margin-fid, fid, fid); // BR
-
-      // QR (optional)
-      let qrBox = null;
-      if(tpl.qrEnabled){
-        const qrSize = 26;
-        const qrDiv = document.createElement('div');
-        new QRCode(qrDiv, { text: JSON.stringify({examId:current.examId, classId:current.classId, sectionId:current.sectionId}), width:qrSize*3, height:qrSize*3 });
-        const img = qrDiv.querySelector('img');
-        if(img){
-          const canvas = document.createElement('canvas');
-          canvas.width = img.width; canvas.height = img.height; const c=canvas.getContext('2d');
-          c.drawImage(img,0,0); const dataUrl = canvas.toDataURL('image/png');
-          doc.addImage(dataUrl, 'PNG', W-margin-qrSize, margin+14, qrSize, qrSize);
-          qrBox = {x:W-margin-qrSize, y:margin+14, w:qrSize, h:qrSize};
-        }
-      }
-
-      // Roll number grid
-      const rollTop = margin + 50; const cols = tpl.rollDigits; const digitH = 40; const colW = 12; const rowH = 5.8; const startX = margin; const startY = rollTop;
-      doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.text('Roll Number:', startX, startY-4);
-      for(let d=0; d<cols; d++){
-        const x = startX + d*(colW+2);
-        // column header
-        doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.text(String(d+1), x+colW/2, startY, {align:'center'});
-        for(let r=0; r<10; r++){
-          const y = startY + 6 + r*rowH;
-          doc.circle(x+colW/2, y, 2.2);
-          doc.setFontSize(7); doc.text(String(r), x+colW-2, y+1.2);
-        }
-      }
-
-      // Sections bubble grids
-      let curY = startY + 6 + 10*rowH + 12;
-      const leftX = margin; const rightX = W/2 + 4; // two columns layout if space
-      const secBoxH = 44; // approx height per block; may auto-wrap
-      const rois = { roll:{x:startX, y:startY, cols, colW, rowH}, sections:[] };
-
-      tpl.sections.forEach((sec, idx)=>{
-        const colLeft = (idx%2===0);
-        const baseX = colLeft? leftX : rightX;
-        if(!colLeft) curY -= secBoxH; // same row
-        // title
-        doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.text(`${sec.name}`, baseX, curY);
-        // grid
-        const optCount = sec.options; const bubbleR = 2.1;
-        const cellW = 8.5; const cellH = 6.8; const qPerRow = 8;
-        const gridX = baseX; const gridY = curY + 3.5;
-        const secROI = { name:sec.name, options:optCount, bubbles:[] };
-        for(let q=0;q<sec.count;q++){
-          const i = q%qPerRow; const j = Math.floor(q/qPerRow);
-          const x0 = gridX + i*(optCount*cellW + 6);
-          const y0 = gridY + j*(cellH + 6);
-          // q label
-          doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.text(String(q+1), x0, y0);
-          // options
-          for(let o=0;o<optCount;o++){
-            const ox = x0 + 6 + o*cellW; const oy = y0;
-            doc.circle(ox, oy, bubbleR);
-            doc.text(String.fromCharCode(65+o), ox+3.6, oy+1.6);
-            secROI.bubbles.push({ q:q+1, opt:String.fromCharCode(65+o), cx:mmToPx(ox), cy:mmToPx(oy), r:mmToPx(bubbleR) });
-          }
-        }
-        rois.sections.push(secROI);
-        if(colLeft){ curY += secBoxH; } else { curY += 0; }
-        if((idx%2===1)) curY += 6; // spacing between rows of sections
-      });
-
-      // Save ROIs (in px at 300dpi scale)
-      tpl.rois = rois; await db.collection('omrTemplates').doc(current.examId).set({ rois }, {merge:true});
-
-      // Render preview
-      const dataUrl = doc.output('dataurlstring');
-      el('pdfPreview').innerHTML = `<img src="${dataUrl}" alt="preview" style="width:100%; max-width:760px; border:1px solid #e5e7eb; border-radius:12px"/>`;
-
-      // Download
-      doc.save(`OMR_${current.examId}.pdf`);
-      el('tplStatus').textContent = 'PDF generated & ROIs saved.';
-    }
-
-    // mm to px at 300 dpi (1 inch = 25.4 mm, 300 dpi => 300 px per inch)
-    function mmToPx(mm){ return Math.round(mm * 300/25.4); }
-
-    // ===== CAMERA & RECOGNITION =====
-    let stream=null;
-    el('btnStartCam').onclick = async ()=>{
-      try{
-        stream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:'environment' } });
-        el('video').srcObject = stream; await el('video').play();
-        el('scanStatus').textContent = 'Camera started.';
-      }catch(err){ alert('Camera error: '+err.message); }
-    }
-    el('btnStopCam').onclick = ()=>{ if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; el('scanStatus').textContent='Stopped.'; } }
-
-    el('btnCapture').onclick = async ()=>{
-      if(!el('video').videoWidth) return alert('Start camera first');
-      if(!tpl.rois) return alert('Generate OMR to compute ROIs first');
-      // capture frame
-      const cvs = el('frameCanvas'); const v=el('video');
-      cvs.width = v.videoWidth; cvs.height = v.videoHeight; const ctx = cvs.getContext('2d');
-      ctx.drawImage(v,0,0,cvs.width,cvs.height);
-
-      // Try read QR to verify examId
-      const imgData = ctx.getImageData(0,0,cvs.width,cvs.height);
-      const qr = jsQR(imgData.data, imgData.width, imgData.height);
-      if(qr){ try{ const payload = JSON.parse(qr.data); if(payload.examId!==current.examId){ el('scanStatus').innerHTML = `<span class="pill bad">QR exam mismatch</span>`; return; } }catch(e){} }
-
-      // NOTE: For MVP we assume sheet alignment ~ camera frame (printed from our PDF). For robust use add perspective warp using the four fiducials.
-
-      // Decode roll number
-      const roll = await decodeRoll(ctx, cvs, tpl.rois.roll);
-
-      // Decode answers
-      const answers = {};
-      for(const s of tpl.rois.sections){
-        const secName = s.name; answers[secName] = {};
-        for(const b of s.bubbles){
-          const filled = isBubbleFilled(ctx, b.cx, b.cy, b.r);
-          if(filled){
-            if(!answers[secName][b.q]) answers[secName][b.q] = [];
-            answers[secName][b.q].push(b.opt);
-          }
-        }
-      }
-
-      // Score using answerKey and section marking
-      const score = scoreAnswers(answers, answerKey, tpl.sections);
-
-      // Save to Firestore
-      const out = { examId:current.examId, classId:current.classId, sectionId:current.sectionId, roll, answers, score, capturedAt: firebase.firestore.FieldValue.serverTimestamp() };
-      await db.collection('results').doc(current.examId).collection('scans').add(out);
-      el('scanStatus').innerHTML = `<span class="pill ok">Saved (Roll ${roll||'?'} | ${score.total.toFixed(2)} marks)</span>`;
-    }
-
-    function isBubbleFilled(ctx, cx, cy, r){
-      // sample average brightness in a smaller inner circle
-      const rad = Math.floor(r*0.8);
-      const x = Math.floor(cx), y=Math.floor(cy); const {width,height} = ctx.canvas;
-      let acc=0, cnt=0; for(let dy=-rad; dy<=rad; dy++) for(let dx=-rad; dx<=rad; dx++){
-        const xx=x+dx, yy=y+dy; if(xx<0||yy<0||xx>=width||yy>=height) continue;
-        if(dx*dx+dy*dy<=rad*rad){ const idx=(yy*width+xx)*4; const r0=ctx.getImageData(xx,yy,1,1).data; const lum = 0.2126*r0[0]+0.7152*r0[1]+0.0722*r0[2]; acc+=lum; cnt++; }
-      }
-      const avg = acc/(cnt||1);
-      return avg < 130; // threshold — tweak if needed
-    }
-
-    async function decodeRoll(ctx, cvs, rollROI){
-      const { x, y, cols, colW, rowH } = rollROI; // mm-space; converted earlier to px for bubbles but here rollROI is in mm-scale — approximate mapping by relative ratios
-      // Fallback: ask user to type roll if alignment uncertain
-      // For MVP, we return null to avoid wrong mapping; advanced impl would compute from fiducials
-      return prompt('Enter Roll Number (temporary until fiducial-based warp is added):')||null;
-    }
-
-    function scoreAnswers(answers, key, sections){
-      let total=0; const perSection={};
-      for(const sec of sections){
-        const ks = key[sec.name]||{}; const as = answers[sec.name]||{}; let s=0;
-        for(let q=1;q<=sec.count;q++){
-          const kc = (ks[q]||[]).slice().sort().join('');
-          const ac = ((as[q]||[]).slice().sort().join(''));
-          if(!ac){ if(sec.negative) s += 0; continue; }
-          if(kc && ac===kc) s += sec.mark; else s += (sec.negative||0)*1; // negative expected to be negative number
-        }
-        perSection[sec.name]=s; total+=s;
-      }
-      return { total, perSection };
-    }
-
-    // ===== BOOT =====
-    (async()=>{ await loadClasses(); })();
+    addEventListener('resize', fixHeight);
+    addEventListener('orientationchange', fixHeight);
+    window.addEventListener('load', fixHeight);
   </script>
 </body>
 </html>
-
-
-
