@@ -340,10 +340,16 @@ printable.prepend(avoidCSS);
       printable.style.color = "#000";
       printable.style.fontFamily = "'Times New Roman', Times, serif";
       printable.style.fontSize = "11pt";
-      printable.style.maxWidth = "820px";
+      /* A4 width at ~96dpi → 794px; fix width to avoid fractional scaling */
+      printable.style.width = "794px";
       printable.style.margin = "0 auto";
       printable.style.padding = "0";
       printable.style.lineHeight = "1.6";
+const hardWidthCSS = document.createElement('style');
+hardWidthCSS.textContent = `
+  @media print { #printable-export { width:794px !important; } }
+`;
+printable.appendChild(hardWidthCSS);
 
       // Header
      printable.innerHTML = `
@@ -566,11 +572,22 @@ function buildQuestionHTML(item) {
   if (/\$|\\\(|\\\)/.test(questionLine)) mathElements.push(qCounter - 1);
 
   const wrap = document.createElement('div');
+
+/* Heuristic: long descriptive items should be allowed to split */
+const isDescriptive = (item.getAttribute('data-type') || '').trim() === 'Descriptive';
+const charCount = (questionLine || '').length + (options.join(' ') || '').length;
+
+if (!isDescriptive || charCount < 450) {
+  // keep small/MCQ items together
   wrap.className = 'no-split';
   wrap.style.cssText = 'page-break-inside:avoid; break-inside:avoid; display:block;';
-  wrap.innerHTML = questionHtml;
-  printable.appendChild(wrap);
+} else {
+  // allow long descriptives to flow across pages
+  wrap.style.cssText = 'page-break-inside:auto; break-inside:auto; display:block;';
+}
 
+wrap.innerHTML = questionHtml;
+printable.appendChild(wrap);
   qCounter++;
   return wrap;
 }
@@ -764,11 +781,12 @@ async function __waitForImages(root){
 await __waitForImages(printable);
 
       html2pdf().set({
-        margin: [1.5, 1.5, 1.5, 1.5],
-        filename: `Question_Bank_${(classVal || '').replace(/ /g, "_")}_${(subjectVal || '').replace(/ /g, "_")}_${((selChaptersForHeader.join('_')) || 'All').replace(/ /g, "_")}.pdf`,
-        html2canvas: { scale: 2, useCORS: true },
-        jsPDF: { unit: 'cm', format: 'a4', orientation: 'portrait' },
-        pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
+  margin: [1.5, 1.5, 1.5, 1.5],
+  filename: `Question_Bank_${(classVal || '').replace(/ /g, "_")}_${(subjectVal || '').replace(/ /g, "_")}_${((selChaptersForHeader.join('_')) || 'All').replace(/ /g, "_")}.pdf`,
+  html2canvas: { scale: 2, useCORS: true, windowWidth: 794 }, // match fixed width
+  jsPDF: { unit: 'cm', format: 'a4', orientation: 'portrait' },
+  pagebreak: { mode: ['css','legacy'], avoid: '.no-split' }  // keep only marked items together
+})
       }).from(printable)
         .toPdf()
         .get('pdf')
@@ -1823,6 +1841,7 @@ All the Best`;
   </div>
 </body>
 </html>
+
 
 
 
