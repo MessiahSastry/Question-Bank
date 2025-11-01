@@ -331,20 +331,19 @@ const qtypeHeaderLine = __chosenTypes.join(', ');
 // inject minimal CSS so headings stick with first question and blocks don't split
 const avoidCSS = document.createElement('style');
 avoidCSS.textContent = `
-  /* Keep headings with the next block/question */
+  /* Headings shouldn't split themselves, but allow a break AFTER if needed */
   .keep-with-next{
     page-break-inside: avoid;
     break-inside: avoid;
-    page-break-after: avoid;
-    break-after: avoid;
     display: block;
   }
-  /* Usual no-split wrapper for compact items */
+  /* Only small/compact items get no-split */
   .no-split, .no-split * img {
     page-break-inside: avoid;
     break-inside: avoid;
   }
 `;
+
 printable.prepend(avoidCSS);
       printable.id = 'printable-export';
       printable.style.background = "#fff";
@@ -585,16 +584,21 @@ function buildQuestionHTML(item) {
 
   const wrap = document.createElement('div');
 
-/* Heuristic: long descriptive items should be allowed to split */
+/* Tighter heuristic: only truly short blocks are kept together */
 const isDescriptive = (item.getAttribute('data-type') || '').trim() === 'Descriptive';
 const charCount = (questionLine || '').length + (options.join(' ') || '').length;
+const hasImg = !!imgHtml;
+const isMCQ = options.length === 4;
 
-if (!isDescriptive || charCount < 450) {
-  // keep small/MCQ items together
+// keep-together only when it's small and image-free
+const isShortCompact =
+  (isMCQ && charCount < 260 && !hasImg) ||
+  (!isMCQ && charCount < 200 && !hasImg);
+
+if (isShortCompact) {
   wrap.className = 'no-split';
   wrap.style.cssText = 'page-break-inside:avoid; break-inside:avoid; display:block;';
 } else {
-  // allow long descriptives to flow across pages
   wrap.style.cssText = 'page-break-inside:auto; break-inside:auto; display:block;';
 }
 
@@ -796,12 +800,12 @@ await __waitForImages(printable);
 
      html2pdf().set({
   // add extra bottom margin for footer clearance
-  margin: [1.5, 1.5, 2.6, 1.5],
+  margin: [1.5, 1.5, 2.2, 1.5],
   filename: `Question_Bank_${(classVal || '').replace(/ /g, "_")}_${(subjectVal || '').replace(/ /g, "_")}_${((selChaptersForHeader.join('_')) || 'All').replace(/ /g, "_")}.pdf`,
   html2canvas: { scale: 2, useCORS: true, windowWidth: 794 },
   jsPDF: { unit: 'cm', format: 'a4', orientation: 'portrait' },
   // keep small blocks together AND keep headings with their next block
-  pagebreak: { mode: ['css','legacy'], avoid: ['.no-split', '.keep-with-next'] }
+  pagebreak: { mode: ['css','legacy'], avoid: '.no-split' }
 }).from(printable)
         .toPdf()
         .get('pdf')
@@ -1856,6 +1860,7 @@ All the Best`;
   </div>
 </body>
 </html>
+
 
 
 
