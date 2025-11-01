@@ -324,43 +324,25 @@ const __chosenTypes = (selectedQtypes.length === 0)
   : __typesOrderHdr.filter(t => selectedQtypes.includes(t));
 const qtypeHeaderLine = __chosenTypes.join(', ');
 
-
       // Wrapper for PDF content
      const printable = document.createElement('div');
 
 // inject minimal CSS so headings stick with first question and blocks don't split
 const avoidCSS = document.createElement('style');
 avoidCSS.textContent = `
-  /* Headings don't split inside themselves; allow break after */
-  .keep-with-next{
-    page-break-inside: avoid;
-    break-inside: avoid;
-    display: block;
-  }
-  /* Only tiny items are kept together */
-  .no-split, .no-split * img {
-    page-break-inside: avoid;
-    break-inside: avoid;
-  }
+  .keep-with-next { page-break-inside: avoid; break-inside: avoid; page-break-after: avoid; break-after: avoid; }
+  .no-split, .no-split * img { page-break-inside: avoid; break-inside: avoid; }
 `;
-
 printable.prepend(avoidCSS);
       printable.id = 'printable-export';
       printable.style.background = "#fff";
       printable.style.color = "#000";
       printable.style.fontFamily = "'Times New Roman', Times, serif";
       printable.style.fontSize = "11pt";
-      /* A4 width at ~96dpi → 794px; fix width to avoid fractional scaling */
-      printable.style.width = "794px";
+      printable.style.maxWidth = "820px";
       printable.style.margin = "0 auto";
-      printable.style.padding = "0"; // reserve space so footer never hits content
+      printable.style.padding = "0";
       printable.style.lineHeight = "1.6";
-const hardWidthCSS = document.createElement('style');
-hardWidthCSS.textContent = `
- @media print { #printable-export { width:794px !important; max-width:794px !important; overflow:visible !important; } }
-`;
-
-printable.appendChild(hardWidthCSS);
 
       // Header
      printable.innerHTML = `
@@ -407,9 +389,9 @@ printable.appendChild(hardWidthCSS);
         if (isMCQ) {
           return `
             <div style="margin-bottom:2px;">
-             <div style="text-indent:-20px;padding-left:20px;padding-right:8px;box-sizing:border-box;font-size:11pt;display:flex;gap:8px;align-items:flex-start;width:100%;">
-                <span style="flex:1;min-width:0;word-break:break-word;">${qNum}. ${text}</span>
-                <span style="margin-left:auto;display:inline-block;text-align:right;font-weight:normal;font-size:1.15em;letter-spacing:2px;min-width:38px;font-family:'Times New Roman', Times, serif;">
+              <div style="text-indent:-20px;padding-left:20px;font-size:11pt;display:flex;justify-content:space-between;align-items:center;max-width:98%;">
+                <span style="flex:1;">${qNum}. ${text}</span>
+                <span style=" display:inline-block; text-align:right; font-weight:normal; font-size:1.15em; letter-spacing:2px; min-width:38px; font-family:'Times New Roman', Times, serif; ">
                   ( &nbsp;&nbsp; )
                 </span>
               </div>
@@ -555,12 +537,12 @@ function buildQuestionHTML(item) {
 
               if (fitsFour) {
                 return `
-                 <div style="display:flex;gap:32px;flex-wrap:wrap;margin-bottom:3px;margin-left:2px;max-width:100%;box-sizing:border-box;">
+                  <div style="display:flex;gap:32px;flex-wrap:wrap;margin-bottom:3px;margin-left:2px;">
                     ${optionLines.map(opt => `<span style="min-width:70px;display:inline-block;vertical-align:top;">${opt.trim()}</span>`).join('')}
                   </div>`;
               } else if (abFits && cdFits) {
                 return `
-                  <div style="display:grid;grid-template-columns:1fr 1fr;column-gap:24px;row-gap:0;margin-bottom:2px;margin-left:2px;max-width:100%;box-sizing:border-box;">
+                  <div style="display:grid;grid-template-columns:auto auto;column-gap:24px;row-gap:0;margin-bottom:2px;margin-left:2px;width:max-content;">
                     <span style="min-width:70px;display:inline-block;vertical-align:top;">${optionLines[0]}</span>
                     <span style="min-width:70px;display:inline-block;vertical-align:top;">${optionLines[1]}</span>
                     <span style="min-width:70px;display:inline-block;vertical-align:top;">${optionLines[2]}</span>
@@ -583,26 +565,11 @@ function buildQuestionHTML(item) {
   if (/\$|\\\(|\\\)/.test(questionLine)) mathElements.push(qCounter - 1);
 
   const wrap = document.createElement('div');
-
-/* Tiny-only heuristic: keep together only very short items without images */
-const isDescriptive = (item.getAttribute('data-type') || '').trim() === 'Descriptive';
-const charCount = (questionLine || '').length + (options.join(' ') || '').length;
-const hasImg = !!imgHtml;
-// isMCQ was computed above in this function
-
-const isShortCompact =
-  (isMCQ && charCount < 180 && !hasImg) ||         // short MCQ
-  (!isMCQ && charCount < 140 && !hasImg);         // very short non-MCQ
-
-if (isShortCompact) {
   wrap.className = 'no-split';
   wrap.style.cssText = 'page-break-inside:avoid; break-inside:avoid; display:block;';
-} else {
-  wrap.style.cssText = 'page-break-inside:auto; break-inside:auto; display:block;';
-}
+  wrap.innerHTML = questionHtml;
+  printable.appendChild(wrap);
 
-wrap.innerHTML = questionHtml;
-printable.appendChild(wrap);
   qCounter++;
   return wrap;
 }
@@ -634,16 +601,14 @@ if (selChaptersForHeader.length >= 2) {
 // helpers
 function renderCenteredChapterTitle(text) {
   const t = document.createElement('div');
-  t.className = 'keep-with-next';
-  t.style.cssText = 'font-size:1.15em;font-weight:800;letter-spacing:0.02em;text-align:center;margin:16px 0 8px 0;';
+  t.style.cssText = 'font-size:1.15em;font-weight:800;letter-spacing:0.02em;text-align:center;margin:16px 0 8px 0;page-break-inside:avoid;break-inside:avoid;';
   t.textContent = String(text || 'Unspecified').toUpperCase();
   printable.appendChild(t);
 }
 
 function renderLeftHeading(text) {
   const h = document.createElement('div');
-  h.className = 'keep-with-next';
-  h.style.cssText = 'font-size:1.05em;font-weight:800;letter-spacing:0.01em;text-align:left;margin:10px 0 6px 0;';
+  h.style.cssText = 'font-size:1.05em;font-weight:800;letter-spacing:0.01em;text-align:left;margin:8px 0 6px 0;';
   h.textContent = text;
   printable.appendChild(h);
 }
@@ -659,8 +624,7 @@ if (!multipleChaptersSelected) {
   // Single chapter: structured render (dynamic marks → levels) + MCQs
   const list = Array.from(nodes);
 
-  // DESCRIPTIVE → group by available Marks (dynamic) and then Levels (L1/L2/L3)
-   // === ORDER: MCQ (Single) → MCQ (Multiple) → Descriptive ===
+    // === ORDER: MCQ (Single) → MCQ (Multiple) → Descriptive ===
   const wantSingle = (selectedQtypes.length === 0) || selectedQtypes.includes('MCQ (Single)');
   const wantMulti  = (selectedQtypes.length === 0) || selectedQtypes.includes('MCQ (Multiple)');
   const wantDesc   = (selectedQtypes.length === 0) || selectedQtypes.includes('Descriptive');
@@ -717,6 +681,7 @@ if (!multipleChaptersSelected) {
       });
     });
   }
+
 } else {
   // Two or more chapters: per-chapter sections below the box
   chapterOrder.forEach(ch => {
@@ -726,8 +691,7 @@ if (!multipleChaptersSelected) {
     // Chapter name centered
     renderCenteredChapterTitle(ch);
 
-    // DESCRIPTIVE block (dynamic Marks → Levels)
-    // === ORDER per chapter: MCQ (Single) → MCQ (Multiple) → Descriptive ===
+      // === ORDER per chapter: MCQ (Single) → MCQ (Multiple) → Descriptive ===
     const wantSingle = (selectedQtypes.length === 0) || selectedQtypes.includes('MCQ (Single)');
     const wantMulti  = (selectedQtypes.length === 0) || selectedQtypes.includes('MCQ (Multiple)');
     const wantDesc   = (selectedQtypes.length === 0) || selectedQtypes.includes('Descriptive');
@@ -783,7 +747,7 @@ if (!multipleChaptersSelected) {
         });
       });
     }
-   });
+  });
 }
   
      if (window.MathJax && typeof window.MathJax.typesetPromise === 'function') {
@@ -797,15 +761,13 @@ async function __waitForImages(root){
 }
 await __waitForImages(printable);
 
-     html2pdf().set({
-  // add extra bottom margin for footer clearance
-  margin: [1.5, 2.0, 2.2, 2.0],
-  filename: `Question_Bank_${(classVal || '').replace(/ /g, "_")}_${(subjectVal || '').replace(/ /g, "_")}_${((selChaptersForHeader.join('_')) || 'All').replace(/ /g, "_")}.pdf`,
-  html2canvas: { scale: 2, useCORS: true, windowWidth: 794 },
-  jsPDF: { unit: 'cm', format: 'a4', orientation: 'portrait' },
-  // keep small blocks together AND keep headings with their next block
-  pagebreak: { mode: ['css','legacy'], avoid: '.no-split' }
-}).from(printable)
+      html2pdf().set({
+        margin: [1.5, 1.5, 1.5, 1.5],
+        filename: `Question_Bank_${(classVal || '').replace(/ /g, "_")}_${(subjectVal || '').replace(/ /g, "_")}_${((selChaptersForHeader.join('_')) || 'All').replace(/ /g, "_")}.pdf`,
+        html2canvas: { scale: 2, useCORS: true },
+        jsPDF: { unit: 'cm', format: 'a4', orientation: 'portrait' },
+        pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
+      }).from(printable)
         .toPdf()
         .get('pdf')
         .then(function (pdf) {
@@ -813,9 +775,7 @@ await __waitForImages(printable);
           for (let i = 1; i <= pageCount; i++) {
             pdf.setPage(i);
             pdf.setFontSize(11);
-           const pw = pdf.internal.pageSize.getWidth();
-          const ph = pdf.internal.pageSize.getHeight();
-          pdf.text(`Page : ${i}`, pw - 2.5, ph - 1.4, { align: 'right' }); // ~1.4cm above bottom
+            pdf.text(`Page : ${i}`, pdf.internal.pageSize.getWidth() - 2.5, pdf.internal.pageSize.getHeight() - 1, { align: 'right' });
           }
         })
         .save()
@@ -1861,37 +1821,3 @@ All the Best`;
   </div>
 </body>
 </html>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
