@@ -331,13 +331,13 @@ const qtypeHeaderLine = __chosenTypes.join(', ');
 // inject minimal CSS so headings stick with first question and blocks don't split
 const avoidCSS = document.createElement('style');
 avoidCSS.textContent = `
-  /* Headings shouldn't split themselves, but allow a break AFTER if needed */
+  /* Headings don't split inside themselves; allow break after */
   .keep-with-next{
     page-break-inside: avoid;
     break-inside: avoid;
     display: block;
   }
-  /* Only small/compact items get no-split */
+  /* Only tiny items are kept together */
   .no-split, .no-split * img {
     page-break-inside: avoid;
     break-inside: avoid;
@@ -353,11 +353,11 @@ printable.prepend(avoidCSS);
       /* A4 width at ~96dpi → 794px; fix width to avoid fractional scaling */
       printable.style.width = "794px";
       printable.style.margin = "0 auto";
-      printable.style.padding = "0 0 48px 0"; // reserve space so footer never hits content
+      printable.style.padding = "0"; // reserve space so footer never hits content
       printable.style.lineHeight = "1.6";
 const hardWidthCSS = document.createElement('style');
 hardWidthCSS.textContent = `
-  @media print { #printable-export { width:794px !important; padding-bottom:48px !important; } }
+ @media print { #printable-export { width:794px !important; } }
 `;
 
 printable.appendChild(hardWidthCSS);
@@ -584,17 +584,15 @@ function buildQuestionHTML(item) {
 
   const wrap = document.createElement('div');
 
-/* Tighter heuristic: only truly short blocks are kept together */
+/* Tiny-only heuristic: keep together only very short items without images */
 const isDescriptive = (item.getAttribute('data-type') || '').trim() === 'Descriptive';
 const charCount = (questionLine || '').length + (options.join(' ') || '').length;
 const hasImg = !!imgHtml;
-// isMCQ is already defined above in this function
+// isMCQ was computed above in this function
 
-// keep-together only when it's small and image-free
 const isShortCompact =
-  (isMCQ && charCount < 260 && !hasImg) ||
-  (!isMCQ && charCount < 200 && !hasImg);
-
+  (isMCQ && charCount < 180 && !hasImg) ||         // short MCQ
+  (!isMCQ && charCount < 140 && !hasImg);         // very short non-MCQ
 
 if (isShortCompact) {
   wrap.className = 'no-split';
@@ -801,7 +799,7 @@ await __waitForImages(printable);
 
      html2pdf().set({
   // add extra bottom margin for footer clearance
-  margin: [1.5, 1.5, 2.2, 1.5],
+  margin: [1.5, 1.5, 2.0, 1.5],
   filename: `Question_Bank_${(classVal || '').replace(/ /g, "_")}_${(subjectVal || '').replace(/ /g, "_")}_${((selChaptersForHeader.join('_')) || 'All').replace(/ /g, "_")}.pdf`,
   html2canvas: { scale: 2, useCORS: true, windowWidth: 794 },
   jsPDF: { unit: 'cm', format: 'a4', orientation: 'portrait' },
@@ -815,7 +813,9 @@ await __waitForImages(printable);
           for (let i = 1; i <= pageCount; i++) {
             pdf.setPage(i);
             pdf.setFontSize(11);
-            pdf.text(`Page : ${i}`, pdf.internal.pageSize.getWidth() - 2.5, pdf.internal.pageSize.getHeight() - 1, { align: 'right' });
+           const pw = pdf.internal.pageSize.getWidth();
+          const ph = pdf.internal.pageSize.getHeight();
+          pdf.text(`Page : ${i}`, pw - 2.5, ph - 1.4, { align: 'right' }); // ~1.4cm above bottom
           }
         })
         .save()
@@ -1861,6 +1861,7 @@ All the Best`;
   </div>
 </body>
 </html>
+
 
 
 
