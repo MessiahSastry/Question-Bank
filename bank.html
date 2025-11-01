@@ -618,7 +618,39 @@ if (!multipleChaptersSelected) {
   const list = Array.from(nodes);
 
   // DESCRIPTIVE → group by available Marks (dynamic) and then Levels (L1/L2/L3)
-  if (includesDescriptive) {
+   // === ORDER: MCQ (Single) → MCQ (Multiple) → Descriptive ===
+  const wantSingle = (selectedQtypes.length === 0) || selectedQtypes.includes('MCQ (Single)');
+  const wantMulti  = (selectedQtypes.length === 0) || selectedQtypes.includes('MCQ (Multiple)');
+  const wantDesc   = (selectedQtypes.length === 0) || selectedQtypes.includes('Descriptive');
+
+  // Helper: render MCQs grouped by Level only
+  function __renderMCQByLevel(listScope, typeLabel) {
+    const mcq = listScope.filter(n => (n.getAttribute('data-type') || '').trim() === typeLabel);
+    if (!mcq.length) return;
+
+    renderLeftHeading(typeLabel);
+    const buckets = levelsOrder.map(lvl => ({
+      name: lvl,
+      items: mcq.filter(n => (n.getAttribute('data-level') || '').trim() === lvl)
+    }));
+    const unspecified = mcq.filter(n => !(n.getAttribute('data-level') || '').trim());
+    if (unspecified.length) buckets.push({ name: 'Unspecified Level', items: unspecified });
+
+    buckets.forEach(b => {
+      if (!b.items.length) return;
+      renderLeftHeading(b.name);
+      b.items.forEach(item => buildQuestionHTML(item));
+    });
+  }
+
+  // 1) MCQ (Single)
+  if (wantSingle) { __renderMCQByLevel(list, 'MCQ (Single)'); }
+
+  // 2) MCQ (Multiple)
+  if (wantMulti)  { __renderMCQByLevel(list, 'MCQ (Multiple)'); }
+
+  // 3) Descriptive — group by Marks → Level
+  if (wantDesc) {
     const descList = list.filter(n => (n.getAttribute('data-type') || '').trim() === 'Descriptive');
 
     const presentMarks = Array.from(new Set(
@@ -627,39 +659,21 @@ if (!multipleChaptersSelected) {
     )).sort((a,b) => a - b);
 
     presentMarks.forEach(m => {
-  const byMarks = descList.filter(n => Number(n.getAttribute('data-marks') || '') === m);
+      const byMarks = descList.filter(n => Number(n.getAttribute('data-marks') || '') === m);
 
-  // build non-empty level groups first
-  const groups = levelsOrder.map(lvl => ({
-    lvl,
-    items: byMarks.filter(n => (n.getAttribute('data-level') || '').trim() === lvl)
-  })).filter(g => g.items.length);
+      const groups = levelsOrder.map(lvl => ({
+        lvl,
+        items: byMarks.filter(n => (n.getAttribute('data-level') || '').trim() === lvl)
+      })).filter(g => g.items.length);
 
-  if (!groups.length) return; // skip this marks heading entirely
+      if (!groups.length) return;
 
-  renderLeftHeading(`${m} Marks`);
-  groups.forEach(g => {
-    renderLeftHeading(g.lvl);
-    g.items.forEach(item => buildQuestionHTML(item));
-  });
-});
-  }
-
-  // MCQ block (only if present)
-  if (includesAnyMCQ) {
-    const singles = list.filter(n => (n.getAttribute('data-type') || '').trim() === 'MCQ (Single)');
-    const multis  = list.filter(n => (n.getAttribute('data-type') || '').trim() === 'MCQ (Multiple)');
-    if (singles.length || multis.length) {
-      renderLeftHeading('MCQs');
-      if (singles.length && multis.length) {
-        renderLeftHeading('MCQ (Single)');  singles.forEach(item => buildQuestionHTML(item));
-        renderLeftHeading('MCQ (Multiple)'); multis.forEach(item => buildQuestionHTML(item));
-      } else if (singles.length) {
-        singles.forEach(item => buildQuestionHTML(item));
-      } else {
-        multis.forEach(item => buildQuestionHTML(item));
-      }
-    }
+      renderLeftHeading(`${m} Marks`);
+      groups.forEach(g => {
+        renderLeftHeading(g.lvl);
+        g.items.forEach(item => buildQuestionHTML(item));
+      });
+    });
   }
 } else {
   // Two or more chapters: per-chapter sections below the box
@@ -671,59 +685,63 @@ if (!multipleChaptersSelected) {
     renderCenteredChapterTitle(ch);
 
     // DESCRIPTIVE block (dynamic Marks → Levels)
-if (includesDescriptive) {
-  const descList = list.filter(n => (n.getAttribute('data-type') || '').trim() === 'Descriptive');
+    // === ORDER per chapter: MCQ (Single) → MCQ (Multiple) → Descriptive ===
+    const wantSingle = (selectedQtypes.length === 0) || selectedQtypes.includes('MCQ (Single)');
+    const wantMulti  = (selectedQtypes.length === 0) || selectedQtypes.includes('MCQ (Multiple)');
+    const wantDesc   = (selectedQtypes.length === 0) || selectedQtypes.includes('Descriptive');
 
-  const presentMarks = Array.from(new Set(
-    descList.map(n => Number(n.getAttribute('data-marks') || ''))
-            .filter(m => Number.isFinite(m) && m > 0)
-  )).sort((a,b) => a - b);
+    function __renderMCQByLevelFor(listScope, typeLabel) {
+      const mcq = listScope.filter(n => (n.getAttribute('data-type') || '').trim() === typeLabel);
+      if (!mcq.length) return;
 
-  presentMarks.forEach(m => {
-  const byMarks = descList.filter(n => Number(n.getAttribute('data-marks') || '') === m);
+      renderLeftHeading(typeLabel);
+      const buckets = levelsOrder.map(lvl => ({
+        name: lvl,
+        items: mcq.filter(n => (n.getAttribute('data-level') || '').trim() === lvl)
+      }));
+      const unspecified = mcq.filter(n => !(n.getAttribute('data-level') || '').trim());
+      if (unspecified.length) buckets.push({ name: 'Unspecified Level', items: unspecified });
 
-  // build non-empty level groups first
-  const groups = levelsOrder.map(lvl => ({
-    lvl,
-    items: byMarks.filter(n => (n.getAttribute('data-level') || '').trim() === lvl)
-  })).filter(g => g.items.length);
-
-  if (!groups.length) return; // skip this marks heading entirely
-
-  renderLeftHeading(`${m} Marks`);
-  groups.forEach(g => {
-    renderLeftHeading(g.lvl);
-    g.items.forEach(item => buildQuestionHTML(item));
-  });
-});
-}
-
-    // MCQ block
-    if (includesAnyMCQ) {
-      const hasSingle = list.some(n => (n.getAttribute('data-type') || '').trim() === 'MCQ (Single)');
-      const hasMulti  = list.some(n => (n.getAttribute('data-type') || '').trim() === 'MCQ (Multiple)');
-
-      if (hasSingle || hasMulti) {
-        renderLeftHeading('MCQs');
-
-        if (hasSingle && hasMulti) {
-          renderLeftHeading('MCQ (Single)');
-          list.filter(n => (n.getAttribute('data-type') || '').trim() === 'MCQ (Single)')
-              .forEach(item => buildQuestionHTML(item));
-
-          renderLeftHeading('MCQ (Multiple)');
-          list.filter(n => (n.getAttribute('data-type') || '').trim() === 'MCQ (Multiple)')
-    .forEach(item => buildQuestionHTML(item));
-        } else if (hasSingle) {
-          list.filter(n => (n.getAttribute('data-type') || '').trim() === 'MCQ (Single)')
-              .forEach(item => buildQuestionHTML(item));
-        } else if (hasMulti) {
-          list.filter(n => (n.getAttribute('data-type') || '').trim() === 'MCQ (Multiple)')
-    .forEach(item => buildQuestionHTML(item));
-        }
-      }
+      buckets.forEach(b => {
+        if (!b.items.length) return;
+        renderLeftHeading(b.name);
+        b.items.forEach(item => buildQuestionHTML(item));
+      });
     }
-  });
+
+    // 1) MCQ (Single)
+    if (wantSingle) { __renderMCQByLevelFor(list, 'MCQ (Single)'); }
+
+    // 2) MCQ (Multiple)
+    if (wantMulti)  { __renderMCQByLevelFor(list, 'MCQ (Multiple)'); }
+
+    // 3) Descriptive — group by Marks → Level
+    if (wantDesc) {
+      const descList = list.filter(n => (n.getAttribute('data-type') || '').trim() === 'Descriptive');
+
+      const presentMarks = Array.from(new Set(
+        descList.map(n => Number(n.getAttribute('data-marks') || ''))
+                .filter(m => Number.isFinite(m) && m > 0)
+      )).sort((a,b) => a - b);
+
+      presentMarks.forEach(m => {
+        const byMarks = descList.filter(n => Number(n.getAttribute('data-marks') || '') === m);
+
+        const groups = levelsOrder.map(lvl => ({
+          lvl,
+          items: byMarks.filter(n => (n.getAttribute('data-level') || '').trim() === lvl)
+        })).filter(g => g.items.length);
+
+        if (!groups.length) return;
+
+        renderLeftHeading(`${m} Marks`);
+        groups.forEach(g => {
+          renderLeftHeading(g.lvl);
+          g.items.forEach(item => buildQuestionHTML(item));
+        });
+      });
+    }
+   });
 }
   
      if (window.MathJax && typeof window.MathJax.typesetPromise === 'function') {
@@ -1797,6 +1815,7 @@ All the Best`;
   </div>
 </body>
 </html>
+
 
 
 
