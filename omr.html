@@ -92,7 +92,33 @@
     table.slim tbody tr{background:#fff; border:1px solid #e5e7eb; border-radius:10px}
 
     .kbd{font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; background:#f3f4f6; padding:2px 6px; border-radius:6px; font-size:12px}
-  </style>
+  /* --- Custom light dropdown (mobile screenshot style) --- */
+.native-select-hidden{ display:none; }
+
+.cdrop{ position:relative; }
+.cdrop-btn{
+  width:100%; border:1px solid #e5e7eb; border-radius:12px;
+  padding:12px; background:#fff; font-weight:600; text-align:left;
+  box-shadow:0 2px 6px rgba(0,0,0,.04);
+  display:flex; align-items:center; justify-content:space-between;
+}
+.cdrop-btn .cdrop-text{ color:#0f3d6b; }
+.cdrop-btn .cdrop-chevron{ font-family: "Font Awesome 6 Free"; font-weight:900; }
+.cdrop-btn .cdrop-chevron::before{ content:"\f078"; } /* chevron-down */
+
+.cdrop-list{
+  position:absolute; left:0; right:0; top:calc(100% + 6px);
+  background:#fff; border:1px solid #e5e7eb; border-radius:12px;
+  max-height:290px; overflow:auto; box-shadow:0 10px 24px rgba(0,0,0,.08);
+  display:none; z-index:40;
+}
+.cdrop.open .cdrop-list{ display:block; }
+.cdrop-item{ padding:12px; cursor:pointer; }
+.cdrop-item:hover{ background:#f4f8fc; }
+.cdrop.disabled .cdrop-btn{ opacity:.6; pointer-events:none; }
+
+/* keep existing styles above */
+</style>
 </head>
 <body>
   <div class="fixed-header" id="header">
@@ -111,23 +137,27 @@
         <section class="card">
       <div class="sectionTitle"><i class="fa fa-database"></i> Pick Class / Section / Subject / Exam</div>
 <div class="grid cols-3">
-  <div>
-    <div class="label">Class</div>
-    <select id="classSel" class="select"></select>
-  </div>
-  <div>
-    <div class="label">Section</div>
-    <select id="sectionSel" class="select"></select>
-  </div>
-  <div>
-    <div class="label">Subject</div>
-    <select id="subjectSel" class="select" disabled></select>
-  </div>
-  <div>
-  <div class="label">Exam</div>
-<div style="display:flex; gap:8px; align-items:center;">
-  <select id="examSel" class="select" disabled></select>
+ <div>
+  <div class="label">Class</div>
+  <select id="classSel" class="select native-select-hidden"></select>
+  <div id="cdrop-class" class="cdrop" data-select="classSel"></div>
 </div>
+  <div>
+  <div class="label">Section</div>
+  <select id="sectionSel" class="select native-select-hidden"></select>
+  <div id="cdrop-section" class="cdrop" data-select="sectionSel"></div>
+</div>
+  <div>
+  <div class="label">Subject</div>
+  <select id="subjectSel" class="select native-select-hidden" disabled></select>
+  <div id="cdrop-subject" class="cdrop" data-select="subjectSel"></div>
+</div>
+ <div>
+  <div class="label">Exam</div>
+  <div style="display:flex; gap:8px; align-items:center; width:100%;">
+    <select id="examSel" class="select native-select-hidden" disabled></select>
+    <div id="cdrop-exam" class="cdrop" data-select="examSel" style="flex:1;"></div>
+  </div>
 </div>
 </div>
 
@@ -276,9 +306,55 @@ const auth = firebase.auth();
 let btnES; // single global handle for the Exam Settings button
 
     const $ = sel => document.querySelector(sel);
-    const el = id => document.getElementById(id);
+const el = id => document.getElementById(id);
 
-    // ===== UI: load dropdowns from your Firestore structure =====
+/* ---------- Custom dropdown binders ---------- */
+function mountCdrop(selectId, hostId){
+  const sel = el(selectId), host = el(hostId);
+  if(!sel || !host) return;
+  // read current selection text
+  const curOpt = sel.selectedOptions && sel.selectedOptions[0] ? sel.selectedOptions[0].textContent : (sel.options[0]?.textContent || 'Select');
+  host.classList.toggle('disabled', !!sel.disabled);
+  host.innerHTML = `
+    <button type="button" class="cdrop-btn"><span class="cdrop-text">${curOpt}</span><span class="cdrop-chevron"></span></button>
+    <div class="cdrop-list"></div>
+  `;
+  const btn = host.querySelector('.cdrop-btn');
+  const list = host.querySelector('.cdrop-list');
+
+  // build items from native select
+  list.innerHTML = '';
+  Array.from(sel.options).forEach(op=>{
+    const item = document.createElement('div');
+    item.className = 'cdrop-item';
+    item.textContent = op.textContent;
+    if (op.disabled) item.style.opacity = .6;
+    item.addEventListener('click', ()=>{
+      sel.value = op.value;
+      // update label
+      host.querySelector('.cdrop-text').textContent = op.textContent;
+      // dispatch real change so your existing handlers run
+      sel.dispatchEvent(new Event('change', {bubbles:true}));
+      host.classList.remove('open');
+    });
+    list.appendChild(item);
+  });
+
+  // open/close
+  btn.addEventListener('click', ()=>{
+    if (sel.disabled) return;
+    document.querySelectorAll('.cdrop.open').forEach(x=>{ if(x!==host) x.classList.remove('open'); });
+    host.classList.toggle('open');
+  });
+  document.addEventListener('click', (e)=>{ if(!host.contains(e.target)) host.classList.remove('open'); });
+}
+
+function refreshCdrop(selectId, hostId){
+  // (re)mount to reflect new option sets
+  mountCdrop(selectId, hostId);
+}
+
+  
    // ===== UI: load dropdowns (styles match your mobile UI) =====
 
 // Academic Year helper (use global if present; else compute Apr–Mar as "YYYY-YY")
@@ -342,14 +418,15 @@ async function loadClasses(){
     .map(d => ({ id:d.id, name:(d.data().name||d.id) }))
     .filter(x => desired.has(x.name))
     .sort((a,b)=> (parseInt(a.name) || 0) - (parseInt(b.name) || 0));
-  el('classSel').innerHTML =
-    '<option value="">Select Class</option>' +
-    rows.map(r=>`<option value="${r.id}" data-name="${r.name}">${r.name}</option>`).join('');
+ el('classSel').innerHTML =
+  '<option value="">Select Class</option>' +
+  rows.map(r=>`<option value="${r.id}" data-name="${r.name}">${r.name}</option>`).join('');
+refreshCdrop('classSel','cdrop-class');
 }
 
 async function loadSections(classId){
-  el('subjectSel').innerHTML = ''; el('subjectSel').disabled = true;
-  el('examSel').innerHTML = ''; el('examSel').disabled = true;
+ el('subjectSel').innerHTML = ''; el('subjectSel').disabled = true; refreshCdrop('subjectSel','cdrop-subject');
+el('examSel').innerHTML = ''; el('examSel').disabled = true; refreshCdrop('examSel','cdrop-exam');
   el('btnKey').disabled = true; el('btnScan').disabled = true;
 
   if(!classId){ el('sectionSel').innerHTML=''; return; }
@@ -357,13 +434,14 @@ async function loadSections(classId){
     .collection('classes').doc(classId).collection('sections');
   const snap = await root.orderBy('name').get();
   el('sectionSel').innerHTML =
-    '<option value="">Select Section</option>' +
-    snap.docs.map(d=>`<option value="${d.id}" data-name="${(d.data().name||d.id)}">${d.data().name||d.id}</option>`).join('');
+  '<option value="">Select Section</option>' +
+  snap.docs.map(d=>`<option value="${d.id}" data-name="${(d.data().name||d.id)}">${d.data().name||d.id}</option>`).join('');
+refreshCdrop('sectionSel','cdrop-section');
 }
 
 async function loadExamsEffective(){
-  el('examSel').innerHTML=''; el('examSel').disabled = true;
-  el('subjectSel').innerHTML=''; el('subjectSel').disabled = true;
+ el('examSel').innerHTML=''; el('examSel').disabled = true; refreshCdrop('examSel','cdrop-exam');
+el('subjectSel').innerHTML=''; el('subjectSel').disabled = true; refreshCdrop('subjectSel','cdrop-subject');
   el('btnKey').disabled = true; el('btnScan').disabled = true;
   btnES = el('btnExamSettings'); if (btnES) btnES.disabled = true;
 
@@ -375,10 +453,11 @@ async function loadExamsEffective(){
   }
   // show names, value = id; keep scope hints in data-attrs
    el('examSel').innerHTML =
-    '<option value="">Select Exam</option>' +
-    exams.map(e=>`<option value="${e.id}" data-scope="${e.__scope||''}">${e.name||e.id}</option>`).join('');
-  el('examSel').disabled = false;
-  btnES = el('btnExamSettings'); if (btnES) btnES.disabled = false; // settings available once exams are loaded
+  '<option value="">Select Exam</option>' +
+  exams.map(e=>`<option value="${e.id}" data-scope="${e.__scope||''}">${e.name||e.id}</option>`).join('');
+el('examSel').disabled = false;
+refreshCdrop('examSel','cdrop-exam');
+btnES = el('btnExamSettings'); if (btnES) btnES.disabled = false;
 }
 
 async function loadSubjectsFromExam(examId){
@@ -406,13 +485,14 @@ async function loadSubjectsFromExam(examId){
   const subs = Array.isArray(d.subjects) ? d.subjects : [];
   if(!subs.length){ el('subjectSel').innerHTML='<option value="">No subjects</option>'; return; }
 
-  el('subjectSel').innerHTML =
-    '<option value="">Select Subject</option>' +
-    subs.map(s=>`<option value="${s.name}">${s.name}</option>`).join('');
-  el('subjectSel').disabled = true; // stays disabled until user picks; enable below
-  // enable actions now that an exam exists; subject optional for OMR template
-  el('btnKey').disabled = false; el('btnScan').disabled = false;
-  el('subjectSel').disabled = false;
+ el('subjectSel').innerHTML =
+  '<option value="">Select Subject</option>' +
+  subs.map(s=>`<option value="${s.name}">${s.name}</option>`).join('');
+el('subjectSel').disabled = true;
+refreshCdrop('subjectSel','cdrop-subject');
+// enable actions now that an exam exists
+el('btnKey').disabled = false; el('btnScan').disabled = false;
+el('subjectSel').disabled = false;
 }
 
 // Events
@@ -823,6 +903,7 @@ el('subjectSel').addEventListener('change', (e)=>{
   </script>
 </body>
 </html>
+
 
 
 
