@@ -34,9 +34,20 @@
     body{
       margin:0; font-family:"Segoe UI",system-ui,-apple-system,Segoe UI,Roboto; color:var(--ink); background:var(--bg);
     }
-   /* Fixed blue header */
+ /* Fixed blue header (no nesting) */
 .fixed-header{
   background:#0f3d6b;
+}
+
+/* Small inline icon button next to selects */
+.inline-btn{
+  height:42px; min-width:42px;
+  padding:0 10px; border:1px solid #c7d7ea; border-radius:8px;
+  background:#0f3d6b; color:#fff; font-weight:600;
+  display:inline-flex; align-items:center; justify-content:center;
+  box-shadow:0 1px 2px rgba(0,0,0,.05);
+}
+.inline-btn:disabled{ opacity:.5; cursor:not-allowed; }
   color:#fff;
   text-align:center;
   padding:18px 0 8px 0;
@@ -113,27 +124,36 @@
       <button class="btn" id="btnExamSettings"><i class="fa fa-sliders"></i> Exam Settings</button>
     </div>
     <section class="card">
-      <div class="sectionTitle"><i class="fa fa-database"></i> Pick Class / Section / Exam</div>
-      <div class="grid cols-3">
-        <div>
-          <div class="label">Class</div>
-          <select id="classSel" class="select"></select>
-        </div>
-        <div>
-          <div class="label">Section</div>
-          <select id="sectionSel" class="select"></select>
-        </div>
-        <div>
-          <div class="label">Exam</div>
-          <select id="examSel" class="select"></select>
-        </div>
-      </div>
-      </div>
-      <!-- Place these UNDER the Exam dropdown -->
-      <div class="toolbar" style="margin-top:10px">
-        <button class="btn" id="btnKey"><i class="fa fa-key"></i> Set Answer Key</button>
-        <button class="btn primary" id="btnScan"><i class="fa fa-camera"></i> Scan & Save</button>
-      </div>
+      <div class="sectionTitle"><i class="fa fa-database"></i> Pick Class / Section / Subject / Exam</div>
+<div class="grid cols-3">
+  <div>
+    <div class="label">Class</div>
+    <select id="classSel" class="select"></select>
+  </div>
+  <div>
+    <div class="label">Section</div>
+    <select id="sectionSel" class="select"></select>
+  </div>
+  <div>
+    <div class="label">Subject</div>
+    <select id="subjectSel" class="select" disabled></select>
+  </div>
+  <div>
+  <div class="label">Exam</div>
+  <div style="display:flex; gap:8px; align-items:center;">
+    <select id="examSel" class="select" disabled></select>
+    <button id="btnExamSettings" class="inline-btn" title="Exam Settings" disabled>
+      <i class="fa fa-cog"></i>
+    </button>
+  </div>
+</div>
+</div>
+
+<!-- Place these UNDER the Exam dropdown -->
+<div class="toolbar" style="margin-top:10px">
+  <button class="btn" id="btnKey" disabled><i class="fa fa-key"></i> Set Answer Key</button>
+  <button class="btn primary" id="btnScan" disabled><i class="fa fa-camera"></i> Scan & Save</button>
+</div>
       <div class="hr"></div>
       <div class="status" id="pickStatus">Select to load template / save path.</div>
     </section>
@@ -254,7 +274,13 @@ const auth = firebase.auth();
 })();
 
     // ===== STATE =====
-    let current = { classId:null, sectionId:null, examId:null, isSubtopic:false, parentExamId:null };
+   let current = {
+  classId:null, className:null,
+  sectionId:null, sectionName:null,
+  subjectName:null,
+  examId:null,
+  isSubtopic:false, parentExamId:null
+};
     let tpl = {
       rollDigits:4,
       bubbleSizeMm:5.5,
@@ -269,39 +295,187 @@ const auth = firebase.auth();
     const el = id => document.getElementById(id);
 
     // ===== UI: load dropdowns from your Firestore structure =====
-    async function loadClasses(){
-      const snap = await db.collection('classes').orderBy('name').get();
-      el('classSel').innerHTML = '<option value="">Select Class</option>' + snap.docs.map(d=>`<option value="${d.id}">${d.data().name||d.id}</option>`).join('');
-    }
-    async function loadSections(classId){
-      if(!classId){ el('sectionSel').innerHTML=''; return; }
-      const snap = await db.collection('classes').doc(classId).collection('sections').orderBy('name').get();
-      el('sectionSel').innerHTML = '<option value="">Select Section</option>' + snap.docs.map(d=>`<option value="${d.id}">${d.data().name||d.id}</option>`).join('');
-    }
-    async function loadExams(classId, sectionId){
-      if(!classId||!sectionId){ el('examSel').innerHTML=''; return; }
-      // Adjust to your schema; here we assume exams are under classes/{class}/sections/{section}/exams
-      const snap = await db.collection('classes').doc(classId).collection('sections').doc(sectionId).collection('exams').orderBy('name').get();
-      el('examSel').innerHTML = '<option value="">Select Exam</option>' + snap.docs.map(d=>`<option value="${d.id}">${d.data().name||d.id}</option>`).join('');
-    }
+   // ===== UI: load dropdowns (styles match your mobile UI) =====
 
-    el('classSel').addEventListener('change', async e=>{
-      current.classId = e.target.value || null; current.sectionId = null; current.examId = null;
-      await loadSections(current.classId); el('examSel').innerHTML='';
-      el('pickStatus').textContent = 'Class picked. Choose Section and Exam.';
-    });
-    el('sectionSel').addEventListener('change', async e=>{
-      current.sectionId = e.target.value || null; current.examId = null;
-      await loadExams(current.classId,current.sectionId);
-      el('pickStatus').textContent = 'Section picked. Choose Exam.';
-    });
-    el('examSel').addEventListener('change', async e=>{
-      current.examId = e.target.value || null;
-      if(current.examId){
-        el('pickStatus').innerHTML = `Exam selected: <span class="kbd">${current.examId}</span>`;
-        await loadTemplate();
-      }
-    });
+// Academic Year helper (use global if present; else compute Apr–Mar as "YYYY-YY")
+const academicYear = (window.academicYear) ? window.academicYear : (() => {
+  const now = new Date(); const y = now.getFullYear(); const m = now.getMonth(); // 0=Jan
+  const start = (m >= 3) ? y : (y-1); const end = String((start+1)).slice(-2);
+  return `${start}-${end}`;
+})();
+
+// Map class name to group (used by effective exam resolver fallback)
+function getClassGroupName(clsName='') {
+  const n = (clsName||'').toLowerCase();
+  if (/(nur|kg|ukg)/.test(n)) return 'nur-ukg';
+  if (/^1|1st|2|2nd/.test(n)) return '1-2';
+  if (/3|3rd|4|4th|5|5th/.test(n)) return '3-5';
+  if (/6|6th|7|7th|8|8th|9|9th/.test(n)) return '6-9';
+  return '10';
+}
+
+// Try to use your existing resolver; otherwise do a minimal precedence merge
+async function fetchEffectiveExamsWrapper(classId, className, {forceRefresh=false}={}) {
+  if (typeof fetchEffectiveExams === 'function') {
+    return await fetchEffectiveExams(classId, className, { forceRefresh });
+  }
+  const group = getClassGroupName(className||'');
+  const root = db.collection('years').doc(academicYear);
+
+  const [groupSnap, classSnap, sectionSnap] = await Promise.all([
+    root.collection('exams').doc('classGroups').collection(group).get(),
+    root.collection('classes').doc(classId).collection('examOverrides').get(),
+    current.sectionId
+      ? root.collection('classes').doc(classId).collection('sections').doc(current.sectionId).collection('examOverrides').get()
+      : Promise.resolve({ empty:true, docs:[] })
+  ]);
+
+  const rank = (origin) => origin==='section' ? 3 : origin==='class' ? 2 : 1;
+  const byNameKey = new Map();
+
+  const push = (doc, origin) => {
+    const d = doc.data()||{}; const k = (d.nameKey || (d.name||'').toLowerCase().replace(/\s+/g,''));
+    if (!k) return;
+    const cur = byNameKey.get(k);
+    const val = { id: doc.id, ...d, __scope: origin, __origin: origin };
+    if (!cur || rank(origin) >= rank(cur.__scope)) byNameKey.set(k, val);
+  };
+
+  groupSnap.forEach(x => push(x, 'group'));
+  classSnap.forEach(x => push(x, 'class'));
+  if (!sectionSnap.empty) sectionSnap.forEach(x => push(x, 'section'));
+
+  return Array.from(byNameKey.values());
+}
+
+// Loaders
+async function loadClasses(){
+  const root = db.collection('years').doc(academicYear).collection('classes');
+  const snap = await root.get();
+  // Restrict to 3rd–10th in label, keep original ids
+  const desired = new Set(['3rd Class','4th Class','5th Class','6th Class','7th Class','8th Class','9th Class','10th Class']);
+  const rows = snap.docs
+    .map(d => ({ id:d.id, name:(d.data().name||d.id) }))
+    .filter(x => desired.has(x.name))
+    .sort((a,b)=> (parseInt(a.name) || 0) - (parseInt(b.name) || 0));
+  el('classSel').innerHTML =
+    '<option value="">Select Class</option>' +
+    rows.map(r=>`<option value="${r.id}" data-name="${r.name}">${r.name}</option>`).join('');
+}
+
+async function loadSections(classId){
+  el('subjectSel').innerHTML = ''; el('subjectSel').disabled = true;
+  el('examSel').innerHTML = ''; el('examSel').disabled = true;
+  el('btnKey').disabled = true; el('btnScan').disabled = true;
+
+  if(!classId){ el('sectionSel').innerHTML=''; return; }
+  const root = db.collection('years').doc(academicYear)
+    .collection('classes').doc(classId).collection('sections');
+  const snap = await root.orderBy('name').get();
+  el('sectionSel').innerHTML =
+    '<option value="">Select Section</option>' +
+    snap.docs.map(d=>`<option value="${d.id}" data-name="${(d.data().name||d.id)}">${d.data().name||d.id}</option>`).join('');
+}
+
+async function loadExamsEffective(){
+  el('examSel').innerHTML=''; el('examSel').disabled = true;
+  el('subjectSel').innerHTML=''; el('subjectSel').disabled = true;
+  el('btnKey').disabled = true; el('btnScan').disabled = true;
+  const btnES = el('btnExamSettings'); if (btnES) btnES.disabled = true;
+
+  if(!current.classId || !current.sectionId) return;
+  const exams = await fetchEffectiveExamsWrapper(current.classId, current.className, { forceRefresh:true });
+  if(!Array.isArray(exams) || !exams.length){
+    el('examSel').innerHTML = '<option value="">No exams found</option>';
+    return;
+  }
+  // show names, value = id; keep scope hints in data-attrs
+   el('examSel').innerHTML =
+    '<option value="">Select Exam</option>' +
+    exams.map(e=>`<option value="${e.id}" data-scope="${e.__scope||''}">${e.name||e.id}</option>`).join('');
+  el('examSel').disabled = false;
+  const btnES = el('btnExamSettings'); if (btnES) btnES.disabled = false; // settings available once exams are loaded
+}
+
+async function loadSubjectsFromExam(examId){
+  el('subjectSel').innerHTML=''; el('subjectSel').disabled = true;
+  if(!examId) return;
+
+  const root = db.collection('years').doc(academicYear);
+  const group = getClassGroupName(current.className||'');
+
+  // try section override → class override → group (by id)
+  const secRef = root.collection('classes').doc(current.classId)
+                  .collection('sections').doc(current.sectionId)
+                  .collection('examOverrides').doc(examId);
+  const classRef = root.collection('classes').doc(current.classId)
+                    .collection('examOverrides').doc(examId);
+  const groupRef = root.collection('exams').doc('classGroups')
+                    .collection(group).doc(examId);
+
+  let doc = await secRef.get();
+  if(!doc.exists) doc = await classRef.get();
+  if(!doc.exists) doc = await groupRef.get();
+  if(!doc.exists){ el('subjectSel').innerHTML='<option value="">No subjects</option>'; return; }
+
+  const d = doc.data()||{};
+  const subs = Array.isArray(d.subjects) ? d.subjects : [];
+  if(!subs.length){ el('subjectSel').innerHTML='<option value="">No subjects</option>'; return; }
+
+  el('subjectSel').innerHTML =
+    '<option value="">Select Subject</option>' +
+    subs.map(s=>`<option value="${s.name}">${s.name}</option>`).join('');
+  el('subjectSel').disabled = true; // stays disabled until user picks; enable below
+  // enable actions now that an exam exists; subject optional for OMR template
+  el('btnKey').disabled = false; el('btnScan').disabled = false;
+  el('subjectSel').disabled = false;
+}
+
+// Events
+el('classSel').addEventListener('change', async (e)=>{
+  current.classId = e.target.value || null;
+  current.className = e.target.selectedOptions[0]?.dataset.name || null;
+  current.sectionId = null; current.sectionName=null;
+  current.subjectName=null; current.examId=null;
+
+  await loadSections(current.classId);
+  el('pickStatus').textContent = current.classId ? 'Class picked. Choose Section.' : 'Select Class.';
+  el('header-exam').textContent = '';
+});
+
+el('sectionSel').addEventListener('change', async (e)=>{
+  current.sectionId = e.target.value || null;
+  current.sectionName = e.target.selectedOptions[0]?.dataset.name || null;
+  current.subjectName=null; current.examId=null;
+
+  // disable settings until we load the list for this section
+  const btnES = el('btnExamSettings'); if (btnES) btnES.disabled = true;
+
+  await loadExamsEffective();
+  el('pickStatus').textContent = current.sectionId ? 'Section picked. Choose Exam.' : 'Choose Section.';
+  el('header-exam').textContent = '';
+});
+
+el('examSel').addEventListener('change', async (e)=>{
+  current.examId = e.target.value || null;
+  const btnES = el('btnExamSettings');
+  if(current.examId){
+    el('header-exam').textContent = `Exam: ${e.target.selectedOptions[0]?.textContent||current.examId}`;
+    el('pickStatus').innerHTML = `Exam selected: <span class="kbd">${current.examId}</span>`;
+    await loadSubjectsFromExam(current.examId);
+    await loadTemplate();
+    if (btnES) btnES.disabled = false;
+  } else {
+    el('header-exam').textContent = '';
+    el('subjectSel').innerHTML=''; el('subjectSel').disabled=true;
+    el('btnKey').disabled = true; el('btnScan').disabled = true;
+    if (btnES) btnES.disabled = false; // still allow opening settings for this class/section
+  }
+});
+
+el('subjectSel').addEventListener('change', (e)=>{
+  current.subjectName = e.target.value || null;
+});
 
     // ===== TEMPLATE UI =====
     el('btnExamSettings').onclick = ()=>{
@@ -393,7 +567,10 @@ const auth = firebase.auth();
     }
 
     // ===== ANSWER KEY UI =====
-    el('btnKey').onclick = async ()=>{ await buildKeyUI(); el('dlgKey').showModal(); }
+    el('btnKey').onclick = async ()=>{
+  if(!current.examId){ alert('Pick Class / Section / Exam first'); return; }
+  await buildKeyUI(); el('dlgKey').showModal();
+}
 
     async function buildKeyUI(){
       if(!tpl.sections.length){ el('keyContent').textContent='(Add sections in Exam Settings first)'; return; }
@@ -644,11 +821,25 @@ const auth = firebase.auth();
       return { total, perSection };
     }
 
-    // ===== BOOT =====
-    (async()=>{ await loadClasses(); })();
+   // ===== BOOT =====
+(async()=>{ await loadClasses(); })();
+
+// ===== Exam Settings inline button hookup =====
+(function(){
+  const btn = document.getElementById('btnExamSettings');
+  if(!btn) return;
+  btn.addEventListener('click', function () {
+    if (!current.classId || !current.sectionId) {
+      alert('Pick Class and Section first.');
+      return;
+    }
+    try { showExamSettingsPopup(); } catch (e) { console.warn('showExamSettingsPopup error', e); }
+  });
+})();
   </script>
 </body>
 </html>
+
 
 
 
