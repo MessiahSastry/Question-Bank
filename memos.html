@@ -113,7 +113,22 @@
 </style>
 <script src="https://cdn.jsdelivr.net/npm/choices.js/public/assets/scripts/choices.min.js"></script>
 <style>
- .ranks-control-wrap select { background:#fff; }  /* native fallback */
+ .ranks-control-wrap select { background:#fff; }
+/* Custom ranks dropdown styling */
+.custom-dropdown { display:inline-block; width:100%; position:relative; }
+.custom-dropdown .selected-option{
+  box-sizing:border-box; padding:12px 14px;
+  border:1.5px solid #b4c8e9; border-radius:10px; background:#f7fbff;
+  font-weight:600; color:#14305a; cursor:pointer;
+}
+.custom-dropdown .dropdown-options{
+  display:none; position:absolute; left:0; right:0; top:calc(100% + 4px);
+  border:1.5px solid #b4c8e9; border-radius:10px; background:#fff;
+  box-shadow:0 6px 20px #0f3d6b22; max-height:240px; overflow:auto; z-index:9999;
+}
+.custom-dropdown .dropdown-options div{ padding:10px 12px; cursor:pointer; }
+.custom-dropdown .dropdown-options div:hover{ background:#eaf3ff; }
+
 .ranks-control-wrap .choices__inner { background:#f7fbff !important; }
 /* If an old/native ranks <select> exists, hide it unless marked as enhanced */
 .ranks-control-wrap select:not([data-choices]) { display:none !important; }
@@ -4124,8 +4139,9 @@ page.render({ canvasContext: ctx, viewport });
     sel.style.display = 'none';
 
     const dd = document.createElement('div');
-    dd.className = 'custom-dropdown';
-    dd.style.position = 'relative';
+dd.className = 'custom-dropdown';
+dd.setAttribute('data-role','ranks'); // mark as ranks UI
+dd.style.position = 'relative';
 
     const selected = document.createElement('div');
     selected.className = 'selected-option';
@@ -4167,7 +4183,7 @@ page.render({ canvasContext: ctx, viewport });
 
     dd.appendChild(selected);
     dd.appendChild(popup);
-    sel.insertAdjacentElement('afterend', dd);
+    wrap.appendChild(dd);
   })(sel);
 
   return wrap;
@@ -4175,22 +4191,29 @@ page.render({ canvasContext: ctx, viewport });
 
 
   function inject(){
-    if (document.getElementById('rankModeSelect')) return; // already present
-    const examNode = findExamNode();
-    if (!examNode) return;
-    const ranks = createRanksBlock();
-    // Place Ranks dropdown immediately AFTER the Exam control container
-examNode.insertAdjacentElement('afterend', ranks);
+  // 1) Remove any pre-existing ranks UI (native select, Choices, or an older custom one)
+  document.querySelectorAll(
+    '.ranks-control-wrap, .custom-dropdown[data-role="ranks"], ' +
+    'select[id*="rank"], select[name*="rank"]'
+  ).forEach(el => el.remove());
 
-// persist & broadcast on change
-const rankSel = document.getElementById('rankModeSelect');
-if (rankSel) {
-  rankSel.addEventListener('change', (e)=>{
-    localStorage.setItem('memos.rankMode', e.target.value);
-    window.dispatchEvent(new CustomEvent('rank-mode-changed', { detail: e.target.value }));
-  });
-}
+  // 2) Find the Exam control anchor
+  const examNode = findExamNode();
+  if (!examNode) return;
+
+  // 3) Insert our single ranks block
+  const ranks = createRanksBlock();
+  examNode.insertAdjacentElement('afterend', ranks);
+
+  // 4) Persist & broadcast on change
+  const rankSel = document.getElementById('rankModeSelect');
+  if (rankSel) {
+    rankSel.addEventListener('change', (e)=>{
+      localStorage.setItem('memos.rankMode', e.target.value);
+      window.dispatchEvent(new CustomEvent('rank-mode-changed', { detail: e.target.value }));
+    });
   }
+}
 
   // Small helper your code can call
   window.getRankMode = function(){
@@ -4207,6 +4230,7 @@ if (rankSel) {
 </script>
 </body>
 </html>
+
 
 
 
