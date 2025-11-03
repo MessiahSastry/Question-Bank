@@ -2069,11 +2069,22 @@ const dividerY = footerStartY + Math.round(rowGap * 0.55) - DIVIDER_UP;
     pdf.setTextColor(...GCLR2);
 
     // TOTAL column: Rank
-    let rankTxt = '';
-if (__ranksByExam && __ranksByExam.get(g.examId)) {
-  const r = __ranksByExam.get(g.examId).get(student.id);
-  rankTxt = (r == null ? '' : String(r));
-}
+    // Apply Ranks dropdown filter to back-page rank cell
+let rankTxt = '';
+const mapForExam = (__ranksByExam && __ranksByExam.get(g.examId)) ? __ranksByExam.get(g.examId) : null;
+const r = mapForExam ? mapForExam.get(student.id) : null;
+
+let limit = null; // null = ALL, -1 = NO
+const v = (document.getElementById('rankSel')?.value || 'ALL Ranks').toUpperCase();
+if (v.includes('NO RANK')) limit = -1;
+else if (v.includes('TOP 3')) limit = 3;
+else if (v.includes('TOP 5')) limit = 5;
+else if (v.includes('TOP 10')) limit = 10;
+else if (v.includes('TOP 15')) limit = 15;
+
+const show = (limit === -1) ? false : (limit == null ? true : (r != null && r <= limit));
+rankTxt = show ? (r == null ? '' : String(r)) : '';
+
 pdf.text(rankTxt, x + wTot/2, y, { align:'center', baseline:'alphabetic' });
     x += wTot + gapBase;
 
@@ -3678,10 +3689,21 @@ leftText(pdf, student.percentage, HEAD_PERCENT[0], HEAD_PERCENT[1], HEAD_PERCENT
     pdf.setTextColor(0,0,0);
     pdf.setFontSize(s);
     pdf.setFont('helvetica','bold');
-    pdf.text(
-  (typeof student.rank !== "undefined" && student.rank !== null) ? student.rank.toString() : "", 
-  cx, cy+33, {align:'center'}
-);
+   // Ranks visibility filter (from #rankSel)
+(function(){
+  let limit = null; // null = ALL, -1 = NO
+  const v = (document.getElementById('rankSel')?.value || 'ALL Ranks').toUpperCase();
+  if (v.includes('NO RANK')) limit = -1;
+  else if (v.includes('TOP 3')) limit = 3;
+  else if (v.includes('TOP 5')) limit = 5;
+  else if (v.includes('TOP 10')) limit = 10;
+  else if (v.includes('TOP 15')) limit = 15;
+
+  const r = (student.rank != null ? Number(student.rank) : null);
+  const show = (limit === -1) ? false : (limit == null ? true : (r != null && r <= limit));
+  const text = show ? (r != null ? String(r) : '') : '';
+  pdf.text(text, cx, cy+33, {align:'center'});
+})();
     pdf.setLineWidth(1);
 
  /* --- Subject rows: dynamic with SUBTOPICS + TOTAL(M/Max) + GRADE --- */
@@ -3835,7 +3857,21 @@ leftText(pdf, student.percentage, HEAD_PERCENT[0], HEAD_PERCENT[1], HEAD_PERCENT
     pdf.setFillColor(120, 80, 30); pdf.ellipse(cx+10, cy+15, 55, 40, "F");
     pdf.setFillColor(255, 255, 255); pdf.setDrawColor(...COLOR_BROWN); pdf.setLineWidth(8);
     pdf.ellipse(cx, cy, 52, 35, "FD"); pdf.setTextColor(0,0,0); pdf.setFontSize(s); pdf.setFont("helvetica", "bold");
-    pdf.text((student.rank ?? "").toString(), cx, cy + 33, { align: "center" });
+    // Ranks visibility filter (from #rankSel)
+(function(){
+  let limit = null; // null = ALL, -1 = NO
+  const v = (document.getElementById('rankSel')?.value || 'ALL Ranks').toUpperCase();
+  if (v.includes('NO RANK')) limit = -1;
+  else if (v.includes('TOP 3')) limit = 3;
+  else if (v.includes('TOP 5')) limit = 5;
+  else if (v.includes('TOP 10')) limit = 10;
+  else if (v.includes('TOP 15')) limit = 15;
+
+  const r = (student.rank != null ? Number(student.rank) : null);
+  const show = (limit === -1) ? false : (limit == null ? true : (r != null && r <= limit));
+  const text = show ? (r != null ? String(r) : '') : '';
+  pdf.text(text, cx, cy+33, {align:'center'});
+})();
     pdf.setLineWidth(1);
 
     /* --- Subject rows: dynamic with SUBTOPICS + TOTAL(M/Max) + GRADE (preview) --- */
@@ -4015,9 +4051,36 @@ page.render({ canvasContext: ctx, viewport });
 
   // Convert all selects that opt in
   document.addEventListener('DOMContentLoaded', function(){
-    document.querySelectorAll('select[data-custom="dropdown"]').forEach(buildCustomFromSelect);
-  });
+  document.querySelectorAll('select[data-custom="dropdown"]').forEach(buildCustomFromSelect);
+
+  // Ensure a separate Rank dropdown exists just below the Exam dropdown
+  (function(){
+    const exam = document.getElementById('examSel');
+    if (!exam) return;
+    let rank = document.getElementById('rankSel');
+    if (!rank) {
+      rank = document.createElement('select');
+      rank.id = 'rankSel';
+      rank.setAttribute('data-custom','dropdown');
+      rank.style.marginTop = '8px';
+
+      ['ALL Ranks','NO Rank','TOP 3 Ranks','TOP 5 Ranks','TOP 10 Ranks','TOP 15 Ranks'].forEach(txt=>{
+        const opt = document.createElement('option');
+        opt.value = txt;
+        opt.textContent = txt;
+        rank.appendChild(opt);
+      });
+
+      // Insert immediately after native exam select (not nested inside it)
+      exam.insertAdjacentElement('afterend', rank);
+
+      // Convert newly added select into the same custom dropdown UI
+      buildCustomFromSelect(rank);
+    }
+  })();
+});
 })();
 </script>
 </body>
 </html>
+
