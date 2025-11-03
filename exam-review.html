@@ -953,14 +953,39 @@ document.getElementById('apply-json-btn').onclick = async function() {
   const raw = prompt(`Paste the STRICT JSON array returned by ChatGPT for Batch ${currentIdx + 1}/${totalBatches}:`, '');
   if (!raw) return;
 
-  let items;
-  try {
-    const cleaned = String(raw).replace(/```json|```/gi, '').trim();
-    items = JSON.parse(cleaned);
-  } catch {
-    alert('Invalid JSON. Please paste only the JSON array.');
-    return;
+  function extractJsonArray(raw) {
+  let s = String(raw || '').trim();
+
+  // strip code fences
+  s = s.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
+
+  // normalize smart quotes / non-breaking spaces
+  s = s.replace(/[\u2018\u2019]/g, "'")
+       .replace(/[\u201C\u201D]/g, '"')
+       .replace(/\u00A0/g, ' ');
+
+  // take the first plausible [...] block
+  const first = s.indexOf('[');
+  const last  = s.lastIndexOf(']');
+  if (first === -1 || last === -1 || last <= first) {
+    throw new Error('No JSON array found');
   }
+  let sub = s.slice(first, last + 1);
+
+  // remove trailing commas before } or ]
+  sub = sub.replace(/,(\s*[}\]])/g, '$1');
+
+  return JSON.parse(sub);
+}
+
+let items;
+try {
+  items = extractJsonArray(raw);
+} catch (e) {
+  console.error('JSON parse failed:', e, raw);
+  alert('Invalid JSON. Please paste only the JSON array.');
+  return;
+}
 
   if (!Array.isArray(items) || items.length !== currentMap.length) {
     alert(`JSON length mismatch. Expected ${currentMap.length} items, got ${Array.isArray(items) ? items.length : 0}.`);
@@ -1039,6 +1064,7 @@ document.getElementById('apply-json-btn').onclick = async function() {
 </script>
 </body>
 </html>
+
 
 
 
