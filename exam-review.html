@@ -953,18 +953,18 @@ document.getElementById('apply-json-btn').onclick = async function() {
   const raw = prompt(`Paste the STRICT JSON array returned by ChatGPT for Batch ${currentIdx + 1}/${totalBatches}:`, '');
   if (!raw) return;
 
-  function extractJsonArray(raw) {
+ function extractJsonArray(raw) {
   let s = String(raw || '').trim();
 
   // strip code fences
   s = s.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
 
-  // normalize smart quotes / non-breaking spaces
+  // normalize smart quotes / nbsp
   s = s.replace(/[\u2018\u2019]/g, "'")
        .replace(/[\u201C\u201D]/g, '"')
        .replace(/\u00A0/g, ' ');
 
-  // take the first plausible [...] block
+  // take first plausible array
   const first = s.indexOf('[');
   const last  = s.lastIndexOf(']');
   if (first === -1 || last === -1 || last <= first) {
@@ -972,8 +972,12 @@ document.getElementById('apply-json-btn').onclick = async function() {
   }
   let sub = s.slice(first, last + 1);
 
-  // remove trailing commas before } or ]
+  // remove trailing commas
   sub = sub.replace(/,(\s*[}\]])/g, '$1');
+
+  // *** KEY FIX: escape illegal backslashes like \c, \s, \(, etc.
+  // Leave alone: \\ (already escaped), valid JSON escapes: \" \\ \/ \b \f \n \r \t \uXXXX
+  sub = sub.replace(/\\(?![\\\/"bfnrtu]|u[0-9a-fA-F]{4})/g, '\\\\');
 
   return JSON.parse(sub);
 }
