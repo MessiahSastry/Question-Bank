@@ -60,54 +60,6 @@
   margin-left: 0 !important; 
   margin-right: 0 !important; 
 }
-
- /* Hide the original native <select> when converted */
-.native-select-hidden { display: none; }
-
-/* Custom dropdown base */
-.custom-dropdown { 
-  position: relative;              /* anchor for absolute options */
-  user-select: none; 
-}
-/* Visible selected pill */
-.custom-dropdown .selected-option {
-  padding: 10px 12px;
-  border: 1px solid #b6cce4;
-  border-radius: 12px;
-  background: #fff;
-}
-
-/* Options: hidden by default */
-.custom-dropdown .dropdown-options {
-  display: none;
-  position: absolute;
-  top: 100%;
-  left: 0; 
-  right: 0;
-  z-index: 10000;                 /* keep menu above following cards */
-  border: 1.5px solid #b4c8e9;
-  border-radius: 12px;
-  background: #fff;
-  max-height: 260px;
-  overflow-y: auto;
-  margin-top: 6px;
-  box-shadow: 0 8px 24px rgba(15,61,107,.12);
-}
-
-/* Show options when wrapper has .open */
-.custom-dropdown.open { z-index: 10001; }
-.custom-dropdown.open .dropdown-options { display: block; }
-
-/* Option item */
-.custom-dropdown .dropdown-options > div {
-  padding: 10px 12px;
-  cursor: pointer;
-}
-.custom-dropdown .dropdown-options > div:hover { background: #f2f7fc; }
-</style>
-
-  <!-- Choices.js for custom dropdown -->
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/choices.js/public/assets/styles/choices.min.css" />
 <style>
 /* ---- Make Choices look like the bank dropdowns ---- */
 .choices,
@@ -3959,7 +3911,6 @@ try {
 // ========== PREVIEW RENDER ===============
 async function showPreviewPDF(stuArr) {
   let pdf;
-  try { window.__lastPreviewStudents = stuArr; } catch {}
   if (backPlan.examCols && backPlan.examCols.length) {
   __ranksByExam = await computeRanksByExam(backPlan.examCols);
 }
@@ -4130,163 +4081,11 @@ page.render({ canvasContext: ctx, viewport });
   await loadYears();
   renderBackCols();
 
-  // Build Ranks dropdown under the Exam control (separate control, same style as others)
-try {
-  const sel = examSel; // existing native <select> for exams
-  if (sel) {
-    // ---- helper: build a custom dropdown identical to others for this one select ----
-    function makeCustomDropdown(nativeSel){
-      // if it's already converted, skip
-      if (nativeSel.nextElementSibling && nativeSel.nextElementSibling.classList?.contains('custom-dropdown')) return;
-
-      nativeSel.classList.add('native-select-hidden');
-
-      const wrap   = document.createElement('div');
-      wrap.className = 'custom-dropdown';
-
-      const selected = document.createElement('div');
-      selected.className = 'selected-option';
-
-      const popup  = document.createElement('div');
-      popup.className = 'dropdown-options';
-
-      const opts = Array.from(nativeSel.options);
-      const curr = nativeSel.selectedIndex >= 0 ? opts[nativeSel.selectedIndex] : opts[0];
-      selected.textContent = curr ? (curr.textContent || curr.value) : 'Select';
-
-      opts.forEach(o=>{
-        const item = document.createElement('div');
-        item.setAttribute('data-value', o.value);
-        item.textContent = o.textContent || o.value;
-        if (o.disabled) item.style.opacity = '0.5';
-        popup.appendChild(item);
-      });
-
-      selected.addEventListener('click', function(e){
-        e.stopPropagation();
-        document.querySelectorAll('.custom-dropdown.open').forEach(d=>d.classList.remove('open'));
-        wrap.classList.toggle('open');
-      });
-      popup.addEventListener('click', function(e){
-        const t = e.target.closest('div[data-value]');
-        if(!t) return;
-        const val = t.getAttribute('data-value');
-        nativeSel.value = val;
-        nativeSel.dispatchEvent(new Event('change', { bubbles:true }));
-        selected.textContent = t.textContent;
-        wrap.classList.remove('open');
-      });
-      document.addEventListener('click', ()=>wrap.classList.remove('open'));
-
-      wrap.appendChild(selected);
-      wrap.appendChild(popup);
-      nativeSel.insertAdjacentElement('afterend', wrap);
-    }
-
-    // ---- Ranks block (label + native select that will be converted) ----
-    const ranksBlock = document.createElement('div');
-    ranksBlock.style.marginTop = '12px';
-
-    const label = document.createElement('div');
-    label.textContent = 'Ranks';
-    label.style.fontWeight = '600';
-    label.style.color = '#0f3d6b';
-    label.style.margin = '6px 0 6px 0';
-
-   const ranksSel = document.createElement('select');
-ranksSel.id = 'rankModeSel';
-ranksSel.classList.add('native-select-hidden');
-ranksSel.setAttribute('data-custom', 'dropdown');
-
-    [
-      {v:'ALL',  t:'ALL Ranks'},
-      {v:'NONE', t:'NO Rank'},
-      {v:'TOP3', t:'TOP 3 Ranks'},
-      {v:'TOP5', t:'TOP 5 Ranks'},
-      {v:'TOP10',t:'TOP 10 Ranks'},
-      {v:'TOP15',t:'TOP 15 Ranks'}
-    ].forEach(o=>{
-      const op = document.createElement('option');
-      op.value = o.v; op.textContent = o.t;
-      ranksSel.appendChild(op);
-    });
-
-    const note = document.createElement('div');
-    note.textContent = 'Tie-break: Math → Physics → Chemistry → Biology; if PC/B missing, uses Science.';
-    note.style.fontSize = '12px';
-    note.style.color = '#195084';
-    note.style.marginTop = '6px';
-
-    ranksBlock.appendChild(label);
-    ranksBlock.appendChild(ranksSel);
-    ranksBlock.appendChild(note);
-
-    // Insert Ranks as a SEPARATE control *after* the entire Exam container
-const examContainer = sel.closest('.control-card') || sel.closest('.form-group') || sel.parentElement;
-const ranksContainer = document.createElement('div');
-ranksContainer.className = examContainer.className; // same box style as Exam
-ranksContainer.style.marginTop = '12px';
-ranksContainer.appendChild(ranksBlock);
-examContainer.insertAdjacentElement('afterend', ranksContainer);
-
-    // Convert this ranks <select> to the same custom dropdown UI
-    makeCustomDropdown(ranksSel);
-
-    // Load persisted pref
-    const pref = loadRankPref();
-    if (pref.mode === 'NONE') ranksSel.value = 'NONE';
-    else if (pref.mode === 'TOPN') {
-      ranksSel.value =
-        pref.topN===3  ? 'TOP3' :
-        pref.topN===5  ? 'TOP5' :
-        pref.topN===10 ? 'TOP10' :
-        pref.topN===15 ? 'TOP15' : 'ALL';
-    } else {
-      ranksSel.value = 'ALL';
-    }
-
-    // Save on change + refresh preview if open
-    ranksSel.addEventListener('change', ()=>{
-      const v = ranksSel.value;
-      if (v === 'NONE') saveRankPref('NONE', null);
-      else if (v === 'ALL') saveRankPref('ALL', null);
-      else if (v === 'TOP3') saveRankPref('TOPN', 3);
-      else if (v === 'TOP5') saveRankPref('TOPN', 5);
-      else if (v === 'TOP10') saveRankPref('TOPN', 10);
-      else if (v === 'TOP15') saveRankPref('TOPN', 15);
-
-      try {
-        if (window.__lastPreviewStudents && Array.isArray(window.__lastPreviewStudents)) {
-          showPreviewPDF(window.__lastPreviewStudents);
-        }
-      } catch {}
-    });
-
-    // When exam/class/section changes, reload pref and update UI (no hiding)
-    ['change'].forEach(ev=>{
-      sel.addEventListener(ev, ()=>{ const p = loadRankPref();
-        // map pref back to UI
-        if (p.mode === 'NONE') ranksSel.value = 'NONE';
-        else if (p.mode === 'TOPN') {
-          ranksSel.value =
-            p.topN===3  ? 'TOP3' :
-            p.topN===5  ? 'TOP5' :
-            p.topN===10 ? 'TOP10' :
-            p.topN===15 ? 'TOP15' : 'ALL';
-        } else ranksSel.value = 'ALL';
-        // also update the visible label of the custom dropdown
-        const disp = ranksSel.nextElementSibling?.querySelector('.selected-option');
-        if (disp) disp.textContent = ranksSel.options[ranksSel.selectedIndex]?.text || 'Select';
-      });
-    });
-    classSel?.addEventListener('change', ()=>{ loadRankPref(); });
-    sectionSel?.addEventListener('change', ()=>{ loadRankPref(); });
-    yearSel?.addEventListener('change', ()=>{ loadRankPref(); });
-  }
-} catch(e) { console.warn('Ranks UI build failed:', e); }
-
+  (async function() {
+  await loadYears();
+  renderBackCols();
 })();
-
+  
   </script>
   <div id="spinnerOverlay" style="
   display:none; position:fixed; top:0; left:0; width:100vw; height:100vh;
@@ -4365,6 +4164,7 @@ examContainer.insertAdjacentElement('afterend', ranksContainer);
 </script>
 </body>
 </html>
+
 
 
 
