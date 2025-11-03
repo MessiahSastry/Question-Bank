@@ -2069,12 +2069,12 @@ const dividerY = footerStartY + Math.round(rowGap * 0.55) - DIVIDER_UP;
     pdf.setTextColor(...GCLR2);
 
     // TOTAL column: Rank
-    let rankTxt = '';
-if (__ranksByExam && __ranksByExam.get(g.examId)) {
-  const r = __ranksByExam.get(g.examId).get(student.id);
-  rankTxt = (r == null ? '' : String(r));
-}
-pdf.text(rankTxt, x + wTot/2, y, { align:'center', baseline:'alphabetic' });
+        let rankTxt = '';
+    if (__ranksByExam && __ranksByExam.get(g.examId)) {
+      const r = __ranksByExam.get(g.examId).get(student.id);
+      rankTxt = visibleRankText(r == null ? null : Number(r));
+    }
+    pdf.text(rankTxt, x + wTot/2, y, { align:'center', baseline:'alphabetic' });
     x += wTot + gapBase;
 
     // GRADE column: Percentage
@@ -2705,6 +2705,72 @@ function formatClass(val) {
 }
 
 /* ===== Back-side helpers: read any exam for a student and compute subject totals ===== */
+
+// ==== RANK VISIBILITY (global) ====
+let __rankVisibility = { mode: 'ALL', topN: null }; // modes: 'ALL' | 'NONE' | 'TOPN'
+
+// Build storage key per exam/class/section
+function rankPrefKey() {
+  try {
+    const year = yearSel?.value || '';
+    const cls  = classSel?.value || '';
+    const sec  = sectionSel?.value || '';
+    const ex   = examSel?.value || '';
+    return `rankPref:${year}:${cls}:${sec}:${ex}`;
+  } catch { return 'rankPref'; }
+}
+
+// Save / load rank preference to localStorage
+function saveRankPref(mode, topN){
+  __rankVisibility = { mode, topN: topN ?? null };
+  try { localStorage.setItem(rankPrefKey(), JSON.stringify(__rankVisibility)); } catch {}
+}
+function loadRankPref(){
+  let v = null;
+  try { v = JSON.parse(localStorage.getItem(rankPrefKey()) || 'null'); } catch {}
+  if (!v || (v.mode!=='ALL' && v.mode!=='NONE' && v.mode!=='TOPN')) v = { mode:'ALL', topN:null };
+  __rankVisibility = v;
+  return v;
+}
+
+// Given a rank number, return the visible text per mode
+function visibleRankText(rankNum){
+  if (rankNum == null || rankNum === '') return '';
+  if (__rankVisibility.mode === 'NONE') return '';
+  if (__rankVisibility.mode === 'TOPN') {
+    if (typeof __rankVisibility.topN === 'number' && rankNum > __rankVisibility.topN) return '';
+  }
+  return String(rankNum);
+}
+
+// Subject score fetchers for front/back tie-breakers
+function _scoreFromSubjectsList(subjectsArr, name){
+  if (!Array.isArray(subjectsArr)) return null;
+  const hit = subjectsArr.find(s => (s?.name || '').trim().toLowerCase() === String(name||'').trim().toLowerCase());
+  const v = hit?.marks;
+  if (v === 'AB' || v === '' || v == null) return null;
+  return Number.isFinite(+v) ? +v : null;
+}
+function _scienceCombinedFromSubjects(subjectsArr){
+  const sci = _scoreFromSubjectsList(subjectsArr, 'Science');
+  if (sci != null) return sci;
+  const p = _scoreFromSubjectsList(subjectsArr, 'Physics');
+  const c = _scoreFromSubjectsList(subjectsArr, 'Chemistry');
+  const b = _scoreFromSubjectsList(subjectsArr, 'Biology');
+  if ([p,c,b].every(v => v == null)) return null;
+  return (p||0) + (c||0) + (b||0);
+}
+
+// Comparator helpers (treat null as -Infinity)
+function _cmpNumDesc(a,b){ const aa = (a==null?-Infinity:a), bb = (b==null?-Infinity:b); return (bb - aa); }
+function _stdCompetitionAssign(sorted, setRankCb){
+  let lastKey = null, displayRank = 0;
+  sorted.forEach((row, idx) => {
+    const key = row.__key; // string that encodes all tie-break components
+    if (key !== lastKey) { displayRank = idx + 1; lastKey = key; }
+    setRankCb(row, displayRank);
+  });
+}
   // simple in-memory cache so we don't refetch the same marks repeatedly
 const __marksCache = new Map();
 
@@ -2736,27 +2802,72 @@ async function _readMarksDocFor(stuId, examId) {
 
 async function computeRanksByExam(examIds) {
   if (!Array.isArray(examIds) || examIds.length === 0) return new Map();
-  const out = new Map(); // examId -> Map(studentId -> rank)
+  const out = new Map(); // examId -> Map(studentId -> rankNumber)
+
   for (const exId of (examIds || [])) {
     const struct = await getExamStructureForExamId(exId);
-    const totals = [];
+    const rows = [];
+
     for (const stu of students) {
       const marksObj = await _readMarksDocFor(stu.id, exId);
-      const subs = _extractSubjectTotalsFromMarks(marksObj, struct); // [{total,max}]
-      const sum = subs.reduce((a,s)=> a + (typeof s.total === 'number' ? s.total : 0), 0);
-      totals.push({ id: stu.id, total: sum });
+      const subs = _extractSubjectTotalsFromMarks(marksObj, struct); // [{name,total,max}]
+      const total = subs.reduce((a,s)=> a + (typeof s.total === 'number' ? s.total : 0), 0);
+
+      // build per-subject values
+      const byName = new Map(subs.map(s => [String(s.name||'').toLowerCase(), s.total]));
+      const v = n => {
+        const t = byName.get(String(n||'').toLowerCase());
+        return (t === 'AB' || t === '' || t == null) ? null : (Number.isFinite(+t)?+t:null);
+      };
+      const math = v('Math') ?? v('Mathematics') ?? null;
+      const phys = v('Physics');
+      const chem = v('Chemistry');
+      const bio  = v('Biology');
+      const sci  = (byName.has('science') ? v('Science') :
+                   ([phys,chem,bio].every(x=>x==null) ? null : (phys||0)+(chem||0)+(bio||0)));
+
+      rows.push({
+        id: stu.id,
+        total,
+        math, phys, chem, bio, sci,
+        __idx: rows.length
+      });
     }
-    totals.sort((a,b)=> b.total - a.total);
-    let last = null, rank = 1, lastRank = 1;
-    totals.forEach((t,i) => {
-      if (t.total !== last) { rank = i+1; last = t.total; lastRank = rank; }
-      t.rank = lastRank;
+
+    // sort with tie-break: total ↓, math ↓, (if PC/B missing → science ↓) else physics ↓, chemistry ↓, biology ↓
+    rows.sort((A,B) => {
+      // stable decorate key
+      const cmpTotal = _cmpNumDesc(A.total, B.total); if (cmpTotal) return cmpTotal;
+      const aHasPCB = (A.phys!=null || A.chem!=null || A.bio!=null);
+      const bHasPCB = (B.phys!=null || B.chem!=null || B.bio!=null);
+
+      const cmpMath = _cmpNumDesc(A.math, B.math); if (cmpMath) return cmpMath;
+
+      if (!aHasPCB || !bHasPCB) {
+        const cmpSci = _cmpNumDesc(A.sci, B.sci); if (cmpSci) return cmpSci;
+      } else {
+        const cmpP = _cmpNumDesc(A.phys, B.phys); if (cmpP) return cmpP;
+        const cmpC = _cmpNumDesc(A.chem, B.chem); if (cmpC) return cmpC;
+        const cmpB = _cmpNumDesc(A.bio , B.bio ); if (cmpB) return cmpB;
+      }
+      // stable fallback
+      return A.__idx - B.__idx;
     });
-    out.set(exId, new Map(totals.map(t => [t.id, t.rank])));
+
+    // build a string key for standard-competition grouping
+    rows.forEach(r => {
+      r.__key = [
+        r.total??'', r.math??'',
+        (r.phys!=null || r.chem!=null || r.bio!=null) ? `P${r.phys??''}|C${r.chem??''}|B${r.bio??''}` : `S${r.sci??''}`
+      ].join('|');
+    });
+
+    const rankMap = new Map();
+    _stdCompetitionAssign(rows, (row, rankNo) => rankMap.set(row.id, rankNo));
+    out.set(exId, rankMap);
   }
   return out;
 }
-
 /* Build normalized subject list across multiple exams (union, stable by name) */
 function _unionSubjectsAcross(examIds, perExamSubjectsMap) {
   const seen = new Set();
@@ -3170,12 +3281,44 @@ async function getAllStudentFullData(){
     (students || []).map(stu => limit(() => fetchStudentData(stu)))
   );
 
-  // rank by totalMarks (dense ranking)
-  const ranked = [...results].sort((a,b)=> b.totalMarks - a.totalMarks);
-  let last = null, rank = 1, lastRank = 1;
-  ranked.forEach((d,i) => {
-    if (d.totalMarks !== last) { rank = i+1; last = d.totalMarks; lastRank = rank; }
-    d.rank = lastRank;
+   // rank by total with JEE-style tie-break (standard-competition)
+  const deco = results.map((s, i) => {
+    const total = (typeof s.totalMarks === 'number') ? s.totalMarks : null;
+    const math  = _scoreFromSubjectsList(s.subjects, 'Math') ?? _scoreFromSubjectsList(s.subjects, 'Mathematics');
+    const phys  = _scoreFromSubjectsList(s.subjects, 'Physics');
+    const chem  = _scoreFromSubjectsList(s.subjects, 'Chemistry');
+    const bio   = _scoreFromSubjectsList(s.subjects, 'Biology');
+    const sci   = _scienceCombinedFromSubjects(s.subjects);
+    const hasPCB = (phys!=null || chem!=null || bio!=null);
+    return { s, total, math, phys, chem, bio, sci, hasPCB, __idx:i };
+  });
+
+  deco.sort((A,B)=>{
+    const cmpT = _cmpNumDesc(A.total, B.total); if (cmpT) return cmpT;
+    const cmpM = _cmpNumDesc(A.math , B.math ); if (cmpM) return cmpM;
+    if (!A.hasPCB || !B.hasPCB) {
+      const cmpS = _cmpNumDesc(A.sci, B.sci); if (cmpS) return cmpS;
+    } else {
+      const cmpP = _cmpNumDesc(A.phys, B.phys); if (cmpP) return cmpP;
+      const cmpC = _cmpNumDesc(A.chem, B.chem); if (cmpC) return cmpC;
+      const cmpB = _cmpNumDesc(A.bio , B.bio ); if (cmpB) return cmpB;
+    }
+    return A.__idx - B.__idx;
+  });
+
+  deco.forEach(r=>{
+    r.__key = [
+      r.total??'',
+      r.math??'',
+      r.hasPCB ? `P${r.phys??''}|C${r.chem??''}|B${r.bio??''}` : `S${r.sci??''}`
+    ].join('|');
+  });
+
+  _stdCompetitionAssign(deco, (row, rankNo) => { row.s.rank = rankNo; });
+
+  // apply visibility (NO rank or TOP-N)
+  deco.forEach(row => {
+    row.s.rank = visibleRankText(row.s.rank);
   });
 
   // restore original student order for rendering
@@ -3677,9 +3820,8 @@ leftText(pdf, student.percentage, HEAD_PERCENT[0], HEAD_PERCENT[1], HEAD_PERCENT
     pdf.ellipse(cx, cy, 52, 35, 'FD');
     pdf.setTextColor(0,0,0);
     pdf.setFontSize(s);
-    pdf.setFont('helvetica','bold');
     pdf.text(
-  (typeof student.rank !== "undefined" && student.rank !== null) ? student.rank.toString() : "", 
+  visibleRankText((typeof student.rank !== "undefined" && student.rank !== null) ? Number(student.rank) : null),
   cx, cy+33, {align:'center'}
 );
     pdf.setLineWidth(1);
@@ -3773,6 +3915,7 @@ try {
 // ========== PREVIEW RENDER ===============
 async function showPreviewPDF(stuArr) {
   let pdf;
+  try { window.__lastPreviewStudents = stuArr; } catch {}
   if (backPlan.examCols && backPlan.examCols.length) {
   __ranksByExam = await computeRanksByExam(backPlan.examCols);
 }
@@ -3835,7 +3978,7 @@ leftText(pdf, student.percentage, HEAD_PERCENT[0], HEAD_PERCENT[1], HEAD_PERCENT
     pdf.setFillColor(120, 80, 30); pdf.ellipse(cx+10, cy+15, 55, 40, "F");
     pdf.setFillColor(255, 255, 255); pdf.setDrawColor(...COLOR_BROWN); pdf.setLineWidth(8);
     pdf.ellipse(cx, cy, 52, 35, "FD"); pdf.setTextColor(0,0,0); pdf.setFontSize(s); pdf.setFont("helvetica", "bold");
-    pdf.text((student.rank ?? "").toString(), cx, cy + 33, { align: "center" });
+    pdf.text(visibleRankText(student.rank == null ? null : Number(student.rank)), cx, cy + 33, { align: "center" });
     pdf.setLineWidth(1);
 
     /* --- Subject rows: dynamic with SUBTOPICS + TOTAL(M/Max) + GRADE (preview) --- */
@@ -3942,7 +4085,91 @@ page.render({ canvasContext: ctx, viewport });
 (async function() {
   await loadYears();
   renderBackCols();
+
+  try {
+    // Build Ranks dropdown under the Exam control
+    const sel = examSel; // existing <select> for exams
+    if (sel) {
+      // container
+      const wrap = document.createElement('div');
+      wrap.style.marginTop = '8px';
+
+      const label = document.createElement('div');
+      label.textContent = 'Ranks:';
+      label.style.fontWeight = '600';
+      label.style.color = '#0f3d6b';
+      label.style.margin = '6px 0 4px 0';
+
+      const ranks = document.createElement('select');
+      ranks.id = 'rankModeSel';
+      ranks.style.padding = '8px 10px';
+      ranks.style.border = '1px solid #c5d3e3';
+      ranks.style.borderRadius = '8px';
+      ranks.style.fontFamily = 'Segoe UI, Arial, sans-serif';
+
+      const opts = [
+        {v:'ALL', t:'ALL Ranks'},
+        {v:'NONE', t:'NO Rank'},
+        {v:'TOP3', t:'1 to 3 ranks'},
+        {v:'TOP5', t:'1 to 5 ranks'},
+        {v:'TOP10', t:'1 to 10 ranks'},
+        {v:'TOP15', t:'1 to 15 ranks'}
+      ];
+      opts.forEach(o => {
+        const op = document.createElement('option');
+        op.value = o.v; op.textContent = o.t; ranks.appendChild(op);
+      });
+
+      const note = document.createElement('div');
+      note.textContent = 'Tie-break: Math → Physics → Chemistry → Biology; if PC/B missing, uses Science.';
+      note.style.fontSize = '12px';
+      note.style.color = '#195084';
+      note.style.marginTop = '6px';
+
+      wrap.appendChild(label);
+      wrap.appendChild(ranks);
+      wrap.appendChild(note);
+
+      // Insert after exam select (or after its custom dropdown if present)
+      const anchor = sel.nextElementSibling?.classList?.contains('custom-dropdown') ? sel.nextElementSibling : sel;
+      anchor.insertAdjacentElement('afterend', wrap);
+
+      // Load persisted pref
+      const pref = loadRankPref();
+      if (pref.mode === 'NONE') ranks.value = 'NONE';
+      else if (pref.mode === 'TOPN') {
+        ranks.value = (pref.topN===3?'TOP3':pref.topN===5?'TOP5':pref.topN===10?'TOP10':pref.topN===15?'TOP15':'ALL');
+      } else ranks.value = 'ALL';
+
+      // On change → save + refresh preview if visible
+      ranks.addEventListener('change', ()=>{
+        const v = ranks.value;
+        if (v === 'NONE') saveRankPref('NONE', null);
+        else if (v === 'ALL') saveRankPref('ALL', null);
+        else if (v === 'TOP3') saveRankPref('TOPN', 3);
+        else if (v === 'TOP5') saveRankPref('TOPN', 5);
+        else if (v === 'TOP10') saveRankPref('TOPN', 10);
+        else if (v === 'TOP15') saveRankPref('TOPN', 15);
+
+        // If a preview is open, rebuild it using current student list (lightweight path if available)
+        try {
+          if (window.__lastPreviewStudents && Array.isArray(window.__lastPreviewStudents)) {
+            showPreviewPDF(window.__lastPreviewStudents);
+          }
+        } catch {}
+      });
+
+      // Also refresh pref when exam/class/section changes
+      ['change'].forEach(ev=>{
+        sel.addEventListener(ev, ()=>{ loadRankPref(); });
+      });
+      classSel?.addEventListener('change', ()=>{ loadRankPref(); });
+      sectionSel?.addEventListener('change', ()=>{ loadRankPref(); });
+      yearSel?.addEventListener('change', ()=>{ loadRankPref(); });
+    }
+  } catch(e) { console.warn('Ranks UI build failed:', e); }
 })();
+
   </script>
   <div id="spinnerOverlay" style="
   display:none; position:fixed; top:0; left:0; width:100vw; height:100vh;
@@ -4021,3 +4248,4 @@ page.render({ canvasContext: ctx, viewport });
 </script>
 </body>
 </html>
+
