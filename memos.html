@@ -4066,22 +4066,86 @@ page.render({ canvasContext: ctx, viewport });
   }
 
   function createRanksBlock(){
-    const wrap = document.createElement('div');
-    wrap.className = 'ranks-control-wrap';
-    wrap.style.marginTop = '8px';
-    wrap.innerHTML = `
-      <label for="rankModeSelect" style="font-weight:600;margin-right:8px;display:inline-block;">Ranks</label>
-      <select id="rankModeSelect" aria-label="Ranks" style="padding:8px 10px;border:1px solid #cdd9ed;border-radius:8px;outline:none;">
-        <option value="ALL">ALL Ranks</option>
-        <option value="NONE">NO Rank</option>
-        <option value="TOP3">TOP 3 Ranks</option>
-        <option value="TOP5">TOP 5 Ranks</option>
-        <option value="TOP10">TOP 10 Ranks</option>
-        <option value="TOP15">TOP 15 Ranks</option>
-      </select>
-    `;
-    return wrap;
-  }
+  // container
+  const wrap = document.createElement('div');
+  wrap.className = 'ranks-control-wrap';
+  wrap.style.marginTop = '8px';
+
+  // label + native select (hidden later)
+  const label = document.createElement('label');
+  label.htmlFor = 'rankModeSelect';
+  label.textContent = 'Ranks';
+  label.style.cssText = 'font-weight:600;margin-right:8px;display:inline-block;';
+
+  const sel = document.createElement('select');
+  sel.id = 'rankModeSelect';
+  sel.setAttribute('aria-label', 'Ranks');
+  sel.setAttribute('data-custom', 'dropdown'); // opt-in for custom UI
+  // options
+  sel.innerHTML = `
+    <option value="ALL">ALL Ranks</option>
+    <option value="NONE">NO Rank</option>
+    <option value="TOP3">TOP 3 Ranks</option>
+    <option value="TOP5">TOP 5 Ranks</option>
+    <option value="TOP10">TOP 10 Ranks</option>
+    <option value="TOP15">TOP 15 Ranks</option>
+  `;
+
+  // restore saved value if any
+  const saved = localStorage.getItem('memos.rankMode');
+  if (saved) sel.value = saved;
+
+  wrap.appendChild(label);
+  wrap.appendChild(sel);
+
+  // ---- convert THIS select to your custom dropdown immediately ----
+  (function convertSelect(sel){
+    // hide native select but keep it for value + change events
+    sel.classList.add('native-select-hidden');
+
+    const dd = document.createElement('div');
+    dd.className = 'custom-dropdown';
+
+    const selected = document.createElement('div');
+    selected.className = 'selected-option';
+    selected.textContent = sel.options[sel.selectedIndex]?.textContent || 'Select';
+
+    const popup = document.createElement('div');
+    popup.className = 'dropdown-options';
+
+    Array.from(sel.options).forEach(o=>{
+      const item = document.createElement('div');
+      item.setAttribute('data-value', o.value);
+      item.textContent = o.textContent || o.value;
+      if (o.disabled) item.style.opacity = '0.5';
+      popup.appendChild(item);
+    });
+
+    selected.addEventListener('click', function(e){
+      e.stopPropagation();
+      document.querySelectorAll('.custom-dropdown.open').forEach(d=>d.classList.remove('open'));
+      dd.classList.toggle('open');
+    });
+    popup.addEventListener('click', function(e){
+      const t = e.target.closest('div[data-value]');
+      if(!t) return;
+      const val = t.getAttribute('data-value');
+      sel.value = val;
+      sel.dispatchEvent(new Event('change', { bubbles:true }));
+      selected.textContent = t.textContent;
+      dd.classList.remove('open');
+    });
+
+    dd.appendChild(selected);
+    dd.appendChild(popup);
+    sel.insertAdjacentElement('afterend', dd);
+
+    // close on outside click
+    document.addEventListener('click', ()=> dd.classList.remove('open'));
+  })(sel);
+
+  return wrap;
+}
 
   function inject(){
     if (document.getElementById('rankModeSelect')) return; // already present
@@ -4089,7 +4153,16 @@ page.render({ canvasContext: ctx, viewport });
     if (!examNode) return;
     const ranks = createRanksBlock();
     // Place Ranks dropdown immediately AFTER the Exam control container
-    examNode.insertAdjacentElement('afterend', ranks);
+examNode.insertAdjacentElement('afterend', ranks);
+
+// persist & broadcast on change
+const rankSel = document.getElementById('rankModeSelect');
+if (rankSel) {
+  rankSel.addEventListener('change', (e)=>{
+    localStorage.setItem('memos.rankMode', e.target.value);
+    window.dispatchEvent(new CustomEvent('rank-mode-changed', { detail: e.target.value }));
+  });
+}
   }
 
   // Small helper your code can call
@@ -4107,6 +4180,7 @@ page.render({ canvasContext: ctx, viewport });
 </script>
 </body>
 </html>
+
 
 
 
