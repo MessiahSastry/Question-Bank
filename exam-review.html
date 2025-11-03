@@ -912,14 +912,14 @@ You will receive a batch of questions (mostly numerical). For EACH question:
 - Never return a question where none of the options are correct.
 - Shuffle options AND ensure the answer letters match the shuffled options.
 - Preserve any TeX/Math formatting already present (e.g., \\( ... \\)).
-- Return STRICT JSON only (no prose, no markdown fences). EXACT shape:
+- Return STRICT JSON only (no prose, no markdown fences). Each item must be ONE of:
+  • MCQ:
+    { "stem":"<updated question text>", "options":["A","B","C","D"], "answer":["A"] }  // or ["A","C"] for multiple
+  • Descriptive:
+    { "stem":"<updated question text>" }  // no options, no answer
+- Do not include any extra fields.
 [
-  {
-    "stem": "<updated question text>",
-    "options": ["A text","B text","C text","D text"],
-    "answer": ["A"]           // or ["A","C"] for multiple; letters A–D only
-  },
-  ...
+  { ... }, { ... }, ...
 ]
 
 Input items (JSON per line):
@@ -999,24 +999,42 @@ try {
     const { subjIdx, sIdx, qIdx } = currentMap[i];
     const out = items[i] || {};
     const stem = (out.stem || '').trim();
-    const opts = Array.isArray(out.options) ? out.options.map(x => String(x || '').trim()) : [];
-    let ans = Array.isArray(out.answer) ? out.answer.map(x => String(x || '').trim().toUpperCase()) : [];
+const isMCQ = Array.isArray(out.options) && out.options.length === 4;
+const opts = isMCQ ? out.options.map(x => String(x || '').trim()) : [];
+let ans = Array.isArray(out.answer) ? out.answer.map(x => String(x || '').trim().toUpperCase()) : [];
 
-    // Normalize A–D unique in order
-    const seen = new Set();
-    ans = ans.filter(L => /^[A-D]$/.test(L) && !seen.has(L) && (seen.add(L), true));
+const qObj = paper.subjects[subjIdx].sections[sIdx].questions[qIdx];
 
-    const qObj = paper.subjects[subjIdx].sections[sIdx].questions[qIdx];
+// Basic stem check
+const validStem = stem.replace(/<[^>]+>/g, '').length >= 3;
+if (validStem) qObj.text = stem;
 
-    const validStem = stem.replace(/<[^>]+>/g, '').length >= 3;
-    const validOpts = opts.length === 4 && opts.every(s => s.length > 0);
-    const validAns  = ans.length >= 1;
+if (isMCQ) {
+  // MCQ path
+  const validOpts = opts.every(s => s.length > 0);
+  if (validOpts) qObj.options = opts;
 
-    if (validStem) qObj.text = stem;
-    if (validOpts) qObj.options = opts;
-    if (validAns)  qObj.answer = ans.join(ans.length > 1 ? ',' : '');
+  // Normalize answers (A–D, unique, original order)
+  const seen = new Set();
+  ans = ans.filter(L => /^[A-D]$/.test(L) && !seen.has(L) && (seen.add(L), true));
+  if (ans.length >= 1) qObj.answer = ans.join(ans.length > 1 ? ',' : '');
 
-    // Guards
+  // Guard: if options exist but answer missing, keep previous answer if any
+  if (Array.isArray(qObj.options) && qObj.options.length === 4 && !qObj.answer) {
+    const orig = backup.subjects[subjIdx].sections[sIdx].questions[qIdx];
+    if (orig?.answer) qObj.answer = orig.answer;
+  }
+} else {
+  // Descriptive path: ensure it’s stored as descriptive (no options/answer)
+  delete qObj.options;
+  delete qObj.answer;
+}
+
+// Guard: if stem was emptied by accident, restore original
+if (!qObj.text || !qObj.text.trim()) {
+  const orig = backup.subjects[subjIdx].sections[sIdx].questions[qIdx];
+  if (orig?.text || orig?.question) qObj.text = (orig.text || orig.question);
+}
     if (Array.isArray(qObj.options) && qObj.options.length === 4 && !qObj.answer) {
       const orig = backup.subjects[subjIdx].sections[sIdx].questions[qIdx];
       if (orig?.answer) qObj.answer = orig.answer;
@@ -1064,6 +1082,7 @@ try {
 </script>
 </body>
 </html>
+
 
 
 
