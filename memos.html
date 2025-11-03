@@ -4086,13 +4086,14 @@ page.render({ canvasContext: ctx, viewport });
   await loadYears();
   renderBackCols();
 
-  try {
-    // Build Ranks dropdown under the Exam control
+   try {
+    // Build Ranks dropdown that appears ONLY after an exam is selected
     const sel = examSel; // existing <select> for exams
     if (sel) {
-      // container
+      // container (initially hidden until an exam is chosen)
       const wrap = document.createElement('div');
       wrap.style.marginTop = '8px';
+      wrap.style.display = 'none';
 
       const label = document.createElement('div');
       label.textContent = 'Ranks:';
@@ -4107,15 +4108,14 @@ page.render({ canvasContext: ctx, viewport });
       ranks.style.borderRadius = '8px';
       ranks.style.fontFamily = 'Segoe UI, Arial, sans-serif';
 
-      const opts = [
-        {v:'ALL', t:'ALL Ranks'},
+      [
+        {v:'ALL',  t:'ALL Ranks'},
         {v:'NONE', t:'NO Rank'},
         {v:'TOP3', t:'1 to 3 ranks'},
         {v:'TOP5', t:'1 to 5 ranks'},
-        {v:'TOP10', t:'1 to 10 ranks'},
-        {v:'TOP15', t:'1 to 15 ranks'}
-      ];
-      opts.forEach(o => {
+        {v:'TOP10',t:'1 to 10 ranks'},
+        {v:'TOP15',t:'1 to 15 ranks'}
+      ].forEach(o => {
         const op = document.createElement('option');
         op.value = o.v; op.textContent = o.t; ranks.appendChild(op);
       });
@@ -4130,28 +4130,45 @@ page.render({ canvasContext: ctx, viewport });
       wrap.appendChild(ranks);
       wrap.appendChild(note);
 
-      // Insert after exam select (or after its custom dropdown if present)
+      // Insert immediately AFTER the visible Exam control (custom dropdown if present)
       const anchor = sel.nextElementSibling?.classList?.contains('custom-dropdown') ? sel.nextElementSibling : sel;
       anchor.insertAdjacentElement('afterend', wrap);
 
-      // Load persisted pref
-      const pref = loadRankPref();
-      if (pref.mode === 'NONE') ranks.value = 'NONE';
-      else if (pref.mode === 'TOPN') {
-        ranks.value = (pref.topN===3?'TOP3':pref.topN===5?'TOP5':pref.topN===10?'TOP10':pref.topN===15?'TOP15':'ALL');
-      } else ranks.value = 'ALL';
+      // Helper: load saved pref for the CURRENT {year,class,section,exam} and set UI
+      function applySavedRankPref() {
+        const pref = loadRankPref(); // uses current selectors (incl. exam)
+        if (pref.mode === 'NONE') ranks.value = 'NONE';
+        else if (pref.mode === 'TOPN') {
+          ranks.value =
+            pref.topN === 3  ? 'TOP3'  :
+            pref.topN === 5  ? 'TOP5'  :
+            pref.topN === 10 ? 'TOP10' :
+            pref.topN === 15 ? 'TOP15' : 'ALL';
+        } else {
+          ranks.value = 'ALL';
+        }
+      }
 
-      // On change → save + refresh preview if visible
-      ranks.addEventListener('change', ()=>{
+      // Show/Hide ranks based on whether an exam is selected
+      function refreshRankVisibility() {
+        const hasExam = !!sel.value;
+        wrap.style.display = hasExam ? 'block' : 'none';
+        if (hasExam) applySavedRankPref();
+      }
+
+      // Initial visibility on page load
+      refreshRankVisibility();
+
+      // Persist on change and refresh preview (if any)
+      ranks.addEventListener('change', () => {
         const v = ranks.value;
-        if (v === 'NONE') saveRankPref('NONE', null);
-        else if (v === 'ALL') saveRankPref('ALL', null);
+        if (v === 'NONE')      saveRankPref('NONE', null);
+        else if (v === 'ALL')  saveRankPref('ALL', null);
         else if (v === 'TOP3') saveRankPref('TOPN', 3);
         else if (v === 'TOP5') saveRankPref('TOPN', 5);
-        else if (v === 'TOP10') saveRankPref('TOPN', 10);
-        else if (v === 'TOP15') saveRankPref('TOPN', 15);
+        else if (v === 'TOP10')saveRankPref('TOPN', 10);
+        else if (v === 'TOP15')saveRankPref('TOPN', 15);
 
-        // If a preview is open, rebuild it using current student list (lightweight path if available)
         try {
           if (window.__lastPreviewStudents && Array.isArray(window.__lastPreviewStudents)) {
             showPreviewPDF(window.__lastPreviewStudents);
@@ -4159,13 +4176,20 @@ page.render({ canvasContext: ctx, viewport });
         } catch {}
       });
 
-      // Also refresh pref when exam/class/section changes
-      ['change'].forEach(ev=>{
-        sel.addEventListener(ev, ()=>{ loadRankPref(); });
+      // When exam changes → toggle visibility and reload pref
+      sel.addEventListener('change', () => {
+        refreshRankVisibility();
+        try {
+          if (window.__lastPreviewStudents && Array.isArray(window.__lastPreviewStudents)) {
+            showPreviewPDF(window.__lastPreviewStudents);
+          }
+        } catch {}
       });
-      classSel?.addEventListener('change', ()=>{ loadRankPref(); });
-      sectionSel?.addEventListener('change', ()=>{ loadRankPref(); });
-      yearSel?.addEventListener('change', ()=>{ loadRankPref(); });
+
+      // If year/class/section changes, the preference key changes → re-apply
+      yearSel?.addEventListener('change',  refreshRankVisibility);
+      classSel?.addEventListener('change', refreshRankVisibility);
+      sectionSel?.addEventListener('change', refreshRankVisibility);
     }
   } catch(e) { console.warn('Ranks UI build failed:', e); }
 })();
@@ -4248,4 +4272,5 @@ page.render({ canvasContext: ctx, viewport });
 </script>
 </body>
 </html>
+
 
