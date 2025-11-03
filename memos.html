@@ -4065,13 +4065,11 @@ page.render({ canvasContext: ctx, viewport });
     return null;
   }
 
-  function createRanksBlock(){
-  // container
+ function createRanksBlock(){
   const wrap = document.createElement('div');
   wrap.className = 'ranks-control-wrap';
   wrap.style.marginTop = '8px';
 
-  // label + native select (hidden later)
   const label = document.createElement('label');
   label.htmlFor = 'rankModeSelect';
   label.textContent = 'Ranks';
@@ -4080,8 +4078,7 @@ page.render({ canvasContext: ctx, viewport });
   const sel = document.createElement('select');
   sel.id = 'rankModeSelect';
   sel.setAttribute('aria-label', 'Ranks');
-  sel.setAttribute('data-custom', 'dropdown'); // opt-in for custom UI
-  // options
+  sel.setAttribute('data-custom', 'dropdown');
   sel.innerHTML = `
     <option value="ALL">ALL Ranks</option>
     <option value="NONE">NO Rank</option>
@@ -4090,21 +4087,20 @@ page.render({ canvasContext: ctx, viewport });
     <option value="TOP10">TOP 10 Ranks</option>
     <option value="TOP15">TOP 15 Ranks</option>
   `;
-
-  // restore saved value if any
   const saved = localStorage.getItem('memos.rankMode');
   if (saved) sel.value = saved;
 
   wrap.appendChild(label);
   wrap.appendChild(sel);
 
-  // ---- convert THIS select to your custom dropdown immediately ----
+  // Convert to custom dropdown NOW and keep popup hidden by default
   (function convertSelect(sel){
-    // hide native select but keep it for value + change events
-    sel.classList.add('native-select-hidden');
+    // hide the native select completely
+    sel.style.display = 'none';
 
     const dd = document.createElement('div');
     dd.className = 'custom-dropdown';
+    dd.style.position = 'relative';
 
     const selected = document.createElement('div');
     selected.className = 'selected-option';
@@ -4112,40 +4108,46 @@ page.render({ canvasContext: ctx, viewport });
 
     const popup = document.createElement('div');
     popup.className = 'dropdown-options';
+    // HIDE BY DEFAULT so it doesn't show as a long list
+    popup.style.display = 'none';
+    popup.style.position = 'absolute';
+    popup.style.left = '0';
+    popup.style.right = '0';
+    popup.style.zIndex = '9999';
 
     Array.from(sel.options).forEach(o=>{
       const item = document.createElement('div');
       item.setAttribute('data-value', o.value);
       item.textContent = o.textContent || o.value;
-      if (o.disabled) item.style.opacity = '0.5';
       popup.appendChild(item);
     });
 
-    selected.addEventListener('click', function(e){
+    function closeAll(){ document.querySelectorAll('.dropdown-options').forEach(p=>p.style.display='none'); }
+    selected.addEventListener('click', (e)=>{
       e.stopPropagation();
-      document.querySelectorAll('.custom-dropdown.open').forEach(d=>d.classList.remove('open'));
-      dd.classList.toggle('open');
+      const nowOpen = (popup.style.display !== 'block');
+      closeAll();
+      popup.style.display = nowOpen ? 'block' : 'none';
     });
-    popup.addEventListener('click', function(e){
+    popup.addEventListener('click', (e)=>{
       const t = e.target.closest('div[data-value]');
       if(!t) return;
       const val = t.getAttribute('data-value');
       sel.value = val;
       sel.dispatchEvent(new Event('change', { bubbles:true }));
       selected.textContent = t.textContent;
-      dd.classList.remove('open');
+      popup.style.display = 'none';
     });
+    document.addEventListener('click', closeAll);
 
     dd.appendChild(selected);
     dd.appendChild(popup);
     sel.insertAdjacentElement('afterend', dd);
-
-    // close on outside click
-    document.addEventListener('click', ()=> dd.classList.remove('open'));
   })(sel);
 
   return wrap;
 }
+
 
   function inject(){
     if (document.getElementById('rankModeSelect')) return; // already present
@@ -4180,6 +4182,7 @@ if (rankSel) {
 </script>
 </body>
 </html>
+
 
 
 
