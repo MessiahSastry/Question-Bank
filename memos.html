@@ -4086,112 +4086,156 @@ page.render({ canvasContext: ctx, viewport });
   await loadYears();
   renderBackCols();
 
-   try {
-    // Build Ranks dropdown that appears ONLY after an exam is selected
-    const sel = examSel; // existing <select> for exams
-    if (sel) {
-      // container (initially hidden until an exam is chosen)
-      const wrap = document.createElement('div');
-      wrap.style.marginTop = '8px';
-      wrap.style.display = 'none';
+  // Build Ranks dropdown under the Exam control (separate control, same style as others)
+try {
+  const sel = examSel; // existing native <select> for exams
+  if (sel) {
+    // ---- helper: build a custom dropdown identical to others for this one select ----
+    function makeCustomDropdown(nativeSel){
+      // if it's already converted, skip
+      if (nativeSel.nextElementSibling && nativeSel.nextElementSibling.classList?.contains('custom-dropdown')) return;
 
-      const label = document.createElement('div');
-      label.textContent = 'Ranks:';
-      label.style.fontWeight = '600';
-      label.style.color = '#0f3d6b';
-      label.style.margin = '6px 0 4px 0';
+      nativeSel.classList.add('native-select-hidden');
 
-      const ranks = document.createElement('select');
-      ranks.id = 'rankModeSel';
-      ranks.style.padding = '8px 10px';
-      ranks.style.border = '1px solid #c5d3e3';
-      ranks.style.borderRadius = '8px';
-      ranks.style.fontFamily = 'Segoe UI, Arial, sans-serif';
+      const wrap   = document.createElement('div');
+      wrap.className = 'custom-dropdown';
 
-      [
-        {v:'ALL',  t:'ALL Ranks'},
-        {v:'NONE', t:'NO Rank'},
-        {v:'TOP3', t:'1 to 3 ranks'},
-        {v:'TOP5', t:'1 to 5 ranks'},
-        {v:'TOP10',t:'1 to 10 ranks'},
-        {v:'TOP15',t:'1 to 15 ranks'}
-      ].forEach(o => {
-        const op = document.createElement('option');
-        op.value = o.v; op.textContent = o.t; ranks.appendChild(op);
+      const selected = document.createElement('div');
+      selected.className = 'selected-option';
+
+      const popup  = document.createElement('div');
+      popup.className = 'dropdown-options';
+
+      const opts = Array.from(nativeSel.options);
+      const curr = nativeSel.selectedIndex >= 0 ? opts[nativeSel.selectedIndex] : opts[0];
+      selected.textContent = curr ? (curr.textContent || curr.value) : 'Select';
+
+      opts.forEach(o=>{
+        const item = document.createElement('div');
+        item.setAttribute('data-value', o.value);
+        item.textContent = o.textContent || o.value;
+        if (o.disabled) item.style.opacity = '0.5';
+        popup.appendChild(item);
       });
 
-      const note = document.createElement('div');
-      note.textContent = 'Tie-break: Math → Physics → Chemistry → Biology; if PC/B missing, uses Science.';
-      note.style.fontSize = '12px';
-      note.style.color = '#195084';
-      note.style.marginTop = '6px';
-
-      wrap.appendChild(label);
-      wrap.appendChild(ranks);
-      wrap.appendChild(note);
-
-      // Insert immediately AFTER the visible Exam control (custom dropdown if present)
-      const anchor = sel.nextElementSibling?.classList?.contains('custom-dropdown') ? sel.nextElementSibling : sel;
-      anchor.insertAdjacentElement('afterend', wrap);
-
-      // Helper: load saved pref for the CURRENT {year,class,section,exam} and set UI
-      function applySavedRankPref() {
-        const pref = loadRankPref(); // uses current selectors (incl. exam)
-        if (pref.mode === 'NONE') ranks.value = 'NONE';
-        else if (pref.mode === 'TOPN') {
-          ranks.value =
-            pref.topN === 3  ? 'TOP3'  :
-            pref.topN === 5  ? 'TOP5'  :
-            pref.topN === 10 ? 'TOP10' :
-            pref.topN === 15 ? 'TOP15' : 'ALL';
-        } else {
-          ranks.value = 'ALL';
-        }
-      }
-
-      // Show/Hide ranks based on whether an exam is selected
-      function refreshRankVisibility() {
-        const hasExam = !!sel.value;
-        wrap.style.display = hasExam ? 'block' : 'none';
-        if (hasExam) applySavedRankPref();
-      }
-
-      // Initial visibility on page load
-      refreshRankVisibility();
-
-      // Persist on change and refresh preview (if any)
-      ranks.addEventListener('change', () => {
-        const v = ranks.value;
-        if (v === 'NONE')      saveRankPref('NONE', null);
-        else if (v === 'ALL')  saveRankPref('ALL', null);
-        else if (v === 'TOP3') saveRankPref('TOPN', 3);
-        else if (v === 'TOP5') saveRankPref('TOPN', 5);
-        else if (v === 'TOP10')saveRankPref('TOPN', 10);
-        else if (v === 'TOP15')saveRankPref('TOPN', 15);
-
-        try {
-          if (window.__lastPreviewStudents && Array.isArray(window.__lastPreviewStudents)) {
-            showPreviewPDF(window.__lastPreviewStudents);
-          }
-        } catch {}
+      selected.addEventListener('click', function(e){
+        e.stopPropagation();
+        document.querySelectorAll('.custom-dropdown.open').forEach(d=>d.classList.remove('open'));
+        wrap.classList.toggle('open');
       });
-
-      // When exam changes → toggle visibility and reload pref
-      sel.addEventListener('change', () => {
-        refreshRankVisibility();
-        try {
-          if (window.__lastPreviewStudents && Array.isArray(window.__lastPreviewStudents)) {
-            showPreviewPDF(window.__lastPreviewStudents);
-          }
-        } catch {}
+      popup.addEventListener('click', function(e){
+        const t = e.target.closest('div[data-value]');
+        if(!t) return;
+        const val = t.getAttribute('data-value');
+        nativeSel.value = val;
+        nativeSel.dispatchEvent(new Event('change', { bubbles:true }));
+        selected.textContent = t.textContent;
+        wrap.classList.remove('open');
       });
+      document.addEventListener('click', ()=>wrap.classList.remove('open'));
 
-      // If year/class/section changes, the preference key changes → re-apply
-      yearSel?.addEventListener('change',  refreshRankVisibility);
-      classSel?.addEventListener('change', refreshRankVisibility);
-      sectionSel?.addEventListener('change', refreshRankVisibility);
+      wrap.appendChild(selected);
+      wrap.appendChild(popup);
+      nativeSel.insertAdjacentElement('afterend', wrap);
     }
-  } catch(e) { console.warn('Ranks UI build failed:', e); }
+
+    // ---- Ranks block (label + native select that will be converted) ----
+    const ranksBlock = document.createElement('div');
+    ranksBlock.style.marginTop = '12px';
+
+    const label = document.createElement('div');
+    label.textContent = 'Ranks';
+    label.style.fontWeight = '600';
+    label.style.color = '#0f3d6b';
+    label.style.margin = '6px 0 6px 0';
+
+    const ranksSel = document.createElement('select');
+    ranksSel.id = 'rankModeSel';
+    ranksSel.setAttribute('data-custom', 'dropdown');
+
+    [
+      {v:'ALL',  t:'ALL Ranks'},
+      {v:'NONE', t:'NO Rank'},
+      {v:'TOP3', t:'1 to 3 ranks'},
+      {v:'TOP5', t:'1 to 5 ranks'},
+      {v:'TOP10',t:'1 to 10 ranks'},
+      {v:'TOP15',t:'1 to 15 ranks'}
+    ].forEach(o=>{
+      const op = document.createElement('option');
+      op.value = o.v; op.textContent = o.t;
+      ranksSel.appendChild(op);
+    });
+
+    const note = document.createElement('div');
+    note.textContent = 'Tie-break: Math → Physics → Chemistry → Biology; if PC/B missing, uses Science.';
+    note.style.fontSize = '12px';
+    note.style.color = '#195084';
+    note.style.marginTop = '6px';
+
+    ranksBlock.appendChild(label);
+    ranksBlock.appendChild(ranksSel);
+    ranksBlock.appendChild(note);
+
+    // Insert AFTER the exam control (or after its custom version if present)
+    const anchor = sel.nextElementSibling?.classList?.contains('custom-dropdown') ? sel.nextElementSibling : sel;
+    anchor.insertAdjacentElement('afterend', ranksBlock);
+
+    // Convert this ranks <select> to the same custom dropdown UI
+    makeCustomDropdown(ranksSel);
+
+    // Load persisted pref
+    const pref = loadRankPref();
+    if (pref.mode === 'NONE') ranksSel.value = 'NONE';
+    else if (pref.mode === 'TOPN') {
+      ranksSel.value =
+        pref.topN===3  ? 'TOP3' :
+        pref.topN===5  ? 'TOP5' :
+        pref.topN===10 ? 'TOP10' :
+        pref.topN===15 ? 'TOP15' : 'ALL';
+    } else {
+      ranksSel.value = 'ALL';
+    }
+
+    // Save on change + refresh preview if open
+    ranksSel.addEventListener('change', ()=>{
+      const v = ranksSel.value;
+      if (v === 'NONE') saveRankPref('NONE', null);
+      else if (v === 'ALL') saveRankPref('ALL', null);
+      else if (v === 'TOP3') saveRankPref('TOPN', 3);
+      else if (v === 'TOP5') saveRankPref('TOPN', 5);
+      else if (v === 'TOP10') saveRankPref('TOPN', 10);
+      else if (v === 'TOP15') saveRankPref('TOPN', 15);
+
+      try {
+        if (window.__lastPreviewStudents && Array.isArray(window.__lastPreviewStudents)) {
+          showPreviewPDF(window.__lastPreviewStudents);
+        }
+      } catch {}
+    });
+
+    // When exam/class/section changes, reload pref and update UI (no hiding)
+    ['change'].forEach(ev=>{
+      sel.addEventListener(ev, ()=>{ const p = loadRankPref();
+        // map pref back to UI
+        if (p.mode === 'NONE') ranksSel.value = 'NONE';
+        else if (p.mode === 'TOPN') {
+          ranksSel.value =
+            p.topN===3  ? 'TOP3' :
+            p.topN===5  ? 'TOP5' :
+            p.topN===10 ? 'TOP10' :
+            p.topN===15 ? 'TOP15' : 'ALL';
+        } else ranksSel.value = 'ALL';
+        // also update the visible label of the custom dropdown
+        const disp = ranksSel.nextElementSibling?.querySelector('.selected-option');
+        if (disp) disp.textContent = ranksSel.options[ranksSel.selectedIndex]?.text || 'Select';
+      });
+    });
+    classSel?.addEventListener('change', ()=>{ loadRankPref(); });
+    sectionSel?.addEventListener('change', ()=>{ loadRankPref(); });
+    yearSel?.addEventListener('change', ()=>{ loadRankPref(); });
+  }
+} catch(e) { console.warn('Ranks UI build failed:', e); }
+
 })();
 
   </script>
@@ -4272,5 +4316,6 @@ page.render({ canvasContext: ctx, viewport });
 </script>
 </body>
 </html>
+
 
 
