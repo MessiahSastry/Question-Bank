@@ -479,6 +479,7 @@ examSelected.textContent = 'Loading...';
 examSelected.dataset.value = '';
 examList.innerHTML = '';
 setLoading(true);
+// Keep the exam dropdown clickable once exams arrive (buttons stay disabled until marks load)
 
       if (!academicYear || !classId || !sectionId){
         statusDiv.textContent = "Class or section not selected.";
@@ -530,19 +531,8 @@ return;
           if (!s.isDeleted) students.push({ id: doc.id, ...s });
         });
 
-        // 4. Preload marks
-        marksMap = {};
-        for (const stu of students){
-          marksMap[stu.id] = {};
-          for (const ex of exams){
-            const markDoc = await db.collection('years').doc(academicYear)
-              .collection('classes').doc(classId)
-              .collection('sections').doc(sectionId)
-              .collection('students').doc(stu.id)
-              .collection('marks').doc(ex.id).get();
-            marksMap[stu.id][ex.id] = markDoc.exists ? markDoc.data() : {};
-          }
-        }
+       // 4. Defer marks loading until an exam is selected (much faster here)
+marksMap = {};
 
         statusDiv.textContent = "";
 setLoading(false);
@@ -567,11 +557,35 @@ setLoading(false);
     document.addEventListener('click', function(){ examList.style.display = 'none'; });
     examList.onclick = function(e){
       const opt = e.target.closest('.dropdown-option'); if (!opt) return;
-      examSelected.textContent = opt.textContent;
-      examSelected.dataset.value = opt.dataset.id;
-      examList.style.display = 'none';
-      selectedExam = opt.dataset.id;
-      selectedExamObj = examMap[selectedExam];
+     examSelected.textContent = opt.textContent;
+examSelected.dataset.value = opt.dataset.id;
+examList.style.display = 'none';
+selectedExam = opt.dataset.id;
+selectedExamObj = examMap[selectedExam];
+
+// Load marks only for the chosen exam (parallel)
+statusDiv.classList.add('loading');
+statusDiv.innerHTML = `<span>Loading marks…</span><span class="dot"></span><span class="dot"></span><span class="dot"></span>`;
+excelBtn.disabled = pdfBtn.disabled = leapBtn.disabled = leapPdfBtn.disabled = copyCSEBtn.disabled = compactViewBtn.disabled = true;
+
+const secRef = db.collection('years').doc(academicYear)
+  .collection('classes').doc(classId)
+  .collection('sections').doc(sectionId);
+
+marksMap = marksMap || {};
+await Promise.all(
+  students.map(async (stu) => {
+    const snap = await secRef
+      .collection('students').doc(stu.id)
+      .collection('marks').doc(selectedExam).get();
+    (marksMap[stu.id] ||= {})[selectedExam] = snap.exists ? snap.data() : {};
+  })
+);
+
+// UI ready
+statusDiv.classList.remove('loading');
+statusDiv.textContent = '';
+excelBtn.disabled = pdfBtn.disabled = leapBtn.disabled = leapPdfBtn.disabled = copyCSEBtn.disabled = compactViewBtn.disabled = false;
     };
     // -------- LEAP helpers (mapping + splitting) --------
 function classBand6to7(name){
@@ -1115,7 +1129,7 @@ mapped.forEach((arr, subjIdx) => {
 
   function buildPageHTML(rowsHtml){
     return `
-      <div style="font-family:'Times New Roman', Times, serif; color:#1a1a1a; margin:0; padding:0;">
+      <div style="font-family:'Times New Roman', Times, serif; color:#1a1a1a; margin:0; padding:0; display:flex; flex-direction:column; align-items:center;">
         <style>
           * { box-sizing: border-box; }
         table { width:99.2%; border-collapse:collapse; table-layout:fixed; font-size:1.30em; line-height:1.45; margin:0 auto; }
@@ -1202,8 +1216,8 @@ try{
     let drawH = drawW / ratio;
     if (drawH > maxH) { drawH = maxH; drawW = maxH * ratio; }
     
-    const x = margin;
-    const y = margin;
+   const x = (pageW - drawW) / 2; // center horizontally
+  const y = margin;              // keep top margin
     
     pdf.addImage(imgData, 'JPEG', x, y, drawW, drawH, undefined, 'FAST');
     if (p < pages.length - 1) pdf.addPage();
@@ -1748,17 +1762,17 @@ const headCells =
 
   function buildPageHTML(rowsHtml){
     return `
-      <div id="printable" style="width:100%;overflow:visible;font-family:'Times New Roman', Times, serif;">
+      <div id="printable" style="width:100%;overflow:visible;font-family:'Times New Roman', Times, serif;display:flex;flex-direction:column;align-items:center;">
         <style>
           *{box-sizing:border-box}
           .heading{width:100%;text-align:center;margin:0 0 4px 0}
           .head-wrap{display:inline-flex;align-items:center;justify-content:center}
           .logo{height:80px;width:auto;border-radius:8px;margin:0 10px}
           .htext{display:flex;flex-direction:column;align-items:center;line-height:1.1}
-          .h1{font-size:1.9em;font-weight:800;color:#0b6b3a}
-          .h2{font-size:1.1em;font-weight:700;color:#0b6b3a}
-          .h3{font-size:1.05em;font-weight:700;color:#0b6b3a}
-          .h4{font-size:1.02em;font-weight:700;color:#0b6b3a}
+          .h1{font-size:44px;font-weight:800;color:#0b6b3a}
+          .h2{font-size:26px;font-weight:700;color:#0b6b3a}
+          .h3{font-size:22px;font-weight:700;color:#0b6b3a}
+          .h4{font-size:20px;font-weight:700;color:#0b6b3a}
 
           table.marks{border-collapse:collapse;width:99.2%;table-layout:fixed;font-size:1.30em;line-height:1.45;margin:0 auto 0}
           thead{display:table-header-group}
@@ -1844,8 +1858,9 @@ try{
     let drawH = drawW / ratio;
     if (drawH > maxH) { drawH = maxH; drawW = maxH * ratio; }
     
-    const x = margin;
+   const x = (pageW - drawW) / 2;
     const y = margin;
+
     
     pdf.addImage(imgData, 'JPEG', x, y, drawW, drawH, undefined, 'FAST');
     if (p < pages.length - 1) pdf.addPage();
@@ -1863,6 +1878,7 @@ try{
   </script>
 </body>
 </html>
+
 
 
 
