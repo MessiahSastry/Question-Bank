@@ -3094,7 +3094,119 @@ dupQuery.get().then(dupSnap => {
 
 // target refs (already defined above)
 
-         // payload to write
+// ---- Migrate marks if a subject was renamed (e.g., "tenugu" -> "TELUGU") ----
+(function migrateSubjectRenames(){
+  try {
+    const oldSubs = Array.isArray(exam.subjects) ? exam.subjects.map(s => String(s.name || '')) : [];
+    const newSubs = Array.isArray(subjects)      ? subjects.map(s => String(s.name || ''))      : [];
+
+    // simple normalizer used in Enter Marks too
+    const _norm = s => (s || '')
+      .toString()
+      .normalize('NFKC')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase();
+
+    // tiny helper: returns true if strings are the same ignoring case OR one-edit-away (insert/delete/replace 1 char)
+    function _oneEdit(a, b){
+      a = (a || '').toLowerCase(); b = (b || '').toLowerCase();
+      if (a === b) return true;
+      const la = a.length, lb = b.length;
+      if (Math.abs(la - lb) > 1) return false;
+      let i = 0, j = 0, edits = 0;
+      while (i < la && j < lb){
+        if (a[i] === b[j]) { i++; j++; continue; }
+        edits++; if (edits > 1) return false;
+        if (la > lb) { i++; }       // delete in a
+        else if (lb > la) { j++; }  // insert in a
+        else { i++; j++; }          // replace
+      }
+      // tail differences
+      if (i < la || j < lb) edits++;
+      return edits <= 1;
+    }
+
+    // build rename map: oldName -> newName (only safe, unambiguous matches)
+    const renameMap = {};
+    oldSubs.forEach(oldName => {
+      const oldN = _norm(oldName);
+      // if new contains exact (by norm), nothing to migrate
+      if (newSubs.some(ns => _norm(ns) === oldN)) return;
+
+      // try to find a single close candidate in new
+      const candidates = newSubs.filter(ns => _oneEdit(oldName, ns));
+      if (candidates.length === 1) {
+        renameMap[oldName] = candidates[0];
+      }
+    });
+
+    // nothing to do
+    if (!Object.keys(renameMap).length) return;
+
+    // migrate within CURRENT section only (marks live per section)
+    db.collection('years').doc(academicYear)
+      .collection('classes').doc(currentClassId)
+      .collection('sections').doc(currentSectionId)
+      .collection('students').orderBy('roll').get()
+      .then(snap => {
+        const ops = [];
+        snap.forEach(stuDoc => {
+          const stuId = stuDoc.id;
+          const markRef = db.collection('years').doc(academicYear)
+            .collection('classes').doc(currentClassId)
+            .collection('sections').doc(currentSectionId)
+            .collection('students').doc(stuId)
+            .collection('marks').doc(examId);
+
+          ops.push(
+            markRef.get().then(doc => {
+              if (!doc.exists) return;
+              const data = doc.data() || {};
+              const updates = {};
+              let needsWrite = false;
+
+              // migrate total keys
+              for (const [oldName, newName] of Object.entries(renameMap)) {
+                const oldKey = Object.keys(data).find(k => k !== '__subs' && _norm(k) === _norm(oldName));
+                const newExists = Object.prototype.hasOwnProperty.call(data, newName);
+                if (oldKey && !newExists) {
+                  updates[newName] = data[oldKey];
+                  updates[oldKey]  = firebase.firestore.FieldValue.delete();
+                  needsWrite = true;
+                }
+              }
+
+              // migrate breakdown keys under __subs
+              const subs = data.__subs && typeof data.__subs === 'object' ? data.__subs : null;
+              if (subs) {
+                for (const [oldName, newName] of Object.entries(renameMap)) {
+                  const oldSKey = Object.keys(subs).find(k => _norm(k) === _norm(oldName));
+                  const newSKey = Object.keys(subs).find(k => _norm(k) === _norm(newName));
+                  if (oldSKey && !newSKey) {
+                    // copy map then remove old
+                    updates[`__subs.${newName}`] = subs[oldSKey];
+                    updates[`__subs.${oldSKey}`] = firebase.firestore.FieldValue.delete();
+                    needsWrite = true;
+                  }
+                }
+              }
+
+              if (needsWrite) {
+                return markRef.set(updates, { merge: true });
+              }
+            })
+          );
+        });
+        return Promise.all(ops);
+      })
+      .catch(e => console.warn('Subject rename migration skipped:', e));
+  } catch (e) {
+    console.warn('Subject rename migration error:', e);
+  }
+})();
+
+// payload to write (after migration step)
 const payload = { 
   name, nameKey, subjects,
   grading: { mode: 'custom', scale: gradingScale }
@@ -5316,6 +5428,7 @@ if (marksFileInput) {
 </script>
 </body>
 </html>
+
 
 
 
