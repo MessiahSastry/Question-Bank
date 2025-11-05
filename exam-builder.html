@@ -594,13 +594,6 @@ function makeStemKey(q) {
   return stemNorm + '|m=' + String(marks ?? '');
 }
 
-// level-aware stem key (used only in Mixed strict selection)
-function _mkLevelKey(text, marks, levelTag) {
-  const base = makeStemKey({ text, marks });
-  return base ? (base + '||lev=' + (levelTag || '')) : '';
-}
-
-
 // Build a stable de-dupe key from a question object
 function makeDeDupeKey(q) {
   // 1) Base stem (strip html, inline options, answers)
@@ -1714,11 +1707,10 @@ for (const item of mapped) {
             });
 
             let picked = null;
-           const sectionSeen = new Set(questions.map(q => _mkLevelKey(q.text, mPerQ, q._assignedLevel || '')));
+            const sectionSeen = new Set(questions.map(q => makeStemKey({ text: q.text, marks: mPerQ })));
             for (const d of uniqueByIdOrText(docs)) {
-              const levTag = (forceDiff === 'Level 1') ? 'L1' : (forceDiff === 'Level 2') ? 'L2' : 'L3';
-            const k = _mkLevelKey(d.question || d.text || '', mPerQ, levTag);
-            if (k && (sectionSeen.has(k) || subjectSeenKeys.has(k))) continue;
+              const k = makeStemKey({ text: d.question || d.text || '', marks: mPerQ });
+              if (k && (sectionSeen.has(k) || subjectSeenKeys.has(k))) continue;
               picked = d; break;
             }
             if (!picked) { sectionErrors.push(`${subjData.subject} - ${sec.label}: need 1×${mPerQ}-mark ${forceDiff} question, none available.`); continue; }
@@ -1735,8 +1727,7 @@ for (const item of mapped) {
               out = { number: 0, text: stem, marks: mPerQ, options: Array.isArray(opts) ? opts : [], answer: (String(picked.answer || '').toUpperCase().match(/[A-D]/g) || []).join(',') };
             }
             out._assignedLevel = slot.assigned;
-          const key = _mkLevelKey(out.text, mPerQ, out._assignedLevel || '');
-            if (key) subjectSeenKeys.add(key);
+            const key = makeStemKey({ text: out.text, marks: mPerQ }); if (key) subjectSeenKeys.add(key);
             questions.push({ ...out, number: questions.length + 1 });
           }
         }
@@ -1893,30 +1884,10 @@ function _finalStemKey(raw, marks) {
     console.warn('BUILDER: NO duplicates in finalPaper before saving');
   }
 })();
-// HARD de-dupe (MCQs use option+answer-aware key; also keep levels separate) and renumber right before save
-function _finalQuestionKey(q, sec, fallbackMarks) {
-  const marks = Number(q?.marks ?? fallbackMarks ?? 0);
-  const levelTag = q?._assignedLevel || ''; // 'L1' | 'L2' | 'L3' or ''
-  const secType = (sec?.mcqType || '').toLowerCase();
-  const isMcq = secType.includes('mcq');
-
-  if (isMcq) {
-    const kd = makeDeDupeKey({
-      text: q?.text || q?.question || '',
-      mcqType: sec?.mcqType,
-      options: Array.isArray(q?.options) ? q.options : undefined,
-      answer: q?.answer
-    });
-    return kd + '||m=' + marks + '||lev=' + levelTag;
-  }
-
-  const ks = _finalStemKey(q?.text || q?.question || '', marks);
-  return ks + '||lev=' + levelTag;
-}
-    try {
+// HARD de-dupe (by normalized stem + marks) and renumber right before save
+try {
   (finalPaper.subjects || []).forEach(s => {
-    // keep uniqueness within a subject, but allow same stem to appear at different levels
-    const subjectSeen = new Set();
+    const subjectSeen = new Set(); // avoid repeats across sections of the same subject
 
     (s.sections || []).forEach(sec => {
       const perSectionSeen = new Set();
@@ -1924,16 +1895,20 @@ function _finalQuestionKey(q, sec, fallbackMarks) {
       const fallbackMarks = Number(sec.marksPerQuestion ?? 0);
 
       for (const q of (sec.questions || [])) {
-        if (q && 'srcId' in q) delete q.srcId;
-        const key = _finalQuestionKey(q, sec, fallbackMarks);  // << use the new key
-        if (!key) { out.push(q); continue; }
-        if (perSectionSeen.has(key) || subjectSeen.has(key)) continue;
-        perSectionSeen.add(key);
-        subjectSeen.add(key);
+        if (q && 'srcId' in q) delete q.srcId; // drop debug field if present
+        const stem  = q?.text ?? q?.question ?? '';
+        const marks = Number(q?.marks ?? fallbackMarks);
+        const k = _finalStemKey(stem, marks);
+        if (!k) { out.push(q); continue; }
+        if (perSectionSeen.has(k) || subjectSeen.has(k)) continue;
+        perSectionSeen.add(k);
+        subjectSeen.add(k);
         out.push(q);
       }
 
-      sec.questions = out.map((qq, i) => ({ ...qq, number: i + 1 }));
+      // renumber neatly within the section for preview
+      sec.questions = out.map((q, i) => ({ ...q, number: i + 1 }));
+
       if (sec.type === 'internal') {
         sec.numPairs = sec.questions.length;
       } else {
