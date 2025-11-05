@@ -666,6 +666,18 @@ function normalizeMcqType(s) {
   if (t.includes('desc'))     return 'Descriptive';
   return s; // unknown → leave as-is
 }
+
+// NEW: robust type inference (used everywhere we filter by MCQ type)
+function inferMcqType(d){
+  const norm = normalizeMcqType(d?.mcqType);
+  if (norm === 'MCQ (Single)' || norm === 'MCQ (Multiple)' || norm === 'Descriptive') return norm;
+
+  // Fallback by inspecting answer/options
+  const letters = String(d?.answer || '').toUpperCase().match(/[A-D]/g) || [];
+  if (letters.length > 1) return 'MCQ (Multiple)';
+  if (Array.isArray(d?.options) && d.options.length === 4) return 'MCQ (Single)';
+  return 'Descriptive';
+}
 // --- DEBUG: list items with their canonical key (no behavior change) ---
 function _debugList(list, label) {
   try {
@@ -738,16 +750,15 @@ async function fetchQuestions({
 
   // Apply all non-chapter filters here
   const applyNonChapterFilters = (q) => {
-    if (forceDifficulty) {
-      q = q.where("difficulty", "==", forceDifficulty);
-    } else if (window.difficultyFilter && window.difficultyFilter !== "Mixed") {
-      q = q.where("difficulty", "==", window.difficultyFilter);
-    }
-    if (marksPerQuestion) q = q.where("marks", "==", parseInt(marksPerQuestion));
-    if (mcqType === "MCQ (Single)")   q = q.where("mcqType", "==", "MCQ (Single)");
-    else if (mcqType === "MCQ (Multiple)") q = q.where("mcqType", "==", "MCQ (Multiple)");
-    return q;
-  };
+  if (forceDifficulty) {
+    q = q.where("difficulty", "==", forceDifficulty);
+  } else if (window.difficultyFilter && window.difficultyFilter !== "Mixed") {
+    q = q.where("difficulty", "==", window.difficultyFilter);
+  }
+  if (marksPerQuestion) q = q.where("marks", "==", parseInt(marksPerQuestion));
+  // Do NOT add mcqType equality here; we’ll filter after fetch using normalizeMcqType().
+  return q;
+};
 
   const selectedChapters = Array.isArray(chapters) ? chapters.filter(Boolean) : [];
   let allQuestions = [];
@@ -768,10 +779,14 @@ async function fetchQuestions({
     snap.forEach(doc => allQuestions.push({ id: doc.id, ...doc.data() }));
   }
 
-  // For descriptive sections, allow docs with mcqType "Descriptive" or missing/empty
-  if (mcqType === "Descriptive") {
-    allQuestions = allQuestions.filter(q => !q.mcqType || q.mcqType === "Descriptive");
-  }
+  // Filter by type in memory using robust inference
+if (mcqType === "Descriptive") {
+  allQuestions = allQuestions.filter(d => inferMcqType(d) === "Descriptive");
+} else if (mcqType === "MCQ (Single)") {
+  allQuestions = allQuestions.filter(d => inferMcqType(d) === "MCQ (Single)");
+} else if (mcqType === "MCQ (Multiple)") {
+  allQuestions = allQuestions.filter(d => inferMcqType(d) === "MCQ (Multiple)");
+}
 
   // De-dupe by ID or by normalized text, then shuffle and cap
   allQuestions = uniqueByIdOrText(allQuestions);
@@ -800,20 +815,20 @@ async function fetchQuestionsWithMarksFallback({
     .where("subject", "==", selectedSubject);
 
   const isAllowedType = (d) => {
-  const typ = normalizeMcqType(d?.mcqType);
+  const typ = inferMcqType(d);
   if (mcqType === "MCQ (Single)")   return typ === "MCQ (Single)";
   if (mcqType === "MCQ (Multiple)") return typ === "MCQ (Multiple)";
-  if (mcqType === "Descriptive")    return !d?.mcqType || typ === "Descriptive";
+  if (mcqType === "Descriptive")    return typ === "Descriptive";
   return true;
 };
 
   const applyFilters = (q, { marks } = {}) => {
   let qq = q;
   if (typeof marks !== "undefined") qq = qq.where("marks", "==", marks);
-  if (mcqType === "MCQ (Single)")   qq = qq.where("mcqType", "==", "MCQ (Single)");
-  if (mcqType === "MCQ (Multiple)") qq = qq.where("mcqType", "==", "MCQ (Multiple)");
+  // Do NOT filter mcqType at query time — schemas vary; we’ll filter after fetch.
   return qq; // no difficulty here
 };
+
 
   const normDiff = s => {
   let t = String(s || "")
@@ -2017,6 +2032,7 @@ window.location.href = 'exam-review.html';
 </script>
 </body>
 </html>
+
 
 
 
