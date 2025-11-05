@@ -1603,35 +1603,73 @@ const sourceTypeGlobal = (document.getElementById('exam-source-dropdown')?.datas
 
 if (sourceTypeGlobal === 'Question Bank') {
   // ===== BANK FLOW =====
-  // If “Mixed”, build a strict global plan by MARKS (40/30/30)
-  let strictSlots = [];
-  if (difficultyValue === "Mixed") {
-    const allSlots = [];
-    subjectsData.forEach((sd, sIdx) => {
-      sd.sections.forEach((sec, secIdx) => {
-        if (sec.type === "all" || sec.type === "any") {
-          const n = Number(sec.numQuestions || 0);
-          const m = Number(sec.marksPerQuestion || 0);
-          for (let i = 0; i < n; i++) allSlots.push({ sIdx, secIdx, subject: sd.subject, label: sec.label, marksPerQuestion: m });
-        }
-      });
+  // If “Mixed”, build a tolerant (slot-aware) plan by MARKS (40/30/30)
+let strictSlots = [];
+let _mixedTargets = null;   // quantized targets by marks (L1/L2/L3)
+let _mixedActual  = { L1:0, L2:0, L3:0 };  // filled as we assign/fetch
+let _mixedG = 1;           // gcd of slot sizes for tolerance
+if (difficultyValue === "Mixed") {
+  const allSlots = [];
+  subjectsData.forEach((sd, sIdx) => {
+    sd.sections.forEach((sec, secIdx) => {
+      if (sec.type === "all" || sec.type === "any") {
+        const n = Number(sec.numQuestions || 0);
+        const m = Number(sec.marksPerQuestion || 0);
+        for (let i = 0; i < n; i++) allSlots.push({ sIdx, secIdx, subject: sd.subject, label: sec.label, marksPerQuestion: m });
+      }
     });
-    const totalMarks = allSlots.reduce((s, sl) => s + (sl.marksPerQuestion || 0), 0);
-    const want = splitCounts(totalMarks, [40, 30, 30]); // [L1,L2,L3] marks
-    const target = { L1: want[0], L2: want[1], L3: want[2] };
-    allSlots.sort((a, b) => (b.marksPerQuestion || 0) - (a.marksPerQuestion || 0));
-    function take(level, m){ if (target[level] >= m){ target[level]-=m; return true;} return false; }
-    strictSlots = allSlots.map(sl => {
-      const m = sl.marksPerQuestion || 0;
-      if (take('L3', m)) return { ...sl, assigned: 'L3' };
-      if (take('L2', m)) return { ...sl, assigned: 'L2' };
-      if (take('L1', m)) return { ...sl, assigned: 'L1' };
-      return { ...sl, assigned: null };
-    });
-    if (strictSlots.some(s => !s.assigned) || target.L1 || target.L2 || target.L3) {
-      allSectionErrors.push(`Mixed(strict): Unable to assign 40/30/30 exactly. Leftover → L1:${target.L1}, L2:${target.L2}, L3:${target.L3}.`);
+  });
+
+  const totalMarks = allSlots.reduce((s, sl) => s + (sl.marksPerQuestion || 0), 0);
+
+  // gcd of slot sizes
+  const _gcd = (a,b)=> b===0?Math.abs(a):_gcd(b,a%b);
+  _mixedG = allSlots.reduce((g, sl) => _gcd(g, sl.marksPerQuestion||0), 0) || 1;
+
+  // raw 40/30/30 (integers via splitCounts), then quantize to multiples of gcd
+  const wantRaw = splitCounts(totalMarks, [40,30,30]); // e.g., [19,14,13] for 46
+  const labels = ["L1","L2","L3"];
+  const rounded = wantRaw.map(v => Math.round(v / _mixedG) * _mixedG);
+
+  // balance to keep sum === totalMarks using largest-remainder style fixes
+  const errs = wantRaw.map((v,i) => v - rounded[i]);
+  let curSum = rounded.reduce((a,b)=>a+b,0);
+  while (curSum !== totalMarks) {
+    // choose index with largest |err| towards fixing the direction
+    let idx = 0, best = -Infinity;
+    for (let i=0;i<3;i++){
+      const dir = (totalMarks > curSum) ? 1 : -1;
+      const score = dir * errs[i]; // prefer adding where we rounded down most, or removing where we rounded up most
+      if (score > best) { best = score; idx = i; }
     }
+    rounded[idx] += (totalMarks > curSum) ? _mixedG : -_mixedG;
+    errs[idx] += (totalMarks > curSum) ? _mixedG : -_mixedG;
+    curSum = rounded.reduce((a,b)=>a+b,0);
   }
+  _mixedTargets = { L1: rounded[0], L2: rounded[1], L3: rounded[2] };
+
+  // assign each slot to the level with largest remaining deficit (greedy)
+  allSlots.sort((a,b)=> (b.marksPerQuestion||0) - (a.marksPerQuestion||0));
+  _mixedActual = { L1:0, L2:0, L3:0 };
+  strictSlots = allSlots.map(sl => {
+    const m = sl.marksPerQuestion || 0;
+    const deficits = [
+      { k:"L1", d: (_mixedTargets.L1 - _mixedActual.L1) },
+      { k:"L2", d: (_mixedTargets.L2 - _mixedActual.L2) },
+      { k:"L3", d: (_mixedTargets.L3 - _mixedActual.L3) },
+    ].sort((x,y)=> y.d - x.d);
+    const pick = deficits[0].k; // choose the biggest gap
+    _mixedActual[pick] += m;
+    return { ...sl, assigned: pick };
+  });
+
+  // If quantization changed the exact 40/30/30 split, warn (non-blocking)
+  const wantTxt = `${wantRaw[0]}/${wantRaw[1]}/${wantRaw[2]}`;
+  const gotTxt  = `${_mixedTargets.L1}/${_mixedTargets.L2}/${_mixedTargets.L3}`;
+  if (wantTxt !== gotTxt) {
+    showToast(`Mixed: snapped to representable totals (gcd=${_mixedG}). Targets L1/L2/L3 → ${gotTxt}`, 'info');
+  }
+}
 
   // Build paper from bank
   for (let sIdx = 0; sIdx < subjectsData.length; sIdx++) {
@@ -1689,47 +1727,88 @@ for (const item of mapped) {
         } else {
           // Mixed(strict): use strictSlots plan
           const mySlots = strictSlots.filter(sl => sl.sIdx === sIdx && sl.secIdx === secIdx && sl.marksPerQuestion === mPerQ);
-          if (mySlots.length !== requestedCount) sectionErrors.push(`${subjData.subject} - ${sec.label}: slot plan mismatch (${mySlots.length} vs ${requestedCount}).`);
+// tolerate any mismatch; just iterate over available slots
+const takeCount = Math.min(requestedCount, mySlots.length);
 
-          for (let i = 0; i < requestedCount; i++) {
-            const slot = mySlots[i];
-            if (!slot || !slot.assigned) { sectionErrors.push(`${subjData.subject} - ${sec.label}: missing assignment for one ${mPerQ}-mark slot.`); continue; }
+for (let i = 0; i < takeCount; i++) {
+  const slot = mySlots[i];
 
-            const forceDiff = slot.assigned === 'L1' ? "Level 1" : (slot.assigned === 'L2' ? "Level 2" : "Level 3");
-            const docs = await fetchQuestionsWithMarksFallback({
-              selectedClass,
-              selectedSubject: subjData.subject,
-              chapters: subjData.chapters,
-              marksPerQuestion: mPerQ,
-              mcqType: sec.mcqType,
-              count: 8,
-              forceDifficulty: forceDiff
-            });
+  // Build a level try-order: prefer slot.assigned, then by largest remaining global deficit
+  const deficits = [
+    { k:"L1", d: (_mixedTargets?.L1 ?? 0) - (_mixedActual?.L1 ?? 0) },
+    { k:"L2", d: (_mixedTargets?.L2 ?? 0) - (_mixedActual?.L2 ?? 0) },
+    { k:"L3", d: (_mixedTargets?.L3 ?? 0) - (_mixedActual?.L3 ?? 0) },
+  ].sort((a,b)=> b.d - a.d).map(x=>x.k);
+  const preferred = slot?.assigned || deficits[0];
+  const levelsTry = [preferred, ...deficits.filter(k => k !== preferred)];
 
-            let picked = null;
-            const sectionSeen = new Set(questions.map(q => makeStemKey({ text: q.text, marks: mPerQ })));
-            for (const d of uniqueByIdOrText(docs)) {
-              const k = makeStemKey({ text: d.question || d.text || '', marks: mPerQ });
-              if (k && (sectionSeen.has(k) || subjectSeenKeys.has(k))) continue;
-              picked = d; break;
-            }
-            if (!picked) { sectionErrors.push(`${subjData.subject} - ${sec.label}: need 1×${mPerQ}-mark ${forceDiff} question, none available.`); continue; }
+  let picked = null, pickedLevel = null;
 
-            const opts = extractMCQOptions(picked);
-            const stem = picked.question || picked.text || '';
-            let out;
-            if ((sec.mcqType === "MCQ (Single)" || sec.mcqType === "MCQ (Multiple)") && Array.isArray(opts) && opts.length === 4) {
-              const clean = opts.map(o => o.replace(/^[A-D][).]?\s*/, '').trim());
-              const shuffled = shuffleMCQQuestion({ ...picked, options: clean, question: stem, answer: picked.answer });
-              const letterAns = (String(shuffled.answer || '').toUpperCase().match(/[A-D]/g) || []).join(',');
-              out = { number: 0, text: shuffled.question || "", marks: mPerQ, options: shuffled.options || [], answer: letterAns };
-            } else {
-              out = { number: 0, text: stem, marks: mPerQ, options: Array.isArray(opts) ? opts : [], answer: (String(picked.answer || '').toUpperCase().match(/[A-D]/g) || []).join(',') };
-            }
-            out._assignedLevel = slot.assigned;
-            const key = makeStemKey({ text: out.text, marks: mPerQ }); if (key) subjectSeenKeys.add(key);
-            questions.push({ ...out, number: questions.length + 1 });
-          }
+  for (const lv of levelsTry) {
+    const forceDiff = lv === 'L1' ? "Level 1" : (lv === 'L2' ? "Level 2" : "Level 3");
+    const docs = await fetchQuestionsWithMarksFallback({
+      selectedClass,
+      selectedSubject: subjData.subject,
+      chapters: subjData.chapters,
+      marksPerQuestion: mPerQ,
+      mcqType: sec.mcqType,
+      count: 8,
+      forceDifficulty: forceDiff
+    });
+
+    const sectionSeen = new Set(questions.map(q => makeStemKey({ text: q.text, marks: mPerQ })));
+    for (const d of uniqueByIdOrText(docs)) {
+      const k = makeStemKey({ text: d.question || d.text || '', marks: mPerQ });
+      if (k && (sectionSeen.has(k) || subjectSeenKeys.has(k))) continue;
+      picked = d; pickedLevel = lv; break;
+    }
+    if (picked) break;
+  }
+
+  // Last resort: try without forcing difficulty
+  if (!picked) {
+    const docs = await fetchQuestionsWithMarksFallback({
+      selectedClass,
+      selectedSubject: subjData.subject,
+      chapters: subjData.chapters,
+      marksPerQuestion: mPerQ,
+      mcqType: sec.mcqType,
+      count: 8,
+      forceDifficulty: null
+    });
+    const sectionSeen = new Set(questions.map(q => makeStemKey({ text: q.text, marks: mPerQ })));
+    for (const d of uniqueByIdOrText(docs)) {
+      const k = makeStemKey({ text: d.question || d.text || '', marks: mPerQ });
+      if (k && (sectionSeen.has(k) || subjectSeenKeys.has(k))) continue;
+      picked = d; pickedLevel = preferred; break;
+    }
+  }
+
+  if (!picked) {
+    sectionErrors.push(`${subjData.subject} - ${sec.label}: no bank question available for one ${mPerQ}-mark slot.`);
+    continue;
+  }
+
+  const opts = extractMCQOptions(picked);
+  const stem = picked.question || picked.text || '';
+  let out;
+  if ((sec.mcqType === "MCQ (Single)" || sec.mcqType === "MCQ (Multiple)") && Array.isArray(opts) && opts.length === 4) {
+    const clean = opts.map(o => o.replace(/^[A-D][).]?\s*/, '').trim());
+    const shuffled = shuffleMCQQuestion({ ...picked, options: clean, question: stem, answer: picked.answer });
+    const letterAns = (String(shuffled.answer || '').toUpperCase().match(/[A-D]/g) || []).join(',');
+    out = { number: 0, text: shuffled.question || "", marks: mPerQ, options: shuffled.options || [], answer: letterAns };
+  } else {
+    out = { number: 0, text: stem, marks: mPerQ, options: Array.isArray(opts) ? opts : [], answer: (String(picked.answer || '').toUpperCase().match(/[A-D]/g) || []).join(',') };
+  }
+  out._assignedLevel = pickedLevel || (slot?.assigned || 'L1');
+  const key = makeStemKey({ text: out.text, marks: mPerQ }); if (key) subjectSeenKeys.add(key);
+  questions.push({ ...out, number: questions.length + 1 });
+
+  // update global actual after successful pick
+  if (_mixedActual && out._assignedLevel) {
+    _mixedActual[out._assignedLevel] = (_mixedActual[out._assignedLevel] || 0) + mPerQ;
+  }
+}
         }
       } else if (sec.type === "internal") {
         let missingPairs = 0;
@@ -1810,7 +1889,7 @@ if (allSectionErrors.length > 0) {
   return;
 }
 
-// === FINAL HARD GATE for Mixed(strict): verify global 40/30/30 exactly by MARKS ===
+// === FINAL TOLERANT CHECK for Mixed: allow ±gcd deviation; never block ===
 if (sourceTypeGlobal === 'Question Bank' && difficultyValue === "Mixed") {
   const actual = { L1: 0, L2: 0, L3: 0 };
   for (const subj of finalPaper.subjects || []) {
@@ -1824,18 +1903,15 @@ if (sourceTypeGlobal === 'Question Bank' && difficultyValue === "Mixed") {
       }
     }
   }
-  const total = actual.L1 + actual.L2 + actual.L3;
-  if (total > 0) {
-    const want = splitCounts(total, [40, 30, 30]);
-    if (actual.L1 !== want[0] || actual.L2 !== want[1] || actual.L3 !== want[2]) {
-      showModalPrompt(
-        `<b>Mixed(strict) check failed</b><br>` +
-        `Expected L1/L2/L3 = ${want[0]}/${want[1]}/${want[2]} marks, ` +
-        `but got ${actual.L1}/${actual.L2}/${actual.L3}.`
-      );
-      btn.disabled = false; btn.textContent = "Build Exam Draft";
-      return;
-    }
+  const g = _mixedG || 1;
+  const tgt = _mixedTargets || { L1:0, L2:0, L3:0 };
+  const d1 = Math.abs((actual.L1||0) - (tgt.L1||0));
+  const d2 = Math.abs((actual.L2||0) - (tgt.L2||0));
+  const d3 = Math.abs((actual.L3||0) - (tgt.L3||0));
+  const ok = (d1 <= g) && (d2 <= g) && (d3 <= g);
+  if (!ok) {
+    showToast(`Mixed: totals L1/L2/L3 achieved ${actual.L1}/${actual.L2}/${actual.L3} (target ${tgt.L1}/${tgt.L2}/${tgt.L3}, ±${g} allowed)`, 'info');
+    // proceed without blocking
   }
 }
 
@@ -1936,3 +2012,4 @@ window.location.href = 'exam-review.html';
 </script>
 </body>
 </html>
+
