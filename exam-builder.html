@@ -594,6 +594,13 @@ function makeStemKey(q) {
   return stemNorm + '|m=' + String(marks ?? '');
 }
 
+// level-aware stem key (used only in Mixed strict selection)
+function _mkLevelKey(text, marks, levelTag) {
+  const base = makeStemKey({ text, marks });
+  return base ? (base + '||lev=' + (levelTag || '')) : '';
+}
+
+
 // Build a stable de-dupe key from a question object
 function makeDeDupeKey(q) {
   // 1) Base stem (strip html, inline options, answers)
@@ -1707,10 +1714,11 @@ for (const item of mapped) {
             });
 
             let picked = null;
-            const sectionSeen = new Set(questions.map(q => makeStemKey({ text: q.text, marks: mPerQ })));
+           const sectionSeen = new Set(questions.map(q => _mkLevelKey(q.text, mPerQ, q._assignedLevel || '')));
             for (const d of uniqueByIdOrText(docs)) {
-              const k = makeStemKey({ text: d.question || d.text || '', marks: mPerQ });
-if (k && (sectionSeen.has(k) || subjectSeenKeys.has(k))) continue;
+              const levTag = (forceDiff === 'Level 1') ? 'L1' : (forceDiff === 'Level 2') ? 'L2' : 'L3';
+            const k = _mkLevelKey(d.question || d.text || '', mPerQ, levTag);
+            if (k && (sectionSeen.has(k) || subjectSeenKeys.has(k))) continue;
               picked = d; break;
             }
             if (!picked) { sectionErrors.push(`${subjData.subject} - ${sec.label}: need 1×${mPerQ}-mark ${forceDiff} question, none available.`); continue; }
@@ -1727,7 +1735,7 @@ if (k && (sectionSeen.has(k) || subjectSeenKeys.has(k))) continue;
               out = { number: 0, text: stem, marks: mPerQ, options: Array.isArray(opts) ? opts : [], answer: (String(picked.answer || '').toUpperCase().match(/[A-D]/g) || []).join(',') };
             }
             out._assignedLevel = slot.assigned;
-           const key = makeStemKey({ text: out.text, marks: mPerQ });
+          const key = _mkLevelKey(out.text, mPerQ, out._assignedLevel || '');
             if (key) subjectSeenKeys.add(key);
             questions.push({ ...out, number: questions.length + 1 });
           }
@@ -1953,6 +1961,7 @@ window.location.href = 'exam-review.html';
 </script>
 </body>
 </html>
+
 
 
 
