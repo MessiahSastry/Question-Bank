@@ -751,7 +751,8 @@ async function fetchQuestions({
       q = q.where("difficulty", "==", window.difficultyFilter);
     }
     if (marksPerQuestion) q = q.where("marks", "==", parseInt(marksPerQuestion));
-    // NOTE: don't filter by mcqType in the Firestore query; we filter after fetch
+    if (mcqType === "MCQ (Single)")   q = q.where("mcqType", "==", "MCQ (Single)");
+    else if (mcqType === "MCQ (Multiple)") q = q.where("mcqType", "==", "MCQ (Multiple)");
     return q;
   };
 
@@ -774,13 +775,10 @@ async function fetchQuestions({
     snap.forEach(doc => allQuestions.push({ id: doc.id, ...doc.data() }));
   }
 
-  // Filter by mcqType in JS using canonical normalization
-const _mcq = (mcqType || '').trim();
-if (_mcq === "MCQ (Single)" || _mcq === "MCQ (Multiple)") {
-  allQuestions = allQuestions.filter(q => normalizeMcqType(q.mcqType) === _mcq);
-} else if (_mcq === "Descriptive") {
-  allQuestions = allQuestions.filter(q => !q.mcqType || normalizeMcqType(q.mcqType) === "Descriptive");
-}
+  // For descriptive sections, allow docs with mcqType "Descriptive" or missing/empty
+  if (mcqType === "Descriptive") {
+    allQuestions = allQuestions.filter(q => !q.mcqType || q.mcqType === "Descriptive");
+  }
 
   // De-dupe by ID or by normalized text, then shuffle and cap
   allQuestions = uniqueByIdOrText(allQuestions);
@@ -819,7 +817,8 @@ async function fetchQuestionsWithMarksFallback({
   const applyFilters = (q, { marks } = {}) => {
   let qq = q;
   if (typeof marks !== "undefined") qq = qq.where("marks", "==", marks);
- // do not filter by mcqType here; we filter after fetch via isAllowedType()
+  if (mcqType === "MCQ (Single)")   qq = qq.where("mcqType", "==", "MCQ (Single)");
+  if (mcqType === "MCQ (Multiple)") qq = qq.where("mcqType", "==", "MCQ (Multiple)");
   return qq; // no difficulty here
 };
 
@@ -1962,9 +1961,3 @@ window.location.href = 'exam-review.html';
 </script>
 </body>
 </html>
-
-
-
-
-
-
