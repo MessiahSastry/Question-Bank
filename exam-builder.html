@@ -263,12 +263,20 @@
                     </div>
                     
                     <!-- NEW: Upload .docx UI (hidden by default) -->
-                    <div class="form-group" id="global-upload-wrap" style="display:none;">
-                        <label>Upload a .docx file (all questions in order)</label>
-                        <input type="file" id="global-docx-input" accept=".docx" />
-                        <div id="global-docx-status" style="color:#54656f;font-size:.9em;margin-top:6px;">No file chosen</div>
+                   <div class="form-group" id="global-upload-wrap" style="display:none;">
+                    <label>Upload a .docx file (all questions in order)</label>
+                    <input type="file" id="global-docx-input" accept=".docx" />
+                    <div id="global-docx-status" style="color:#54656f;font-size:.9em;margin-top:6px;">No file chosen</div>
+                </div>
+                
+                <!-- NEW: Paste/.docx shuffling controls -->
+                <div class="form-group" id="paste-docx-shuffle" style="display:none;">
+                    <label>Arrangement</label>
+                    <div style="margin-top:6px;">
+                        <label><input type="checkbox" id="chk-shuffle-questions" checked> Shuffle questions</label>
+                        <label style="margin-left:16px;"><input type="checkbox" id="chk-shuffle-options" checked> Shuffle options (MCQ)</label>
                     </div>
-                    
+                </div>
                     <div class="form-group">
                         <label>Difficulty Level</label>
                         <div id="difficulty-dropdown" class="custom-dropdown"></div>
@@ -546,7 +554,7 @@ function parsePastedQuestionsToPool(raw) {
   return blocks;
 }
 
-function allocateSequentiallyAcrossSections(subjectsData, pool) {
+function allocateSequentiallyAcrossSections(subjectsData, pool, { shuffleQuestions = true, shuffleOptions = true } = {}) {
   const errors = [];
   let index = 0;
   const stripLead = s => String(s || '').replace(/^\s*(?:Q?\s*\d+[\.\)]\s*)/, '').trim();
@@ -599,22 +607,29 @@ if (Array.isArray(extracted) && extracted.length === 4) {
     const ansLetters = ansMatch ? ansMatch[1].match(/[A-D]/g) : [];
 
     // 5) Shuffle options and remap answers accordingly
-    const shuffled = shuffleMCQQuestion({
-      question: stemNoAns,
-      options: cleanOpts,
-      answer: ansLetters && ansLetters.length ? ansLetters : [] // accepts array too
-    });
+    let outOptions = cleanOpts.slice();
+let outAnswerLetters = (ansLetters && ansLetters.length) ? ansLetters.slice() : [];
 
-    // 6) Convert shuffled answer to letters "A,B" format
-    const letterAns = (String(shuffled.answer || '').toUpperCase().match(/[A-D]/g) || []).join(',');
+// shuffle options only if enabled
+if (shuffleOptions) {
+  const shuffled = shuffleMCQQuestion({
+    question: stemNoAns,
+    options: cleanOpts,
+    answer: outAnswerLetters
+  });
+  outOptions = shuffled.options || cleanOpts;
+  outAnswerLetters = (String(shuffled.answer || '').toUpperCase().match(/[A-D]/g) || []);
+}
 
-    pick.push({
-      number: i + 1,
-      text: shuffled.question || stemNoAns,
-      marks: marks,
-      options: shuffled.options || cleanOpts,
-      answer: letterAns
-    });
+const letterAns = (outAnswerLetters || []).join(',');
+
+pick.push({
+  number: i + 1,
+  text: stemNoAns,
+  marks: marks,
+  options: outOptions,
+  answer: letterAns
+});
   } else {
     // Not an MCQ with A–D options → keep as descriptive
     pick.push({
@@ -626,9 +641,15 @@ if (Array.isArray(extracted) && extracted.length === 4) {
     });
   }
 }
-      if (pick.length < need) {
+            if (pick.length < need) {
         errors.push(`${subj.subject} - ${sec.label}: Only ${pick.length} of ${need} questions available from source.`);
       }
+
+      // NEW: shuffle question order in the section (Paste/.docx only) if enabled
+      if (shuffleQuestions && pick.length > 1) {
+        shuffleArray(pick);
+      }
+
       sec.questions = pick;
     }
   }
@@ -1554,23 +1575,34 @@ document.addEventListener('DOMContentLoaded', () => {
 createDropdown('exam-source-dropdown', ["Question Bank","Paste","Upload .docx"], 'Question Bank');
 (function wireGlobalSourceUI(){
   const dd = document.getElementById('exam-source-dropdown');
-  const pasteWrap = document.getElementById('global-paste-wrap');
-  const uploadWrap = document.getElementById('global-upload-wrap');
-  const pasteArea = document.getElementById('global-paste-area');
-  const pasteCount = document.getElementById('global-paste-count');
-  const docxInput  = document.getElementById('global-docx-input');
-  const docxStatus = document.getElementById('global-docx-status');
-  window._globalDocxArrayBuffer = null;
+const pasteWrap = document.getElementById('global-paste-wrap');
+const uploadWrap = document.getElementById('global-upload-wrap');
+const pasteArea = document.getElementById('global-paste-area');
+const pasteCount = document.getElementById('global-paste-count');
+const docxInput  = document.getElementById('global-docx-input');
+const docxStatus = document.getElementById('global-docx-status');
 
-  function toggle() {
+// NEW: shuffle controls & defaults
+const shuffleBlock = document.getElementById('paste-docx-shuffle');
+const chkSQ = document.getElementById('chk-shuffle-questions');
+const chkSO = document.getElementById('chk-shuffle-options');
+window._shuffleQuestions = true;
+window._shuffleOptions  = true;
+
+window._globalDocxArrayBuffer = null;
+
+function toggle() {
   const v = dd.dataset.value || 'Question Bank';
-  const isBank  = v === 'Question Bank';
-  const isPaste = v === 'Paste';
-  const isWord  = v === 'Upload .docx';
+  const isBank  = (v === 'Question Bank');
+  const isPaste = (v === 'Paste');
+  const isWord  = (v === 'Upload .docx');
 
   // show paste/word areas
   pasteWrap.style.display  = isPaste ? 'block' : 'none';
   uploadWrap.style.display = isWord  ? 'block' : 'none';
+
+  // show shuffle controls only for Paste/.docx
+  if (shuffleBlock) shuffleBlock.style.display = (isPaste || isWord) ? 'block' : 'none';
 
   // hide/show Difficulty (its enclosing .form-group)
   const diffGroup = document.getElementById('difficulty-dropdown')?.closest('.form-group');
@@ -1585,6 +1617,9 @@ createDropdown('exam-source-dropdown', ["Question Bank","Paste","Upload .docx"],
 dd.addEventListener('change', toggle);
 toggle();
 
+// NEW: keep flags in sync
+if (chkSQ) chkSQ.addEventListener('change', () => { window._shuffleQuestions = !!chkSQ.checked; });
+if (chkSO) chkSO.addEventListener('change', () => { window._shuffleOptions  = !!chkSO.checked; });
   pasteArea?.addEventListener('input', () => {
     const t = (pasteArea.value || '').trim();
     const headerRe = /^[ \t]*(?:Q\.?\s*)?(\d+)(?:[\.\)]|\s)\s*/gmi;
@@ -1982,7 +2017,14 @@ const deficits = [
   }
 
   const pool = parsePastedQuestionsToPool(rawText);
-  const { errors: allocErrors } = allocateSequentiallyAcrossSections(subjectsData, pool);
+  const { errors: allocErrors } = allocateSequentiallyAcrossSections(
+  subjectsData,
+  pool,
+  {
+    shuffleQuestions: !!window._shuffleQuestions,
+    shuffleOptions:  !!window._shuffleOptions
+  }
+);
   if (allocErrors?.length) allSectionErrors = allSectionErrors.concat(allocErrors);
 
   for (const subjData of subjectsData) {
@@ -2151,6 +2193,7 @@ window.location.href = 'exam-review.html';
 </script>
 </body>
 </html>
+
 
 
 
