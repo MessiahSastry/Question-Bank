@@ -384,11 +384,41 @@ const config = {
 
 // --- Helpers for MCQ logic (keep as-is) ---
 function extractMCQOptions(q) {
-    if (Array.isArray(q.options) && q.options.length === 4) return q.options;
-    let stem = q.question || q.text || '';
-    let match = stem.match(/^(.*?)(?:A\))\s*([^B]+)B\)\s*([^C]+)C\)\s*([^D]+)D\)\s*([^A]*)(?:Ans:|$)/);
-    if (match) return [match[2].trim(), match[3].trim(), match[4].trim(), match[5].trim()];
-    return null;
+  // Returns [A,B,C,D] or null
+  if (Array.isArray(q?.options) && q.options.length === 4) return q.options;
+
+  let s = String(q?.question || q?.text || '');
+  s = s.replace(/\r/g, ''); // normalize
+
+  // Find label positions for A)/B)/C)/D) OR A./B./C./D. (case-insensitive)
+  const labelRe = /(^|\s)([ABCD])[\)\.]\s/gi;
+  const hits = [];
+  let m;
+  while ((m = labelRe.exec(s)) !== null) {
+    // start index after the label token (e.g., after "A) " or "B. ")
+    hits.push({ letter: m[2].toUpperCase(), i: m.index + m[0].length });
+  }
+
+  // Need exactly A,B,C,D in order
+  const need = ['A', 'B', 'C', 'D'];
+  const map = {};
+  for (const h of hits) {
+    if (!(h.letter in map)) map[h.letter] = h.i;
+  }
+  if (!need.every(L => map[L] != null)) return null;
+
+  const endA = map['B'];
+  const endB = map['C'];
+  const endC = map['D'];
+  const ansIdx = (s.match(/\bAns?\s*:/i)?.index) ?? s.length;
+  const endD = ansIdx;
+
+  const A = s.slice(map['A'], endA).trim();
+  const B = s.slice(map['B'], endB).trim();
+  const C = s.slice(map['C'], endC).trim();
+  const D = s.slice(map['D'], endD).trim();
+
+  return [A, B, C, D];
 }
 function shuffleArray(arr) {
     for (let i = arr.length - 1; i > 0; i--) {
@@ -401,9 +431,17 @@ function shuffleMCQQuestion(questionObj) {
     let { options, answer } = questionObj;
     let correctIndices = [];
     if (typeof answer === 'string') {
-        const ansMatches = answer.match(/[A-D]/g);
-        if (ansMatches) correctIndices = ansMatches.map(l => "ABCD".indexOf(l));
-    } else if (Array.isArray(answer)) correctIndices = answer;
+      const ansMatches = String(answer).toUpperCase().match(/[A-D]/g);
+      if (ansMatches) correctIndices = ansMatches.map(l => "ABCD".indexOf(l));
+    } else if (Array.isArray(answer)) {
+      if (answer.length && typeof answer[0] === 'string') {
+        correctIndices = answer
+          .map(l => "ABCD".indexOf(String(l).toUpperCase()))
+          .filter(i => i >= 0);
+      } else {
+        correctIndices = answer; // assume indices
+      }
+    }
     const optPairs = options.map((opt, idx) => ({ opt, idx }));
     shuffleArray(optPairs);
     const newOptions = optPairs.map(p => p.opt);
@@ -2095,6 +2133,7 @@ window.location.href = 'exam-review.html';
 </script>
 </body>
 </html>
+
 
 
 
