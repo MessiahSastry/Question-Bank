@@ -1984,36 +1984,60 @@ function _finalStemKey(raw, marks) {
 })();
 // HARD de-dupe (by normalized stem + marks) and renumber right before save
 try {
-  (finalPaper.subjects || []).forEach(s => {
-    const subjectSeen = new Set(); // avoid repeats across sections of the same subject
+  // For Question Bank builds: keep original strict de-dup.
+  // For Paste / Upload .docx: NO de-dup at all — keep everything as pasted.
+  const sourceTypeGlobal =
+    (document.getElementById('exam-source-dropdown')?.dataset?.value) || 'Question Bank';
 
-    (s.sections || []).forEach(sec => {
-      const perSectionSeen = new Set();
-      const out = [];
-      const fallbackMarks = Number(sec.marksPerQuestion ?? 0);
+  if (sourceTypeGlobal === 'Question Bank') {
+    (finalPaper.subjects || []).forEach(s => {
+      const subjectSeen = new Set(); // avoid repeats across sections of the same subject
+      (s.sections || []).forEach(sec => {
+        const perSectionSeen = new Set();
+        const out = [];
+        const fallbackMarks = Number(sec.marksPerQuestion ?? 0);
 
-      for (const q of (sec.questions || [])) {
-        if (q && 'srcId' in q) delete q.srcId; // drop debug field if present
-        const stem  = q?.text ?? q?.question ?? '';
-        const marks = Number(q?.marks ?? fallbackMarks);
-        const k = _finalStemKey(stem, marks);
-        if (!k) { out.push(q); continue; }
-        if (perSectionSeen.has(k) || subjectSeen.has(k)) continue;
-        perSectionSeen.add(k);
-        subjectSeen.add(k);
-        out.push(q);
-      }
+        for (const q of (sec.questions || [])) {
+          if (q && 'srcId' in q) delete q.srcId; // drop debug field if present
+          const stem  = q?.text ?? q?.question ?? '';
+          const marks = Number(q?.marks ?? fallbackMarks);
+          const k = _finalStemKey(stem, marks);
+          if (!k) { out.push(q); continue; }
+          if (perSectionSeen.has(k) || subjectSeen.has(k)) continue;
+          perSectionSeen.add(k);
+          subjectSeen.add(k);
+          out.push(q);
+        }
 
-      // renumber neatly within the section for preview
-      sec.questions = out.map((q, i) => ({ ...q, number: i + 1 }));
+        // renumber neatly within the section for preview
+        sec.questions = out.map((q, i) => ({ ...q, number: i + 1 }));
 
-      if (sec.type === 'internal') {
-        sec.numPairs = sec.questions.length;
-      } else {
-        sec.numQuestions = sec.questions.length;
-      }
+        if (sec.type === 'internal') {
+          sec.numPairs = sec.questions.length;
+        } else {
+          sec.numQuestions = sec.questions.length;
+        }
+      });
     });
-  });
+  } else {
+    // Paste / Upload .docx: keep ALL questions exactly as collected; just renumber.
+    (finalPaper.subjects || []).forEach(s => {
+      (s.sections || []).forEach(sec => {
+        const fallbackMarks = Number(sec.marksPerQuestion ?? 0);
+        sec.questions = (sec.questions || []).map((q, i) => {
+          if (q && 'srcId' in q) delete q.srcId; // strip debug field only
+          if (q && (q.marks == null || isNaN(q.marks))) q.marks = fallbackMarks; // ensure marks
+          return { ...q, number: i + 1 };
+        });
+
+        if (sec.type === 'internal') {
+          sec.numPairs = sec.questions.length;
+        } else {
+          sec.numQuestions = sec.questions.length;
+        }
+      });
+    });
+  }
 } catch (e) {
   console.warn('final cleanup error:', e);
 }
@@ -2034,6 +2058,7 @@ window.location.href = 'exam-review.html';
 </script>
 </body>
 </html>
+
 
 
 
