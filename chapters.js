@@ -302,11 +302,14 @@ window.textbooks = {
     "Social": [
       "Our Universe and the Earth",
       "Forests",
+      "Learning Through Maps",
+      "Delhi Sulthanate",
+      "Kakatiya Kingdom",
+      "Vijayanagara Empire",
       "Equality in Indian Democracy",
       "State Government",
       "Our Country – India",
       "India’s Neighbors",
-      "The Mughal Empire",
       "Rulers and Buildings",
       "Mobile and Settled Communities",
       "Popular Beliefs and Religious Debates"
@@ -715,6 +718,7 @@ window.textbooks = {
     ]
   }
 };
+
 
 
 
