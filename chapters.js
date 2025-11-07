@@ -356,9 +356,7 @@ window.textbooks = {
     "Math 1": [
       "Rational Numbers",
       "Linear Equations in One Variable",
-      "Understanding Quadrilaterals",
       "Practical Geometry",
-      "Data Handling",
       "Squares and Square Roots"
     ],
     "Math 1 IIT": [
@@ -375,6 +373,8 @@ window.textbooks = {
       "Algebraic Expressions - Basics"
     ],
     "Math 2": [
+      "Understanding Quadrilaterals",
+      "Data Handling",
       "Cubes and Cube Roots",
       "Comparing Quantities",
       "Algebraic Expressions and Identities",
@@ -718,6 +718,7 @@ window.textbooks = {
     ]
   }
 };
+
 
 
 
