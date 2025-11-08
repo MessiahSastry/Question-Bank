@@ -373,10 +373,10 @@
   </div>
 </div>
  <script>
-   function formatSubQuestions(text) {
+  function formatSubQuestions(text) {
   if (!text) return '';
 
-  // Normalize HTML → plain text
+  // 1) Normalize HTML → lines
   let t = String(text)
     .replace(/\r/g, '')
     .replace(/&nbsp;/gi, ' ')
@@ -389,35 +389,38 @@
     .replace(/<ol[^>]*>|<ul[^>]*>|<\/ol>|<\/ul>/gi, '')
     .trim();
 
-  // Remove any existing OR variants so we re-insert a single centered one
-  t = t
-    .replace(/\n\s*\(?\s*OR\s*\)?\s*\n/gi, '\n')
-    .replace(/\s*\(\s*OR\s*\)\s*/gi, ' ')
-    .replace(/\s+\bOR\b\s+/gi, ' ');
+  // 2) Clean any existing standalone OR lines we’ll reinsert centered
+  t = t.replace(/\n\s*\(?\s*OR\s*\)?\s*\n/gi, '\n');
 
-  // Accept labels with various punctuation/spaces
-  const aLabel = /\(\s*A\s*\)|A\)|A\.|A\:/i;
-  const bLabel = /\(\s*B\s*\)|B\)|B\.|B\:/i;
+  const lines = t.split('\n').map(s => s.trim()).filter(Boolean);
 
-  if (aLabel.test(t) && bLabel.test(t)) {
-    // Split at B (tolerant)
-    const parts = t.split(bLabel);
-    const stripLead = s => s.replace(/^\s*(\(\s*[AB]\s*\)|[AB][\)\.\:])\s*/i, '').trim();
-    const dropWrappedLabels = s => s.replace(/\n\s*(\(\s*[AB]\s*\)|[AB][\)\.\:])\s+/gi, '\n');
+  // 3) Find the first A-line and first B-line anywhere below it
+  const A_RE = /^\s*(?:\(\s*A\s*\)|A[\)\.\:])\s*/i;
+  const B_RE = /^\s*(?:\(\s*B\s*\)|B[\)\.\:])\s*/i;
 
-    const aTxt = dropWrappedLabels(stripLead(parts[0] || ''));
-    const bTxt = dropWrappedLabels(stripLead((parts[1] || '')));
+  let aIdx = -1, bIdx = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (aIdx === -1 && A_RE.test(lines[i])) aIdx = i;
+    if (aIdx !== -1 && bIdx === -1 && B_RE.test(lines[i])) { bIdx = i; break; }
+  }
+
+  // If we got a proper A … B pair, build the centered OR block
+  if (aIdx !== -1 && bIdx !== -1 && bIdx > aIdx) {
+    const stripLabel = s => s.replace(A_RE, '').replace(B_RE, '').trim();
+    const aTxt = lines.slice(aIdx, bIdx).map((ln, k) => k === 0 ? stripLabel(ln) : ln.replace(A_RE,'')).join('\n');
+    const bTxt = lines.slice(bIdx).map((ln, k) => k === 0 ? stripLabel(ln) : ln.replace(B_RE,'')).join('\n');
+
+    const dropWrappedAB = s => s.replace(/\n\s*(?:\(\s*[AB]\s*\)|[AB][\)\.\:])\s+/gi, '\n');
 
     return `
-      <div class="pair-a"><span class="label">(A)</span><span class="txt">${aTxt}</span></div>
+      <div class="pair-a"><span class="label">(A)</span><span class="txt">${dropWrappedAB(aTxt)}</span></div>
       <div class="pair-or">(OR)</div>
-      <div class="pair-b"><span class="label">(B)</span><span class="txt">${bTxt}</span></div>
+      <div class="pair-b"><span class="label">(B)</span><span class="txt">${dropWrappedAB(bTxt)}</span></div>
     `;
   }
 
-  // Fallback: just lines
-  return t.split(/\n/).map(s => s.trim()).filter(Boolean)
-           .map(line => `<div>${line}</div>`).join('');
+  // Fallback: no internal choice → simple lines
+  return lines.map(line => `<div>${line}</div>`).join('');
 }
 
   function autoLatexAll(str) {
@@ -1033,6 +1036,7 @@ window.addEventListener('DOMContentLoaded', () => {
 </script>
  </body>
 </html>
+
 
 
 
