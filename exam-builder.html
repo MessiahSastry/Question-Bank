@@ -571,7 +571,7 @@ function allocateSequentiallyAcrossSections(subjectsData, pool, { shuffleQuestio
     if (index >= pool.length) return null;
     const rawBlock = stripLead(pool[index++]) || '';
 
-    // remove trailing "Ans: ..." if present
+    // base stem: strip trailing "Ans: ..." if present
     let stem = rawBlock.replace(/\bAns?\s*:\s*.*$/i, '').trim();
 
     // if inline A) ... D) options exist, cut them off from the stem
@@ -580,6 +580,13 @@ function allocateSequentiallyAcrossSections(subjectsData, pool, { shuffleQuestio
       const aLabelIdx = stem.search(/(^|\s)A[)\.]\s/i);
       if (aLabelIdx !== -1) stem = stem.slice(0, aLabelIdx).trim();
     }
+
+    // drop any leading A/a labels only at the very start (keep inner (a),(b) etc.)
+    stem = stem.replace(/^\s*(?:\(?[Aa]\)?[.)]|(?:\(A\))|A[.)])\s+/, '');
+
+    // also drop any leftover leading "a)" / "a." variants
+    stem = stem.replace(/^\s*[aA][.)]\s+/, '');
+
     return stem || null;
   };
 
@@ -588,9 +595,18 @@ function allocateSequentiallyAcrossSections(subjectsData, pool, { shuffleQuestio
     const bStem = takeCleanStem();
     if (!aStem || !bStem) break;
 
+    // Render as:
+    //  (A) text
+    //  (OR)   [centered]
+    //  (B) text
+    const htmlPair =
+      `(A) ${aStem}<br>` +
+      `<div style="text-align:center;"><b>(OR)</b></div>` +
+      `(B) ${bStem}`;
+
     pairs.push({
-      number: p + 1,
-      text: `a) ${aStem}\n\nb) ${bStem}`,
+      number: p + 1,             // preview will continue global numbering
+      text: htmlPair,            // HTML so "(OR)" centers nicely
       marks: marks,
       options: [],
       answer: ""
@@ -1596,9 +1612,14 @@ function buildSectionInstructions(sec) {
     return anyN ? `Answer any ${anyN} questions` : `Answer any questions`;
   }
   if (sec.type === "internal") {
-    const p = Number(sec.numPairs) || 0;
-    return p ? `Answer any (${p} question pairs)` : `Answer any (question pairs)`;
-  }
+  const p = Number(sec.numPairs) || 0;
+  const n = p || 0;
+  const plural = n === 1 ? "question" : "questions";
+  // Example: "Answer all 2 questions. Choose either (A) or (B) in each."
+  return n
+    ? `Answer all ${n} ${plural}. Choose either (A) or (B) in each.`
+    : `Answer all questions. Choose either (A) or (B) in each.`;
+}
   return "";
 }
 
@@ -2231,6 +2252,7 @@ window.location.href = 'exam-review.html';
 </script>
 </body>
 </html>
+
 
 
 
