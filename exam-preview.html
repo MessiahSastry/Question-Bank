@@ -718,82 +718,90 @@ function renderPrintPreview() {
           </div>
         `;
 
-        if (section.questions && section.questions.length > 0) {
-          const questionsHTML = section.questions.map(q => {
-            const currentQNum = q.number || (qNum++);
-            let questionContentHTML = '';
-            let optionLines = [];
-            const hasShuffledOptions = Array.isArray(q.options) && q.options.length === 4;
+       if (section.questions && section.questions.length > 0) {
+          const questionsHTML = section.questions.map(q => {
+            const currentQNum = q.number || (qNum++);
+            let questionContentHTML = '';
+            let optionLines = [];
+            const hasShuffledOptions = Array.isArray(q.options) && q.options.length === 4;
+            let isAlreadyFormatted = false; // <-- 1. ADD THIS FLAG
 
-            if (hasShuffledOptions) {
-              const raw = (q.question || q.text || '');
-              questionContentHTML = raw.replace(/\s*A\).*/g, '').trim();
-              optionLines = q.options.map((opt, idx) => {
-                const cleanOpt = stripLeadingLabel(opt);
-                return String.fromCharCode(65 + idx) + ') ' + cleanOpt;
-              });
-            } else {
-              const pre = (q.html || q.renderedHTML || q.finalHTML || q.formattedHTML || q.question || q.text || '');
-              // If review already produced pair markup, trust it as-is
-              if (/\bpair-a\b/.test(pre) && /\bpair-b\b/.test(pre)) {
-                questionContentHTML = ensureOrAB(pre);
-              } else {
-                let html = pre
-                  .replace(/<img[^>]*>/gi, '')
-                  .replace(/<\/p>/gi,'<br>')
-                  .replace(/<div[^>]*>/gi,'<br>')
-                  .replace(/<\/div>/gi,'')
-                  .replace(/<li[^>]*>/gi,'<br>')
-                  .replace(/<\/li>/gi,'')
-                  .replace(/<ol[^>]*>|<ul[^>]*>|<\/ol>|<\/ul>/gi,'');
+            if (hasShuffledOptions) {
+              const raw = (q.question || q.text || '');
+              questionContentHTML = raw.replace(/\s*A\).*/g, '').trim();
+              optionLines = q.options.map((opt, idx) => {
+                const cleanOpt = stripLeadingLabel(opt);
+                return String.fromCharCode(65 + idx) + ') ' + cleanOpt;
+              });
+            } else {
+              const pre = (q.html || q.renderedHTML || q.finalHTML || q.formattedHTML || q.question || q.text || '');
+              // If review already produced pair markup, trust it as-is
+              if (/\bpair-a\b/.test(pre) && /\bpair-b\b/.test(pre)) {
+                questionContentHTML = ensureOrAB(pre);
+                isAlreadyFormatted = true; // <-- 2. SET THE FLAG
+              } else {
+                let html = pre
+                  .replace(/<img[^>]*>/gi, '')
+                  .replace(/<\/p>/gi,'<br>')
+                  .replace(/<div[^>]*>/gi,'<br>')
+a               .replace(/<\/div>/gi,'')
+                  .replace(/<li[^>]*>/gi,'<br>')
+                  .replace(/<\/li>/gi,'')
+                  .replace(/<ol[^>]*>|<ul[^>]*>|<\/ol>|<\/ul>/gi,'');
 
-                let parts = html.split(/<br\s*\/?>|\r?\n|\r/gi)
-                  .map(s => s.replace(/ /g, ' ').trim())
-                  .filter(Boolean);
+                let parts = html.split(/<br\s*\/?>|\r?\n|\r/gi)
+                  .map(s => s.replace(/ /g, ' ').trim())
+                  .filter(Boolean);
 
-                if (parts.length > 0) {
-                 questionContentHTML = ensureOrAB(autoLatexAll(removeMetaPrefix((parts[0] || ''))));
-                  for (let i = 1; i < parts.length; i++) {
-                    let line = autoLatexAll(parts[i]);
-                    let inlineOpts = line.match(/((?:^|\s|\()(?:(?:[A-D])|(?:iv|vi|ix|v?i{1,3}))\s*[)\.: -]\s*.*?)(?=\s+(?:^|\s|\()(?:(?:[A-D])|(?:iv|vi|ix|v?i{1,3}))\s*[)\.: -]\s*|$)/gi);
-                    if (inlineOpts && inlineOpts.length >= 2) {
-                      optionLines.push(...inlineOpts.map(opt => autoLatexAll(opt.trim())));
-                    } else {
-                      const singleOpt = line.match(/^\s*(?:^|\s|\()(?:(?:[A-D])|(?:iv|vi|ix|v?i{1,3}))\s*[)\.: -]\s+.+$/i);
-                      if (singleOpt) {
-                        optionLines.push(autoLatexAll((singleOpt[0] || '').trim()));
-                      } else if (line && !/^\s*(?:^|\s|\()(?:(?:[A-D])|(?:\(?i{1,3}\)?|iv))\s*[\)\.\:\-–—]\s+/.test(line)) {
-                        questionContentHTML += '<br>' + line;
-                      }
-                    }
-                  }
-                  if (optionLines.length === 4) {
-                    optionLines = optionLines
-                      .map(s => stripLeadingLabel(s).replace(/\s+/g,' ').trim())
-                      .map((opt, i) => String.fromCharCode(65 + i) + ') ' + opt);
-                  }
-                } // ← closes if(parts.length>0)
-              }   // ← closes else { ... } for hasShuffledOptions
-            }
+                if (parts.length > 0) {
+                 questionContentHTML = ensureOrAB(autoLatexAll(removeMetaPrefix((parts[0] || ''))));
+                  for (let i = 1; i < parts.length; i++) {
+                    let line = autoLatexAll(parts[i]);
+                    let inlineOpts = line.match(/((?:^|\s|\()(?:(?:[A-D])|(?:iv|vi|ix|v?i{1,3}))\s*[)\.: -]\s*.*?)(?=\s+(?:^|\s|\()(?:(?:[A-D])|(?:iv|vi|ix|v?i{1,3}))\s*[)\.: -]\s*|$)/gi);
+                    if (inlineOpts && inlineOpts.length >= 2) {
+                      optionLines.push(...inlineOpts.map(opt => autoLatexAll(opt.trim())));
+                    } else {
+                      const singleOpt = line.match(/^\s*(?:^|\s|\()(?:(?:[A-D])|(?:iv|vi|ix|v?i{1,3}))\s*[)\.: -]\s+.+$/i);
+                      if (singleOpt) {
+                        optionLines.push(autoLatexAll((singleOpt[0] || '').trim()));
+Next               } else if (line && !/^\s*(?:^|\s|\()(?:(?:[A-D])|(?:\(?i{1,3}\)?|iv))\s*[\)\.\:\-–—]\s+/.test(line)) {
+                        questionContentHTML += '<br>' + line;
+                s     }
+                    }
+                  }
+                  if (optionLines.length === 4) {
+                    optionLines = optionLines
+                      .map(s => stripLeadingLabel(s).replace(/\s+/g,' ').trim())
+s                     .map((opt, i) => String.fromCharCode(65 + i) + ') ' + opt);
+                  }
+                } // ← closes if(parts.length>0)
+          _B_L_A_N_K_     }   // ← closes else { ... } for hasShuffledOptions
+            }
 
-            const optionsHTML = renderOptionsLayout(optionLines);
-            const imageHTML = q.image ? `<div class="question-img-block"><img class="question-img" src="${q.image}" alt="Question Image" /></div>` : '';
+            const optionsHTML = renderOptionsLayout(optionLines);
+            const imageHTML = q.image ? `<div class="question-img-block"><img class="question-img" src="${q.image}" alt="Question Image" /></div>` : '';
 
-            return `
-              <div class="question-container">
-                <div class="question-number">${currentQNum}.</div>
-                <div class="question-body">
-                  <div class="question-text" style="font-size:1.15em;" ${section.type==='internal' ? 'data-internal-choice="1"' : ''}>
-                  ${forceOrAB(formatSubQuestions(questionContentHTML))}
-                </div>
-                  ${imageHTML}
-                  <div class="options-block" data-options="${encodeURIComponent(JSON.stringify(optionLines))}">${optionsHTML}</div>
-                </div>
-              </div>
-            `;
-          }).join('');
-          contentHTML += questionsHTML;
-        }
+            // <-- 3. ADD THIS LOGIC
+            const finalQuestionHTML = isAlreadyFormatted
+              ? questionContentHTML
+              : forceOrAB(formatSubQuestions(questionContentHTML));
+            // --- END OF NEW LOGIC ---
+
+            return `
+              <div class="question-container">
+                <div class="question-number">${currentQNum}.</div>
+                <div class="question-body">
+                  <div class="question-text" style="font-size:1.15em;" ${section.type==='internal' ? 'data-internal-choice="1"' : ''}>
+                    ${finalQuestionHTML} 
+                  </div>
+                  ${imageHTML}
+                  <div class="options-block" data-options="${encodeURIComponent(JSON.stringify(optionLines))}">${optionsHTML}</div>
+                </div>
+              </div>
+      _B_L_A_N_K_    `;
+          }).join('');
+          contentHTML += questionsHTML;
+        }
       }
     }
   } else if (exam.subjects && exam.subjects.length === 1) {
@@ -831,81 +839,91 @@ function renderPrintPreview() {
           </div>
         `;
 
-        if (section.questions && section.questions.length > 0) {
-          const questionsHTML = section.questions.map(q => {
-            const currentQNum = q.number || (qNum++);
-            let questionContentHTML = '';
-            let optionLines = [];
-            const hasShuffledOptions = Array.isArray(q.options) && q.options.length === 4;
+       if (section.questions && section.questions.length > 0) {
+          const questionsHTML = section.questions.map(q => {
+            const currentQNum = q.number || (qNum++);
+            let questionContentHTML = '';
+            let optionLines = [];
+            const hasShuffledOptions = Array.isArray(q.options) && q.options.length === 4;
+            let isAlreadyFormatted = false; // <-- 1. ADD THIS FLAG
 
-            if (hasShuffledOptions) {
-              const raw = (q.question || q.text || '');
-              questionContentHTML = raw.replace(/\s*A\).*/g, '').trim();
-              optionLines = q.options.map((opt, idx) => {
-                const cleanOpt = stripLeadingLabel(opt);
-                return String.fromCharCode(65 + idx) + ') ' + cleanOpt;
-              });
-            } else {
-              let html = (q.text || q.question || '')
-                .replace(/<img[^>]*>/gi, '')
-                .replace(/<\/p>/gi, '<br>')
-                .replace(/<div[^>]*>/gi, '<br>')
-                .replace(/<\/div>/gi, '')
-                .replace(/<li[^>]*>/gi, '<br>')
-                .replace(/<\/li>/gi, '')
-                .replace(/<ol[^>]*>|<ul[^>]*>|<\/ol>|<\/ul>/gi, '');
-            
-              let parts = html.split(/<br\s*\/?>|\r?\n|\r/gi)
-                .map(s => s.replace(/ /g, ' ').trim())
-                .filter(Boolean);
-            
-              if (parts.length > 0) {
-                questionContentHTML = ensureOrAB(autoLatexAll(removeMetaPrefix((parts[0] || ''))));
-                for (let i = 1; i < parts.length; i++) {
-                  const raw = parts[i];
-                  let line = autoLatexAll(raw);
-            
-                  let inlineOpts = line.match(
-                    /((?:^|\s|\()(?:(?:[A-D])|(?:iv|vi|ix|v?i{1,3}))\s*[)\.: -]\s*.*?)(?=\s+(?:^|\s|\()(?:(?:[A-D])|(?:iv|vi|ix|v?i{1,3}))\s*[)\.: -]\s*|$)/gi
-                  );
-                  if (inlineOpts && inlineOpts.length >= 2) {
-                    optionLines.push(...inlineOpts.map(opt => autoLatexAll(opt.trim())));
-                  } else {
-                    const singleOpt = raw.match(/^\s*(?:^|\s|\()(?:(?:[A-D])|(?:\(?i{1,3}\)?|iv))\s*[\)\.\:\-–—]\s+.+$/i);
-                    if (singleOpt) {
-                      optionLines.push(autoLatexAll(singleOpt[0].trim()));
-                    } else if (line) {
-                      questionContentHTML += '<br>' + line;
-                    }
-                  }
-                }
-            
-                if (optionLines.length === 4) {
-                  optionLines = optionLines
-                    .map(s => stripLeadingLabel(s).replace(/\s+/g, ' ').trim())
-                    .map((opt, i) => String.fromCharCode(65 + i) + ') ' + opt);
-                }
-              } // ← closes if(parts.length>0)
-            }   // ← closes else { ... } for hasShuffledOptions
+            if (hasShuffledOptions) {
+              const raw = (q.question || q.text || '');
+              questionContentHTML = raw.replace(/\s*A\).*/g, '').trim();
+nbsp;             optionLines = q.options.map((opt, idx) => {
+                const cleanOpt = stripLeadingLabel(opt);
+                return String.fromCharCode(65 + idx) + ') ' + cleanOpt;
+              });
+            } else {
+              // THIS IS THE UPGRADED LOGIC:
+€             const pre = (q.html || q.renderedHTML || q.finalHTML || q.formattedHTML || q.question || q.text || '');
+              // If review already produced pair markup, trust it as-is
+              if (/\bpair-a\b/.test(pre) && /\bpair-b\b/.test(pre)) {
+                questionContentHTML = ensureOrAB(pre);
+                isAlreadyFormatted = true; // <-- 2. SET THE FLAG
+              } else {
+                let html = pre
+                  .replace(/<img[^>]*>/gi, '')
+a               .replace(/<\/p>/gi,'<br>')
+                  .replace(/<div[^>]*>/gi,'<br>')
+                  .replace(/<\/div>/gi,'')
+                  .replace(/<li[^>]*>/gi,'<br>')
+a               .replace(/<\/li>/gi,'')
+                  .replace(/<ol[^>]*>|<ul[^>]*>|<\/ol>|<\/ul>/gi,'');
 
-            const optionsHTML = renderOptionsLayout(optionLines);
-            const imageHTML = q.image ? `<div class="question-img-block"><img class="question-img" src="${q.image}" alt="Question Image" /></div>` : '';
+                let parts = html.split(/<br\s*\/?>|\r?\n|\r/gi)
+                  .map(s => s.replace(/ /g, ' ').trim())
+                  .filter(Boolean);
 
-            return `
-              <div class="question-container">
-                <div class="question-number">${currentQNum}.</div>
-                <div class="question-body">
-                  <div class="question-text" style="font-size:1.15em;" ${section.type==='internal' ? 'data-internal-choice="1"' : ''}>
-                  ${forceOrAB(formatSubQuestions(questionContentHTML))}
-                </div>
-                  ${imageHTML}
-                  <div class="options-block" data-options="${encodeURIComponent(JSON.stringify(optionLines))}">${optionsHTML}</div>
-                </div>
-              </div>
-            `;
-          }).join('');
-          contentHTML += questionsHTML;
-        }
+              s if (parts.length > 0) {
+                 questionContentHTML = ensureOrAB(autoLatexAll(removeMetaPrefix((parts[0] || ''))));
+                  for (let i = 1; i < parts.length; i++) {
+                    let line = autoLatexAll(parts[i]);
+s                   let inlineOpts = line.match(/((?:^|\s|\()(?:(?:[A-D])|(?:iv|vi|ix|v?i{1,3}))\s*[)\.: -]\s*.*?)(?=\s+(?:^|\s|\()(?:(?:[A-D])|(?:iv|vi|ix|v?i{1,3}))\s*[)\.: -]\s*|$)/gi);
+                    if (inlineOpts && inlineOpts.length >= 2) {
+                A     optionLines.push(...inlineOpts.map(opt => autoLatexAll(opt.trim())));
+                    } else {
+                      const singleOpt = line.match(/^\s*(?:^|\s|\()(?:(?:[A-D])|(?:iv|vi|ix|v?i{1,3}))\s*[)\.: -]\s+.+$/i);
+                      if (singleOpt) {
+                        optionLines.push(autoLatexAll((singleOpt[0] || '').trim()));
+s                     } else if (line && !/^\s*(?:^|\s|\()(?:(?:[A-D])|(?:\(?i{1,3}\)?|iv))\s*[\)\.\:\-–—]\s+/.test(line)) {
+                        questionContentHTML += '<br>' + line;
+                      }
+                    }
+s                 }
+                  if (optionLines.length === 4) {
+            _B_L_A_N_K_       optionLines = optionLines
+                      .map(s => stripLeadingLabel(s).replace(/\s+/g,' ').trim())
+                    s .map((opt, i) => String.fromCharCode(65 + i) + ') ' + opt);
+                  }
+                } // ← closes if(parts.length>0)
+              }   // ← closes else { ... } for hasShuffledOptions
+            }
+
+            const optionsHTML = renderOptionsLayout(optionLines);
+s           const imageHTML = q.image ? `<div class="question-img-block"><img class="question-img" src="${q.image}" alt="Question Image" /></div>` : '';
+
+            // <-- 3. ADD THIS LOGIC
+            const finalQuestionHTML = isAlreadyFormatted
+              ? questionContentHTML
+              : forceOrAB(formatSubQuestions(questionContentHTML));
+a           // --- END OF NEW LOGIC ---
+
+            return `
+              <div class="question-container">
+s               <div class="question-number">${currentQNum}.</div>
+                <div class="question-body">
+                  <div class="question-text" style="font-size:1.15em;" ${section.type==='internal' ? 'data-internal-choice="1"' : ''}>
+all                 ${finalQuestionHTML} 
+                  </div>
+                  ${imageHTML}
+                  <div class="options-block" data-options="${encodeURIComponent(JSON.stringify(optionLines))}">${optionsHTML}</div>
+                </div>
+s             </div>
+            `;
+          }).join('');
+          contentHTML += questionsHTML;
+        }
       }
     }
   }
@@ -1185,6 +1203,7 @@ window.addEventListener('DOMContentLoaded', () => {
 </script>
  </body>
 </html>
+
 
 
 
