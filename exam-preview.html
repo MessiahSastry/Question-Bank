@@ -441,7 +441,40 @@ if (inline){
     `;
   }
 
-  return lines.map(line=>`<div>${line}</div>`).join('');
+   // Default: wrap each remaining line
+  return lines.map(line => `<div>${line}</div>`).join('');
+} // <-- end of formatSubQuestions
+
+// --- helper: force "(OR)" between (A) and (B) ---
+function forceOrAB(html){
+  if (!html) return '';
+  // already has (OR) or explicit node
+  if (/\(\s*OR\s*\)/i.test(html) || /\bclass\s*=\s*["']pair-or["']/.test(html)) return html;
+
+  // pair markup present but missing (OR)
+  if (/\bpair-a\b/.test(html) && /\bpair-b\b/.test(html)) {
+    return html.replace(
+      /(<\/div>\s*)(<div[^>]*class=["']pair-b\b)/i,
+      '$1<div class="pair-or">(OR)</div>$2'
+    );
+  }
+
+  // raw (A) ... (B) in one block
+  const m = html.match(/\(\s*A\s*\)\s*([\s\S]*?)\s*\(\s*B\s*\)\s*([\s\S]*)$/i);
+  if (m) {
+    const a = m[1].trim(), b = m[2].trim();
+    return `
+      <div class="pair-a"><span class="label">(A)</span><span class="txt">${a}</span></div>
+      <div class="pair-or">(OR)</div>
+      <div class="pair-b"><span class="label">(B)</span><span class="txt">${b}</span></div>
+    `;
+  }
+  return html;
+}
+
+// shim so older calls keep working
+function ensureOrAB(html){
+  return forceOrAB(html);
 }
 
   function autoLatexAll(str) {
@@ -705,7 +738,7 @@ function renderPrintPreview() {
               const pre = (q.html || q.renderedHTML || q.finalHTML || q.formattedHTML || q.question || q.text || '');
               // If review already produced pair markup, trust it as-is
               if (/\bpair-a\b/.test(pre) && /\bpair-b\b/.test(pre)) {
-                questionContentHTML = pre;
+                questionContentHTML = ensureOrAB(pre);
               } else {
                 let html = pre
                   .replace(/<img[^>]*>/gi, '')
@@ -721,7 +754,7 @@ function renderPrintPreview() {
                   .filter(Boolean);
 
                 if (parts.length > 0) {
-                  questionContentHTML = autoLatexAll(removeMetaPrefix((parts[0] || '')));
+                 questionContentHTML = ensureOrAB(autoLatexAll(removeMetaPrefix((parts[0] || ''))));
                   for (let i = 1; i < parts.length; i++) {
                     let line = autoLatexAll(parts[i]);
                     let inlineOpts = line.match(/((?:^|\s|\()(?:(?:[A-D])|(?:iv|vi|ix|v?i{1,3}))\s*[)\.: -]\s*.*?)(?=\s+(?:^|\s|\()(?:(?:[A-D])|(?:iv|vi|ix|v?i{1,3}))\s*[)\.: -]\s*|$)/gi);
@@ -753,7 +786,7 @@ function renderPrintPreview() {
                 <div class="question-number">${currentQNum}.</div>
                 <div class="question-body">
                   <div class="question-text" style="font-size:1.15em;" ${section.type==='internal' ? 'data-internal-choice="1"' : ''}>
-                  ${/\bpair-a\b/.test(questionContentHTML) ? questionContentHTML : formatSubQuestions(questionContentHTML)}
+                  ${forceOrAB(/\bpair-a\b/.test(questionContentHTML) ? questionContentHTML : formatSubQuestions(questionContentHTML))}
                 </div>
                   ${imageHTML}
                   <div class="options-block" data-options="${encodeURIComponent(JSON.stringify(optionLines))}">${optionsHTML}</div>
@@ -829,7 +862,7 @@ function renderPrintPreview() {
                 .filter(Boolean);
             
               if (parts.length > 0) {
-                questionContentHTML = autoLatexAll(removeMetaPrefix((parts[0] || '')));
+                questionContentHTML = ensureOrAB(autoLatexAll(removeMetaPrefix((parts[0] || ''))));
                 for (let i = 1; i < parts.length; i++) {
                   const raw = parts[i];
                   let line = autoLatexAll(raw);
@@ -865,7 +898,7 @@ function renderPrintPreview() {
                 <div class="question-number">${currentQNum}.</div>
                 <div class="question-body">
                   <div class="question-text" style="font-size:1.15em;" ${section.type==='internal' ? 'data-internal-choice="1"' : ''}>
-                  ${formatSubQuestions(questionContentHTML)}
+                  ${formatSubQuestions(forceOrAB(questionContentHTML))}
                 </div>
                   ${imageHTML}
                   <div class="options-block" data-options="${encodeURIComponent(JSON.stringify(optionLines))}">${optionsHTML}</div>
@@ -1154,6 +1187,7 @@ window.addEventListener('DOMContentLoaded', () => {
 </script>
  </body>
 </html>
+
 
 
 
