@@ -353,7 +353,15 @@
 }
 
 .pair-or{ text-align:center; font-weight:700; margin:6px 0; }
-.pair-b{ display:block; margin-top:2px; }
+
+/* A & B blocks with hanging-style alignment */
+.pair-a, .pair-b{ display:block; margin-top:2px; }
+.pair-a .label, .pair-b .label{ display:inline-block; min-width:2em; font-weight:700; }
+.pair-a .txt, .pair-b .txt{ display:inline-block; vertical-align:top; text-indent:0; }
+
+/* Make sure any inline tags don’t shrink B */
+.question-text, .question-text *{ font-size:inherit !important; }
+.question-text small{ font-size:inherit !important; }
 </style>
 </head>
 <body>
@@ -366,40 +374,50 @@
  <script>
    function formatSubQuestions(text) {
   if (!text) return '';
-  // Normalize block breaks and force (OR)(B) onto separate lines
+
+  // HTML → plain lines; strip tags that cause odd sizes
   let t = String(text)
     .replace(/\r/g, '')
-    .replace(/<\/p>/gi, '<br>')
-    .replace(/<div[^>]*>/gi, '<br>')
+    .replace(/<\/p>/gi, '\n')
+    .replace(/<div[^>]*>/gi, '\n')
     .replace(/<\/div>/gi, '')
-    // (A) ... (OR)(B) ...  --> split into three lines
-    .replace(/\(OR\)\s*\(B\)/gi, '\n(OR)\n(B) ')
-    // stand-alone (OR) should be on its own line
-    .replace(/(^|[\s<])\(OR\)(?=[$\s<])/gi, '$1\n(OR)\n');
+    .replace(/<li[^>]*>/gi, '\n')
+    .replace(/<\/li>/gi, '')
+    .replace(/<ol[^>]*>|<ul[^>]*>|<\/ol>|<\/ul>/gi, '')
+    .replace(/<small[^>]*>/gi, '')         // remove <small>
+    .replace(/<\/small>/gi, '')
+    .replace(/\s+\n/g, '\n')
+    .trim();
 
-  return t
-    .split(/\n|<br\s*\/?>/gi)
-    .map(s => s.trim())
-    .filter(Boolean)
-    .map(line => {
-      // Centered (OR)
-      if (/^\(OR\)$/i.test(line)) {
-        return `<div class="pair-or">(OR)</div>`;
-      }
-      // (B) ... as a separate block
-      if (/^\(B\)[\s\S]*/i.test(line)) {
-        return `<div class="pair-b"><b>(B)</b> ${line.replace(/^\(B\)\s*/i,'')}</div>`;
-      }
-      // Standard sub-labels like A) / 1)
-      if (/^([A-D]|[1-9]+)[\.\)]\s+/i.test(line)) {
-        const label = line.match(/^([A-D]|[1-9]+)[\.\)]\s+/i)[0];
-        const content = line.replace(/^([A-D]|[1-9]+)[\.\)]\s+/, '');
-        return `<div style="margin-left:18px;"><b>${label}</b> ${content}</div>`;
-      }
-      return `<div>${line}</div>`;
-    })
-    .join('');
+  // Remove any existing ORs so we insert exactly one centered (OR)
+  t = t
+    .replace(/\n\s*\(?\s*OR\s*\)?\s*\n/gi, '\n')  // standalone lines like "OR" or "(OR)"
+    .replace(/\s*\(\s*OR\s*\)\s*/gi, ' ')         // inline "(OR)"
+    .replace(/\s+\bOR\b\s+/gi, ' ');              // inline "OR"
+
+  const hasA = /\(\s*A\s*\)/i.test(t);
+  const hasB = /\(\s*B\s*\)/i.test(t);
+
+  if (hasA && hasB) {
+    const parts = t.split(/\(\s*B\s*\)/i);
+    const aTxt = parts[0].replace(/^\s*\(\s*A\s*\)\s*/i, '').trim();
+    const bTxt = (parts[1] || '').trim();
+
+    return `
+      <div class="pair-a"><b class="label">(A)</b> <span class="txt">${aTxt}</span></div>
+      <div class="pair-or">(OR)</div>
+      <div class="pair-b"><b class="label">(B)</b> <span class="txt">${bTxt}</span></div>
+    `;
+  }
+
+  // Fallback: no internal choice → return as simple lines
+  return t.split(/\n|<br\s*\/?>/i)
+          .map(s => s.trim())
+          .filter(Boolean)
+          .map(line => `<div>${line}</div>`)
+          .join('');
 }
+
   function autoLatexAll(str) {
   if (!str) return '';
 
@@ -1013,6 +1031,7 @@ window.addEventListener('DOMContentLoaded', () => {
 </script>
  </body>
 </html>
+
 
 
 
