@@ -352,6 +352,8 @@
   .details-rect { border-color:#000 !important; background:#fff !important; }
 }
 
+.pair-or{ text-align:center; font-weight:700; margin:6px 0; }
+.pair-b{ display:block; margin-top:2px; }
 </style>
 </head>
 <body>
@@ -364,15 +366,31 @@
  <script>
    function formatSubQuestions(text) {
   if (!text) return '';
-  let t = text.replace(/\r/g, '')
-              .replace(/<\/p>/gi,'<br>')
-              .replace(/<div[^>]*>/gi,'<br>')
-              .replace(/<\/div>/gi,'');
+  // Normalize block breaks and force (OR)(B) onto separate lines
+  let t = String(text)
+    .replace(/\r/g, '')
+    .replace(/<\/p>/gi, '<br>')
+    .replace(/<div[^>]*>/gi, '<br>')
+    .replace(/<\/div>/gi, '')
+    // (A) ... (OR)(B) ...  --> split into three lines
+    .replace(/\(OR\)\s*\(B\)/gi, '\n(OR)\n(B) ')
+    // stand-alone (OR) should be on its own line
+    .replace(/(^|[\s<])\(OR\)(?=[$\s<])/gi, '$1\n(OR)\n');
+
   return t
     .split(/\n|<br\s*\/?>/gi)
-    .map(line => line.trim())
+    .map(s => s.trim())
     .filter(Boolean)
     .map(line => {
+      // Centered (OR)
+      if (/^\(OR\)$/i.test(line)) {
+        return `<div class="pair-or">(OR)</div>`;
+      }
+      // (B) ... as a separate block
+      if (/^\(B\)[\s\S]*/i.test(line)) {
+        return `<div class="pair-b"><b>(B)</b> ${line.replace(/^\(B\)\s*/i,'')}</div>`;
+      }
+      // Standard sub-labels like A) / 1)
       if (/^([A-D]|[1-9]+)[\.\)]\s+/i.test(line)) {
         const label = line.match(/^([A-D]|[1-9]+)[\.\)]\s+/i)[0];
         const content = line.replace(/^([A-D]|[1-9]+)[\.\)]\s+/, '');
@@ -586,11 +604,12 @@ function renderPrintPreview() {
     </div>
   `;
 
+    let qNum = 1;       // global continuous numbering
   let contentHTML = '';
   if (exam.subjects && exam.subjects.length > 1) {
     for (const subjectBlock of exam.subjects) {
       contentHTML += `<div style="text-align:center;font-weight:bold;font-size:1.14em;margin:22px 0 7px 0;color:#0f3d6b;">Subject: ${subjectBlock.subject || ''}</div>`;
-      let secNum = 1;
+            /* qNum is global; no per-section reset */
       for (const section of (subjectBlock.sections || [])) {
         contentHTML += `
           <div class="section-block" style="margin-bottom: 6px;">
@@ -602,12 +621,16 @@ function renderPrintPreview() {
               font-weight:bold;font-size:1.12em;padding:5px 26px 5px 18px;margin-bottom:10px;
               display:flex;align-items:center;justify-content:space-between;">
               <span style="flex:1;text-align:left;">
-                ${
-                  section.type === 'all'      ? `Answer all ${section.numQuestions} questions` :
-                  section.type === 'any'      ? `Answer any ${section.attemptAny || section.numQuestions} questions` :
-                  section.type === 'internal' ? `Answer all ${section.numPairs} pairs` : ''
-                }
-              </span>
+  ${
+    (() => {
+      let instr =
+        section.type === 'all'      ? `Answer all ${section.numQuestions} questions` :
+        section.type === 'any'      ? `Answer any ${section.attemptAny || section.numQuestions} questions` :
+        section.type === 'internal' ? `Answer all ${section.numPairs} pairs` : '';
+      return section.instructions || instr;
+    })()
+  }
+</span>
               <span style="flex:0 0 auto;text-align:right;margin-left:30px;">
                 ${
                   section.type === 'all'      ? `${section.numQuestions} x ${section.marksPerQuestion} = ${section.numQuestions * section.marksPerQuestion} Marks` :
@@ -621,7 +644,7 @@ function renderPrintPreview() {
 
         if (section.questions && section.questions.length > 0) {
           const questionsHTML = section.questions.map(q => {
-            const currentQNum = q.number || (secNum++);
+                        const currentQNum = q.number || (qNum++);
             let questionContentHTML = '';
             let optionLines = [];
             const hasShuffledOptions = Array.isArray(q.options) && q.options.length === 4;
@@ -693,7 +716,7 @@ function renderPrintPreview() {
     }
   } else if (exam.subjects && exam.subjects.length === 1) {
     for (const subjectBlock of exam.subjects) {
-      let secNum = 1;
+           /* qNum is global; no per-section reset */
       for (const section of (subjectBlock.sections || [])) {
         contentHTML += `
           <div class="section-block" style="margin-bottom: 6px;">
@@ -705,12 +728,16 @@ function renderPrintPreview() {
               font-weight:bold;font-size:1.12em;padding:5px 26px 5px 18px;margin-bottom:10px;
               display:flex;align-items:center;justify-content:space-between;">
               <span style="flex:1;text-align:left;">
-                ${
-                  section.type === 'all'      ? `Answer all ${section.numQuestions} questions` :
-                  section.type === 'any'      ? `Answer any ${section.attemptAny || section.numQuestions} questions` :
-                  section.type === 'internal' ? `Answer all ${section.numPairs} pairs` : ''
-                }
-              </span>
+              ${
+                (() => {
+                  let instr =
+                    section.type === 'all'      ? `Answer all ${section.numQuestions} questions` :
+                    section.type === 'any'      ? `Answer any ${section.attemptAny || section.numQuestions} questions` :
+                    section.type === 'internal' ? `Answer all ${section.numPairs} pairs` : '';
+                  return section.instructions || instr;
+                })()
+              }
+            </span>
               <span style="flex:0 0 auto;text-align:right;margin-left:30px;color:#0f3d6b;">
                 ${
                   section.type === 'all'      ? `${section.numQuestions} x ${section.marksPerQuestion} = ${section.numQuestions * section.marksPerQuestion} Marks` :
@@ -724,7 +751,7 @@ function renderPrintPreview() {
 
         if (section.questions && section.questions.length > 0) {
           const questionsHTML = section.questions.map(q => {
-            const currentQNum = q.number || (secNum++);
+                       const currentQNum = q.number || (qNum++);
             let questionContentHTML = '';
             let optionLines = [];
             const hasShuffledOptions = Array.isArray(q.options) && q.options.length === 4;
@@ -986,6 +1013,7 @@ window.addEventListener('DOMContentLoaded', () => {
 </script>
  </body>
 </html>
+
 
 
 
