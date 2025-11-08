@@ -1162,25 +1162,32 @@ container.classList.add('mjx-process');
 }
 
 
-// Inserts a gap + editable OR box between consecutive lines that start with (A) and (B)
+
+// Inserts a gap + editable OR box when (A)... and (B)... exist in the SAME block (even with <br>)
 function insertManualOrBoxes(root=document){
   (root.querySelectorAll('.question-text')||[]).forEach(qt=>{
-    const kids=[...qt.childNodes].filter(n=>n.nodeType===1||(n.nodeType===3&&n.textContent.trim()));
-    for(let i=0;i<kids.length-1;i++){
-      const a=kids[i], b=kids[i+1];
-      const aT=(a.textContent||'').trim();
-      const bT=(b.textContent||'').trim();
-      if(/^\(\s*A\s*\)/i.test(aT) && /^\(\s*B\s*\)/i.test(bT) &&
-         !(a.nextElementSibling && a.nextElementSibling.classList && a.nextElementSibling.classList.contains('or-box'))){
-        const g1=document.createElement('div'); g1.className='ab-gap';
-        const or=document.createElement('div'); or.className='or-box';
-        or.innerHTML='<input type="text" value="(OR)" aria-label="Internal choice text">';
-        const g2=document.createElement('div'); g2.className='ab-gap';
-        a.parentNode.insertBefore(g1,b);
-        a.parentNode.insertBefore(or,b);
-        a.parentNode.insertBefore(g2,b);
-        break;
-      }
+    if (qt.querySelector('.or-box') || (qt.querySelector('.pair-a') && qt.querySelector('.pair-b'))) return;
+
+    // Normalise <p>/<div> → <br> so we can search reliably
+    let html = (qt.innerHTML || '')
+      .replace(/<\/p>/gi, '<br>')
+      .replace(/<p[^>]*>/gi, '')
+      .replace(/<div[^>]*>/gi, '')
+      .replace(/<\/div>/gi, '');
+
+    const aIdx = html.search(/\(\s*A\s*\)/i);
+    const bIdx = aIdx >= 0 ? html.slice(aIdx + 1).search(/\(\s*B\s*\)/i) : -1;
+
+    if (aIdx >= 0 && bIdx >= 0) {
+      const beforeB = aIdx + 1 + bIdx; // absolute index of "(B)"
+      const insertHTML =
+        '<div class="ab-gap"></div>' +
+        '<div class="or-box"><input type="text" value="(OR)" aria-label="Internal choice text"></div>' +
+        '<div class="ab-gap"></div>';
+
+      // Insert just BEFORE the (B) marker
+      html = html.slice(0, beforeB) + insertHTML + html.slice(beforeB);
+      qt.innerHTML = html;
     }
   });
 }
@@ -1377,6 +1384,7 @@ window.addEventListener('DOMContentLoaded', () => {
 </script>
 </body>
 </html>
+
 
 
 
