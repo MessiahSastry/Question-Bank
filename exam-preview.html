@@ -390,12 +390,7 @@
   .trim();
 
 
-  // remove any existing “OR” lines so we re-insert one centered
-  t = t
-  .replace(/(?:\n|<br\s*\/?>)\s*(?:<[^>]*>)?\(?\s*OR\s*\)?(?:<\/[^>]*>)?\s*(?:\n|<br\s*\/?>)/gi, '\n')
-  .replace(/\(\s*OR\s*\)/gi, '');
-
-  const lines = t.split('\n').map(s=>s.trim()).filter(Boolean);
+    const lines = t.split('\n').map(s=>s.trim()).filter(Boolean);
   const A_RE = /^\s*(?:<[^>]+>\s*)*(?:\(\s*A\s*\)|A[\)\.\:])\s*/i;
 const B_RE = /^\s*(?:<[^>]+>\s*)*(?:\(\s*B\s*\)|B[\)\.\:])\s*/i;
 
@@ -405,7 +400,8 @@ const B_RE = /^\s*(?:<[^>]+>\s*)*(?:\(\s*B\s*\)|B[\)\.\:])\s*/i;
     if (aIdx!==-1 && bIdx===-1 && B_RE.test(lines[i])) { bIdx=i; break; }
   }
 
-   if (aIdx!==-1 && bIdx!==-1 && bIdx>aIdx){
+   if (aIdx!==-1 && bIdx!==-1 && bIdx>aIdx && !/\bOR\b/i.test(t)){
+
     const stripLead = s => s.replace(A_RE,'').replace(B_RE,'').trim();
     const dropWrappedAB = s => s.replace(/\n\s*(?:\(\s*[AB]\s*\)|[AB][\)\.\:])\s+/gi, '\n');
 
@@ -420,8 +416,8 @@ const B_RE = /^\s*(?:<[^>]+>\s*)*(?:\(\s*B\s*\)|B[\)\.\:])\s*/i;
   }
 
   // Fallback: (A)…(B)… present inside a single line/block
-  const abMatch = t.match(/\(\s*A\s*\)\s*([\s\S]*?)\s*\(\s*B\s*\)\s*([\s\S]*)$/i);
-  if (abMatch) {
+  const abMatch = /\bOR\b/i.test(t) ? null : t.match(/\(\s*A\s*\)\s*([\s\S]*?)\s*\(\s*B\s*\)\s*([\s\S]*)$/i);
+if (abMatch) {
   const aTxt = abMatch[1].trim();
   const bTxt = abMatch[2].trim();
     return `
@@ -432,8 +428,8 @@ const B_RE = /^\s*(?:<[^>]+>\s*)*(?:\(\s*B\s*\)|B[\)\.\:])\s*/i;
   }
 
   // 🔁 Fallback: A and B inside a single block (no newlines detected)
-  const inline = t.match(/\(\s*A\s*\)\s*([\s\S]*?)\s*\(\s*B\s*\)\s*([\s\S]*)$/i);
-  if (inline){
+  const inline = /\bOR\b/i.test(t) ? null : t.match(/\(\s*A\s*\)\s*([\s\S]*?)\s*\(\s*B\s*\)\s*([\s\S]*)$/i);
+if (inline){
     const aTxt = inline[1].trim();
     const bTxt = inline[2].trim();
     return `
@@ -754,7 +750,7 @@ function renderPrintPreview() {
               <div class="question-container">
                 <div class="question-number">${currentQNum}.</div>
                 <div class="question-body">
-                  <div class="question-text" style="font-size:1.15em;">
+                  <div class="question-text" style="font-size:1.15em;" ${section.type==='internal' ? 'data-internal-choice="1"' : ''}>
                   ${/\bpair-a\b/.test(questionContentHTML) ? questionContentHTML : formatSubQuestions(questionContentHTML)}
                 </div>
                   ${imageHTML}
@@ -893,6 +889,7 @@ function renderPrintPreview() {
             B_RE=/^\s*(?:\(\s*B\s*\)|B[\)\.\:])\s*/i,
             OR_RE=/^\s*\(?\s*OR\s*\)?\s*$/i;
       root.querySelectorAll('.question-body .question-text').forEach(qt=>{
+  if (qt.closest('[data-internal-choice="1"]')) return; // preserve review OR for internal choice
         const elms=[...qt.children]; if(elms.length<3) return;
         for(let i=0;i<elms.length-2;i++){
           const a=elms[i], o=elms[i+1], b=elms[i+2];
@@ -1137,6 +1134,7 @@ window.addEventListener('DOMContentLoaded', () => {
 </script>
  </body>
 </html>
+
 
 
 
