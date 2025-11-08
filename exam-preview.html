@@ -376,51 +376,44 @@
   function formatSubQuestions(text) {
   if (!text) return '';
 
-  // 1) Normalize HTML → lines
   let t = String(text)
-    .replace(/\r/g, '')
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/p>/gi, '\n')
-    .replace(/<div[^>]*>/gi, '\n')
-    .replace(/<\/div>/gi, '')
-    .replace(/<li[^>]*>/gi, '\n')
-    .replace(/<\/li>/gi, '')
-    .replace(/<ol[^>]*>|<ul[^>]*>|<\/ol>|<\/ul>/gi, '')
+    .replace(/\r/g,'')
+    .replace(/&nbsp;/gi,' ')
+    .replace(/<br\s*\/?>/gi,'\n')
+    .replace(/<\/p>/gi,'\n')
+    .replace(/<div[^>]*>/gi,'\n').replace(/<\/div>/gi,'')
+    .replace(/<li[^>]*>/gi,'\n').replace(/<\/li>/gi,'')
+    .replace(/<ol[^>]*>|<ul[^>]*>|<\/ol>|<\/ul>/gi,'')
     .trim();
 
-  // 2) Clean any existing standalone OR lines we’ll reinsert centered
+  // remove any existing “OR” lines so we re-insert one centered
   t = t.replace(/\n\s*\(?\s*OR\s*\)?\s*\n/gi, '\n');
 
-  const lines = t.split('\n').map(s => s.trim()).filter(Boolean);
-
-  // 3) Find the first A-line and first B-line anywhere below it
+  const lines = t.split('\n').map(s=>s.trim()).filter(Boolean);
   const A_RE = /^\s*(?:\(\s*A\s*\)|A[\)\.\:])\s*/i;
   const B_RE = /^\s*(?:\(\s*B\s*\)|B[\)\.\:])\s*/i;
 
-  let aIdx = -1, bIdx = -1;
-  for (let i = 0; i < lines.length; i++) {
-    if (aIdx === -1 && A_RE.test(lines[i])) aIdx = i;
-    if (aIdx !== -1 && bIdx === -1 && B_RE.test(lines[i])) { bIdx = i; break; }
+  let aIdx=-1, bIdx=-1;
+  for (let i=0;i<lines.length;i++){
+    if (aIdx===-1 && A_RE.test(lines[i])) aIdx=i;
+    if (aIdx!==-1 && bIdx===-1 && B_RE.test(lines[i])) { bIdx=i; break; }
   }
 
-  // If we got a proper A … B pair, build the centered OR block
-  if (aIdx !== -1 && bIdx !== -1 && bIdx > aIdx) {
-    const stripLabel = s => s.replace(A_RE, '').replace(B_RE, '').trim();
-    const aTxt = lines.slice(aIdx, bIdx).map((ln, k) => k === 0 ? stripLabel(ln) : ln.replace(A_RE,'')).join('\n');
-    const bTxt = lines.slice(bIdx).map((ln, k) => k === 0 ? stripLabel(ln) : ln.replace(B_RE,'')).join('\n');
-
+  if (aIdx!==-1 && bIdx!==-1 && bIdx>aIdx){
+    const stripLead = s => s.replace(A_RE,'').replace(B_RE,'').trim();
     const dropWrappedAB = s => s.replace(/\n\s*(?:\(\s*[AB]\s*\)|[AB][\)\.\:])\s+/gi, '\n');
 
+    const aTxt = dropWrappedAB([lines[aIdx].replace(A_RE,''), ...lines.slice(aIdx+1,bIdx)].join('\n'));
+    const bTxt = dropWrappedAB([lines[bIdx].replace(B_RE,''), ...lines.slice(bIdx+1)].join('\n'));
+
     return `
-      <div class="pair-a"><span class="label">(A)</span><span class="txt">${dropWrappedAB(aTxt)}</span></div>
+      <div class="pair-a"><span class="label">(A)</span><span class="txt">${aTxt}</span></div>
       <div class="pair-or">(OR)</div>
-      <div class="pair-b"><span class="label">(B)</span><span class="txt">${dropWrappedAB(bTxt)}</span></div>
+      <div class="pair-b"><span class="label">(B)</span><span class="txt">${bTxt}</span></div>
     `;
   }
 
-  // Fallback: no internal choice → simple lines
-  return lines.map(line => `<div>${line}</div>`).join('');
+  return lines.map(line=>`<div>${line}</div>`).join('');
 }
 
   function autoLatexAll(str) {
@@ -856,20 +849,42 @@ function renderPrintPreview() {
   container.classList.add('mjx-process');
 
   function doTypeset() {
-  // 1) Build options HTML BEFORE MathJax runs so TeX inside options is seen
+  // Normalize A / OR / B when they arrive as three sibling lines
+  (function normalizeInternalChoices(root=document){
+    const A_RE=/^\s*(?:\(\s*A\s*\)|A[\)\.\:])\s*/i,
+          B_RE=/^\s*(?:\(\s*B\s*\)|B[\)\.\:])\s*/i,
+          OR_RE=/^\s*\(?\s*OR\s*\)?\s*$/i;
+    root.querySelectorAll('.question-body .question-text').forEach(qt=>{
+      const elms=[...qt.children]; if(elms.length<3) return;
+      for(let i=0;i<elms.length-2;i++){
+        const a=elms[i], o=elms[i+1], b=elms[i+2];
+        if(A_RE.test((a.textContent||'').trim()) &&
+           OR_RE.test((o.textContent||'').trim()) &&
+           B_RE.test((b.textContent||'').trim())){
+          const strip=(h,re)=>String(h).replace(re,'').trim();
+          const html=`<div class="pair-a"><span class="label">(A)</span><span class="txt">${strip(a.innerHTML,A_RE)}</span></div>
+                      <div class="pair-or">(OR)</div>
+                      <div class="pair-b"><span class="label">(B)</span><span class="txt">${strip(b.innerHTML,B_RE)}</span></div>`;
+          a.insertAdjacentHTML('beforebegin', html);
+          a.remove(); o.remove(); b.remove();
+          break;
+        }
+      }
+    });
+  })(document);
+
+  // Build options HTML BEFORE MathJax
   document.querySelectorAll('.options-block[data-options]').forEach(node => {
     try {
       const raw = node.getAttribute('data-options') || '[]';
       const arr = JSON.parse(decodeURIComponent(raw));
-      if (Array.isArray(arr) && arr.length) {
-        node.innerHTML = renderOptionsLayout(arr);
-      }
+      if (Array.isArray(arr) && arr.length) node.innerHTML = renderOptionsLayout(arr);
     } catch (e) {}
   });
 
-  // 2) Now typeset everything (questions + options)
+  // Typeset MathJax
   if (window.MathJax && typeof window.MathJax.typesetPromise === 'function') {
-    return window.MathJax.typesetPromise([container])
+    return window.MathJax.typesetPromise([document.getElementById('print-preview')])
       .catch(err => console.error('MathJax typeset failed:', err));
   }
   return Promise.resolve();
@@ -1036,6 +1051,7 @@ window.addEventListener('DOMContentLoaded', () => {
 </script>
  </body>
 </html>
+
 
 
 
