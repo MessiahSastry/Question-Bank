@@ -356,7 +356,18 @@
 
 /* A & B blocks with hanging-style alignment */
 .pair-a, .pair-b{ display:flex; align-items:flex-start; gap:6px; margin-top:2px; }
-.pair-a .label, .pair-b .label{ flex:0 0 2.2em; font-weight:700; }
+.pair-a .label, .pair-b .label{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  width:1.4em; height:1.4em;
+  border:2px solid #000;
+  border-radius:9999px;
+  font-weight:700;
+  margin-right:8px;
+  flex:0 0 auto;
+  line-height:1;
+}
 .pair-a .txt, .pair-b .txt{ flex:1 1 auto; }
 .pair-or{ text-align:center; font-weight:700; margin:6px 0; }
 
@@ -935,112 +946,85 @@ if (section.questions && section.questions.length > 0) {
   container.classList.add('mjx-process');
 
   function doTypeset() {
-    // Normalize A / OR / B when they arrive as three sibling lines
-    (function normalizeInternalChoices(root=document){
-      const A_RE=/^\s*(?:\(\s*A\s*\)|A[\)\.\:])\s*/i,
-            B_RE=/^\s*(?:\(\s*B\s*\)|B[\)\.\:])\s*/i,
-            OR_RE=/^\s*\(?\s*OR\s*\)?\s*$/i;
-     root.querySelectorAll('.question-body .question-text').forEach(qt=>{
-          const elms=[...qt.children]; if(elms.length<3) return;
-        for(let i=0;i<elms.length-2;i++){
-          const a=elms[i], o=elms[i+1], b=elms[i+2];
-          if(A_RE.test((a.textContent||'').trim()) &&
-             OR_RE.test((o.textContent||'').trim()) &&
-             B_RE.test((b.textContent||'').trim())){
-            const strip=(h,re)=>String(h).replace(re,'').trim();
-            const html=`<div class="pair-a"><span class="label">(A)</span><span class="txt">${strip(a.innerHTML,A_RE)}</span></div>
-                        <div class="pair-or">(OR)</div>
-                        <div class="pair-b"><span class="label">(B)</span><span class="txt">${strip(b.innerHTML,B_RE)}</span></div>`;
-            a.insertAdjacentHTML('beforebegin', html);
-            a.remove(); o.remove(); b.remove();
-            break;
-          }
-        }
-      });
-    })(document);
+  // --- HARD normalizer: build pair markup even if author forgot OR or line-breaks ---
+  (function hardAB(root=document){
+    root.querySelectorAll('.question-body .question-text').forEach(qt=>{
+      // already normalized
+      if (qt.querySelector('.pair-a') && qt.querySelector('.pair-b')) return;
 
-    // Ensure (OR) exists between pair-a and pair-b if formatter missed it
-    (function ensureOrBetweenPairs(root=document){
-      root.querySelectorAll('.question-body .question-text').forEach(qt=>{
-        const a = qt.querySelector(':scope > .pair-a');
-        const b = qt.querySelector(':scope > .pair-b');
-        if (a && b) {
-          const mid = a.nextElementSibling;
-          if (!mid || !mid.classList || !mid.classList.contains('pair-or')) {
-            const or = document.createElement('div');
-            or.className = 'pair-or';
-            or.textContent = '(OR)';
-            a.insertAdjacentElement('afterend', or);
-          }
-        }
-      });
-    })(document);
+      const html = (qt.innerHTML || '').trim();
 
-    // Wrap (A) ... (B) into pair markup even when there's NO 'OR' line
-(function wrapABIfNoOr(root = document) {
-  const A_LAB = /\(\s*A\s*\)/i;
-  const B_LAB = /\(\s*B\s*\)/i;
-  const A_RE  = /^\s*(?:\(\s*A\s*\)|A[\)\.\:])\s*/i;
-  const B_RE  = /^\s*(?:\(\s*B\s*\)|B[\)\.\:])\s*/i;
-
-  root.querySelectorAll('.question-body .question-text').forEach(qt => {
-    // already normalized
-    if (qt.querySelector('.pair-a') && qt.querySelector('.pair-b')) return;
-
-    const html = (qt.innerHTML || '').trim();
-
-    // 0) PURE TEXT NODE case → split on (B) and rebuild with (OR)
-    if (!qt.children.length && A_LAB.test(html) && B_LAB.test(html)) {
-      const cleaned = html.replace(/\(\s*OR\s*\)/ig, '');
-      const parts = cleaned.split(/\(\s*B\s*\)/i);
-      const aHTML = (parts[0] || '').replace(A_RE, '').trim();
-      const bHTML = (parts[1] || '').trim();
-      qt.innerHTML =
-        `<div class="pair-a"><span class="label">(A)</span><span class="txt">${aHTML}</span></div>` +
-        `<div class="pair-or">(OR)</div>` +
-        `<div class="pair-b"><span class="label">(B)</span><span class="txt">${bHTML}</span></div>`;
-      return;
-    }
-
-    // 1) ELEMENT LINES case → locate elements starting with (A) ... and (B) ...
-    const kids = Array.from(qt.children);
-    if (!kids.length) return;
-
-    let aIdx = -1, bIdx = -1;
-    for (let i = 0; i < kids.length; i++) {
-      const t = (kids[i].textContent || '').trim();
-      if (aIdx < 0 && A_RE.test(t)) aIdx = i;
-      else if (aIdx >= 0 && bIdx < 0 && B_RE.test(t)) { bIdx = i; break; }
-    }
-
-    if (aIdx >= 0 && bIdx >= 0) {
-      const strip = (el, re) => String(el.innerHTML || '').replace(re, '').trim();
-      const aHTML = strip(kids[aIdx], A_RE);
-      const bHTML = strip(kids[bIdx], B_RE);
-      qt.innerHTML =
-        `<div class="pair-a"><span class="label">(A)</span><span class="txt">${aHTML}</span></div>` +
-        `<div class="pair-or">(OR)</div>` +
-        `<div class="pair-b"><span class="label">(B)</span><span class="txt">${bHTML}</span></div>`;
-    }
-  });
-})(document);
-
-    // Build options HTML BEFORE MathJax
-    document.querySelectorAll('.options-block[data-options]').forEach(node => {
-      try {
-        const raw = node.getAttribute('data-options') || '[]';
-        const arr = JSON.parse(decodeURIComponent(raw));
-        if (Array.isArray(arr) && arr.length) node.innerHTML = renderOptionsLayout(arr);
-      } catch (e) {}
+      // Match (A) ... [optional (OR)] ... (B) ...  (works across tags/newlines)
+      const m = html.match(/\(\s*A\s*\)\s*([\s\S]*?)\s*(?:\(\s*OR\s*\)\s*)?\(\s*B\s*\)\s*([\s\S]*)/i);
+      if (m) {
+        const aHTML = m[1].trim();
+        const bHTML = m[2].trim();
+        qt.innerHTML =
+          `<div class="pair-a"><span class="label">(A)</span><span class="txt">${aHTML}</span></div>` +
+          `<div class="pair-or">(OR)</div>` +
+          `<div class="pair-b"><span class="label">(B)</span><span class="txt">${bHTML}</span></div>`;
+        return;
+      }
     });
+  })();
 
-    // Typeset MathJax
-    if (window.MathJax && typeof window.MathJax.typesetPromise === 'function') {
-      return window.MathJax.typesetPromise([document.getElementById('print-preview')])
-        .catch(err => console.error('MathJax typeset failed:', err));
-    }
-    return Promise.resolve();
+  // Normalize A / OR / B when they arrive as three sibling lines
+  (function normalizeInternalChoices(root=document){
+    const A_RE=/^\s*(?:\(\s*A\s*\)|A[\)\.\:])\s*/i,
+          B_RE=/^\s*(?:\(\s*B\s*\)|B[\)\.\:])\s*/i,
+          OR_RE=/^\s*\(?\s*OR\s*\)?\s*$/i;
+    root.querySelectorAll('.question-body .question-text').forEach(qt=>{
+      const elms=[...qt.children]; if(elms.length<3) return;
+      for(let i=0;i<elms.length-2;i++){
+        const a=elms[i], o=elms[i+1], b=elms[i+2];
+        if(A_RE.test((a.textContent||'').trim()) &&
+           OR_RE.test((o.textContent||'').trim()) &&
+           B_RE.test((b.textContent||'').trim())){
+          const strip=(h,re)=>String(h).replace(re,'').trim();
+          const html=`<div class="pair-a"><span class="label">(A)</span><span class="txt">${strip(a.innerHTML,A_RE)}</span></div>
+                      <div class="pair-or">(OR)</div>
+                      <div class="pair-b"><span class="label">(B)</span><span class="txt">${strip(b.innerHTML,B_RE)}</span></div>`;
+          a.insertAdjacentHTML('beforebegin', html);
+          a.remove(); o.remove(); b.remove();
+          break;
+        }
+      }
+    });
+  })(document);
+
+  // Ensure (OR) exists between pair-a and pair-b if something built pairs without OR
+  (function ensureOrBetweenPairs(root=document){
+    root.querySelectorAll('.question-body .question-text').forEach(qt=>{
+      const a = qt.querySelector(':scope > .pair-a');
+      const b = qt.querySelector(':scope > .pair-b');
+      if (a && b) {
+        const mid = a.nextElementSibling;
+        if (!mid || !mid.classList || !mid.classList.contains('pair-or')) {
+          const or = document.createElement('div');
+          or.className = 'pair-or';
+          or.textContent = '(OR)';
+          a.insertAdjacentElement('afterend', or);
+        }
+      }
+    });
+  })(document);
+
+  // Build options HTML BEFORE MathJax
+  document.querySelectorAll('.options-block[data-options]').forEach(node => {
+    try {
+      const raw = node.getAttribute('data-options') || '[]';
+      const arr = JSON.parse(decodeURIComponent(raw));
+      if (Array.isArray(arr) && arr.length) node.innerHTML = renderOptionsLayout(arr);
+    } catch (e) {}
+  });
+
+  // Typeset MathJax
+  if (window.MathJax && typeof window.MathJax.typesetPromise === 'function') {
+    return window.MathJax.typesetPromise([document.getElementById('print-preview')])
+      .catch(err => console.error('MathJax typeset failed:', err));
   }
+  return Promise.resolve();
+}
 
   if (window.MathJax?.startup?.promise) {
     window.MathJax.startup.promise.then(doTypeset);
@@ -1248,6 +1232,7 @@ window.addEventListener('DOMContentLoaded', () => {
 </script>
 </body>
 </html>
+
 
 
 
