@@ -562,10 +562,48 @@ function allocateSequentiallyAcrossSections(subjectsData, pool, { shuffleQuestio
   for (const subj of subjectsData) {
     for (const sec of subj.sections) {
       if (sec.type === 'internal') {
-        errors.push(`${subj.subject} - ${sec.label}: Internal choice not supported with Paste/Word mode.`);
-        sec.questions = [];
-        continue;
-      }
+  const needPairs = Number(sec.numPairs || 0);
+  const marks     = Number(sec.marksPerQuestion || 0);
+  const pairs     = [];
+
+  // helper to take next cleaned stem from pool
+  const takeCleanStem = () => {
+    if (index >= pool.length) return null;
+    const rawBlock = stripLead(pool[index++]) || '';
+
+    // remove trailing "Ans: ..." if present
+    let stem = rawBlock.replace(/\bAns?\s*:\s*.*$/i, '').trim();
+
+    // if inline A) ... D) options exist, cut them off from the stem
+    const extracted = extractMCQOptions({ question: rawBlock });
+    if (Array.isArray(extracted) && extracted.length === 4) {
+      const aLabelIdx = stem.search(/(^|\s)A[)\.]\s/i);
+      if (aLabelIdx !== -1) stem = stem.slice(0, aLabelIdx).trim();
+    }
+    return stem || null;
+  };
+
+  for (let p = 0; p < needPairs; p++) {
+    const aStem = takeCleanStem();
+    const bStem = takeCleanStem();
+    if (!aStem || !bStem) break;
+
+    pairs.push({
+      number: p + 1,
+      text: `a) ${aStem}\n\nb) ${bStem}`,
+      marks: marks,
+      options: [],
+      answer: ""
+    });
+  }
+
+  if (pairs.length < needPairs) {
+    errors.push(`${subj.subject} - ${sec.label}: Only ${pairs.length} of ${needPairs} pairs available from source.`);
+  }
+
+  sec.questions = pairs;
+  continue;
+}
       const need = Number(sec.numQuestions || 0);
       const marks = Number(sec.marksPerQuestion || 0);
       const pick = [];
@@ -2193,6 +2231,7 @@ window.location.href = 'exam-review.html';
 </script>
 </body>
 </html>
+
 
 
 
