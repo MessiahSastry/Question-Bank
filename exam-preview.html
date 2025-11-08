@@ -358,11 +358,13 @@
 .ab-gap{ height:10px; }
 .or-box{ display:flex; justify-content:center; margin:4px 0; }
 .or-box input{
+  display:inline-block;
   text-align:center;
   font-weight:700;
   font-family:'Times New Roman', Times, serif;
-  width:100px; padding:4px 10px;
+  width:120px; padding:4px 10px;
   border:1px solid #111; border-radius:8px;
+  background:#fff;
 }
 @media print{
   .or-box input{
@@ -971,7 +973,8 @@ if (section.questions && section.questions.length > 0) {
   page.innerHTML += contentHTML;
   page.innerHTML += `<div class="print-footer-spacer"></div>`;
   container.appendChild(page);
-insertManualOrBoxes(page);
+setTimeout(()=>insertManualOrBoxes(page),0);
+
 
 // ---- IMMEDIATE (A)/(B) NORMALIZER (handles single-block + sibling cases) ----
 page.querySelectorAll('.question-text').forEach(qt => {
@@ -1168,26 +1171,29 @@ function insertManualOrBoxes(root=document){
   (root.querySelectorAll('.question-text')||[]).forEach(qt=>{
     if (qt.querySelector('.or-box') || (qt.querySelector('.pair-a') && qt.querySelector('.pair-b'))) return;
 
-    // Normalise <p>/<div> → <br> so we can search reliably
-    let html = (qt.innerHTML || '')
-      .replace(/<\/p>/gi, '<br>')
-      .replace(/<p[^>]*>/gi, '')
-      .replace(/<div[^>]*>/gi, '')
-      .replace(/<\/div>/gi, '');
+    // Text-first parse (robust across stray tags/BRs)
+    const raw = (qt.innerHTML || '')
+      .replace(/<\/p>/gi,'\n').replace(/<p[^>]*>/gi,'')
+      .replace(/<br\s*\/?>/gi,'\n')
+      .replace(/<div[^>]*>/gi,'\n').replace(/<\/div>/gi,'')
+      .replace(/\r/g,'');
+    const lines = raw.split('\n').map(s=>s.trim()).filter(Boolean);
 
-    const aIdx = html.search(/\(\s*A\s*\)/i);
-    const bIdx = aIdx >= 0 ? html.slice(aIdx + 1).search(/\(\s*B\s*\)/i) : -1;
+    const A_RE = /^\(\s*A\s*\)|^A[\)\.\:]/i;
+    const B_RE = /^\(\s*B\s*\)|^B[\)\.\:]/i;
 
-    if (aIdx >= 0 && bIdx >= 0) {
-      const beforeB = aIdx + 1 + bIdx; // absolute index of "(B)"
-      const insertHTML =
-        '<div class="ab-gap"></div>' +
-        '<div class="or-box"><input type="text" value="(OR)" aria-label="Internal choice text"></div>' +
-        '<div class="ab-gap"></div>';
-
-      // Insert just BEFORE the (B) marker
-      html = html.slice(0, beforeB) + insertHTML + html.slice(beforeB);
-      qt.innerHTML = html;
+    let aIdx = lines.findIndex(l=>A_RE.test(l));
+    let bIdx = -1;
+    if (aIdx !== -1){
+      for (let i=aIdx+1;i<lines.length;i++){ if (B_RE.test(lines[i])) { bIdx=i; break; } }
+    }
+    if (aIdx !== -1 && bIdx !== -1){
+      const aHTML = lines[aIdx].replace(A_RE,'').trim() + (bIdx-aIdx>1? ('\n'+lines.slice(aIdx+1,bIdx).join('\n')) : '');
+      const bHTML = lines[bIdx].replace(B_RE,'').trim() + (bIdx<lines.length-1? ('\n'+lines.slice(bIdx+1).join('\n')) : '');
+      qt.innerHTML =
+        `<div class="pair-a"><span class="label">(A)</span><span class="txt">${aHTML}</span></div>`+
+        `<div class="or-box"><input type="text" value="(OR)" aria-label="Internal choice text"></div><div class="ab-gap"></div>`+
+        `<div class="pair-b"><span class="label">(B)</span><span class="txt">${bHTML}</span></div>`;
     }
   });
 }
@@ -1384,6 +1390,7 @@ window.addEventListener('DOMContentLoaded', () => {
 </script>
 </body>
 </html>
+
 
 
 
