@@ -358,7 +358,7 @@
 .pair-a, .pair-b{ display:flex; align-items:flex-start; gap:6px; margin-top:2px; }
 .pair-a .label, .pair-b .label{ flex:0 0 2.2em; font-weight:700; }
 .pair-a .txt, .pair-b .txt{ flex:1 1 auto; }
-.pair-or{ text-align:center; font-weight:700; margin:6px 0; } /* stays; ensures centered (OR) */
+.pair-or{ text-align:center; font-weight:700; margin:6px 0; }
 
 /* Make sure any inline tags don’t shrink B */
 .question-text, .question-text *{ font-size:inherit !important; }
@@ -376,9 +376,10 @@
    function formatSubQuestions(text) {
   if (!text) return '';
 
-  // Normalize HTML → plain lines (convert <br> first so OR between <br> is caught)
+  // Normalize HTML → plain text
   let t = String(text)
     .replace(/\r/g, '')
+    .replace(/&nbsp;/gi, ' ')
     .replace(/<br\s*\/?>/gi, '\n')
     .replace(/<\/p>/gi, '\n')
     .replace(/<div[^>]*>/gi, '\n')
@@ -386,36 +387,35 @@
     .replace(/<li[^>]*>/gi, '\n')
     .replace(/<\/li>/gi, '')
     .replace(/<ol[^>]*>|<ul[^>]*>|<\/ol>|<\/ul>/gi, '')
-    .replace(/<small[^>]*>/gi, '')
-    .replace(/<\/small>/gi, '')
     .trim();
 
-  // Strip ANY existing ORs so we insert exactly one centered (OR)
+  // Remove any existing OR variants so we re-insert a single centered one
   t = t
-    .replace(/\n\s*\(?\s*OR\s*\)?\s*\n/gi, '\n')  // lines: OR / (OR) between newlines
-    .replace(/\s*\(\s*OR\s*\)\s*/gi, ' ')         // inline (OR)
-    .replace(/\s+\bOR\b\s+/gi, ' ');              // inline OR
+    .replace(/\n\s*\(?\s*OR\s*\)?\s*\n/gi, '\n')
+    .replace(/\s*\(\s*OR\s*\)\s*/gi, ' ')
+    .replace(/\s+\bOR\b\s+/gi, ' ');
 
-  const hasA = /\(\s*A\s*\)/i.test(t);
-  const hasB = /\(\s*B\s*\)/i.test(t);
+  // Accept labels with various punctuation/spaces
+  const aLabel = /\(\s*A\s*\)|A\)|A\.|A\:/i;
+  const bLabel = /\(\s*B\s*\)|B\)|B\.|B\:/i;
 
-  if (hasA && hasB) {
-   const parts = t.split(/\(\s*B\s*\)/i);
-const stripLead = s => s.replace(/^\s*\(\s*[AB]\s*\)\s*/i, '').trim();
-// if any pasted content repeats labels at line starts, drop them on wrapped lines too:
-const dropWrappedLabels = s => s.replace(/\n\s*\(?[AB]\)?[.)-]?\s+/gi, '\n');
+  if (aLabel.test(t) && bLabel.test(t)) {
+    // Split at B (tolerant)
+    const parts = t.split(bLabel);
+    const stripLead = s => s.replace(/^\s*(\(\s*[AB]\s*\)|[AB][\)\.\:])\s*/i, '').trim();
+    const dropWrappedLabels = s => s.replace(/\n\s*(\(\s*[AB]\s*\)|[AB][\)\.\:])\s+/gi, '\n');
 
-const aTxt = dropWrappedLabels(stripLead(parts[0] || ''));
-const bTxt = dropWrappedLabels((parts[1] || '').trim());
+    const aTxt = dropWrappedLabels(stripLead(parts[0] || ''));
+    const bTxt = dropWrappedLabels(stripLead((parts[1] || '')));
 
-return `
-  <div class="pair-a"><span class="label">(A)</span><span class="txt">${aTxt}</span></div>
-  <div class="pair-or">(OR)</div>
-  <div class="pair-b"><span class="label">(B)</span><span class="txt">${bTxt}</span></div>
-`;
+    return `
+      <div class="pair-a"><span class="label">(A)</span><span class="txt">${aTxt}</span></div>
+      <div class="pair-or">(OR)</div>
+      <div class="pair-b"><span class="label">(B)</span><span class="txt">${bTxt}</span></div>
+    `;
   }
 
-  // No internal choice → simple lines
+  // Fallback: just lines
   return t.split(/\n/).map(s => s.trim()).filter(Boolean)
            .map(line => `<div>${line}</div>`).join('');
 }
@@ -1033,6 +1033,7 @@ window.addEventListener('DOMContentLoaded', () => {
 </script>
  </body>
 </html>
+
 
 
 
