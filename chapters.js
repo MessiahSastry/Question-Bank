@@ -402,7 +402,6 @@ window.textbooks = {
       "Force and Pressure",
       "Friction",
       "Sound",
-      "Chemical Effects of Electric Current",
       "Light",
       "Stars and the Solar System"
     ],
@@ -418,6 +417,7 @@ window.textbooks = {
     ],
     "Chemistry": [
       "Synthetic Fibres and Plastics",
+      "Chemical Effects of Electric Current",
       "Metals and Non-Metals",
       "Coal and Petroleum",
       "Combustion and Flame"
@@ -718,6 +718,7 @@ window.textbooks = {
     ]
   }
 };
+
 
 
 
