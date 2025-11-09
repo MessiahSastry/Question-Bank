@@ -457,6 +457,13 @@ window.textbooks = {
     "Social": [
       "Resources",
       "Land, Soil, Water, Natural Vegetation and Wildlife Resources",
+      "How When and Where",
+      "From Trate to Territory",
+      "Ruling The Countryside",
+      "Tibals and Dikus",
+      "The Indian Constitution",
+      "Understanding Secularism",
+      "Judiciary",
       "Mineral and Power Resources",
       "Agriculture",
       "Industries",
@@ -718,6 +725,7 @@ window.textbooks = {
     ]
   }
 };
+
 
 
 
