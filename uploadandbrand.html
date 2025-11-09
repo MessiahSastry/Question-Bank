@@ -173,7 +173,13 @@
           <input type="text" id="maxMarks">
         </div>
         <button class="submit-btn" id="processBtn">Add Header & Download</button>
-        <a id="downloadLink">Download Branded PDF</a>
+<a id="downloadLink">Download Branded PDF</a>
+
+<!-- Inline PDF preview (hidden until ready) -->
+<div id="previewWrap" style="display:none; margin-top:16px;">
+  <div style="font-weight:600;color:#1762a7;margin-bottom:8px;">Preview</div>
+  <iframe id="pdfPreview" style="width:100%;height:70vh;border:1px solid #bcd6ef;border-radius:8px;background:#fff;"></iframe>
+</div>
       </div>
     </main>
   </div>
@@ -236,7 +242,7 @@ function formatDuration(minutes) {
   return `${m} min`;
 }
 
-document.getElementById('processBtn').onclick = async function () {
+async function process(mode = 'download') {
   const showSpinner = () => document.getElementById('spinner-overlay').style.display = "flex";
   const hideSpinner = () => document.getElementById('spinner-overlay').style.display = "none";
 
@@ -253,11 +259,10 @@ document.getElementById('processBtn').onclick = async function () {
     if (!pdfFile) { hideSpinner(); return alert("Please select a PDF to brand!"); }
 
     const pdfBytes = await pdfFile.arrayBuffer();
-    const srcDoc = await PDFLib.PDFDocument.load(pdfBytes);
-  const pdfDoc = await PDFLib.PDFDocument.create(); // output doc
+    const pdfDoc = await PDFLib.PDFDocument.load(pdfBytes);
 
     const fontBold = await pdfDoc.embedFont(PDFLib.StandardFonts.TimesRomanBold);
-const fontReg  = await pdfDoc.embedFont(PDFLib.StandardFonts.TimesRoman);
+    const fontReg = await pdfDoc.embedFont(PDFLib.StandardFonts.TimesRoman);
 
     const fetchLogo = async (path) => {
       const res = await fetch(path);
@@ -266,86 +271,92 @@ const fontReg  = await pdfDoc.embedFont(PDFLib.StandardFonts.TimesRoman);
     };
     const logo1Img = await fetchLogo('schoollogo1.png');
     const logo2Img = await fetchLogo('schoollogo2.png');
-    
-    // === Build a new first page with a header band, then place original page below ===
-const srcFirst = srcDoc.getPage(0);
-const [embFirst] = await pdfDoc.embedPages([srcFirst]);
-const { width, height } = srcFirst.getSize();
-const headerHeight = 100;
-const bandTop = height - headerHeight; // top edge of the header band
-const scale = (height - headerHeight) / height;
+    const logo1Dims = logo1Img.scale(66 / logo1Img.height);
+    const logo2Dims = logo2Img.scale(66 / logo2Img.height);
 
-const newFirst = pdfDoc.addPage([width, height]);
-// place original page content below header (shrunken)
-newFirst.drawPage(embFirst, {
-  x: (width - width * scale) / 2,
-  y: 0,
-  width: width * scale,
-  height: height * scale
+    const page = pdfDoc.getPage(0);
+    const { width, height } = page.getSize();
+    const margin = 45, headH = 170;
+
+    page.drawRectangle({ x: 0, y: height - headH, width: width, height: headH, color: PDFLib.rgb(1,1,1), opacity: 1 });
+    const logoY = height - 100;
+
+    page.drawImage(logo1Img, { x: 50, y: logoY, width: logo1Dims.width, height: logo1Dims.height });
+    page.drawImage(logo2Img, { x: width - 50 - logo2Dims.width, y: logoY, width: logo2Dims.width, height: logo2Dims.height });
+
+    const headingY = logoY + 15;
+    page.drawText(schoolName, {
+      x: width / 2 - fontBold.widthOfTextAtSize(schoolName, 24) / 2,
+      y: headingY + 30,
+      size: 24,
+      font: fontBold,
+      color: PDFLib.rgb(0.10, 0.18, 0.5)
+    });
+    page.drawText('IIT & NEET FOUNDATION', {
+      x: width / 2 - fontReg.widthOfTextAtSize('IIT & NEET FOUNDATION', 15) / 2,
+      y: headingY + 10,
+      size: 15,
+      font: fontReg,
+      color: PDFLib.rgb(0.08, 0.25, 0.48)
+    });
+    page.drawText(examName, {
+      x: width / 2 - fontBold.widthOfTextAtSize(examName, 15) / 2,
+      y: headingY - 10,
+      size: 15,
+      font: fontBold,
+      color: PDFLib.rgb(0.12, 0.12, 0.16)
+    });
+
+  // Box for class/subject/date/time/marks
+const boxX = 50;
+const boxY = height - 165;
+const boxW = width - 100;
+const boxH = 55;
+const radius = 10;
+page.drawRectangle({
+  x: 50, y: boxY, width: boxW, height: boxH,
+  borderColor: PDFLib.rgb(0, 0, 0), 
+  color: PDFLib.rgb(1, 1, 1), 
+  borderWidth: 2,
+  borderRadius: 10, // Doesn't work in pdf-lib
 });
-
-// HEADER (kept slim, entirely inside 0..headerHeight)
-const centerX = width / 2;
-const logoH = 50;
-const logo1Dims = logo1Img.scale(logoH / logo1Img.height);
-const logo2Dims = logo2Img.scale(logoH / logo2Img.height);
-const logoY = bandTop + headerHeight - logoH - 8;
-
-newFirst.drawImage(logo1Img, { x: 50, y: logoY, width: logo1Dims.width, height: logo1Dims.height });
-newFirst.drawImage(logo2Img, { x: width - 50 - logo2Dims.width, y: logoY, width: logo2Dims.width, height: logo2Dims.height });
-
-newFirst.drawText(schoolName, {
-  x: centerX - fontBold.widthOfTextAtSize(schoolName, 20) / 2,
-  y: bandTop + headerHeight - 32,
-  size: 20, font: fontBold, color: PDFLib.rgb(0.10, 0.18, 0.5)
-});
-newFirst.drawText('IIT & NEET FOUNDATION', {
-  x: centerX - fontReg.widthOfTextAtSize('IIT & NEET FOUNDATION', 12) / 2,
-  y: bandTop + headerHeight - 48,
-  size: 12, font: fontReg, color: PDFLib.rgb(0.08, 0.25, 0.48)
-});
-newFirst.drawText(examName, {
-  x: centerX - fontBold.widthOfTextAtSize(examName, 12) / 2,
-  y: bandTop + headerHeight - 66,
-  size: 12, font: fontBold, color: PDFLib.rgb(0.12, 0.12, 0.16)
-});
-
-// Info box kept inside header band
-const boxX = 50, boxW = width - 100, boxH = 34, boxY = bandTop + 10;
-newFirst.drawRectangle({ x: boxX, y: boxY, width: boxW, height: boxH, borderColor: PDFLib.rgb(0,0,0), borderWidth: 1, color: PDFLib.rgb(1,1,1) });
-
 const subj = subject.toUpperCase();
-newFirst.drawText("Class: " + className, { x: boxX + 18, y: boxY + boxH - 20, size: 11.5, font: fontBold, color: PDFLib.rgb(0.11, 0.23, 0.53) });
-newFirst.drawText(subj, { x: centerX - fontBold.widthOfTextAtSize(subj, 14) / 2, y: boxY + boxH - 18, size: 14, font: fontBold, color: PDFLib.rgb(0.07, 0.18, 0.5) });
-newFirst.drawText("Date: " + formatDate(date), { x: width - 168, y: boxY + boxH - 20, size: 11.5, font: fontBold, color: PDFLib.rgb(0.11, 0.23, 0.53) });
-newFirst.drawText("Time: " + formatDuration(Number(time)), { x: boxX + 18, y: boxY + 8, size: 11.5, font: fontBold, color: PDFLib.rgb(0.15, 0.24, 0.35) });
-newFirst.drawText("Max Marks: " + maxMarks, { x: width - 168, y: boxY + 8, size: 11.5, font: fontBold, color: PDFLib.rgb(0.15, 0.24, 0.35) });
-
-// append remaining pages unchanged
-const total = srcDoc.getPageCount();
-if (total > 1) {
-  const others = await pdfDoc.copyPages(srcDoc, Array.from({ length: total - 1 }, (_, i) => i + 1));
-  others.forEach(p => pdfDoc.addPage(p));
-}
+page.drawText("Class: " + className, { x: 68, y: boxY + boxH - 22, size: 12.5, font: fontBold, color: PDFLib.rgb(0.11, 0.23, 0.53) });
+page.drawText(subj, { x: width / 2 - fontBold.widthOfTextAtSize(subj, 17) / 2, y: boxY + boxH - 20, size: 17, font: fontBold, color: PDFLib.rgb(0.07, 0.18, 0.5) });
+page.drawText("Date: " + formatDate(date), { x: width - 168, y: boxY + boxH - 22, size: 12.5, font: fontBold, color: PDFLib.rgb(0.11, 0.23, 0.53) });
+const timeStr = formatDuration(Number(time));
+page.drawText("Time: " + timeStr, { x: 68, y: boxY + 13, size: 12.5, font: fontBold, color: PDFLib.rgb(0.15, 0.24, 0.35) });
+page.drawText("Max Marks: " + maxMarks, { x: width - 168, y: boxY + 13, size: 12.5, font: fontBold, color: PDFLib.rgb(0.15, 0.24, 0.35) });
 
     const newPdfBytes = await pdfDoc.save();
-    const blob = new Blob([newPdfBytes], { type: 'application/pdf' });
-    const url = URL.createObjectURL(blob);
+const blob = new Blob([newPdfBytes], { type: 'application/pdf' });
+const url = URL.createObjectURL(blob);
 
-    // Directly trigger download
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'QuestionPaper_Branded.pdf';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    // Open the PDF in a new tab for viewing/sharing/printing
-    window.open(url, '_blank');
-  } catch (e) {
-    alert("Error while branding PDF: " + (e.message || e));
-  }
+// Always update the inline preview
+showInlinePreview(url);
+
+if (mode === 'download') {
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'QuestionPaper_Branded.pdf';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+} catch (e) {
+  alert("Error while branding PDF: " + (e.message || e));
+} finally {
   hideSpinner();
-};
+}
+}
+
+function showInlinePreview(url) {
+  const wrap = document.getElementById('previewWrap');
+  const frame = document.getElementById('pdfPreview');
+  if (frame) frame.src = url;
+  if (wrap) wrap.style.display = 'block';
+}
+document.getElementById('processBtn').onclick = () => process('download');
 
 flatpickr("#date", {
   dateFormat: "d-m-Y",
@@ -359,6 +370,19 @@ document.getElementById('class-dropdown').addEventListener('change', () => {
   const subjects = config.subjectMappings[selectedClass] || [];
   createDropdown('subject-dropdown', subjects, 'Select Subject');
 });
+
+// Auto inline preview as soon as a file is chosen
+document.getElementById('pdfFile').addEventListener('change', async () => {
+  const input = document.getElementById('pdfFile');
+  if (!input.files || !input.files.length) {
+    const wrap = document.getElementById('previewWrap');
+    const frame = document.getElementById('pdfPreview');
+    if (frame) frame.removeAttribute('src');
+    if (wrap) wrap.style.display = 'none';
+    return;
+  }
+  await process('inline'); // no download; refresh inline preview
+});
 </script>
 <div id="spinner-overlay" style="display:none;position:fixed;z-index:9999;top:0;left:0;width:100vw;height:100vh;background:rgba(255,255,255,0.80);align-items:center;justify-content:center;">
   <div style="display:flex;flex-direction:column;align-items:center;gap:16px;">
@@ -368,6 +392,3 @@ document.getElementById('class-dropdown').addEventListener('change', () => {
 </div>
 </body>
 </html>
-
-
-
