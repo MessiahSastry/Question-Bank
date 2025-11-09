@@ -352,8 +352,6 @@
   .details-rect { border-color:#000 !important; background:#fff !important; }
 }
 
-.pair-or{ display:none !important; }
-
 /* --- simple manual OR insert --- */
 .ab-gap{ height:10px; }
 .or-box{ display:flex; justify-content:center; margin:4px 0; }
@@ -388,7 +386,8 @@
   line-height:1;
 }
 .pair-a .txt, .pair-b .txt{ flex:1 1 auto; }
-.pair-or{ display:none !important; }
+/* allow visibility; it will be upgraded to an input */
+.pair-or{ display:block; text-align:center; font-weight:700; margin:4px 0; }
 
 /* Make sure any inline tags don’t shrink B */
 .question-text, .question-text *{ font-size:inherit !important; }
@@ -978,7 +977,7 @@ setTimeout(()=>insertManualOrBoxes(page),0);
 
 // ---- IMMEDIATE (A)/(B) NORMALIZER (handles single-block + sibling cases) ----
 page.querySelectorAll('.question-text').forEach(qt => {
-  if (qt.querySelector('.pair-a') && qt.querySelector('.pair-b')) return;
+  if (qt.querySelector('.pair-a') && qt.querySelector('.pair-b') && qt.querySelector('.or-box')) return;
 
   // 1) Single-block case: (A) ... [optional (OR)] ... (B) ... (works across <br>, <p>)
   let html = (qt.innerHTML || '').trim()
@@ -1031,8 +1030,9 @@ container.classList.add('mjx-process');
   // --- HARD normalizer: build pair markup even if author forgot OR or line-breaks ---
   (function hardAB(root=document){
     root.querySelectorAll('.question-body .question-text').forEach(qt=>{
-      // already normalized
-      if (qt.querySelector('.pair-a') && qt.querySelector('.pair-b')) return;
+   
+     // Only skip if the OR input already exists
+if (qt.querySelector('.pair-a') && qt.querySelector('.pair-b') && qt.querySelector('.or-box')) return;
 
       const html = (qt.innerHTML || '').trim();
 
@@ -1131,7 +1131,23 @@ container.classList.add('mjx-process');
     }
   });
 })(document);
-
+/* --- UPGRADE ANY LEGACY .pair-or INTO THE EDITABLE INPUT (safety net) --- */
+(function upgradeHiddenPairOr(root=document){
+  root.querySelectorAll('.question-text .pair-or').forEach(mid=>{
+    const a = mid.previousElementSibling;
+    const b = mid.nextElementSibling;
+    // Only when structure is .pair-a [pair-or] .pair-b
+    if (a?.classList?.contains('pair-a') && b?.classList?.contains('pair-b')) {
+      const g1 = document.createElement('div'); g1.className = 'ab-gap';
+      const or = document.createElement('div'); or.className = 'or-box';
+      or.innerHTML = '<input type="text" value="(OR)" aria-label="Internal choice text">';
+      const g2 = document.createElement('div'); g2.className = 'ab-gap';
+      mid.replaceWith(g1);
+      g1.after(or);
+      or.after(g2);
+    }
+  });
+})(document);
   // Build options HTML BEFORE MathJax
   document.querySelectorAll('.options-block[data-options]').forEach(node => {
     try {
@@ -1169,7 +1185,8 @@ container.classList.add('mjx-process');
 // Inserts a gap + editable OR box when (A)... and (B)... exist in the SAME block (even with <br>)
 function insertManualOrBoxes(root=document){
   (root.querySelectorAll('.question-text')||[]).forEach(qt=>{
-    if (qt.querySelector('.or-box') || (qt.querySelector('.pair-a') && qt.querySelector('.pair-b'))) return;
+   if (qt.querySelector('.or-box')) return;
+// do NOT return just because pairs exist; we still have to insert the OR
 
     // Text-first parse (robust across stray tags/BRs)
     const raw = (qt.innerHTML || '')
@@ -1390,6 +1407,7 @@ window.addEventListener('DOMContentLoaded', () => {
 </script>
 </body>
 </html>
+
 
 
 
