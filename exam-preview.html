@@ -673,6 +673,14 @@ function stripLeadingLabel(s) {
     .replace(/^\s*(?:\(\s*A\s*\)|A[\)\.\:])\s*/i, '')   // kill leading (A), A), A., A:
     .replace(/^\s*(?:\(\s*B\s*\)|B[\)\.\:])\s*/i, '');  // kill leading (B), B), B., B:
 }
+   function dedupePairText(root = document){
+  root.querySelectorAll('.pair-a .txt').forEach(n=>{
+    n.innerHTML = stripABPrefix(String(n.innerHTML));
+  });
+  root.querySelectorAll('.pair-b .txt').forEach(n=>{
+    n.innerHTML = stripABPrefix(String(n.innerHTML));
+  });
+}
 function renderPrintPreview() {
   const container = document.getElementById('print-preview');
   container.innerHTML = '';
@@ -970,13 +978,7 @@ if (section.questions && section.questions.length > 0) {
   page.innerHTML += contentHTML;
   page.innerHTML += `<div class="print-footer-spacer"></div>`;
   container.appendChild(page);
-setTimeout(()=>{
-  insertManualOrBoxes(page);
-  // De-dupe any remaining "(A)"/"(B)" at the start of the text spans
-  page.querySelectorAll('.pair-a .txt, .pair-b .txt').forEach(node=>{
-    node.innerHTML = stripABPrefix(node.innerHTML);
-  });
-},0);
+setTimeout(()=>{ insertManualOrBoxes(page); },0);
 
 
 // ---- IMMEDIATE (A)/(B) NORMALIZER (handles single-block + sibling cases) ----
@@ -991,8 +993,8 @@ page.querySelectorAll('.question-text').forEach(qt => {
 
   const m = html.match(/\(\s*A\s*\)\s*([\s\S]*?)\s*(?:\(\s*OR\s*\)\s*)?\(\s*B\s*\)\s*([\s\S]*?)$/i);
   if (m) {
-    const a = m[1].trim();
-    const b = m[2].trim();
+    const a = stripABPrefix(m[1].trim());
+    const b = stripABPrefix(m[2].trim());
     qt.innerHTML =
       `<div class="pair-a"><span class="label">(A)</span><span class="txt">${a}</span></div>` +
       `<div class="pair-or">(OR)</div><div class="ab-gap"></div>` +
@@ -1173,14 +1175,15 @@ if (qt.querySelector('.pair-a') && qt.querySelector('.pair-b') && qt.querySelect
     } catch (e) {}
   });
 
-  // Typeset MathJax
-  if (window.MathJax && typeof window.MathJax.typesetPromise === 'function') {
-    return window.MathJax.typesetPromise([document.getElementById('print-preview')])
-      .catch(err => console.error('MathJax typeset failed:', err));
-  }
-  return Promise.resolve();
+ // Typeset MathJax
+if (window.MathJax && typeof window.MathJax.typesetPromise === 'function') {
+  return window.MathJax.typesetPromise([document.getElementById('print-preview')])
+    .catch(err => console.error('MathJax typeset failed:', err))
+    .then(() => dedupePairText(document));
 }
-
+// no-MathJax fallback:
+return Promise.resolve().then(() => dedupePairText(document));
+}
   if (window.MathJax?.startup?.promise) {
     window.MathJax.startup.promise.then(doTypeset);
   } else if (window.MathJax?.typesetPromise) {
@@ -1423,6 +1426,7 @@ window.addEventListener('DOMContentLoaded', () => {
 </script>
 </body>
 </html>
+
 
 
 
