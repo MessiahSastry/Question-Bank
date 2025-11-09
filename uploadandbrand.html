@@ -131,7 +131,9 @@
   0% { transform: rotate(0deg);}
   100% { transform: rotate(360deg);}
 }
-  </style>
+  /* lightweight helpers for sticker preview */
+.preview-toolbar label { font-weight:600; color:#185496; font-size:0.95em; }
+</style>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
   <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
 </head>
@@ -172,186 +174,314 @@
           <label>Max Marks:</label>
           <input type="text" id="maxMarks">
         </div>
-        <button class="submit-btn" id="processBtn">Add Header & Download</button>
-        <a id="downloadLink">Download Branded PDF</a>
+        <button class="submit-btn" id="previewBtn">Preview Header</button>
+<a id="downloadLink">Download Branded PDF</a>
+
+<!-- Movable header preview panel -->
+<div id="previewPanel" style="display:none; margin:16px auto 0; max-width:820px; background:#fff; border:1px dashed #bcd6ef; border-radius:10px; padding:14px;">
+  <div class="preview-toolbar" style="display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-bottom:10px;">
+    <label style="font-weight:600; color:#185496; font-size:0.95em;">
+      Position (from top, pt): <input type="number" id="posTopPt" value="24" min="0" max="200" step="1" style="width:90px;">
+    </label>
+    <label style="font-weight:600; color:#185496; font-size:0.95em;">
+      Scale: <input type="range" id="scaleSlider" min="80" max="125" value="100"> <span id="scaleVal">100%</span>
+    </label>
+    <label style="font-weight:600; color:#185496; font-size:0.95em;"><input type="checkbox" id="whiteUnderlay" checked> White underlay behind header</label>
+    <label style="font-weight:600; color:#185496; font-size:0.95em;"><input type="checkbox" id="applyAllPages" checked> Apply to all pages</label>
+    <span id="applyAllPagesNote" style="color:#54656f; font-size:0.9em;">(uncheck to place on first page only)</span>
+    <button class="submit-btn" id="downloadBtn" style="max-width:260px; padding:10px 16px;">Download Branded PDF</button>
+  </div>
+  <div class="preview-canvas-wrap" id="previewWrap" style="position:relative; margin:0 auto; background:#fafafa; border:1px solid #e7eef7; overflow:hidden; width:700px;">
+    <img id="previewPage" class="preview-page" alt="PDF Page Preview (size only)" style="width:100%; display:block; background:#fff;">
+    <img id="headerSticker" alt="Header Sticker (drag up/down)" style="position:absolute; left:0; right:0; margin:0 auto; cursor:grab; outline:1px dashed #1762a7; user-select:none;">
+  </div>
+</div>
       </div>
     </main>
   </div>
 
 <script>
-  window.PDFLib = PDFLib;
+window.PDFLib = PDFLib;
+
+/* ---- Config + small helpers (kept compatible with your UI) ---- */
 const config = {
-  classes: ["3rd Class", "4th Class", "5th Class", "6th Class", "7th Class", "8th Class", "9th Class", "10th Class"],
+  classes: ["3rd Class","4th Class","5th Class","6th Class","7th Class","8th Class","9th Class","10th Class"],
   subjectMappings: {
-    "3rd Class": ["Telugu", "Hindi", "English", "Math", "Science", "Social"],
-    "4th Class": ["Telugu", "Hindi", "English", "Math", "Science", "Social"],
-    "5th Class": ["Telugu", "Hindi", "English", "Math", "Science", "Social"],
-    "6th Class": ["Telugu", "Hindi", "English 1", "English 2", "Math 1", "Math 2", "Physics", "Chemistry", "Biology", "Social"],
-    "7th Class": ["Telugu", "Hindi", "English 1", "English 2", "Math 1", "Math 2", "Physics", "Chemistry", "Biology", "Social"],
-    "8th Class": ["Telugu", "Hindi", "English 1", "English 2", "Math 1", "Math 2", "Physics", "Chemistry", "Biology", "Social"],
-    "9th Class": ["Telugu", "Hindi", "English 1", "English 2", "Math 1", "Math 2", "Physics", "Chemistry", "Biology", "Social"],
-    "10th Class": ["Telugu", "Hindi", "English 1", "English 2", "Math 1", "Math 2", "Physics", "Chemistry", "Biology", "Social"]
+    "3rd Class":["Telugu","Hindi","English","Math","Science","Social"],
+    "4th Class":["Telugu","Hindi","English","Math","Science","Social"],
+    "5th Class":["Telugu","Hindi","English","Math","Science","Social"],
+    "6th Class":["Telugu","Hindi","English 1","English 2","Math 1","Math 2","Physics","Chemistry","Biology","Social"],
+    "7th Class":["Telugu","Hindi","English 1","English 2","Math 1","Math 2","Physics","Chemistry","Biology","Social"],
+    "8th Class":["Telugu","Hindi","English 1","English 2","Math 1","Math 2","Physics","Chemistry","Biology","Social"],
+    "9th Class":["Telugu","Hindi","English 1","English 2","Math 1","Math 2","Physics","Chemistry","Biology","Social"],
+    "10th Class":["Telugu","Hindi","English 1","English 2","Math 1","Math 2","Physics","Chemistry","Biology","Social"]
   }
 };
-function createDropdown(containerId, options, placeholder) {
-  const container = document.getElementById(containerId);
-  if (!container) return;
-  const optionsHTML = options.map(opt => `<div data-value="${opt}">${opt}</div>`).join('');
-  container.innerHTML = `<div class="selected-option">${placeholder}</div><div class="dropdown-options">${optionsHTML}</div>`;
-  container.dataset.value = '';
-  container.addEventListener('click', (e) => {
+function createDropdown(containerId, options, placeholder){
+  const el = document.getElementById(containerId); if(!el) return;
+  const optionsHTML = options.map(o=>`<div data-value="${o}">${o}</div>`).join('');
+  el.innerHTML = `<div class="selected-option">${placeholder}</div><div class="dropdown-options">${optionsHTML}</div>`;
+  el.dataset.value = '';
+  el.onclick = (e)=>{
     e.stopPropagation();
-    document.querySelectorAll('.custom-dropdown.open').forEach(d => { if (d !== container) d.classList.remove('open'); });
-    container.classList.toggle('open');
-    if (e.target.dataset.value) {
-      container.querySelector('.selected-option').textContent = e.target.dataset.value;
-      container.dataset.value = e.target.dataset.value;
-      container.classList.remove('open');
-      container.dispatchEvent(new Event('change', { bubbles: true }));
+    document.querySelectorAll('.custom-dropdown.open').forEach(d=>{ if(d!==el) d.classList.remove('open'); });
+    el.classList.toggle('open');
+    if(e.target.dataset.value){
+      el.querySelector('.selected-option').textContent = e.target.dataset.value;
+      el.dataset.value = e.target.dataset.value;
+      el.classList.remove('open');
+      el.dispatchEvent(new Event('change',{bubbles:true}));
     }
-  });
+  };
 }
-function formatDate(dateStr) {
-  if (!dateStr) return '';
-  const [d, m, y] = dateStr.split('-');
-  return `${d}/${m}/${y}`;
-}
-
-// Convert minutes to "H½ hours" style (e.g., 90 -> "1½ hours")
-function formatDuration(minutes) {
-  const m = parseInt(minutes, 10);
-  if (isNaN(m) || m <= 0) return '';
-  const h = Math.floor(m / 60);
-  const r = m % 60;
-  const HALF = '\u00BD'; // ½
-
-  if (r === 0 && h > 0) {
-    return h === 1 ? '1 hour' : `${h} hours`;
-  }
-  if (r === 30) {
-    if (h === 0) return `${HALF} hour`;   // "½ hour"
-    return `${h}${HALF} hours`;           // "1½ hours", "2½ hours", ...
-  }
-  // Fallback for non-half-hour cases
+function formatDate(dstr){ if(!dstr) return ''; const [d,m,y]=dstr.split('-'); return `${d}/${m}/${y}`; }
+function formatDuration(minutes){
+  const m = parseInt(minutes,10); if(isNaN(m)||m<=0) return '';
+  const h = Math.floor(m/60), r = m%60, HALF = '\u00BD';
+  if(r===0 && h>0) return h===1?'1 hour':`${h} hours`;
+  if(r===30) return h===0?`${HALF} hour`:`${h}${HALF} hours`;
   return `${m} min`;
 }
+function dataURLToUint8Array(dataURL){
+  const b64 = dataURL.split(',')[1]; const bin = atob(b64);
+  const len = bin.length; const bytes = new Uint8Array(len);
+  for (let i=0;i<len;i++) bytes[i]=bin.charCodeAt(i);
+  return bytes;
+}
 
-document.getElementById('processBtn').onclick = async function () {
-  const showSpinner = () => document.getElementById('spinner-overlay').style.display = "flex";
-  const hideSpinner = () => document.getElementById('spinner-overlay').style.display = "none";
+/* ---- Global state for preview ---- */
+let gPdfBytes = null;
+let gPdfDoc = null;
+let gFirstPageWpt = 595;   // default A4 portrait width
+let gFirstPageHpt = 842;   // default A4 portrait height
+let gStickerDataURL = null;
+let gStickerWpt = 0, gStickerHpt = 0;
+let gScale = 1.0;       // 1.0 = 100%
+let gTopFromTopPt = 24; // from top in points (user control)
 
-  showSpinner();
-  try {
-    const pdfFile = document.getElementById('pdfFile').files[0];
-    const schoolName = "St. Patrick's School";
-    const examName = document.getElementById('examName').value.trim();
-    const className = document.getElementById('class-dropdown').dataset.value;
-    const subject = document.getElementById('subject-dropdown').dataset.value;
-    const date = document.getElementById('date').value;
-    const time = document.getElementById('time').value.trim();
-    const maxMarks = document.getElementById('maxMarks').value.trim();
-    if (!pdfFile) { hideSpinner(); return alert("Please select a PDF to brand!"); }
+/* ---- Build a single bitmap for the ENTIRE header (logos+titles+info box) ---- */
+async function buildHeaderStickerBitmapForPreview(){
+  // read inputs
+  const schoolName = "St. Patrick's School";
+  const examName = document.getElementById('examName').value.trim();
+  const className = document.getElementById('class-dropdown').dataset.value || '';
+  const subject = (document.getElementById('subject-dropdown').dataset.value || '').toUpperCase();
+  const date = document.getElementById('date').value;
+  const time = document.getElementById('time').value.trim();
+  const maxMarks = document.getElementById('maxMarks').value.trim();
 
-    const pdfBytes = await pdfFile.arrayBuffer();
-    const pdfDoc = await PDFLib.PDFDocument.load(pdfBytes);
+  // target sticker size in PDF points (approx same as your old header)
+  const stickerWidthPt = Math.min(520, gFirstPageWpt - 90); // page width minus 45pt margins
+  const stickerHeightPt = 170;
 
-    const fontBold = await pdfDoc.embedFont(PDFLib.StandardFonts.TimesRomanBold);
-    const fontReg = await pdfDoc.embedFont(PDFLib.StandardFonts.TimesRoman);
+  // render to a high-DPI canvas (2x)
+  const SCALE = 2;
+  const cw = Math.round(stickerWidthPt * SCALE);
+  const ch = Math.round(stickerHeightPt * SCALE);
+  const c = document.createElement('canvas'); c.width = cw; c.height = ch;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#ffffff'; ctx.fillRect(0,0,cw,ch);
 
-    const fetchLogo = async (path) => {
-      const res = await fetch(path);
-      const imgBytes = await res.arrayBuffer();
-      return await pdfDoc.embedPng(imgBytes);
-    };
-    const logo1Img = await fetchLogo('schoollogo1.png');
-    const logo2Img = await fetchLogo('schoollogo2.png');
-    const logo1Dims = logo1Img.scale(66 / logo1Img.height);
-    const logo2Dims = logo2Img.scale(66 / logo2Img.height);
+  // load logos
+  const logo1 = new Image(); logo1.src = 'schoollogo1.png';
+  const logo2 = new Image(); logo2.src = 'schoollogo2.png';
+  await Promise.all([
+    new Promise(r=>{logo1.onload=r; logo1.onerror=r;}),
+    new Promise(r=>{logo2.onload=r; logo2.onerror=r;})
+  ]);
 
-    const page = pdfDoc.getPage(0);
-    const { width, height } = page.getSize();
-    const margin = 45, headH = 170;
+  // place logos ~66pt tall
+  const targetLogoHpt = 66, targetLogoHp = targetLogoHpt * SCALE;
+  const l1ratio = logo1.width/Math.max(1,logo1.height);
+  const l2ratio = logo2.width/Math.max(1,logo2.height);
+  const l1w = Math.round(targetLogoHp*l1ratio), l1h = Math.round(targetLogoHp);
+  const l2w = Math.round(targetLogoHp*l2ratio), l2h = Math.round(targetLogoHp);
+  const lY = Math.round((stickerHeightPt - 100) * SCALE);
 
-    page.drawRectangle({ x: 0, y: height - headH, width: width, height: headH, color: PDFLib.rgb(1,1,1), opacity: 1 });
-    const logoY = height - 100;
+  ctx.drawImage(logo1, Math.round(0.0 + 0.0 + 0 + 5)*SCALE, lY, l1w, l1h);
+  ctx.drawImage(logo2, cw - l2w - 5, lY, l2w, l2h);
 
-    page.drawImage(logo1Img, { x: 50, y: logoY, width: logo1Dims.width, height: logo1Dims.height });
-    page.drawImage(logo2Img, { x: width - 50 - logo2Dims.width, y: logoY, width: logo2Dims.width, height: logo2Dims.height });
+  // headings
+  ctx.fillStyle = '#1a2d80';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'alphabetic';
+  ctx.font = `${24*SCALE}px "Times New Roman", Times, serif`;
+  const headingY = (lY + 15*SCALE);
+  ctx.fillText(schoolName, cw/2, headingY + 30*SCALE);
 
-    const headingY = logoY + 15;
-    page.drawText(schoolName, {
-      x: width / 2 - fontBold.widthOfTextAtSize(schoolName, 24) / 2,
-      y: headingY + 30,
-      size: 24,
-      font: fontBold,
-      color: PDFLib.rgb(0.10, 0.18, 0.5)
-    });
-    page.drawText('IIT & NEET FOUNDATION', {
-      x: width / 2 - fontReg.widthOfTextAtSize('IIT & NEET FOUNDATION', 15) / 2,
-      y: headingY + 10,
-      size: 15,
-      font: fontReg,
-      color: PDFLib.rgb(0.08, 0.25, 0.48)
-    });
-    page.drawText(examName, {
-      x: width / 2 - fontBold.widthOfTextAtSize(examName, 15) / 2,
-      y: headingY - 10,
-      size: 15,
-      font: fontBold,
-      color: PDFLib.rgb(0.12, 0.12, 0.16)
-    });
+  ctx.fillStyle = '#154078';
+  ctx.font = `${15*SCALE}px "Times New Roman", Times, serif`;
+  ctx.fillText('IIT & NEET FOUNDATION', cw/2, headingY + 10*SCALE);
 
-  // Box for class/subject/date/time/marks
-const boxX = 50;
-const boxY = height - 165;
-const boxW = width - 100;
-const boxH = 55;
-const radius = 10;
-page.drawRectangle({
-  x: 50, y: boxY, width: boxW, height: boxH,
-  borderColor: PDFLib.rgb(0, 0, 0), 
-  color: PDFLib.rgb(1, 1, 1), 
-  borderWidth: 2,
-  borderRadius: 10, // Doesn't work in pdf-lib
-});
-const subj = subject.toUpperCase();
-page.drawText("Class: " + className, { x: 68, y: boxY + boxH - 22, size: 12.5, font: fontBold, color: PDFLib.rgb(0.11, 0.23, 0.53) });
-page.drawText(subj, { x: width / 2 - fontBold.widthOfTextAtSize(subj, 17) / 2, y: boxY + boxH - 20, size: 17, font: fontBold, color: PDFLib.rgb(0.07, 0.18, 0.5) });
-page.drawText("Date: " + formatDate(date), { x: width - 168, y: boxY + boxH - 22, size: 12.5, font: fontBold, color: PDFLib.rgb(0.11, 0.23, 0.53) });
-const timeStr = formatDuration(Number(time));
-page.drawText("Time: " + timeStr, { x: 68, y: boxY + 13, size: 12.5, font: fontBold, color: PDFLib.rgb(0.15, 0.24, 0.35) });
-page.drawText("Max Marks: " + maxMarks, { x: width - 168, y: boxY + 13, size: 12.5, font: fontBold, color: PDFLib.rgb(0.15, 0.24, 0.35) });
+  ctx.fillStyle = '#1f1f29';
+  ctx.font = `${15*SCALE}px "Times New Roman", Times, serif`;
+  ctx.fillText(examName, cw/2, headingY - 10*SCALE);
 
-    const newPdfBytes = await pdfDoc.save();
-    const blob = new Blob([newPdfBytes], { type: 'application/pdf' });
-    const url = URL.createObjectURL(blob);
+  // info box
+  const boxXpt = 0, boxYpt = 15, boxWpt = stickerWidthPt, boxHpt = 55;
+  const bx = Math.round(boxXpt*SCALE), by = ch - Math.round((stickerHeightPt - boxYpt - boxHpt)*SCALE) - Math.round(boxHpt*SCALE);
+  const bw = Math.round(boxWpt*SCALE), bh = Math.round(boxHpt*SCALE);
 
-    // Directly trigger download
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'QuestionPaper_Branded.pdf';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    // Open the PDF in a new tab for viewing/sharing/printing
-    window.open(url, '_blank');
-  } catch (e) {
-    alert("Error while branding PDF: " + (e.message || e));
+  ctx.strokeStyle = '#000'; ctx.lineWidth = 2*SCALE;
+  ctx.strokeRect(bx + 50*SCALE, ch - (165*SCALE), bw - 100*SCALE, 55*SCALE);
+
+  ctx.fillStyle = '#1b3b88';
+  ctx.font = `${12.5*SCALE}px "Times New Roman", Times, serif`;
+  ctx.textAlign = 'left';
+  ctx.fillText(`Class: ${className}`, (68)*SCALE, ch - (165*SCALE) + (55*SCALE) - 22*SCALE );
+
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#123066';
+  ctx.font = `${17*SCALE}px "Times New Roman", Times, serif`;
+  ctx.fillText(subject, cw/2, ch - (165*SCALE) + (55*SCALE) - 20*SCALE );
+
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#1b3b88';
+  ctx.font = `${12.5*SCALE}px "Times New Roman", Times, serif`;
+  ctx.fillText(`Date: ${formatDate(date)}`, cw - (168*SCALE), ch - (165*SCALE) + (55*SCALE) - 22*SCALE );
+
+  const timeStr = formatDuration(Number(time));
+  ctx.fillStyle = '#263c59';
+  ctx.fillText(`Time: ${timeStr}`, (68)*SCALE, ch - (165*SCALE) + 13*SCALE );
+
+  ctx.fillText(`Max Marks: ${maxMarks}`, cw - (168*SCALE), ch - (165*SCALE) + 13*SCALE );
+
+  gStickerDataURL = c.toDataURL('image/png');
+  gStickerWpt = stickerWidthPt; gStickerHpt = stickerHeightPt;
+  return gStickerDataURL;
+}
+
+/* ---- Preview flow ---- */
+function showPreviewSizeBox(){
+  // fit a page image box proportionally (no actual PDF raster; we show a size proxy)
+  const wrap = document.getElementById('previewWrap');
+  const pageImg = document.getElementById('previewPage');
+  const targetWpx = wrap.clientWidth || 700;
+  const scale = targetWpx / gFirstPageWpt; // px per point
+  const targetHpx = Math.round(gFirstPageHpt * scale);
+  pageImg.style.height = `${targetHpx}px`;
+  wrap.style.height = `${targetHpx}px`;
+  return scale;
+}
+
+function attachStickerInteractions(pxPerPt){
+  const sticker = document.getElementById('headerSticker');
+  const posInput = document.getElementById('posTopPt');
+  const scaleSlider = document.getElementById('scaleSlider');
+  const scaleVal = document.getElementById('scaleVal');
+
+  // apply current values
+  sticker.style.transform = `scale(${gScale})`;
+  scaleVal.textContent = `${Math.round(gScale*100)}%`;
+
+  // position from top in px (preview)
+  function refreshStickerPosition(){
+    const yPx = Math.max(0, Math.round(gTopFromTopPt * pxPerPt));
+    sticker.style.top = `${yPx}px`;
   }
-  hideSpinner();
-};
+  refreshStickerPosition();
 
-flatpickr("#date", {
-  dateFormat: "d-m-Y",
-  allowInput: false,      // disables typing, popup only
-  defaultDate: "today"
-});
+  // drag vertical only
+  let dragging = false, startY = 0, startTopPt = 0;
+  sticker.onmousedown = (e)=>{ dragging=true; startY=e.clientY; startTopPt=gTopFromTopPt; e.preventDefault(); };
+  window.onmousemove = (e)=>{
+    if(!dragging) return;
+    const dyPx = e.clientY - startY;
+    const dyPt = dyPx / pxPerPt;
+    gTopFromTopPt = Math.max(0, Math.min(400, Math.round(startTopPt + dyPt)));
+    posInput.value = gTopFromTopPt;
+    refreshStickerPosition();
+  };
+  window.onmouseup = ()=> dragging=false;
+
+  // slider/number
+  posInput.oninput = ()=>{ gTopFromTopPt = Math.max(0, parseInt(posInput.value||'0',10)); refreshStickerPosition(); };
+  scaleSlider.oninput = ()=>{
+    gScale = parseInt(scaleSlider.value,10)/100;
+    sticker.style.transform = `scale(${gScale})`;
+    scaleVal.textContent = `${scaleSlider.value}%`;
+  };
+}
+
+async function handlePreview(){
+  const file = document.getElementById('pdfFile').files[0];
+  if(!file){ alert('Please select a PDF to brand!'); return; }
+
+  // load original PDF (once)
+  gPdfBytes = await file.arrayBuffer();
+  gPdfDoc = await PDFLib.PDFDocument.load(gPdfBytes);
+  const first = gPdfDoc.getPage(0);
+  const sz = first.getSize(); gFirstPageWpt = sz.width; gFirstPageHpt = sz.height;
+
+  await buildHeaderStickerBitmapForPreview();
+
+  // set sticker src and show panel
+  const sticker = document.getElementById('headerSticker');
+  sticker.src = gStickerDataURL;
+
+  document.getElementById('previewPanel').style.display = 'block';
+  const pxPerPt = showPreviewSizeBox();
+
+  // set sticker width in preview to match gStickerWpt scaled to px
+  const stickerWpx = Math.round(gStickerWpt * pxPerPt);
+  sticker.style.width = `${stickerWpx}px`;
+
+  attachStickerInteractions(pxPerPt);
+}
+
+/* ---- Export (burn image into PDF) ---- */
+async function handleDownload(){
+  if(!gPdfDoc || !gStickerDataURL){ alert('Please click Preview Header first.'); return; }
+
+  const whiteUnderlay = document.getElementById('whiteUnderlay').checked;
+  const applyAll = document.getElementById('applyAllPages').checked;
+
+  // embed sticker image
+  const stickerBytes = dataURLToUint8Array(gStickerDataURL);
+  const pdfDoc = await PDFLib.PDFDocument.load(gPdfBytes); // start from original again
+  const stickerImg = await pdfDoc.embedPng(stickerBytes);
+
+  // scaled dimensions in PDF points
+  const wPt = gStickerWpt * gScale;
+  const hPt = gStickerHpt * gScale;
+
+  const placeOnPage = (page)=>{
+    const { width, height } = page.getSize();
+    const x = (width - wPt)/2;
+    const y = height - gTopFromTopPt - hPt; // from top down
+    if(whiteUnderlay){
+      page.drawRectangle({ x, y, width:wPt, height:hPt, color: PDFLib.rgb(1,1,1) });
+    }
+    page.drawImage(stickerImg, { x, y, width:wPt, height:hPt });
+  };
+
+  if(applyAll){
+    pdfDoc.getPages().forEach(placeOnPage);
+  } else {
+    placeOnPage(pdfDoc.getPage(0));
+  }
+
+  const out = await pdfDoc.save();
+  const blob = new Blob([out], {type:'application/pdf'});
+  const url = URL.createObjectURL(blob);
+
+  const a = document.createElement('a');
+  a.href = url; a.download = 'QuestionPaper_Branded.pdf';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  window.open(url,'_blank');
+}
+
+/* ---- Wire up UI ---- */
+document.getElementById('previewBtn').addEventListener('click', handlePreview);
+document.getElementById('downloadBtn').addEventListener('click', handleDownload);
+
+flatpickr("#date",{ dateFormat:"d-m-Y", allowInput:false, defaultDate:"today" });
 createDropdown('class-dropdown', config.classes, 'Select Class');
 createDropdown('subject-dropdown', [], 'Select Subject');
-document.getElementById('class-dropdown').addEventListener('change', () => {
-  const selectedClass = document.getElementById('class-dropdown').dataset.value;
-  const subjects = config.subjectMappings[selectedClass] || [];
-  createDropdown('subject-dropdown', subjects, 'Select Subject');
+document.getElementById('class-dropdown').addEventListener('change', ()=>{
+  const sel = document.getElementById('class-dropdown').dataset.value;
+  const subs = config.subjectMappings[sel] || [];
+  createDropdown('subject-dropdown', subs, 'Select Subject');
 });
 </script>
 <div id="spinner-overlay" style="display:none;position:fixed;z-index:9999;top:0;left:0;width:100vw;height:100vh;background:rgba(255,255,255,0.80);align-items:center;justify-content:center;">
@@ -362,6 +492,7 @@ document.getElementById('class-dropdown').addEventListener('change', () => {
 </div>
 </body>
 </html>
+
 
 
 
