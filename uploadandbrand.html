@@ -414,27 +414,36 @@ async function showInlinePreview(url) {
   if (!wrap) return;
 
   if (isMobile && canvas) {
-    // Mobile: render first page into canvas (live)
+    // Mobile: render first page into canvas (feed ArrayBuffer to PDF.js)
     if (frame) { frame.removeAttribute('src'); frame.style.display = 'none'; }
     canvas.style.display = 'block';
 
     try {
-      const pdf = await pdfjsLib.getDocument({ url }).promise;
+      // Convert blob URL -> ArrayBuffer (more reliable on mobile)
+      const resp = await fetch(url);
+      const buffer = await resp.arrayBuffer();
+
+      const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
       const page = await pdf.getPage(1);
 
-      // Fit to container width
       const containerWidth = canvas.parentElement.clientWidth;
-      const viewport1 = page.getViewport({ scale: 1 });
-      const scale = containerWidth / viewport1.width;
+      const v1 = page.getViewport({ scale: 1 });
+      const scale = containerWidth / v1.width;
       const viewport = page.getViewport({ scale });
 
-      canvas.width = Math.ceil(viewport.width);
-      canvas.height = Math.ceil(viewport.height);
+      // Retina-friendly sizing
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      canvas.style.width = Math.round(viewport.width) + 'px';
+      canvas.style.height = Math.round(viewport.height) + 'px';
+      canvas.width = Math.round(viewport.width * dpr);
+      canvas.height = Math.round(viewport.height * dpr);
 
       const ctx = canvas.getContext('2d');
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
       await page.render({ canvasContext: ctx, viewport }).promise;
     } catch (err) {
-      // Fallback: hide canvas if something goes wrong
+      console.warn('Mobile canvas preview failed:', err);
       canvas.style.display = 'none';
     }
   } else {
@@ -496,6 +505,7 @@ document.getElementById('pdfFile').addEventListener('change', async () => {
 </div>
 </body>
 </html>
+
 
 
 
