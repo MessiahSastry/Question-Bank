@@ -175,14 +175,13 @@
         <button class="submit-btn" id="processBtn">Add Header & Download</button>
 <a id="downloadLink">Download Branded PDF</a>
 
-<!-- Single control: shrink entire page content so header never overlaps -->
-<!-- Single control: push down only the FIRST PAGE content so header doesn't cover text -->
+<!-- Single control: SCALE only the FIRST PAGE content (keeps top just under header) -->
 <div class="form-group" style="margin-top:10px;">
-  <label>First Page Top Margin (px):</label>
-  <input type="range" id="offsetInput" min="0" max="250" value="0"
-         oninput="document.getElementById('offsetValue').textContent=this.value + ' px';">
+  <label>First Page Scale (%):</label>
+  <input type="range" id="scale1Input" min="85" max="100" value="96"
+         oninput="document.getElementById('scale1Value').textContent=this.value + '%';">
   <div style="margin-top:6px;color:#54656f;">
-    Current: <span id="offsetValue">0 px</span>
+    Current: <span id="scale1Value">96%</span>
   </div>
   <small style="color:#54656f;">(Only affects page 1; other pages untouched)</small>
 </div>
@@ -293,9 +292,9 @@ async function process(mode = 'download') {
     const headH = 170;     // header height
     const topPad = 10;     // small gap under header
 
-    // Single control: how much to push down only the first page content
-    const offsetPx = document.getElementById('offsetInput')
-      ? Number(document.getElementById('offsetInput').value) : 0;
+    // Single control: first-page scale (%). No vertical slide.
+const scale1Pct = document.getElementById('scale1Input')
+  ? Number(document.getElementById('scale1Input').value) : 96;
 
     const pageCount = srcDoc.getPageCount();
 
@@ -303,54 +302,59 @@ async function process(mode = 'download') {
       const srcPage = srcDoc.getPage(i);
       const { width, height } = srcPage.getSize();
 
-      if (i === 0) {
-        // FIRST PAGE: draw header, then draw original page content translated DOWN by offsetPx.
-        const outPage = outDoc.addPage([width, height]);
+     if (i === 0) {
+  const outPage = outDoc.addPage([width, height]);
 
-        // Header (logos + titles + info box)
-        const logoScale1 = 66 / logo1Img.height;
-        const logoScale2 = 66 / logo2Img.height;
-        const logo1Dims = { width: logo1Img.width * logoScale1, height: 66 };
-        const logo2Dims = { width: logo2Img.width * logoScale2, height: 66 };
+  // 1) Original first-page content SCALED (no slide). Keep top just below header.
+  const embedded = await outDoc.embedPage(srcPage);
+  const scale = Math.min(1, Math.max(0.85, scale1Pct / 100)); // clamp 85–100%
+  const drawW = width * scale;
+  const drawH = height * scale;
+  const x = (width - drawW) / 2;                       // center horizontally
+  const y = height - headH - 10 - drawH;               // anchor under header (10px gap)
 
-        const logoY = height - 100;
-        outPage.drawImage(logo1Img, { x: 50, y: logoY, width: logo1Dims.width, height: logo1Dims.height });
-        outPage.drawImage(logo2Img, { x: width - 50 - logo2Dims.width, y: logoY, width: logo2Dims.width, height: logo2Dims.height });
+  outPage.drawPage(embedded, { x, y, width: drawW, height: drawH });
 
-        const headingY = logoY + 15;
-        outPage.drawText(schoolName, {
-          x: width / 2 - fontBold.widthOfTextAtSize(schoolName, 24) / 2,
-          y: headingY + 30, size: 24, font: fontBold, color: PDFLib.rgb(0.10, 0.18, 0.5)
-        });
-        outPage.drawText('IIT & NEET FOUNDATION', {
-          x: width / 2 - fontReg.widthOfTextAtSize('IIT & NEET FOUNDATION', 15) / 2,
-          y: headingY + 10, size: 15, font: fontReg, color: PDFLib.rgb(0.08, 0.25, 0.48)
-        });
-        outPage.drawText(examName, {
-          x: width / 2 - fontBold.widthOfTextAtSize(examName, 15) / 2,
-          y: headingY - 10, size: 15, font: fontBold, color: PDFLib.rgb(0.12, 0.12, 0.16)
-        });
+  // 2) White mask band to ensure header area is clean (defensive)
+  outPage.drawRectangle({
+    x: 0, y: height - headH, width: width, height: headH, color: PDFLib.rgb(1, 1, 1)
+  });
 
-        // Info box
-        const boxX = 50, boxY = height - 165, boxW = width - 100, boxH = 55;
-        outPage.drawRectangle({ x: boxX, y: boxY, width: boxW, height: boxH,
-          borderColor: PDFLib.rgb(0,0,0), color: PDFLib.rgb(1,1,1), borderWidth: 2 });
-        outPage.drawText("Class: " + className, { x: 68, y: boxY + boxH - 22, size: 12.5, font: fontBold, color: PDFLib.rgb(0.11, 0.23, 0.53) });
-        outPage.drawText(subj, { x: width/2 - fontBold.widthOfTextAtSize(subj, 17)/2, y: boxY + boxH - 20, size: 17, font: fontBold, color: PDFLib.rgb(0.07, 0.18, 0.5) });
-        outPage.drawText("Date: " + (formatDate(date) || ''), { x: width - 168, y: boxY + boxH - 22, size: 12.5, font: fontBold, color: PDFLib.rgb(0.11, 0.23, 0.53) });
-        const timeStr = formatDuration(Number(time));
-        outPage.drawText("Time: " + timeStr, { x: 68, y: boxY + 13, size: 12.5, font: fontBold, color: PDFLib.rgb(0.15, 0.24, 0.35) });
-        outPage.drawText("Max Marks: " + maxMarks, { x: width - 168, y: boxY + 13, size: 12.5, font: fontBold, color: PDFLib.rgb(0.15, 0.24, 0.35) });
+  // 3) Header (logos + titles) on TOP
+  const logoScale1 = 66 / logo1Img.height;
+  const logoScale2 = 66 / logo2Img.height;
+  const logo1Dims = { width: logo1Img.width * logoScale1, height: 66 };
+  const logo2Dims = { width: logo2Img.width * logoScale2, height: 66 };
 
-        // Draw the original first page content FULL SIZE (no scaling), shifted DOWN by offsetPx.
-        const embedded = await outDoc.embedPage(srcPage);
-        outPage.drawPage(embedded, {
-          x: 0,
-          y: -offsetPx,      // push content down; if too big, bottom will clip (first page only)
-          width: width,
-          height: height
-        });
+  const logoY = height - 100;
+  outPage.drawImage(logo1Img, { x: 50, y: logoY, width: logo1Dims.width, height: logo1Dims.height });
+  outPage.drawImage(logo2Img, { x: width - 50 - logo2Dims.width, y: logoY, width: logo2Dims.width, height: logo2Dims.height });
 
+  const headingY = logoY + 15;
+  outPage.drawText(schoolName, {
+    x: width / 2 - fontBold.widthOfTextAtSize(schoolName, 24) / 2,
+    y: headingY + 30, size: 24, font: fontBold, color: PDFLib.rgb(0.10, 0.18, 0.5)
+  });
+  outPage.drawText('IIT & NEET FOUNDATION', {
+    x: width / 2 - fontReg.widthOfTextAtSize('IIT & NEET FOUNDATION', 15) / 2,
+    y: headingY + 10, size: 15, font: fontReg, color: PDFLib.rgb(0.08, 0.25, 0.48)
+  });
+  outPage.drawText(examName, {
+    x: width / 2 - fontBold.widthOfTextAtSize(examName, 15) / 2,
+    y: headingY - 10, size: 15, font: fontBold, color: PDFLib.rgb(0.12, 0.12, 0.16)
+  });
+
+  // Info box
+  const boxX = 50, boxY = height - 165, boxW = width - 100, boxH = 55;
+  outPage.drawRectangle({ x: boxX, y: boxY, width: boxW, height: boxH,
+    borderColor: PDFLib.rgb(0,0,0), color: PDFLib.rgb(1,1,1), borderWidth: 2 });
+  outPage.drawText("Class: " + className, { x: 68, y: boxY + boxH - 22, size: 12.5, font: fontBold, color: PDFLib.rgb(0.11, 0.23, 0.53) });
+  outPage.drawText((subject || '').toUpperCase(), { x: width/2 - fontBold.widthOfTextAtSize((subject||'').toUpperCase(), 17)/2, y: boxY + boxH - 20, size: 17, font: fontBold, color: PDFLib.rgb(0.07, 0.18, 0.5) });
+  outPage.drawText("Date: " + (formatDate(date) || ''), { x: width - 168, y: boxY + boxH - 22, size: 12.5, font: fontBold, color: PDFLib.rgb(0.11, 0.23, 0.53) });
+  const timeStr = formatDuration(Number(time));
+  outPage.drawText("Time: " + timeStr, { x: 68, y: boxY + 13, size: 12.5, font: fontBold, color: PDFLib.rgb(0.15, 0.24, 0.35) });
+  outPage.drawText("Max Marks: " + maxMarks, { x: width - 168, y: boxY + 13, size: 12.5, font: fontBold, color: PDFLib.rgb(0.15, 0.24, 0.35) });
+}
       } else {
         // OTHER PAGES: untouched (copy as-is)
         const [copied] = await outDoc.copyPages(srcDoc, [i]);
@@ -389,16 +393,19 @@ function showInlinePreview(url) {
 }
 document.getElementById('processBtn').onclick = () => process('download');
 
-// Live inline preview when the first-page margin slider moves
+
+// Live inline preview when the first-page SCALE slider moves
 (function () {
-  const el = document.getElementById('offsetInput');
+  const el = document.getElementById('scale1Input');
   if (!el) return;
   let t = null;
   el.addEventListener('input', () => {
     if (t) clearTimeout(t);
-    t = setTimeout(() => process('inline'), 250); // debounce for smoother updates
+    t = setTimeout(() => process('inline'), 200); // debounce
   });
 })();
+
+
 
 
 flatpickr("#date", {
@@ -435,5 +442,6 @@ document.getElementById('pdfFile').addEventListener('change', async () => {
 </div>
 </body>
 </html>
+
 
 
