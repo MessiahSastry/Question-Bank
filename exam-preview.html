@@ -667,11 +667,18 @@ function stripLeadingLabel(s) {
   while (labelRe.test(t)) t = t.replace(labelRe, '');
   return t;
 }
-   function stripABPrefix(html) {
-  if (!html) return '';
-  return String(html)
-    .replace(/^\s*(?:\(\s*A\s*\)|A[\)\.\:])\s*/i, '')   // kill leading (A), A), A., A:
-    .replace(/^\s*(?:\(\s*B\s*\)|B[\)\.\:])\s*/i, '');  // kill leading (B), B), B., B:
+  function stripABPrefix(html) {
+  if (html == null) return '';
+  let s = String(html)
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/^\s+(?=<)/, ''); // drop spaces before a leading tag
+
+  // Allow any number of leading tags before the label: <b>(A)</b>, <span>A)</span>, etc.
+  const RE = /^\s*(?:<[^>]+>\s*)*(?:\(\s*[AB]\s*\)|[AB][)\.:])\s*/i;
+
+  // Strip repeatedly in case there are nested/duplicated prefixes
+  while (RE.test(s)) s = s.replace(RE, '');
+  return s.trim();
 }
    function dedupePairText(root = document){
   root.querySelectorAll('.pair-a .txt').forEach(n=>{
@@ -822,14 +829,21 @@ function renderPrintPreview() {
   h = h.replace(/<\/p>/gi,'<br>').replace(/<p[^>]*>/gi,'').replace(/<br\s*\/?>/gi,'\n');
   const m = h.match(/\(\s*A\s*\)\s*([\s\S]*?)\s*(?:\(\s*OR\s*\)\s*)?\(\s*B\s*\)\s*([\s\S]*)/i);
   if (m) {
+     if (m) {
     const a = m[1].trim(), b = m[2].trim();
-    return `<div class="pair-a"><span class="label">(A)</span><span class="txt">${a}</span></div>
-            <div class="pair-or">(OR)</div><div class="ab-gap"></div>
-            <div class="pair-b"><span class="label">(B)</span><span class="txt">${b}</span></div>`;
+    let out = `<div class="pair-a"><span class="label">(A)</span><span class="txt">${a}</span></div>
+               <div class="pair-or">(OR)</div><div class="ab-gap"></div>
+               <div class="pair-b"><span class="label">(B)</span><span class="txt">${b}</span></div>`;
+    // scrub any leftover (A)/(B) inside the txt spans
+    out = out.replace(/(<span class="txt">)([\s\S]*?)(<\/span>)/g,
+      (_, p1, mid, p3) => p1 + stripABPrefix(mid) + p3);
+    return out;
   }
-  return forceOrAB(formatSubQuestions(h));
+  let out = forceOrAB(formatSubQuestions(h));
+  out = out.replace(/(<span class="txt">)([\s\S]*?)(<\/span>)/g,
+    (_, p1, mid, p3) => p1 + stripABPrefix(mid) + p3);
+  return out;
 })();
-
 
     return `
       <div class="question-container">
@@ -1426,6 +1440,7 @@ window.addEventListener('DOMContentLoaded', () => {
 </script>
 </body>
 </html>
+
 
 
 
