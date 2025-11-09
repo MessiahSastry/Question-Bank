@@ -458,7 +458,7 @@ window.textbooks = {
       "Resources",
       "Land, Soil, Water, Natural Vegetation and Wildlife Resources",
       "How When and Where",
-      "From Trate to Territory",
+      "From Trade to Territory",
       "Ruling The Countryside",
       "Tibals and Dikus",
       "The Indian Constitution",
@@ -725,6 +725,7 @@ window.textbooks = {
     ]
   }
 };
+
 
 
 
