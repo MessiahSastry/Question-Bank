@@ -136,6 +136,8 @@
 </style>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
   <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"></script>
 </head>
 <body>
   <div class="page-wrapper">
@@ -192,8 +194,8 @@
     <button class="submit-btn" id="downloadBtn" style="max-width:260px; padding:10px 16px;">Download Branded PDF</button>
   </div>
  <div class="preview-canvas-wrap" id="previewWrap" style="position:relative; margin:0 auto; background:#fafafa; border:1px solid #e7eef7; overflow:hidden; width:100%; max-width:700px;">
-    <img id="previewPage" class="preview-page" alt="PDF Page Preview (size only)" style="width:100%; display:block; background:#fff;">
-    <img id="headerSticker" alt="Header Sticker (drag up/down)" style="position:absolute; left:0; right:0; margin:0 auto; cursor:grab; outline:1px dashed #1762a7; user-select:none;">
+   <canvas id="previewPageCanvas" style="width:100%; display:block; background:#fff;"></canvas>
+    <img id="headerSticker" alt="Header Sticker (drag up/down)" style="position:absolute; left:0; right:0; margin:0 auto; cursor:grab; outline:1px dashed #1762a7; user-select:none; z-index:2;">
   </div>
 </div>
       </div>
@@ -202,6 +204,7 @@
 
 <script>
 window.PDFLib = PDFLib;
+if (window['pdfjsLib']) { pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'; }
 
 /* ---- Config + small helpers (kept compatible with your UI) ---- */
 const config = {
@@ -375,15 +378,15 @@ async function buildHeaderStickerBitmapForPreview(){
 
 /* ---- Preview flow ---- */
 function showPreviewSizeBox(){
-  // fit a page image box proportionally (no actual PDF raster; we show a size proxy)
   const wrap = document.getElementById('previewWrap');
-  const pageImg = document.getElementById('previewPage');
+  const cvs = document.getElementById('previewPageCanvas');
   const targetWpx = wrap.clientWidth || 700;
-  const scale = targetWpx / gFirstPageWpt; // px per point
-  const targetHpx = Math.round(gFirstPageHpt * scale);
-  pageImg.style.height = `${targetHpx}px`;
+  const pxPerPt = targetWpx / gFirstPageWpt; // px per PDF point
+  const targetHpx = Math.round(gFirstPageHpt * pxPerPt);
+  cvs.style.width = `${targetWpx}px`;
+  cvs.style.height = `${targetHpx}px`;
   wrap.style.height = `${targetHpx}px`;
-  return scale;
+  return pxPerPt;
 }
 
 function attachStickerInteractions(pxPerPt){
@@ -429,22 +432,39 @@ async function handlePreview(){
   const file = document.getElementById('pdfFile').files[0];
   if(!file){ alert('Please select a PDF to brand!'); return; }
 
-  // load original PDF (once)
+  // Load with PDFLib (for export) and detect page size
   gPdfBytes = await file.arrayBuffer();
   gPdfDoc = await PDFLib.PDFDocument.load(gPdfBytes);
   const first = gPdfDoc.getPage(0);
   const sz = first.getSize(); gFirstPageWpt = sz.width; gFirstPageHpt = sz.height;
 
-  await buildHeaderStickerBitmapForPreview();
+  // Render with PDF.js for on-screen preview
+  const blobUrl = URL.createObjectURL(new Blob([gPdfBytes], {type:'application/pdf'}));
+  const wrap = document.getElementById('previewWrap');
+  const cvs = document.getElementById('previewPageCanvas');
+  const ctx2d = cvs.getContext('2d');
 
-  // set sticker src and show panel
+  const pxPerPt = showPreviewSizeBox(); // compute preview scale
+  const pdf = await pdfjsLib.getDocument({ url: blobUrl }).promise;
+  const page = await pdf.getPage(1);
+
+  // scale PDF.js viewport to match our preview width
+  const vp = page.getViewport({ scale: 1 });
+  const scale = (wrap.clientWidth || 700) / vp.width;
+  const vpScaled = page.getViewport({ scale });
+
+  cvs.width = Math.floor(vpScaled.width);
+  cvs.height = Math.floor(vpScaled.height);
+
+  await page.render({ canvasContext: ctx2d, viewport: vpScaled }).promise;
+
+  // Build header sticker, show panel, size the sticker to px
+  await buildHeaderStickerBitmapForPreview();
   const sticker = document.getElementById('headerSticker');
   sticker.src = gStickerDataURL;
 
   document.getElementById('previewPanel').style.display = 'block';
-  const pxPerPt = showPreviewSizeBox();
 
-  // set sticker width in preview to match gStickerWpt scaled to px
   const stickerWpx = Math.round(gStickerWpt * pxPerPt);
   sticker.style.width = `${stickerWpx}px`;
 
@@ -514,6 +534,7 @@ document.getElementById('class-dropdown').addEventListener('change', ()=>{
 </div>
 </body>
 </html>
+
 
 
 
