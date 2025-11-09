@@ -191,7 +191,7 @@
     <span id="applyAllPagesNote" style="color:#54656f; font-size:0.9em;">(uncheck to place on first page only)</span>
     <button class="submit-btn" id="downloadBtn" style="max-width:260px; padding:10px 16px;">Download Branded PDF</button>
   </div>
-  <div class="preview-canvas-wrap" id="previewWrap" style="position:relative; margin:0 auto; background:#fafafa; border:1px solid #e7eef7; overflow:hidden; width:700px;">
+ <div class="preview-canvas-wrap" id="previewWrap" style="position:relative; margin:0 auto; background:#fafafa; border:1px solid #e7eef7; overflow:hidden; width:100%; max-width:700px;">
     <img id="previewPage" class="preview-page" alt="PDF Page Preview (size only)" style="width:100%; display:block; background:#fff;">
     <img id="headerSticker" alt="Header Sticker (drag up/down)" style="position:absolute; left:0; right:0; margin:0 auto; cursor:grab; outline:1px dashed #1762a7; user-select:none;">
   </div>
@@ -257,11 +257,11 @@ let gFirstPageHpt = 842;   // default A4 portrait height
 let gStickerDataURL = null;
 let gStickerWpt = 0, gStickerHpt = 0;
 let gScale = 1.0;       // 1.0 = 100%
-let gTopFromTopPt = 24; // from top in points (user control)
+let gTopFromTopPt = 0; // from top in points (user control)
 
 /* ---- Build a single bitmap for the ENTIRE header (logos+titles+info box) ---- */
 async function buildHeaderStickerBitmapForPreview(){
-  // read inputs
+  // inputs
   const schoolName = "St. Patrick's School";
   const examName = document.getElementById('examName').value.trim();
   const className = document.getElementById('class-dropdown').dataset.value || '';
@@ -270,19 +270,26 @@ async function buildHeaderStickerBitmapForPreview(){
   const time = document.getElementById('time').value.trim();
   const maxMarks = document.getElementById('maxMarks').value.trim();
 
-  // target sticker size in PDF points (approx same as your old header)
-  const stickerWidthPt = Math.min(520, gFirstPageWpt - 90); // page width minus 45pt margins
-  const stickerHeightPt = 170;
+  // full usable width; taller to avoid clipping; top→down layout
+  const stickerWidthPt = Math.max(420, Math.min(gFirstPageWpt - 90, gFirstPageWpt));
+  const stickerHeightPt = 220;
 
-  // render to a high-DPI canvas (2x)
+  // high-DPI canvas
   const SCALE = 2;
   const cw = Math.round(stickerWidthPt * SCALE);
   const ch = Math.round(stickerHeightPt * SCALE);
   const c = document.createElement('canvas'); c.width = cw; c.height = ch;
   const ctx = c.getContext('2d');
   ctx.fillStyle = '#ffffff'; ctx.fillRect(0,0,cw,ch);
+  ctx.textBaseline = 'alphabetic';
+  ctx.textAlign = 'center';
 
-  // load logos
+  // paddings & sizes (pt)
+  const padTopPt = 12, lineGapPt = 6;
+  const titlePt = 24, subPt = 15, examPt = 15;
+  const logoHpt = 50, infoHpt = 55;
+
+  // logos
   const logo1 = new Image(); logo1.src = 'schoollogo1.png';
   const logo2 = new Image(); logo2.src = 'schoollogo2.png';
   await Promise.all([
@@ -290,64 +297,73 @@ async function buildHeaderStickerBitmapForPreview(){
     new Promise(r=>{logo2.onload=r; logo2.onerror=r;})
   ]);
 
-  // place logos ~66pt tall
-  const targetLogoHpt = 66, targetLogoHp = targetLogoHpt * SCALE;
+  // running Y (top→down)
+  let yPt = padTopPt;
+
+  // 1) Title
+  ctx.fillStyle = '#1a2d80';
+  ctx.font = `${titlePt*SCALE}px "Times New Roman", Times, serif`;
+  ctx.fillText(schoolName, cw/2, Math.round((yPt + titlePt)*SCALE));
+  yPt += titlePt + lineGapPt;
+
+  // 2) Subtitle
+  ctx.fillStyle = '#154078';
+  ctx.font = `${subPt*SCALE}px "Times New Roman", Times, serif`;
+  ctx.fillText('IIT & NEET FOUNDATION', cw/2, Math.round((yPt + subPt)*SCALE));
+  yPt += subPt + lineGapPt;
+
+  // 3) Exam name
+  ctx.fillStyle = '#1f1f29';
+  ctx.font = `${examPt*SCALE}px "Times New Roman", Times, serif`;
+  ctx.fillText(examName, cw/2, Math.round((yPt + examPt)*SCALE));
+  yPt += examPt + 8;
+
+  // 4) Logos row
+  const lHpx = Math.round(logoHpt * SCALE);
   const l1ratio = logo1.width/Math.max(1,logo1.height);
   const l2ratio = logo2.width/Math.max(1,logo2.height);
-  const l1w = Math.round(targetLogoHp*l1ratio), l1h = Math.round(targetLogoHp);
-  const l2w = Math.round(targetLogoHp*l2ratio), l2h = Math.round(targetLogoHp);
-  const lY = Math.round((stickerHeightPt - 100) * SCALE);
+  const l1w = Math.round(lHpx*l1ratio), l2w = Math.round(lHpx*l2ratio);
+  const lYpx = Math.round(yPt*SCALE);
+  const leftPadPx = 8*SCALE, rightPadPx = 8*SCALE;
+  ctx.drawImage(logo1, leftPadPx, lYpx, l1w, lHpx);
+  ctx.drawImage(logo2, cw - rightPadPx - l2w, lYpx, l2w, lHpx);
+  yPt += logoHpt + 12;
 
-  ctx.drawImage(logo1, Math.round(0.0 + 0.0 + 0 + 5)*SCALE, lY, l1w, l1h);
-  ctx.drawImage(logo2, cw - l2w - 5, lY, l2w, l2h);
-
-  // headings
-  ctx.fillStyle = '#1a2d80';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'alphabetic';
-  ctx.font = `${24*SCALE}px "Times New Roman", Times, serif`;
-  const headingY = (lY + 15*SCALE);
-  ctx.fillText(schoolName, cw/2, headingY + 30*SCALE);
-
-  ctx.fillStyle = '#154078';
-  ctx.font = `${15*SCALE}px "Times New Roman", Times, serif`;
-  ctx.fillText('IIT & NEET FOUNDATION', cw/2, headingY + 10*SCALE);
-
-  ctx.fillStyle = '#1f1f29';
-  ctx.font = `${15*SCALE}px "Times New Roman", Times, serif`;
-  ctx.fillText(examName, cw/2, headingY - 10*SCALE);
-
-  // info box
-  const boxXpt = 0, boxYpt = 15, boxWpt = stickerWidthPt, boxHpt = 55;
-  const bx = Math.round(boxXpt*SCALE), by = ch - Math.round((stickerHeightPt - boxYpt - boxHpt)*SCALE) - Math.round(boxHpt*SCALE);
-  const bw = Math.round(boxWpt*SCALE), bh = Math.round(boxHpt*SCALE);
+  // 5) Info box (full width minus 50pt margins)
+  const boxXpt = 50, boxWpt = Math.max(200, stickerWidthPt - 100);
+  const boxYpt = yPt, boxHpt = infoHpt;
 
   ctx.strokeStyle = '#000'; ctx.lineWidth = 2*SCALE;
-  ctx.strokeRect(bx + 50*SCALE, ch - (165*SCALE), bw - 100*SCALE, 55*SCALE);
+  ctx.strokeRect(Math.round(boxXpt*SCALE), Math.round(boxYpt*SCALE), Math.round(boxWpt*SCALE), Math.round(boxHpt*SCALE));
 
+  const midXpx = cw/2;
   ctx.fillStyle = '#1b3b88';
   ctx.font = `${12.5*SCALE}px "Times New Roman", Times, serif`;
   ctx.textAlign = 'left';
-  ctx.fillText(`Class: ${className}`, (68)*SCALE, ch - (165*SCALE) + (55*SCALE) - 22*SCALE );
+  ctx.fillText(`Class: ${className}`, Math.round((boxXpt+18)*SCALE), Math.round((boxYpt+boxHpt-18)*SCALE));
 
   ctx.textAlign = 'center';
   ctx.fillStyle = '#123066';
   ctx.font = `${17*SCALE}px "Times New Roman", Times, serif`;
-  ctx.fillText(subject, cw/2, ch - (165*SCALE) + (55*SCALE) - 20*SCALE );
+  ctx.fillText(subject, midXpx, Math.round((boxYpt+boxHpt-17)*SCALE));
 
-  ctx.textAlign = 'left';
+  ctx.textAlign = 'right';
   ctx.fillStyle = '#1b3b88';
   ctx.font = `${12.5*SCALE}px "Times New Roman", Times, serif`;
-  ctx.fillText(`Date: ${formatDate(date)}`, cw - (168*SCALE), ch - (165*SCALE) + (55*SCALE) - 22*SCALE );
+  ctx.fillText(`Date: ${formatDate(date)}`, Math.round((boxXpt+boxWpt-18)*SCALE), Math.round((boxYpt+boxHpt-18)*SCALE));
 
   const timeStr = formatDuration(Number(time));
+  ctx.textAlign = 'left';
   ctx.fillStyle = '#263c59';
-  ctx.fillText(`Time: ${timeStr}`, (68)*SCALE, ch - (165*SCALE) + 13*SCALE );
+  ctx.fillText(`Time: ${timeStr}`, Math.round((boxXpt+18)*SCALE), Math.round((boxYpt+18)*SCALE));
 
-  ctx.fillText(`Max Marks: ${maxMarks}`, cw - (168*SCALE), ch - (165*SCALE) + 13*SCALE );
+  ctx.textAlign = 'right';
+  ctx.fillText(`Max Marks: ${maxMarks}`, Math.round((boxXpt+boxWpt-18)*SCALE), Math.round((boxYpt+18)*SCALE));
 
+  // finalize
   gStickerDataURL = c.toDataURL('image/png');
-  gStickerWpt = stickerWidthPt; gStickerHpt = stickerHeightPt;
+  gStickerWpt = stickerWidthPt;
+  gStickerHpt = stickerHeightPt;
   return gStickerDataURL;
 }
 
@@ -492,6 +508,7 @@ document.getElementById('class-dropdown').addEventListener('change', ()=>{
 </div>
 </body>
 </html>
+
 
 
 
