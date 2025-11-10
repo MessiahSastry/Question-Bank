@@ -508,10 +508,7 @@ window.textbooks = {
       "Number Systems",
       "Polynomials",
       "Coordinate Geometry",
-      "Linear Equations in Two Variables",
-      "Introduction to Euclid’s Geometry",
-      "Lines and Angles",
-      "Triangles"
+       "Triangles"
     ],
     "Math 1 IIT": [
       "Theory of Numbers - Basics",
@@ -527,6 +524,9 @@ window.textbooks = {
       "Trigonometry - Ratios and Identities"
     ],
     "Math 2": [
+      "Linear Equations in Two Variables",
+      "Introduction to Euclid’s Geometry",
+      "Lines and Angles",
       "Quadrilaterals",
       "Areas of Parallelograms and Triangles",
       "Circles",
@@ -725,6 +725,7 @@ window.textbooks = {
     ]
   }
 };
+
 
 
 
