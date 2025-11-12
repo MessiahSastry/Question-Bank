@@ -605,6 +605,10 @@ window.textbooks = {
     ],
     "Social": [
       "India: Size and Location",
+      "Socialism in Europe and the Russian Revolution",
+      "What is Democracy? why is Democracy?",
+      "Constitutional Design",
+      "People as Resource",
       "The French revolution",
       " A Story of Village Palampur",
       "Physical Features of India",
@@ -725,6 +729,7 @@ window.textbooks = {
     ]
   }
 };
+
 
 
 
