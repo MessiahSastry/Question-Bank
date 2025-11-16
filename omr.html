@@ -1346,11 +1346,44 @@ async function loadImageAsDataURL(src){
       if (!current.examId) return alert('Pick Class/Section/Exam first');
       if (!tpl.sections.length) return alert('Add at least one section in Exam Settings');
 
-      const { jsPDF } = window.jspdf;
+           const { jsPDF } = window.jspdf;
       const doc = new jsPDF({ unit: 'mm', format: 'a4' });
       const W = 210, H = 297;
       const margin = 10;
       const cx = W / 2;
+
+      // ---------- PAGE BORDERS ----------
+      const outer = 6;
+      const inner = outer + 2.5;
+
+      doc.setDrawColor(15, 61, 107);
+      doc.setLineWidth(0.9);
+      doc.roundedRect(
+        outer,
+        outer,
+        W - 2 * outer,
+        H - 2 * outer,
+        4, 4, 'S'
+      );
+
+      doc.setDrawColor(120, 144, 156);
+      doc.setLineWidth(0.4);
+      doc.roundedRect(
+        inner,
+        inner,
+        W - 2 * inner,
+        H - 2 * inner,
+        3, 3, 'S'
+      );
+
+      doc.setDrawColor(23, 98, 167);
+      doc.setLineWidth(1.1);
+      const barW = 26, barGap = 3;
+      doc.line(cx - barW - barGap / 2, inner + 3, cx - barGap / 2, inner + 3);
+      doc.line(cx + barGap / 2, inner + 3, cx + barW + barGap / 2, inner + 3);
+
+      // reset line width for rest of drawing
+      doc.setLineWidth(0.2);
 
       // Friendly exam name from dropdown
       const examSel = document.getElementById('examSel');
@@ -1358,39 +1391,47 @@ async function loadImageAsDataURL(src){
         ? examSel.selectedOptions[0].textContent.trim()
         : (current.examId || 'Exam');
 
-      // ---------- COLOURED HEADER ----------
-      const headerH = 30;
-      doc.setFillColor(15, 61, 107);        // dark blue
-      doc.rect(0, 0, W, headerH, 'F');
+           // ---------- HEADER (white background like question paper) ----------
+      const headerH = 40;   // virtual header height for layout (no blue banner)
 
-      // Logos (logo.png, logo1.png) on left & right
+      // Logos (logo.png, logo1.png) on left & right, close to heading
       try {
         const [logoLeft, logoRight] = await Promise.all([
           loadImageAsDataURL('logo.png'),
           loadImageAsDataURL('logo1.png')
         ]);
-        const logoW = 18, logoH = 18, logoY = 6;
-        if (logoLeft)  doc.addImage(logoLeft,  'PNG', margin, logoY, logoW, logoH);
-        if (logoRight) doc.addImage(logoRight, 'PNG', W - margin - logoW, logoY, logoW, logoH);
+        const logoW = 20, logoH = 20;
+        const logoY = 14;
+        if (logoLeft)  doc.addImage(logoLeft,  'PNG', margin + 4, logoY, logoW, logoH);
+        if (logoRight) doc.addImage(logoRight, 'PNG', W - margin - logoW - 4, logoY, logoW, logoH);
       } catch (e) {
         console.warn('Logo load error:', e);
       }
 
-      // Header text (centre)
-      doc.setTextColor(255, 255, 255);
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(16);
-      doc.text("St. PATRICK'S SCHOOL", cx, 11, { align: 'center' });
+      const titleY = 20;
 
+      // School name with blue fill + red outline
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(20);
+      doc.setDrawColor(220, 38, 38);       // red outline
+      doc.setLineWidth(0.5);
+      doc.setTextColor(15, 61, 107);       // blue fill
+      doc.text("St. Patrick's School", cx, titleY, {
+        align: 'center',
+        renderingMode: 'fillThenStroke'
+      });
+
+      // Subheading in blue
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(11);
-      doc.text('IIT & NEET FOUNDATION', cx, 17, { align: 'center' });
+      doc.setTextColor(23, 98, 167);
+      doc.text('IIT & NEET FOUNDATION', cx, titleY + 7, { align: 'center' });
 
-      // Exam name – yellow
+      // Exam name in dark green
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(13);
-      doc.setTextColor(253, 198, 0);        // #fdc600
-      doc.text(examLabel.toUpperCase(), cx, 24, { align: 'center' });
+      doc.setTextColor(0, 105, 62);
+      doc.text(examLabel.toUpperCase(), cx, titleY + 14, { align: 'center' });
 
       // Reset text colour
       doc.setTextColor(0, 0, 0);
@@ -1432,11 +1473,11 @@ async function loadImageAsDataURL(src){
       doc.rect(margin, fidYBot, fid, fid);               // BL
       doc.rect(W - margin - fid, fidYBot, fid, fid);     // BR
 
-      // ---------- STUDENT INFO BOX ----------
-      const infoTop = headerH + 10;
-      const infoH   = 24;
-      const infoLeft = margin;
-      const infoW    = W - 2 * margin;
+           // ---------- STUDENT INFO BOX ----------
+      const infoTop  = headerH + 6;
+      const infoH    = 20;
+      const infoLeft = margin + 4;
+      const infoW    = W - 2 * (margin + 4);
 
       doc.setDrawColor(23, 98, 167);       // border
       doc.setFillColor(243, 244, 246);     // light bg
@@ -1446,55 +1487,78 @@ async function loadImageAsDataURL(src){
       doc.setTextColor(15, 61, 107);
       doc.setFontSize(9);
 
-      const line1Y = infoTop + 8;
-      const line2Y = infoTop + 15;
-      const line3Y = infoTop + 22;
-      const midX   = infoLeft + infoW / 2;
+      const line1Y = infoTop + 7;
+      const line2Y = infoTop + 14;
 
-      doc.text('Name:',            infoLeft + 4, line1Y);
+      // First line
+      doc.text('Name:', infoLeft + 4, line1Y);
+
+      // Second line: Class & Section / Subject / Date
       doc.text('Class & Section:', infoLeft + 4, line2Y);
-      doc.text('Roll No.:',        infoLeft + 4, line3Y);
 
-      doc.text('Subject:',         midX + 4,    line1Y);
-      doc.text('Date:',            midX + 4,    line2Y);
-      doc.text('Max Marks:',       midX + 4,    line3Y);
+      const subjX = infoLeft + infoW * 0.46;
+      const dateX = infoLeft + infoW * 0.80;
+      doc.text('/ Subject:', subjX, line2Y);
+      doc.text('/ Date:',    dateX, line2Y);
 
       // back to black for grids
       doc.setTextColor(0, 0, 0);
 
-      // ---------- ROLL NUMBER GRID ----------
-      const rollTop = infoTop + infoH + 10;
-      const cols = tpl.rollDigits;
-      const colW = 12;
-      const rowH = 5.8;
-      const startX = margin;
-      const startY = rollTop;
+           // ---------- ROLL NUMBER GRID (vertical 0–9 like sample) ----------
+      const rollTop = infoTop + infoH + 6;
+      const cols    = tpl.rollDigits;
+      const colW    = 10;
+      const rowH    = 6;
+
+      const labelX      = margin + 4;
+      const boxesStartX = labelX + 14;   // space for 0–9 labels
+      const boxesY      = rollTop;
 
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(11);
       doc.setTextColor(15, 61, 107);
-      doc.text('Roll Number:', startX, startY - 4);
+      doc.text('Roll No:', labelX, boxesY - 2);
 
+      // Top digit boxes
+      doc.setDrawColor(15, 61, 107);
       for (let d = 0; d < cols; d++) {
-        const x = startX + d * (colW + 2);
-        doc.setFont('helvetica', 'normal');
-        doc.setFontSize(9);
-        doc.text(String(d + 1), x + colW / 2, startY, { align: 'center' });
-        for (let r = 0; r < 10; r++) {
-          const y = startY + 6 + r * rowH;
-          doc.circle(x + colW / 2, y, 2.2);
-          doc.text(String(r), x + colW - 2, y + 1.2);
-        }
+        const x = boxesStartX + d * (colW + 3);
+        doc.roundedRect(x, boxesY, colW, 7, 1, 1, 'S');
       }
+
+      const bubblesTopY = boxesY + 11;
+
+      // 0–9 labels on left
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8);
       doc.setTextColor(0, 0, 0);
 
+      for (let r = 0; r <= 9; r++) {
+        const y = bubblesTopY + r * rowH;
+        doc.text(String(r), labelX + 2, y + 1.8);
+      }
+
+      // Bubbles for each digit column
+      const bubbleR = 2.2;
+      for (let d = 0; d < cols; d++) {
+        const cxBase = boxesStartX + d * (colW + 3) + colW / 2;
+        for (let r = 0; r <= 9; r++) {
+          const cy = bubblesTopY + r * rowH;
+          doc.circle(cxBase, cy, bubbleR);
+        }
+      }
+
+      // approximate ROIs for roll decoding
+      const rollGridX = boxesStartX;
+      const rollGridY = bubblesTopY;
+
       // ---------- SECTIONS BUBBLE GRIDS ----------
-      let curY = startY + 6 + 10 * rowH + 12;
+      let curY = bubblesTopY + 10 * rowH + 18;
       const leftX  = margin;
       const rightX = W / 2 + 4;
       const secBoxH = 44;
       const rois = {
-        roll: { x: startX, y: startY, cols, colW, rowH },
+        roll: { x: rollGridX, y: rollGridY, cols, colW, rowH },
         sections: []
       };
 
@@ -1784,5 +1848,6 @@ async function loadImageAsDataURL(src){
   </script>
 </body>
 </html>
+
 
 
