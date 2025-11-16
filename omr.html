@@ -1320,183 +1320,256 @@ el('btnKeyImport').onclick = ()=>{
   };
   inp.click();
 };
-    // ===== PDF GENERATION (with ROIs) =====
-       el('btnGenerate').onclick = async () => {
+    // Helper: load logo.png / logo1.png as PNG dataURL for jsPDF
+async function loadImageAsDataURL(src){
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.width;
+      canvas.height = img.height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0);
+      resolve(canvas.toDataURL('image/png'));
+    };
+    img.onerror = () => {
+      console.warn('Logo load failed:', src);
+      resolve(null);       // fail silently
+    };
+    img.src = src;
+  });
+}
+
+        // ===== PDF GENERATION (colourful layout + ROIs) =====
+    el('btnGenerate').onclick = async () => {
       if (!current.examId) return alert('Pick Class/Section/Exam first');
       if (!tpl.sections.length) return alert('Add at least one section in Exam Settings');
 
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+      const W = 210, H = 297;
+      const margin = 10;
+      const cx = W / 2;
+
+      // Friendly exam name from dropdown
+      const examSel = document.getElementById('examSel');
+      const examLabel = examSel && examSel.selectedOptions[0]
+        ? examSel.selectedOptions[0].textContent.trim()
+        : (current.examId || 'Exam');
+
+      // ---------- COLOURED HEADER ----------
+      const headerH = 30;
+      doc.setFillColor(15, 61, 107);        // dark blue
+      doc.rect(0, 0, W, headerH, 'F');
+
+      // Logos (logo.png, logo1.png) on left & right
       try {
-        const { jsPDF } = window.jspdf;
-        const doc = new jsPDF({ unit: 'mm', format: 'a4' });
-        const W = 210, H = 297;           // A4 portrait
-        const margin = 12;
-        const cx = W / 2;
-
-        // Header
-        doc.setFont('helvetica', 'bold'); doc.setFontSize(14);
-        doc.text("ST. PATRICK'S SCHOOL", cx, margin, { align: 'center' });
-        doc.setFont('helvetica', 'normal'); doc.setFontSize(11);
-        doc.text('OMR – ' + (current.examId || 'Exam'), cx, margin + 6, { align: 'center' });
-
-        // Fiducials (corner squares)
-        const fid = 10;
-        doc.rect(margin, margin, fid, fid);                       // TL
-        doc.rect(W - margin - fid, margin, fid, fid);             // TR
-        doc.rect(margin, H - margin - fid, fid, fid);             // BL
-        doc.rect(W - margin - fid, H - margin - fid, fid, fid);   // BR
-
-        // QR (optional, wrapped in try/catch so a bad PNG doesn't crash everything)
-        let qrBox = null;
-        if (tpl.qrEnabled) {
-          try {
-            const qrSize = 26;
-            const qrDiv = document.createElement('div');
-
-            new QRCode(qrDiv, {
-              text: JSON.stringify({
-                examId: current.examId,
-                classId: current.classId,
-                sectionId: current.sectionId
-              }),
-              width: qrSize * 3,
-              height: qrSize * 3
-            });
-
-            const imgEl = qrDiv.querySelector('img');
-            const cvsEl = qrDiv.querySelector('canvas');
-            let dataUrl = null;
-
-            if (cvsEl) {
-              // Some versions of qrcodejs render a <canvas> directly
-              dataUrl = cvsEl.toDataURL('image/png');
-            } else if (imgEl) {
-              // Fallback when it renders an <img>
-              const tmp = document.createElement('canvas');
-              const w = imgEl.naturalWidth || imgEl.width;
-              const h = imgEl.naturalHeight || imgEl.height;
-              if (w && h) {
-                tmp.width = w;
-                tmp.height = h;
-                const ctx = tmp.getContext('2d');
-                ctx.drawImage(imgEl, 0, 0, w, h);
-                dataUrl = tmp.toDataURL('image/png');
-              }
-            }
-
-            if (dataUrl) {
-              doc.addImage(
-                dataUrl,
-                'PNG',
-                W - margin - qrSize,
-                margin + 14,
-                qrSize,
-                qrSize
-              );
-              qrBox = { x: W - margin - qrSize, y: margin + 14, w: qrSize, h: qrSize };
-            }
-          } catch (err) {
-            console.error('QR PNG embed failed, skipping QR:', err);
-            // We simply skip QR if something is wrong; PDF generation continues
-          }
-        }
-
-        // Roll number grid
-        const rollTop = margin + 50;
-        const cols = tpl.rollDigits;
-        const colW = 12;
-        const rowH = 5.8;
-        const startX = margin;
-        const startY = rollTop;
-
-        doc.setFont('helvetica', 'bold'); doc.setFontSize(11);
-        doc.text('Roll Number:', startX, startY - 4);
-
-        for (let d = 0; d < cols; d++) {
-          const x = startX + d * (colW + 2);
-          doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
-          doc.text(String(d + 1), x + colW / 2, startY, { align: 'center' });
-          for (let r = 0; r < 10; r++) {
-            const y = startY + 6 + r * rowH;
-            doc.circle(x + colW / 2, y, 2.2);
-            doc.setFontSize(7);
-            doc.text(String(r), x + colW - 2, y + 1.2);
-          }
-        }
-
-        // Sections bubble grids
-        let curY = startY + 6 + 10 * rowH + 12;
-        const leftX = margin;
-        const rightX = W / 2 + 4;
-        const secBoxH = 44;
-        const rois = {
-          roll: { x: startX, y: startY, cols, colW, rowH },
-          sections: []
-        };
-
-        tpl.sections.forEach((sec, idx) => {
-          const colLeft = (idx % 2 === 0);
-          const baseX = colLeft ? leftX : rightX;
-          if (!colLeft) curY -= secBoxH;
-
-          doc.setFont('helvetica', 'bold'); doc.setFontSize(11);
-          doc.text(`${sec.name}`, baseX, curY);
-
-          const optCount = sec.options;
-          const bubbleR = 2.1;
-          const cellW = 8.5;
-          const cellH = 6.8;
-          const qPerRow = 8;
-          const gridX = baseX;
-          const gridY = curY + 3.5;
-          const secROI = { name: sec.name, options: optCount, bubbles: [] };
-
-          for (let q = 0; q < sec.count; q++) {
-            const i = q % qPerRow;
-            const j = Math.floor(q / qPerRow);
-            const x0 = gridX + i * (optCount * cellW + 6);
-            const y0 = gridY + j * (cellH + 6);
-
-            doc.setFont('helvetica', 'normal'); doc.setFontSize(8);
-            doc.text(String(q + 1), x0, y0);
-
-            for (let o = 0; o < optCount; o++) {
-              const ox = x0 + 6 + o * cellW;
-              const oy = y0;
-              doc.circle(ox, oy, bubbleR);
-              doc.text(String.fromCharCode(65 + o), ox + 3.6, oy + 1.6);
-              secROI.bubbles.push({
-                q: q + 1,
-                opt: String.fromCharCode(65 + o),
-                cx: mmToPx(ox),
-                cy: mmToPx(oy),
-                r: mmToPx(bubbleR)
-              });
-            }
-          }
-
-          rois.sections.push(secROI);
-          if (colLeft) { curY += secBoxH; }
-          if (idx % 2 === 1) curY += 6;
-        });
-
-        // Save ROIs
-        tpl.rois = rois;
-        await db.collection('omrTemplates')
-          .doc(current.examId)
-          .set({ rois }, { merge: true });
-
-        // Render preview (PDF as data URL)
-        const dataUrl = doc.output('dataurlstring');
-        el('pdfPreview').innerHTML =
-          `<img src="${dataUrl}" alt="preview" style="width:100%; max-width:760px; border:1px solid #e5e7eb; border-radius:12px"/>`;
-
-        // Download
-        doc.save(`OMR_${current.examId}.pdf`);
-        el('tplStatus').textContent = 'PDF generated & ROIs saved.';
-      } catch (err) {
-        console.error('Error while generating OMR PDF:', err);
-        alert('Error while generating OMR PDF: ' + err.message);
+        const [logoLeft, logoRight] = await Promise.all([
+          loadImageAsDataURL('logo.png'),
+          loadImageAsDataURL('logo1.png')
+        ]);
+        const logoW = 18, logoH = 18, logoY = 6;
+        if (logoLeft)  doc.addImage(logoLeft,  'PNG', margin, logoY, logoW, logoH);
+        if (logoRight) doc.addImage(logoRight, 'PNG', W - margin - logoW, logoY, logoW, logoH);
+      } catch (e) {
+        console.warn('Logo load error:', e);
       }
+
+      // Header text (centre)
+      doc.setTextColor(255, 255, 255);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(16);
+      doc.text("St. PATRICK'S SCHOOL", cx, 11, { align: 'center' });
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(11);
+      doc.text('IIT & NEET FOUNDATION', cx, 17, { align: 'center' });
+
+      // Exam name – yellow
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(13);
+      doc.setTextColor(253, 198, 0);        // #fdc600
+      doc.text(examLabel.toUpperCase(), cx, 24, { align: 'center' });
+
+      // Reset text colour
+      doc.setTextColor(0, 0, 0);
+
+      // ---------- QR CODE (optional) ----------
+      let qrBox = null;
+      if (tpl.qrEnabled) {
+        const qrSize = 22;
+        const qrDiv = document.createElement('div');
+        new QRCode(qrDiv, {
+          text: JSON.stringify({
+            examId: current.examId,
+            classId: current.classId,
+            sectionId: current.sectionId
+          }),
+          width: qrSize * 3,
+          height: qrSize * 3
+        });
+        const img = qrDiv.querySelector('img') || qrDiv.querySelector('canvas');
+        if (img) {
+          const canvas = document.createElement('canvas');
+          canvas.width = img.width;
+          canvas.height = img.height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0);
+          const dataUrl = canvas.toDataURL('image/png');
+          doc.addImage(dataUrl, 'PNG', W - margin - qrSize, headerH + 4, qrSize, qrSize);
+          qrBox = { x: W - margin - qrSize, y: headerH + 4, w: qrSize, h: qrSize };
+        }
+      }
+
+      // ---------- FIDUCIALS ----------
+      const fid = 7;
+      const fidYTop = headerH + 4;
+      const fidYBot = H - margin - fid;
+      doc.setDrawColor(0, 0, 0);
+      doc.rect(margin, fidYTop, fid, fid);               // TL
+      doc.rect(W - margin - fid, fidYTop, fid, fid);     // TR
+      doc.rect(margin, fidYBot, fid, fid);               // BL
+      doc.rect(W - margin - fid, fidYBot, fid, fid);     // BR
+
+      // ---------- STUDENT INFO BOX ----------
+      const infoTop = headerH + 10;
+      const infoH   = 24;
+      const infoLeft = margin;
+      const infoW    = W - 2 * margin;
+
+      doc.setDrawColor(23, 98, 167);       // border
+      doc.setFillColor(243, 244, 246);     // light bg
+      doc.roundedRect(infoLeft, infoTop, infoW, infoH, 3, 3, 'FD');
+
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(15, 61, 107);
+      doc.setFontSize(9);
+
+      const line1Y = infoTop + 8;
+      const line2Y = infoTop + 15;
+      const line3Y = infoTop + 22;
+      const midX   = infoLeft + infoW / 2;
+
+      doc.text('Name:',            infoLeft + 4, line1Y);
+      doc.text('Class & Section:', infoLeft + 4, line2Y);
+      doc.text('Roll No.:',        infoLeft + 4, line3Y);
+
+      doc.text('Subject:',         midX + 4,    line1Y);
+      doc.text('Date:',            midX + 4,    line2Y);
+      doc.text('Max Marks:',       midX + 4,    line3Y);
+
+      // back to black for grids
+      doc.setTextColor(0, 0, 0);
+
+      // ---------- ROLL NUMBER GRID ----------
+      const rollTop = infoTop + infoH + 10;
+      const cols = tpl.rollDigits;
+      const colW = 12;
+      const rowH = 5.8;
+      const startX = margin;
+      const startY = rollTop;
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(11);
+      doc.setTextColor(15, 61, 107);
+      doc.text('Roll Number:', startX, startY - 4);
+
+      for (let d = 0; d < cols; d++) {
+        const x = startX + d * (colW + 2);
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(9);
+        doc.text(String(d + 1), x + colW / 2, startY, { align: 'center' });
+        for (let r = 0; r < 10; r++) {
+          const y = startY + 6 + r * rowH;
+          doc.circle(x + colW / 2, y, 2.2);
+          doc.text(String(r), x + colW - 2, y + 1.2);
+        }
+      }
+      doc.setTextColor(0, 0, 0);
+
+      // ---------- SECTIONS BUBBLE GRIDS ----------
+      let curY = startY + 6 + 10 * rowH + 12;
+      const leftX  = margin;
+      const rightX = W / 2 + 4;
+      const secBoxH = 44;
+      const rois = {
+        roll: { x: startX, y: startY, cols, colW, rowH },
+        sections: []
+      };
+
+      tpl.sections.forEach((sec, idx) => {
+        const inLeftCol = (idx % 2 === 0);
+        const baseX = inLeftCol ? leftX : rightX;
+
+        if (!inLeftCol) curY -= secBoxH;   // share row
+
+        // coloured card behind section
+        const cardW = (W / 2) - margin - 4;
+        doc.setFillColor(248, 250, 252);
+        doc.roundedRect(baseX - 2, curY - 6, cardW, secBoxH, 2, 2, 'F');
+
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(11);
+        doc.setTextColor(23, 98, 167);
+        doc.text(`${sec.name}`, baseX, curY - 1);
+        doc.setTextColor(0, 0, 0);
+
+        const optCount = sec.options;
+        const bubbleR  = 2.1;
+        const cellW    = 8.5;
+        const cellH    = 6.8;
+        const qPerRow  = 8;
+        const gridX    = baseX;
+        const gridY    = curY + 3.5;
+
+        const secROI = { name: sec.name, options: optCount, bubbles: [] };
+
+        for (let q = 0; q < sec.count; q++) {
+          const i = q % qPerRow;
+          const j = Math.floor(q / qPerRow);
+          const x0 = gridX + i * (optCount * cellW + 6);
+          const y0 = gridY + j * (cellH + 6);
+
+          doc.setFont('helvetica', 'normal');
+          doc.setFontSize(8);
+          doc.text(String(q + 1), x0, y0);
+
+          for (let o = 0; o < optCount; o++) {
+            const ox = x0 + 6 + o * cellW;
+            const oy = y0;
+            doc.circle(ox, oy, bubbleR);
+            doc.text(String.fromCharCode(65 + o), ox + 3.6, oy + 1.6);
+
+            secROI.bubbles.push({
+              q:   q + 1,
+              opt: String.fromCharCode(65 + o),
+              cx:  mmToPx(ox),
+              cy:  mmToPx(oy),
+              r:   mmToPx(bubbleR)
+            });
+          }
+        }
+
+        rois.sections.push(secROI);
+
+        if (inLeftCol) {
+          curY += secBoxH;
+        } else {
+          curY += 6;
+        }
+      });
+
+      // Save ROIs
+      tpl.rois = rois;
+      await db.collection('omrTemplates').doc(current.examId).set({ rois }, { merge: true });
+
+      // ---------- PREVIEW + DOWNLOAD ----------
+      const dataUrl = doc.output('dataurlstring');
+      document.getElementById('pdfPreview').innerHTML =
+        `<img src="${dataUrl}" alt="preview" style="width:100%; max-width:760px; border:1px solid #e5e7eb; border-radius:12px"/>`;
+
+      doc.save(`OMR_${examLabel.replace(/\s+/g, '_')}.pdf`);
+      document.getElementById('tplStatus').textContent = 'PDF generated & ROIs saved.';
     };
 
     // mm to px at 300 dpi (1 inch = 25.4 mm, 300 dpi => 300 px per inch)
@@ -1704,9 +1777,3 @@ el('btnKeyImport').onclick = ()=>{
   </script>
 </body>
 </html>
-
-
-
-
-
-
