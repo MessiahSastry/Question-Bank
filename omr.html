@@ -185,7 +185,7 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
       font-size:12px;
     }
 
-    /* Bubble-style answer key choices */
+       /* Bubble-style answer key choices */
     .bubble-choice{
       display:inline-flex;
       align-items:center;
@@ -230,6 +230,34 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
     .bubble-label{
       font-weight:500;
       color:#111827;
+    }
+
+    /* Small flag toggles under each question (Either / Add score) */
+    .key-flags{
+      margin-top:6px;
+      display:flex;
+      flex-wrap:wrap;
+      gap:8px;
+    }
+    .flag-toggle{
+      display:inline-flex;
+      align-items:center;
+      padding:3px 8px;
+      border-radius:999px;
+      border:1px solid #e5e7eb;
+      font-size:11px;
+      color:#6b7280;
+      cursor:pointer;
+      user-select:none;
+      background:#f9fafb;
+    }
+    .flag-toggle input{
+      display:none;
+    }
+    .flag-toggle.on{
+      background:#ecfdf5;
+      border-color:#16a34a;
+      color:#166534;
     }
 
   /* --- Custom light dropdown (mobile screenshot style) --- */
@@ -873,78 +901,180 @@ el('subjectSel').addEventListener('change', (e)=>{
     }
 
     // ===== ANSWER KEY UI =====
-    el('btnKey').onclick = async ()=>{
-  if(!current.examId){ alert('Pick Class / Section / Exam first'); return; }
-  await buildKeyUI(); el('dlgKey').showModal();
+function ensureKeyEntry(secName, q){
+  if(!answerKey[secName]) answerKey[secName] = {};
+  let entry = answerKey[secName][q];
+  if(Array.isArray(entry)){
+    entry = { options: entry.slice(), either:false, addScore:false };
+  } else if(!entry || typeof entry !== 'object'){
+    entry = { options: [], either:false, addScore:false };
+  } else {
+    entry.options = Array.isArray(entry.options) ? entry.options : [];
+    entry.either = !!entry.either;
+    entry.addScore = !!entry.addScore;
+  }
+  answerKey[secName][q] = entry;
+  return entry;
 }
 
-    async function buildKeyUI(){
-      if(!tpl.sections.length){ el('keyContent').textContent='(Add sections in Exam Settings first)'; return; }
-      if(!answerKey || typeof answerKey!== 'object') answerKey={};
-      const host = document.createElement('div');
-      tpl.sections.forEach(sec=>{
-        if(!answerKey[sec.name]) answerKey[sec.name] = {};
-        const box = document.createElement('div');
-        box.className='card';
-        box.style.marginBottom='12px';
-        box.innerHTML = `<div class="sectionTitle"><i class="fa fa-key"></i> ${sec.name} — ${sec.count} Qs (${sec.options===4?'A–D':'A–E'})</div>`;
-        const tbl = document.createElement('table');
-        tbl.className='slim';
-        const thead = document.createElement('thead'); thead.innerHTML = '<tr><th>#</th><th>Correct choice(s)</th></tr>'; tbl.appendChild(thead);
-        const tbody = document.createElement('tbody');
-        for(let q=1;q<=sec.count;q++){
-          const tr=document.createElement('tr');
-          const cell1=`<td style="width:60px"><span class="kbd">${q}</span></td>`;
-             const options = ['A','B','C','D','E','F'].slice(0,sec.options).map(op=>{
-            const id = `${sec.name}__${q}__${op}`.replace(/\s+/g,'_');
-            const checked = (answerKey[sec.name][q]||[]).includes(op)? 'checked':'';
-            return `
-              <label class="bubble-choice">
-                <input type="checkbox" id="${id}" data-sec="${sec.name}" data-q="${q}" value="${op}" ${checked}/>
-                <span class="bubble-circle"></span>
-                <span class="bubble-label">${op}</span>
-              </label>
-            `;
-          }).join('');
-          tr.innerHTML = cell1 + `<td>${options}</td>`; tbody.appendChild(tr);
-        }
-        tbl.appendChild(tbody); box.appendChild(tbl); host.appendChild(box);
-      });
-      const kc = el('keyContent'); kc.innerHTML=''; kc.appendChild(host);
-      kc.querySelectorAll('input[type=checkbox]').forEach(chk=>{
-        chk.addEventListener('change', (e)=>{
-          const sec = e.target.dataset.sec; const q = Number(e.target.dataset.q); const v = e.target.value;
-          if(!answerKey[sec][q]) answerKey[sec][q]=[];
-          if(e.target.checked){ if(!answerKey[sec][q].includes(v)) answerKey[sec][q].push(v); }
-          else { answerKey[sec][q] = answerKey[sec][q].filter(x=>x!==v); }
-        })
-      })
+el('btnKey').onclick = async ()=>{
+  if(!current.examId){ alert('Pick Class / Section / Exam first'); return; }
+  await buildKeyUI();
+  el('dlgKey').showModal();
+};
+
+async function buildKeyUI(){
+  if(!tpl.sections.length){
+    el('keyContent').textContent='(Add sections in Exam Settings first)';
+    return;
+  }
+  if(!answerKey || typeof answerKey !== 'object') answerKey = {};
+
+  const host = document.createElement('div');
+
+  tpl.sections.forEach(sec=>{
+    if(!answerKey[sec.name]) answerKey[sec.name] = {};
+
+    const box = document.createElement('div');
+    box.className='card';
+    box.style.marginBottom='12px';
+
+    const optLabel =
+      sec.options === 2 ? 'A–B' :
+      sec.options === 3 ? 'A–C' :
+      sec.options === 4 ? 'A–D' :
+      sec.options === 5 ? 'A–E' : 'A–F';
+
+    box.innerHTML =
+      `<div class="sectionTitle"><i class="fa fa-key"></i> ${sec.name} — ${sec.count} Qs (${optLabel})</div>`;
+
+    const tbl = document.createElement('table');
+    tbl.className='slim';
+    const thead = document.createElement('thead');
+    thead.innerHTML = '<tr><th>#</th><th>Correct choice(s) & flags</th></tr>';
+    tbl.appendChild(thead);
+
+    const tbody = document.createElement('tbody');
+
+    for(let q=1; q<=sec.count; q++){
+      const entry = ensureKeyEntry(sec.name, q);
+      const correctOpts = entry.options || [];
+      const either = !!entry.either;
+      const addScore = !!entry.addScore;
+
+      const tr = document.createElement('tr');
+      const cell1 = `<td style="width:60px"><span class="kbd">${q}</span></td>`;
+
+      const optionsHtml = ['A','B','C','D','E','F']
+        .slice(0, sec.options)
+        .map(op=>{
+          const id = `${sec.name}__${q}__${op}`.replace(/\s+/g,'_');
+          const checked = correctOpts.includes(op) ? 'checked' : '';
+          return `
+            <label class="bubble-choice">
+              <input type="checkbox" class="key-opt" id="${id}" data-sec="${sec.name}" data-q="${q}" value="${op}" ${checked}/>
+              <span class="bubble-circle"></span>
+              <span class="bubble-label">${op}</span>
+            </label>
+          `;
+        }).join('');
+
+      const flagsHtml = `
+        <div class="key-flags">
+          <label class="flag-toggle ${either ? 'on' : ''}">
+            <input type="checkbox" class="flag-either" data-sec="${sec.name}" data-q="${q}" ${either ? 'checked' : ''}/>
+            Either (any one earns full marks)
+          </label>
+          <label class="flag-toggle ${addScore ? 'on' : ''}">
+            <input type="checkbox" class="flag-addscore" data-sec="${sec.name}" data-q="${q}" ${addScore ? 'checked' : ''}/>
+            Add score (grace marks when no option set)
+          </label>
+        </div>
+      `;
+
+      tr.innerHTML = cell1 + `<td>${optionsHtml}${flagsHtml}</td>`;
+      tbody.appendChild(tr);
     }
 
-    el('btnKeySave').onclick = async ()=>{
-      if(!current.examId) return alert('Pick Class/Section/Exam first');
-      await db.collection('omrTemplates').doc(current.examId).set({ answerKey }, {merge:true});
-      alert('Answer Key saved.');
-    }
+    tbl.appendChild(tbody);
+    box.appendChild(tbl);
+    host.appendChild(box);
+  });
 
-    // CSV import: expects rows like: Section, QNo, Answers (e.g., "A" or "A;C")
-    el('btnKeyImport').onclick = ()=>{
-      const inp = document.createElement('input'); inp.type='file'; inp.accept='.csv';
-      inp.onchange = async ()=>{
-        const file = inp.files[0]; if(!file) return;
-        const txt = await file.text();
-        txt.split(/\r?\n/).forEach(line=>{
-          const [sec, qStr, ans] = line.split(',').map(s=>s&&s.trim());
-          if(!sec||!qStr||!ans) return;
-          const q = Number(qStr); const arr = ans.split(/;|\s+/).filter(Boolean);
-          if(!answerKey[sec]) answerKey[sec] = {}; answerKey[sec][q] = arr;
-        })
-        await buildKeyUI();
-        alert('CSV imported into key (not yet saved). Click Save Key.');
-      };
-      inp.click();
-    }
+  const kc = el('keyContent');
+  kc.innerHTML = '';
+  kc.appendChild(host);
 
+  // Option bubbles
+  kc.querySelectorAll('input.key-opt').forEach(chk=>{
+    chk.addEventListener('change', (e)=>{
+      const sec = e.target.dataset.sec;
+      const q = Number(e.target.dataset.q);
+      const v = e.target.value;
+      const entry = ensureKeyEntry(sec, q);
+
+      if(e.target.checked){
+        if(!entry.options.includes(v)) entry.options.push(v);
+      } else {
+        entry.options = entry.options.filter(x=>x !== v);
+      }
+    });
+  });
+
+  // Either toggle
+  kc.querySelectorAll('input.flag-either').forEach(inp=>{
+    inp.addEventListener('change', (e)=>{
+      const sec = e.target.dataset.sec;
+      const q = Number(e.target.dataset.q);
+      const entry = ensureKeyEntry(sec, q);
+      entry.either = e.target.checked;
+      const label = e.target.closest('.flag-toggle');
+      if(label) label.classList.toggle('on', e.target.checked);
+    });
+  });
+
+  // Add score toggle (for cancelled questions with no option set)
+  kc.querySelectorAll('input.flag-addscore').forEach(inp=>{
+    inp.addEventListener('change', (e)=>{
+      const sec = e.target.dataset.sec;
+      const q = Number(e.target.dataset.q);
+      const entry = ensureKeyEntry(sec, q);
+      entry.addScore = e.target.checked;
+      const label = e.target.closest('.flag-toggle');
+      if(label) label.classList.toggle('on', e.target.checked);
+    });
+  });
+}
+
+el('btnKeySave').onclick = async ()=>{
+  if(!current.examId) return alert('Pick Class/Section/Exam first');
+  await db.collection('omrTemplates').doc(current.examId).set({ answerKey }, {merge:true});
+  alert('Answer Key saved.');
+};
+
+// CSV import: expects rows like: Section, QNo, Answers (e.g., "A" or "A;C")
+el('btnKeyImport').onclick = ()=>{
+  const inp = document.createElement('input');
+  inp.type='file';
+  inp.accept='.csv';
+  inp.onchange = async ()=>{
+    const file = inp.files[0];
+    if(!file) return;
+    const txt = await file.text();
+    txt.split(/\r?\n/).forEach(line=>{
+      const [sec, qStr, ans] = line.split(',').map(s=>s && s.trim());
+      if(!sec || !qStr || !ans) return;
+      const q = Number(qStr);
+      const arr = ans.split(/;|\s+/).filter(Boolean);
+      if(!answerKey[sec]) answerKey[sec] = {};
+      // store as options array; buildKeyUI/scoreAnswers will normalise
+      answerKey[sec][q] = arr;
+    });
+    await buildKeyUI();
+    alert('CSV imported into key (not yet saved). Click Save Key.');
+  };
+  inp.click();
+};
     // ===== PDF GENERATION (with ROIs) =====
     el('btnGenerate').onclick = async ()=>{
       if(!current.examId) return alert('Pick Class/Section/Exam first');
@@ -1119,19 +1249,85 @@ el('subjectSel').addEventListener('change', (e)=>{
     }
 
     function scoreAnswers(answers, key, sections){
-      let total=0; const perSection={};
-      for(const sec of sections){
-        const ks = key[sec.name]||{}; const as = answers[sec.name]||{}; let s=0;
-        for(let q=1;q<=sec.count;q++){
-          const kc = (ks[q]||[]).slice().sort().join('');
-          const ac = ((as[q]||[]).slice().sort().join(''));
-          if(!ac){ if(sec.negative) s += 0; continue; }
-          if(kc && ac===kc) s += sec.mark; else s += (sec.negative||0)*1; // negative expected to be negative number
-        }
-        perSection[sec.name]=s; total+=s;
+  let total = 0;
+  const perSection = {};
+
+  for(const sec of sections){
+    const ks = key[sec.name] || {};
+    const as = answers[sec.name] || {};
+    let s = 0;
+
+    for(let q=1; q<=sec.count; q++){
+      const entry = ks[q];
+      let keyOptions = [];
+      let either = false;
+      let addScore = false;
+
+      if(Array.isArray(entry)){
+        keyOptions = entry.slice();
+      } else if(entry && typeof entry === 'object'){
+        keyOptions = Array.isArray(entry.options) ? entry.options.slice() : [];
+        either = !!entry.either;
+        addScore = !!entry.addScore;
       }
-      return { total, perSection };
+
+      const studentOptions = (as[q] || []).slice().sort();
+
+      // Case 1: no option set in key
+      if(keyOptions.length === 0){
+        if(addScore){
+          // Grace marks: full marks regardless of what student has bubbled
+          s += sec.mark;
+        } else {
+          // Question effectively ignored: 0 marks, no negative
+          s += 0;
+        }
+        continue;
+      }
+
+      // Normalised key for comparisons
+      const keySorted = keyOptions.slice().sort();
+
+      // Case 2: "Either" logic (teacher has ticked Either toggle)
+      if(either && keyOptions.length >= 2){
+        const intersection = studentOptions.filter(x => keySorted.includes(x));
+        const hasOnlyKeyChoices = studentOptions.every(x => keySorted.includes(x));
+
+        if(intersection.length === 1 && hasOnlyKeyChoices){
+          // Student has marked exactly one of the allowed "either" options
+          s += sec.mark;
+        } else if(studentOptions.length === 0){
+          // No attempt: 0 marks (no negative)
+          s += 0;
+        } else {
+          // Attempted but not matching the either rule
+          s += (sec.negative || 0);
+        }
+        continue;
+      }
+
+      // Case 3: Single / multiple correct (default behaviour)
+      const kc = keySorted.join('');
+      const ac = studentOptions.join('');
+
+      if(!ac){
+        // No attempt: 0 marks, no negative
+        s += 0;
+      } else if(kc && ac === kc){
+        // Exact match to key
+        s += sec.mark;
+      } else {
+        // Wrong (extra/missing options)
+        s += (sec.negative || 0);
+      }
     }
+
+    perSection[sec.name] = s;
+    total += s;
+  }
+
+  return { total, perSection };
+}
 
    // ===== BOOT =====
 (async()=>{ await loadClasses(); })();
