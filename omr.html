@@ -334,11 +334,18 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
     </div>
   </div>
 
-  <!-- Subject (4th, after exam) -->
+   <!-- Subject (4th, after exam) -->
   <div>
     <div class="label">Subject</div>
     <select id="subjectSel" class="select native-select-hidden" disabled></select>
     <div id="cdrop-subject" class="cdrop" data-select="subjectSel"></div>
+  </div>
+
+  <!-- Subtopic (5th, only when subject has subtopics) -->
+  <div>
+    <div class="label">Subtopic</div>
+    <select id="subtopicSel" class="select native-select-hidden" disabled></select>
+    <div id="cdrop-subtopic" class="cdrop" data-select="subtopicSel"></div>
   </div>
 </div>
 
@@ -493,14 +500,15 @@ const auth = firebase.auth();
 })();
 
     // ===== STATE =====
-   let current = {
+  let current = {
   classId:null, className:null,
   sectionId:null, sectionName:null,
   subjectName:null,
+  subtopicName:null,
   examId:null,
   isSubtopic:false, parentExamId:null
 };
-    let tpl = {
+let tpl = {
       rollDigits:4,
       bubbleSizeMm:5.5,
       qrEnabled:true,
@@ -508,6 +516,7 @@ const auth = firebase.auth();
       // computed ROIs saved after generation for deterministic scan
       rois:null,
     };
+    let examSubjects = [];   // subjects + subtopics for the currently selected exam
     let answerKey = { /* sectionName -> { qIndex: ["A","C"] } */ };
 let btnES; // single global handle for the Exam Settings button
 
@@ -742,12 +751,24 @@ async function loadExamsEffective(){
 }
 
 async function loadSubjectsFromExam(examId){
-  const subjectSel = el('subjectSel');
+  const subjectSel  = el('subjectSel');
+  const subtopicSel = el('subtopicSel');
 
-  // reset and disable while loading
+  // reset Subject
   subjectSel.innerHTML = '<option value="">Select Subject</option>';
   subjectSel.disabled = true;
   refreshCdrop('subjectSel','cdrop-subject');
+
+  // reset Subtopic
+  if (subtopicSel){
+    subtopicSel.innerHTML = '<option value="">Select Subtopic</option>';
+    subtopicSel.disabled = true;
+    refreshCdrop('subtopicSel','cdrop-subtopic');
+  }
+
+  examSubjects = [];
+  el('btnKey').disabled  = true;
+  el('btnScan').disabled = true;
 
   if (!examId) {
     return;
@@ -783,7 +804,7 @@ async function loadSubjectsFromExam(examId){
   if (Array.isArray(d.subjects)) {
     subs = d.subjects;
   } else {
-    // Case 2: Firestore shows 0,1,2,... fields (your screenshot)
+    // Case 2: Firestore shows 0,1,2,... fields
     const numericKeys = Object.keys(d).filter(k => /^\d+$/.test(k));
     subs = numericKeys
       .map(k => d[k])
@@ -797,6 +818,9 @@ async function loadSubjectsFromExam(examId){
     return;
   }
 
+  // keep full objects for subtopics
+  examSubjects = subs;
+
   subjectSel.innerHTML =
     '<option value="">Select Subject</option>' +
     subs.map(s => `<option value="${s.name}">${s.name}</option>`).join('');
@@ -804,16 +828,18 @@ async function loadSubjectsFromExam(examId){
   subjectSel.disabled = false;
   refreshCdrop('subjectSel','cdrop-subject');
 
-  // enable actions now that an exam & subject list exist
+  // enable actions once we at least have subjects
   el('btnKey').disabled  = false;
   el('btnScan').disabled = false;
 }
+
     // Events
 el('classSel').addEventListener('change', async (e)=>{
   current.classId = e.target.value || null;
   current.className = e.target.selectedOptions[0]?.dataset.name || null;
   current.sectionId = null; current.sectionName=null;
-  current.subjectName=null; current.examId=null;
+  current.subjectName=null; current.subtopicName=null; current.examId=null;
+  examSubjects = [];
 
   await loadSections(current.classId);
   el('pickStatus').textContent = current.classId ? 'Class picked. Choose Section.' : 'Select Class.';
@@ -823,10 +849,11 @@ el('classSel').addEventListener('change', async (e)=>{
 el('sectionSel').addEventListener('change', async (e)=>{
   current.sectionId = e.target.value || null;
   current.sectionName = e.target.selectedOptions[0]?.dataset.name || null;
-  current.subjectName=null; current.examId=null;
+  current.subjectName=null; current.subtopicName=null; current.examId=null;
+  examSubjects = [];
 
   // disable settings until we load the list for this section
- btnES = el('btnExamSettings'); if (btnES) btnES.disabled = true;
+  btnES = el('btnExamSettings'); if (btnES) btnES.disabled = true;
 
   await loadExamsEffective();
   el('pickStatus').textContent = current.sectionId ? 'Section picked. Choose Exam.' : 'Choose Section.';
@@ -851,7 +878,48 @@ el('examSel').addEventListener('change', async (e)=>{
 });
 
 el('subjectSel').addEventListener('change', (e)=>{
-  current.subjectName = e.target.value || null;
+  current.subjectName  = e.target.value || null;
+  current.subtopicName = null;
+
+  const subSel = el('subtopicSel');
+  if (!subSel){
+    return;
+  }
+
+  // reset subtopic dropdown
+  subSel.innerHTML = '<option value="">Select Subtopic</option>';
+  subSel.disabled  = true;
+  refreshCdrop('subtopicSel','cdrop-subtopic');
+
+  if (!current.subjectName || !Array.isArray(examSubjects)){
+    return; // direct subject or nothing selected yet
+  }
+
+  const subj = examSubjects.find(s => s && s.name === current.subjectName);
+  if (!subj){
+    return;
+  }
+
+  const mode = subj.subtopicsMode || 'none';
+  const stArr = Array.isArray(subj.subtopics) ? subj.subtopics : [];
+
+  // If no subtopics / direct mode → keep subtopic disabled
+  if (mode === 'none' || !stArr.length){
+    return;
+  }
+
+  // Has subtopics → fill dropdown
+  subSel.innerHTML =
+    '<option value="">Select Subtopic</option>' +
+    stArr.map((st, i) => `<option value="${st.name}">${st.name}</option>`).join('');
+
+  subSel.disabled = false;
+  refreshCdrop('subtopicSel','cdrop-subtopic');
+});
+
+// track selected subtopic
+el('subtopicSel').addEventListener('change', (e)=>{
+  current.subtopicName = e.target.value || null;
 });
 
     // ===== TEMPLATE UI =====
@@ -1336,46 +1404,79 @@ el('btnKeyImport').onclick = ()=>{
     }
     el('btnStopCam').onclick = ()=>{ if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; el('scanStatus').textContent='Stopped.'; } }
 
-    el('btnCapture').onclick = async ()=>{
-      if(!el('video').videoWidth) return alert('Start camera first');
-      if(!tpl.rois) return alert('Generate OMR to compute ROIs first');
-      // capture frame
-      const cvs = el('frameCanvas'); const v=el('video');
-      cvs.width = v.videoWidth; cvs.height = v.videoHeight; const ctx = cvs.getContext('2d');
-      ctx.drawImage(v,0,0,cvs.width,cvs.height);
+   el('btnCapture').onclick = async ()=>{
+  if(!el('video').videoWidth) return alert('Start camera first');
+  if(!tpl.rois) return alert('Generate OMR to compute ROIs first');
 
-      // Try read QR to verify examId
-      const imgData = ctx.getImageData(0,0,cvs.width,cvs.height);
-      const qr = jsQR(imgData.data, imgData.width, imgData.height);
-      if(qr){ try{ const payload = JSON.parse(qr.data); if(payload.examId!==current.examId){ el('scanStatus').innerHTML = `<span class="pill bad">QR exam mismatch</span>`; return; } }catch(e){} }
+  // If subject has subtopics, make sure one is selected
+  let subjCfg = null;
+  if (current.subjectName && Array.isArray(examSubjects)){
+    subjCfg = examSubjects.find(s => s && s.name === current.subjectName) || null;
+  }
+  const hasSubtopics =
+    subjCfg &&
+    subjCfg.subtopicsMode &&
+    subjCfg.subtopicsMode !== 'none' &&
+    Array.isArray(subjCfg.subtopics) &&
+    subjCfg.subtopics.length > 0;
 
-      // NOTE: For MVP we assume sheet alignment ~ camera frame (printed from our PDF). For robust use add perspective warp using the four fiducials.
+  if (hasSubtopics && !current.subtopicName){
+    return alert('Please select the Subtopic before scanning OMR.');
+  }
 
-      // Decode roll number
-      const roll = await decodeRoll(ctx, cvs, tpl.rois.roll);
+  // capture frame
+  const cvs = el('frameCanvas'); const v=el('video');
+  cvs.width = v.videoWidth; cvs.height = v.videoHeight; const ctx = cvs.getContext('2d');
+  ctx.drawImage(v,0,0,cvs.width,cvs.height);
 
-      // Decode answers
-      const answers = {};
-      for(const s of tpl.rois.sections){
-        const secName = s.name; answers[secName] = {};
-        for(const b of s.bubbles){
-          const filled = isBubbleFilled(ctx, b.cx, b.cy, b.r);
-          if(filled){
-            if(!answers[secName][b.q]) answers[secName][b.q] = [];
-            answers[secName][b.q].push(b.opt);
-          }
-        }
+  // Try read QR to verify examId
+  const imgData = ctx.getImageData(0,0,cvs.width,cvs.height);
+  const qr = jsQR(imgData.data, imgData.width, imgData.height);
+  if(qr){
+    try{
+      const payload = JSON.parse(qr.data);
+      if(payload.examId!==current.examId){
+        el('scanStatus').innerHTML = `<span class="pill bad">QR exam mismatch</span>`;
+        return;
       }
+    }catch(e){}
+  }
 
-      // Score using answerKey and section marking
-      const score = scoreAnswers(answers, answerKey, tpl.sections);
+  // Decode roll number
+  const roll = await decodeRoll(ctx, cvs, tpl.rois.roll);
 
-      // Save to Firestore
-      const out = { examId:current.examId, classId:current.classId, sectionId:current.sectionId, roll, answers, score, capturedAt: firebase.firestore.FieldValue.serverTimestamp() };
-      await db.collection('results').doc(current.examId).collection('scans').add(out);
-      el('scanStatus').innerHTML = `<span class="pill ok">Saved (Roll ${roll||'?'} | ${score.total.toFixed(2)} marks)</span>`;
+  // Decode answers
+  const answers = {};
+  for(const s of tpl.rois.sections){
+    const secName = s.name; answers[secName] = {};
+    for(const b of s.bubbles){
+      const filled = isBubbleFilled(ctx, b.cx, b.cy, b.r);
+      if(filled){
+        if(!answers[secName][b.q]) answers[secName][b.q] = [];
+        answers[secName][b.q].push(b.opt);
+      }
     }
+  }
 
+  // Score using answerKey and section marking
+  const score = scoreAnswers(answers, answerKey, tpl.sections);
+
+  // Save to Firestore (include subject + subtopic info)
+  const out = {
+    examId:current.examId,
+    classId:current.classId,
+    sectionId:current.sectionId,
+    subjectName: current.subjectName || null,
+    subtopicName: current.subtopicName || null,
+    roll,
+    answers,
+    score,
+    capturedAt: firebase.firestore.FieldValue.serverTimestamp()
+  };
+  await db.collection('results').doc(current.examId).collection('scans').add(out);
+  el('scanStatus').innerHTML =
+    `<span class="pill ok">Saved (Roll ${roll||'?'} | ${score.total.toFixed(2)} marks)</span>`;
+};
     function isBubbleFilled(ctx, cx, cy, r){
       // sample average brightness in a smaller inner circle
       const rad = Math.floor(r*0.8);
@@ -1476,11 +1577,16 @@ el('btnKeyImport').onclick = ()=>{
   return { total, perSection };
 }
 
-   // ===== BOOT =====
-(async()=>{ await loadClasses(); })();
+ // ===== BOOT =====
+(async()=>{
+  // mount empty subtopic dropdown in disabled state
+  refreshCdrop('subtopicSel','cdrop-subtopic');
+  await loadClasses();
+})();
 
   </script>
 </body>
 </html>
+
 
 
