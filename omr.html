@@ -367,12 +367,13 @@ const academicYear = (window.academicYear) ? window.academicYear : (() => {
 // Map class name to group (used by effective exam resolver fallback)
 function getClassGroupName(clsName='') {
   const n = (clsName||'').toLowerCase();
-  if (/(nur|kg|ukg)/.test(n)) return 'nur-ukg';
-  if (/^1|1st|2|2nd/.test(n)) return '1-2';
-  if (/3|3rd|4|4th|5|5th/.test(n)) return '3-5';
-  if (/6|6th|7|7th|8|8th|9|9th/.test(n)) return '6-9';
-  return '10';
+  if (/(nur|kg|ukg)/.test(n)) return 'class-nur-ukg';
+  if (/(^1|1st|^2|2nd)/.test(n)) return 'class-1-2';
+  if (/(3|3rd|4|4th|5|5th)/.test(n)) return 'class-3-5';
+  if (/(6|6th|7|7th|8|8th|9|9th)/.test(n)) return 'class-6-9';
+  return 'class-10';
 }
+
 
 // Try to use your existing resolver; otherwise do a minimal precedence merge
 async function fetchEffectiveExamsWrapper(classId, className, {forceRefresh=false}={}) {
@@ -498,17 +499,17 @@ async function loadSubjectsFromExam(examId){
     return;
   }
 
-  const root = db.collection('years').doc(academicYear);
-  const group = getClassGroupName(current.className||'');
+  const root  = db.collection('years').doc(academicYear);
+  const group = getClassGroupName(current.className || '');
 
   // try section override → class override → group (by id)
   const secRef = root.collection('classes').doc(current.classId)
-                  .collection('sections').doc(current.sectionId)
-                  .collection('examOverrides').doc(examId);
+                     .collection('sections').doc(current.sectionId)
+                     .collection('examOverrides').doc(examId);
   const classRef = root.collection('classes').doc(current.classId)
-                    .collection('examOverrides').doc(examId);
+                       .collection('examOverrides').doc(examId);
   const groupRef = root.collection('exams').doc('classGroups')
-                    .collection(group).doc(examId);
+                       .collection(group).doc(examId);
 
   let doc = await secRef.get();
   if (!doc.exists) doc = await classRef.get();
@@ -516,17 +517,28 @@ async function loadSubjectsFromExam(examId){
 
   if (!doc.exists) {
     subjectSel.innerHTML = '<option value="">No subjects</option>';
-    subjectSel.disabled = true;
+    subjectSel.disabled  = true;
     refreshCdrop('subjectSel','cdrop-subject');
     return;
   }
 
   const d = doc.data() || {};
-  const subs = Array.isArray(d.subjects) ? d.subjects : [];
+  let subs = [];
+
+  // Case 1: normal "subjects" array field
+  if (Array.isArray(d.subjects)) {
+    subs = d.subjects;
+  } else {
+    // Case 2: Firestore shows 0,1,2,... fields (your screenshot)
+    const numericKeys = Object.keys(d).filter(k => /^\d+$/.test(k));
+    subs = numericKeys
+      .map(k => d[k])
+      .filter(v => v && typeof v === 'object');
+  }
 
   if (!subs.length) {
     subjectSel.innerHTML = '<option value="">No subjects</option>';
-    subjectSel.disabled = true;
+    subjectSel.disabled  = true;
     refreshCdrop('subjectSel','cdrop-subject');
     return;
   }
@@ -539,10 +551,9 @@ async function loadSubjectsFromExam(examId){
   refreshCdrop('subjectSel','cdrop-subject');
 
   // enable actions now that an exam & subject list exist
-  el('btnKey').disabled = false;
+  el('btnKey').disabled  = false;
   el('btnScan').disabled = false;
 }
-
     // Events
 el('classSel').addEventListener('change', async (e)=>{
   current.classId = e.target.value || null;
@@ -939,6 +950,7 @@ el('subjectSel').addEventListener('change', (e)=>{
   </script>
 </body>
 </html>
+
 
 
 
