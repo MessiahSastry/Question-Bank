@@ -1566,10 +1566,9 @@ async function loadImageAsDataURL(src){
       const rollGridX = boxesStartX;
       const rollGridY = bubblesTopY;
 
-           // ---------- SECTIONS BUBBLE GRIDS (5 vertical Qs per block, letters repeat) ----------
+               // ---------- SECTIONS BUBBLE GRIDS (5-question blocks stacked vertically) ----------
       // Start just under the roll grid, inside the inner page border (not touching)
       const sectionsTopY = bubblesTopY + 10 * rowH + 14;
-      let curY = sectionsTopY;
       const leftX  = inner + 6;        // a little away from inner border
       const rightX = W / 2 + 4;
 
@@ -1578,88 +1577,85 @@ async function loadImageAsDataURL(src){
         sections: []
       };
 
-
-      // each block: letters row + 5 vertical questions
+      // Each block: A–D header + 5 vertical questions (1–5, 6–10, …)
       const rowsPerBlock = 5;
-      const rowGap       = 6.4;   // increased vertical gap between each question row
+      const rowGap       = 6.4;   // vertical gap between each question row
       const bubbleR      = 2.1;   // bubble radius in mm
-      const numColW      = 4.0;   // space for question number
+      const numColW      = 6.0;  // space for question number
       const optStep      = 6.4;   // gap between A/B/C/D
-      const blockHeight  = 4 + 2 + rowsPerBlock * rowGap + 8; // card height
+      const perBlockHeight = 4 + 2 + rowsPerBlock * rowGap + 8; // height per 5-question block
 
       // Make answer bubbles darker & thicker
       doc.setDrawColor(23, 98, 167); // deep blue outline
       doc.setLineWidth(0.35);        // thicker circle border
 
+      let curYLeft  = sectionsTopY;
+      let curYRight = sectionsTopY;
+
       tpl.sections.forEach((sec, idx) => {
         const inLeftCol = (idx % 2 === 0);
-        const baseX = inLeftCol ? leftX : rightX;
+        const baseX  = inLeftCol ? leftX  : rightX;
+        const startY = inLeftCol ? curYLeft : curYRight;
 
-        // share same row for left/right
-        if (!inLeftCol) curY -= blockHeight;
+        const optCount = sec.options;
+        const secROI = { name: sec.name, options: optCount, bubbles: [] };
 
+        const totalBlocks = Math.ceil(sec.count / rowsPerBlock);
+
+        // Card background height = all 5-question blocks stacked vertically
         const cardW = (W / 2) - margin - 4;
+        const cardH = totalBlocks * perBlockHeight;
         const cardX = baseX - 2;
-        const cardY = curY - 4;
+        const cardY = startY - 4;
 
         // light card background
         doc.setFillColor(248, 250, 252);
-        doc.roundedRect(cardX, cardY, cardW, blockHeight, 2, 2, 'F');
+        doc.roundedRect(cardX, cardY, cardW, cardH, 2, 2, 'F');
 
         // section title
         doc.setFont('helvetica', 'bold');
         doc.setFontSize(11);
         doc.setTextColor(23, 98, 167);
-        doc.text(`${sec.name}`, baseX, curY);
+        doc.text(`${sec.name}`, baseX, startY);
         doc.setTextColor(0, 0, 0);
 
-        const optCount = sec.options;
-        const secROI = { name: sec.name, options: optCount, bubbles: [] };
+        const headerBaseY = startY + 4;
 
-        // width of one block (1–5, 6–10, …)
-        const blockW = numColW + optCount * optStep + 4;
-        const totalBlocks = Math.ceil(sec.count / rowsPerBlock);
-        const gridBaseY = curY + 4; // header baseline
-
+        // Now place blocks of 5 questions: 1–5, 6–10, 11–15… stacked VERTICALLY
+        let qNum = 1;
         for (let b = 0; b < totalBlocks; b++) {
-          const startQ = b * rowsPerBlock + 1;
-          if (startQ > sec.count) break;
-          const endQ = Math.min(sec.count, (b + 1) * rowsPerBlock);
+          const blockTopY = headerBaseY + b * perBlockHeight;
 
-          const blockX = baseX + b * (blockW + 6);
-          const headerY = gridBaseY;
-
-          // header letters A/B/C/D/E/F
+          // A/B/C/D/E/F header for this 5-question block
           doc.setFont('helvetica', 'bold');
           doc.setFontSize(8);
           for (let o = 0; o < optCount; o++) {
-            const hx = blockX + numColW + 2 + o * optStep;
-            doc.text(String.fromCharCode(65 + o), hx, headerY);
+            const hx = baseX + numColW + 2 + o * optStep;
+            doc.text(String.fromCharCode(65 + o), hx, blockTopY);
           }
 
-           // questions vertically: 5 per block
+          // Five question rows under this header (or fewer on last block)
           doc.setFont('helvetica', 'normal');
-          doc.setFontSize(10); // bigger question numbers
-          for (let q = startQ; q <= endQ; q++) {
-            const rowIndex = q - startQ;            // 0..4
-            const y = headerY + 4 + rowIndex * rowGap;
+          doc.setFontSize(10);
+          for (let r = 0; r < rowsPerBlock && qNum <= sec.count; r++, qNum++) {
+            const y = blockTopY + 4 + r * rowGap;
 
             // question number
-            doc.text(String(q), blockX, y);
+            doc.text(String(qNum), baseX, y);
 
-            // bubbles under each letter
+            // bubbles A–D (or up to F) under this header
             for (let o = 0; o < optCount; o++) {
-              const cxMm = blockX + numColW + 2 + o * optStep;
+              const cxMm = baseX + numColW + 2 + o * optStep;
               const cyMm = y - 1.0;
 
               doc.circle(cxMm, cyMm, bubbleR);
 
               secROI.bubbles.push({
-                q,
+                q:   qNum,
                 opt: String.fromCharCode(65 + o),
-                cx: mmToPx(cxMm),
-                cy: mmToPx(cyMm),
-                r:  mmToPx(bubbleR)
+                cx:  mmToPx(cxMm),
+                cy:  mmToPx(cyMm),
+                r:   mmToPx(bubbleR)
               });
             }
           }
@@ -1667,11 +1663,11 @@ async function loadImageAsDataURL(src){
 
         rois.sections.push(secROI);
 
-        // move down for next pair of sections
+        // Move down for the next section in this column
         if (inLeftCol) {
-          curY += blockHeight;
+          curYLeft  += cardH + 6;
         } else {
-          curY += 6;
+          curYRight += cardH + 6;
         }
       });
 
@@ -1899,11 +1895,3 @@ async function loadImageAsDataURL(src){
   </script>
 </body>
 </html>
-
-
-
-
-
-
-
-
