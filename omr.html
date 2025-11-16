@@ -440,29 +440,63 @@ refreshCdrop('sectionSel','cdrop-section');
 }
 
 async function loadExamsEffective(){
- el('examSel').innerHTML=''; el('examSel').disabled = true; refreshCdrop('examSel','cdrop-exam');
-el('subjectSel').innerHTML=''; el('subjectSel').disabled = true; refreshCdrop('subjectSel','cdrop-subject');
-  el('btnKey').disabled = true; el('btnScan').disabled = true;
-  btnES = el('btnExamSettings'); if (btnES) btnES.disabled = true;
+  const examSel = el('examSel');
+  const subjectSel = el('subjectSel');
 
-  if(!current.classId || !current.sectionId) return;
-  const exams = await fetchEffectiveExamsWrapper(current.classId, current.className, { forceRefresh:true });
-  if(!Array.isArray(exams) || !exams.length){
-    el('examSel').innerHTML = '<option value="">No exams found</option>';
+  // RESET exam + subject + buttons
+  examSel.innerHTML = '<option value="">Loading exams…</option>';
+  examSel.disabled = true;
+  refreshCdrop('examSel','cdrop-exam');
+
+  subjectSel.innerHTML = '<option value="">Select Subject</option>';
+  subjectSel.disabled = true;
+  refreshCdrop('subjectSel','cdrop-subject');
+
+  el('btnKey').disabled = true;
+  el('btnScan').disabled = true;
+  btnES = el('btnExamSettings');
+  if (btnES) btnES.disabled = true;
+
+  if (!current.classId || !current.sectionId) {
+    examSel.innerHTML = '<option value="">Select Exam</option>';
+    examSel.disabled = true;
+    refreshCdrop('examSel','cdrop-exam');
     return;
   }
+
+  const exams = await fetchEffectiveExamsWrapper(current.classId, current.className, { forceRefresh:true });
+
+  if (!Array.isArray(exams) || !exams.length) {
+    examSel.innerHTML = '<option value="">No exams found</option>';
+    examSel.disabled = false;                 // allow dropdown to open and show message
+    refreshCdrop('examSel','cdrop-exam');
+    el('pickStatus').textContent = 'No exams configured for this Class/Section.';
+    return;
+  }
+
   // show names, value = id; keep scope hints in data-attrs
-   el('examSel').innerHTML =
-  '<option value="">Select Exam</option>' +
-  exams.map(e=>`<option value="${e.id}" data-scope="${e.__scope||''}">${e.name||e.id}</option>`).join('');
-el('examSel').disabled = false;
-refreshCdrop('examSel','cdrop-exam');
-btnES = el('btnExamSettings'); if (btnES) btnES.disabled = false;
+  examSel.innerHTML =
+    '<option value="">Select Exam</option>' +
+    exams.map(e => `<option value="${e.id}" data-scope="${e.__scope||''}">${e.name||e.id}</option>`).join('');
+
+  examSel.disabled = false;
+  refreshCdrop('examSel','cdrop-exam');
+
+  btnES = el('btnExamSettings');
+  if (btnES) btnES.disabled = false;
 }
 
 async function loadSubjectsFromExam(examId){
-  el('subjectSel').innerHTML=''; el('subjectSel').disabled = true;
-  if(!examId) return;
+  const subjectSel = el('subjectSel');
+
+  // reset and disable while loading
+  subjectSel.innerHTML = '<option value="">Select Subject</option>';
+  subjectSel.disabled = true;
+  refreshCdrop('subjectSel','cdrop-subject');
+
+  if (!examId) {
+    return;
+  }
 
   const root = db.collection('years').doc(academicYear);
   const group = getClassGroupName(current.className||'');
@@ -477,28 +511,39 @@ async function loadSubjectsFromExam(examId){
                     .collection(group).doc(examId);
 
   let doc = await secRef.get();
-  if(!doc.exists) doc = await classRef.get();
-  if(!doc.exists) doc = await groupRef.get();
-  if(!doc.exists){ el('subjectSel').innerHTML='<option value="">No subjects</option>'; return; }
+  if (!doc.exists) doc = await classRef.get();
+  if (!doc.exists) doc = await groupRef.get();
 
-  const d = doc.data()||{};
+  if (!doc.exists) {
+    subjectSel.innerHTML = '<option value="">No subjects</option>';
+    subjectSel.disabled = true;
+    refreshCdrop('subjectSel','cdrop-subject');
+    return;
+  }
+
+  const d = doc.data() || {};
   const subs = Array.isArray(d.subjects) ? d.subjects : [];
-  if(!subs.length){ el('subjectSel').innerHTML='<option value="">No subjects</option>'; return; }
 
- el('subjectSel').innerHTML =
-  '<option value="">Select Subject</option>' +
-  subs.map(s=>`<option value="${s.name}">${s.name}</option>`).join('');
+  if (!subs.length) {
+    subjectSel.innerHTML = '<option value="">No subjects</option>';
+    subjectSel.disabled = true;
+    refreshCdrop('subjectSel','cdrop-subject');
+    return;
+  }
 
-// enable subject BEFORE mounting custom dropdown
-el('subjectSel').disabled = false;
-refreshCdrop('subjectSel','cdrop-subject');
+  subjectSel.innerHTML =
+    '<option value="">Select Subject</option>' +
+    subs.map(s => `<option value="${s.name}">${s.name}</option>`).join('');
 
-// enable actions now that an exam exists
-el('btnKey').disabled = false;
-el('btnScan').disabled = false;
+  subjectSel.disabled = false;
+  refreshCdrop('subjectSel','cdrop-subject');
+
+  // enable actions now that an exam & subject list exist
+  el('btnKey').disabled = false;
+  el('btnScan').disabled = false;
 }
 
-// Events
+    // Events
 el('classSel').addEventListener('change', async (e)=>{
   current.classId = e.target.value || null;
   current.className = e.target.selectedOptions[0]?.dataset.name || null;
