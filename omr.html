@@ -1517,8 +1517,11 @@ async function loadImageAsDataURL(src){
       const colW    = 10;
       const rowH    = 6;
 
-      const labelX      = margin + 4;
-      const boxesStartX = labelX + 14;   // space for 0–9 labels
+           // start a bit inside the inner page border, so the whole roll block
+      // sits nicely inside the top-left page box
+      const labelX      = inner + 6;
+      const boxesStartX = labelX + 16;   // space for 0–9 labels
+
       const boxesY      = rollTop;
 
       doc.setFont('helvetica', 'bold');
@@ -1559,73 +1562,106 @@ async function loadImageAsDataURL(src){
       const rollGridX = boxesStartX;
       const rollGridY = bubblesTopY;
 
-      // ---------- SECTIONS BUBBLE GRIDS ----------
-      let curY = bubblesTopY + 10 * rowH + 18;
+           // ---------- SECTIONS BUBBLE GRIDS (5 vertical Qs per block, letters repeat) ----------
+      let curY = startY + 6 + 10 * rowH + 12;
       const leftX  = margin;
       const rightX = W / 2 + 4;
-      const secBoxH = 44;
+
       const rois = {
-        roll: { x: rollGridX, y: rollGridY, cols, colW, rowH },
+        roll: { x: startX, y: startY, cols, colW, rowH },
         sections: []
       };
+
+      // each block: letters row + 5 vertical questions
+           const rowsPerBlock = 5;
+      const rowGap       = 5.2;
+      const bubbleR      = 2.1;   // bubble radius in mm
+      const numColW      = 4.0;   // space for question number
+      const optStep      = 6.4;   // gap between A/B/C/D
+      const blockHeight  = 4 + 2 + rowsPerBlock * rowGap + 8; // card height
+
+      // Make answer bubbles darker & thicker
+      doc.setDrawColor(23, 98, 167); // deep blue outline
+      doc.setLineWidth(0.35);        // thicker circle border
 
       tpl.sections.forEach((sec, idx) => {
         const inLeftCol = (idx % 2 === 0);
         const baseX = inLeftCol ? leftX : rightX;
 
-        if (!inLeftCol) curY -= secBoxH;   // share row
+        // share same row for left/right
+        if (!inLeftCol) curY -= blockHeight;
 
-        // coloured card behind section
         const cardW = (W / 2) - margin - 4;
-        doc.setFillColor(248, 250, 252);
-        doc.roundedRect(baseX - 2, curY - 6, cardW, secBoxH, 2, 2, 'F');
+        const cardX = baseX - 2;
+        const cardY = curY - 4;
 
+        // light card background
+        doc.setFillColor(248, 250, 252);
+        doc.roundedRect(cardX, cardY, cardW, blockHeight, 2, 2, 'F');
+
+        // section title
         doc.setFont('helvetica', 'bold');
         doc.setFontSize(11);
         doc.setTextColor(23, 98, 167);
-        doc.text(`${sec.name}`, baseX, curY - 1);
+        doc.text(`${sec.name}`, baseX, curY);
         doc.setTextColor(0, 0, 0);
 
         const optCount = sec.options;
-        const bubbleR  = 2.1;
-        const cellW    = 8.5;
-        const cellH    = 6.8;
-        const qPerRow  = 8;
-        const gridX    = baseX;
-        const gridY    = curY + 3.5;
-
         const secROI = { name: sec.name, options: optCount, bubbles: [] };
 
-        for (let q = 0; q < sec.count; q++) {
-          const i = q % qPerRow;
-          const j = Math.floor(q / qPerRow);
-          const x0 = gridX + i * (optCount * cellW + 6);
-          const y0 = gridY + j * (cellH + 6);
+        // width of one block (1–5, 6–10, …)
+        const blockW = numColW + optCount * optStep + 4;
+        const totalBlocks = Math.ceil(sec.count / rowsPerBlock);
+        const gridBaseY = curY + 4; // header baseline
 
-          doc.setFont('helvetica', 'normal');
+        for (let b = 0; b < totalBlocks; b++) {
+          const startQ = b * rowsPerBlock + 1;
+          if (startQ > sec.count) break;
+          const endQ = Math.min(sec.count, (b + 1) * rowsPerBlock);
+
+          const blockX = baseX + b * (blockW + 6);
+          const headerY = gridBaseY;
+
+          // header letters A/B/C/D/E/F
+          doc.setFont('helvetica', 'bold');
           doc.setFontSize(8);
-          doc.text(String(q + 1), x0, y0);
-
           for (let o = 0; o < optCount; o++) {
-            const ox = x0 + 6 + o * cellW;
-            const oy = y0;
-            doc.circle(ox, oy, bubbleR);
-            doc.text(String.fromCharCode(65 + o), ox + 3.6, oy + 1.6);
+            const hx = blockX + numColW + 2 + o * optStep;
+            doc.text(String.fromCharCode(65 + o), hx, headerY);
+          }
 
-            secROI.bubbles.push({
-              q:   q + 1,
-              opt: String.fromCharCode(65 + o),
-              cx:  mmToPx(ox),
-              cy:  mmToPx(oy),
-              r:   mmToPx(bubbleR)
-            });
+          // questions vertically: 5 per block
+          doc.setFont('helvetica', 'normal');
+          for (let q = startQ; q <= endQ; q++) {
+            const rowIndex = q - startQ;            // 0..4
+            const y = headerY + 4 + rowIndex * rowGap;
+
+            // question number
+            doc.text(String(q), blockX, y);
+
+            // bubbles under each letter
+            for (let o = 0; o < optCount; o++) {
+              const cxMm = blockX + numColW + 2 + o * optStep;
+              const cyMm = y - 1.0;
+
+              doc.circle(cxMm, cyMm, bubbleR);
+
+              secROI.bubbles.push({
+                q,
+                opt: String.fromCharCode(65 + o),
+                cx: mmToPx(cxMm),
+                cy: mmToPx(cyMm),
+                r:  mmToPx(bubbleR)
+              });
+            }
           }
         }
 
         rois.sections.push(secROI);
 
+        // move down for next pair of sections
         if (inLeftCol) {
-          curY += secBoxH;
+          curY += blockHeight;
         } else {
           curY += 6;
         }
@@ -1855,6 +1891,7 @@ async function loadImageAsDataURL(src){
   </script>
 </body>
 </html>
+
 
 
 
