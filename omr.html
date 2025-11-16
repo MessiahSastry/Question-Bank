@@ -437,6 +437,33 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
       </div>
       <div id="keyContent">(Key grid appears after template is saved)</div>
     </div>
+   </dialog>
+
+  <!-- Answer Key Summary (CampusConnect) -->
+  <dialog id="dlgKeySummary" class="modal">
+    <header>
+      <div class="title">
+        <div class="h1">CampusConnect</div>
+        <div class="sub">Answer Key Summary</div>
+      </div>
+      <button class="icon-btn modal-close" type="button"
+              onclick="document.getElementById('dlgKeySummary').close()"
+              aria-label="Close">
+        <i class="fa fa-xmark"></i>
+      </button>
+    </header>
+    <div class="content">
+      <pre id="keySummaryText"
+           style="white-space:pre-wrap; font-size:13px; line-height:1.5;"></pre>
+      <div class="toolbar" style="justify-content:flex-end; margin-top:12px;">
+        <button class="btn" type="button" id="btnKeySummaryEdit">
+          Edit again
+        </button>
+        <button class="btn primary" type="button" id="btnKeySummaryClose">
+          Close
+        </button>
+      </div>
+    </div>
   </dialog>
 
   <script>
@@ -486,6 +513,54 @@ let btnES; // single global handle for the Exam Settings button
 
     const $ = sel => document.querySelector(sel);
 const el = id => document.getElementById(id);
+
+// CampusConnect custom alert dialog (replaces window.alert)
+(function setupCampusConnectAlert(){
+  const dlgId = 'dlgAppAlert';
+  let dialog = document.getElementById(dlgId);
+
+  // Create dialog once if it doesn't exist
+  if (!dialog){
+    const wrapper = document.createElement('div');
+    wrapper.innerHTML = `
+      <dialog id="dlgAppAlert" class="modal">
+        <header>
+          <div class="title">
+            <div class="h1">CampusConnect</div>
+            <div class="sub">Message</div>
+          </div>
+          <button class="icon-btn modal-close" type="button" aria-label="Close">
+            <i class="fa fa-xmark"></i>
+          </button>
+        </header>
+        <div class="content">
+          <p id="appAlertText"
+             style="font-size:13px; line-height:1.5; margin:0 0 12px;"></p>
+          <div class="toolbar" style="justify-content:flex-end; margin-top:12px;">
+            <button class="btn primary" type="button" id="btnAppAlertOk">OK</button>
+          </div>
+        </div>
+      </dialog>
+    `;
+    dialog = wrapper.firstElementChild;
+    document.body.appendChild(dialog);
+  }
+
+  const textEl  = dialog.querySelector('#appAlertText');
+  const okBtn   = dialog.querySelector('#btnAppAlertOk');
+  const closeBtn= dialog.querySelector('.modal-close');
+
+  function show(msg){
+    if (textEl) textEl.textContent = msg;
+    dialog.showModal();
+  }
+
+  if (okBtn)   okBtn.onclick    = () => dialog.close();
+  if (closeBtn) closeBtn.onclick = () => dialog.close();
+
+  // Override native alert
+  window.alert = show;
+})();
 
 /* ---------- Custom dropdown binders ---------- */
 function mountCdrop(selectId, hostId){
@@ -1102,18 +1177,22 @@ function getKeySummaryText(){
 }
 
 function closeKeyDialogWithSummary(){
-  // Build summary text
-  const msg = getKeySummaryText()
-    + '\n\nOK = Close\nCancel = Edit again';
-
-  // confirm() has 2 buttons:
-  //  OK     → true  (close)
-  //  Cancel → false (stay / edit)
-  const shouldClose = window.confirm(msg);
-  if (shouldClose){
-    el('dlgKey').close();
-  }
+  const msg = getKeySummaryText();
+  el('keySummaryText').textContent = msg;
+  el('dlgKeySummary').showModal();
 }
+
+// Summary dialog buttons
+el('btnKeySummaryEdit').onclick = ()=> {
+  // Just close summary; keep Set Answer Key open
+  el('dlgKeySummary').close();
+};
+el('btnKeySummaryClose').onclick = ()=> {
+  // Close both dialogs
+  el('dlgKeySummary').close();
+  el('dlgKey').close();
+};
+
 el('btnKeySave').onclick = async ()=>{
   if(!current.examId) return alert('Pick Class/Section/Exam first');
   await db.collection('omrTemplates').doc(current.examId).set({ answerKey }, {merge:true});
@@ -1403,4 +1482,5 @@ el('btnKeyImport').onclick = ()=>{
   </script>
 </body>
 </html>
+
 
