@@ -341,8 +341,8 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
     <div id="cdrop-subject" class="cdrop" data-select="subjectSel"></div>
   </div>
 
-  <!-- Subtopic (5th, only when subject has subtopics) -->
-  <div>
+    <!-- Subtopic (5th, only when subject has subtopics) -->
+  <div id="subtopicRow" style="display:none;">
     <div class="label">Subtopic</div>
     <select id="subtopicSel" class="select native-select-hidden" disabled></select>
     <div id="cdrop-subtopic" class="cdrop" data-select="subtopicSel"></div>
@@ -861,11 +861,26 @@ el('sectionSel').addEventListener('change', async (e)=>{
 });
 
 el('examSel').addEventListener('change', async (e)=>{
-  current.examId = e.target.value || null;
+  current.examId       = e.target.value || null;
+  current.subjectName  = null;
+  current.subtopicName = null;
+
+  // reset & hide subtopic row whenever exam changes
+  const subSel = el('subtopicSel');
+  const subRow = document.getElementById('subtopicRow');
+  if (subSel){
+    subSel.innerHTML = '<option value="">Select Subtopic</option>';
+    subSel.disabled  = true;
+    refreshCdrop('subtopicSel','cdrop-subtopic');
+  }
+  if (subRow) subRow.style.display = 'none';
+
   btnES = el('btnExamSettings');
   if(current.examId){
-    el('header-exam').textContent = `Exam: ${e.target.selectedOptions[0]?.textContent||current.examId}`;
-    el('pickStatus').innerHTML = `Exam selected: <span class="kbd">${current.examId}</span>`;
+    el('header-exam').textContent =
+      `Exam: ${e.target.selectedOptions[0]?.textContent || current.examId}`;
+    el('pickStatus').innerHTML =
+      `Exam selected: <span class="kbd">${current.examId}</span>`;
     await loadSubjectsFromExam(current.examId);
     await loadTemplate();
     if (btnES) btnES.disabled = false;
@@ -882,39 +897,41 @@ el('subjectSel').addEventListener('change', (e)=>{
   current.subtopicName = null;
 
   const subSel = el('subtopicSel');
-  if (!subSel){
-    return;
-  }
+  const subRow = document.getElementById('subtopicRow');
+
+  if (subRow) subRow.style.display = 'none';   // hide by default
+
+  if (!subSel) return;
 
   // reset subtopic dropdown
   subSel.innerHTML = '<option value="">Select Subtopic</option>';
   subSel.disabled  = true;
   refreshCdrop('subtopicSel','cdrop-subtopic');
 
+  // no subject picked or no examSubjects -> stay hidden
   if (!current.subjectName || !Array.isArray(examSubjects)){
-    return; // direct subject or nothing selected yet
-  }
-
-  const subj = examSubjects.find(s => s && s.name === current.subjectName);
-  if (!subj){
     return;
   }
 
-  const mode = subj.subtopicsMode || 'none';
+  const subj = examSubjects.find(s => s && s.name === current.subjectName);
+  if (!subj) return;
+
+  const mode  = subj.subtopicsMode || 'none';
   const stArr = Array.isArray(subj.subtopics) ? subj.subtopics : [];
 
-  // If no subtopics / direct mode → keep subtopic disabled
+  // direct subject OR no subtopics -> keep row hidden
   if (mode === 'none' || !stArr.length){
     return;
   }
 
-  // Has subtopics → fill dropdown
+  // has subtopics -> show row and enable dropdown
   subSel.innerHTML =
     '<option value="">Select Subtopic</option>' +
-    stArr.map((st, i) => `<option value="${st.name}">${st.name}</option>`).join('');
+    stArr.map(st => `<option value="${st.name}">${st.name}</option>`).join('');
 
   subSel.disabled = false;
   refreshCdrop('subtopicSel','cdrop-subtopic');
+  if (subRow) subRow.style.display = '';
 });
 
 // track selected subtopic
@@ -1587,6 +1604,7 @@ el('btnKeyImport').onclick = ()=>{
   </script>
 </body>
 </html>
+
 
 
 
