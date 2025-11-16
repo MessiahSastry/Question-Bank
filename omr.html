@@ -1566,7 +1566,7 @@ async function loadImageAsDataURL(src){
       const rollGridX = boxesStartX;
       const rollGridY = bubblesTopY;
 
-               // ---------- SECTIONS BUBBLE GRIDS (5-question blocks stacked vertically) ----------
+                   // ---------- SECTIONS BUBBLE GRIDS (5-question blocks, vertical then wrap to next column) ----------
       // Start just under the roll grid, inside the inner page border (not touching)
       const sectionsTopY = bubblesTopY + 10 * rowH + 14;
       const leftX  = inner + 6;        // a little away from inner border
@@ -1578,11 +1578,11 @@ async function loadImageAsDataURL(src){
       };
 
       // Each block: A–D header + 5 vertical questions (1–5, 6–10, …)
-      const rowsPerBlock = 5;
-      const rowGap       = 6.4;   // vertical gap between each question row
-      const bubbleR      = 2.1;   // bubble radius in mm
-      const numColW      = 6.0;  // space for question number
-      const optStep      = 6.4;   // gap between A/B/C/D
+      const rowsPerBlock   = 5;
+      const rowGap         = 6.4;   // vertical gap between each question row
+      const bubbleR        = 2.1;   // bubble radius in mm
+      const numColW        = 6.0;   // space for question number (extra gap from bubbles)
+      const optStep        = 6.4;   // gap between A/B/C/D
       const perBlockHeight = 4 + 2 + rowsPerBlock * rowGap + 8; // height per 5-question block
 
       // Make answer bubbles darker & thicker
@@ -1594,17 +1594,23 @@ async function loadImageAsDataURL(src){
 
       tpl.sections.forEach((sec, idx) => {
         const inLeftCol = (idx % 2 === 0);
-        const baseX  = inLeftCol ? leftX  : rightX;
-        const startY = inLeftCol ? curYLeft : curYRight;
+        const baseX     = inLeftCol ? leftX : rightX;
+        const startY    = inLeftCol ? curYLeft : curYRight;
 
-        const optCount = sec.options;
-        const secROI = { name: sec.name, options: optCount, bubbles: [] };
-
+        const optCount  = sec.options;
+        const secROI    = { name: sec.name, options: optCount, bubbles: [] };
         const totalBlocks = Math.ceil(sec.count / rowsPerBlock);
 
-        // Card background height = all 5-question blocks stacked vertically
-        const cardW = (W / 2) - margin - 4;
-        const cardH = totalBlocks * perBlockHeight;
+        const headerBaseY  = startY + 4;
+        const bottomLimit  = H - inner - 12;              // keep above inner page border
+        const availableH   = bottomLimit - headerBaseY;
+        const blocksPerCol = Math.max(1, Math.floor(availableH / perBlockHeight));
+
+        const blockW   = numColW + optCount * optStep + 4;
+        const colCount = Math.ceil(totalBlocks / blocksPerCol);
+
+        const cardW = colCount * blockW + (colCount - 1) * 8 + 4;
+        const cardH = blocksPerCol * perBlockHeight;
         const cardX = baseX - 2;
         const cardY = startY - 4;
 
@@ -1619,33 +1625,34 @@ async function loadImageAsDataURL(src){
         doc.text(`${sec.name}`, baseX, startY);
         doc.setTextColor(0, 0, 0);
 
-        const headerBaseY = startY + 4;
-
-        // Now place blocks of 5 questions: 1–5, 6–10, 11–15… stacked VERTICALLY
         let qNum = 1;
         for (let b = 0; b < totalBlocks; b++) {
-          const blockTopY = headerBaseY + b * perBlockHeight;
+          const colIndex = Math.floor(b / blocksPerCol);  // which column inside this section
+          const rowIndex = b % blocksPerCol;              // which block vertically in that column
+
+          const blockTopY   = headerBaseY + rowIndex * perBlockHeight;
+          const blockLeftX  = baseX + colIndex * (blockW + 8);
 
           // A/B/C/D/E/F header for this 5-question block
           doc.setFont('helvetica', 'bold');
           doc.setFontSize(8);
           for (let o = 0; o < optCount; o++) {
-            const hx = baseX + numColW + 2 + o * optStep;
+            const hx = blockLeftX + numColW + 2 + o * optStep;
             doc.text(String.fromCharCode(65 + o), hx, blockTopY);
           }
 
-          // Five question rows under this header (or fewer on last block)
+          // Up to 5 questions under this header
           doc.setFont('helvetica', 'normal');
           doc.setFontSize(10);
           for (let r = 0; r < rowsPerBlock && qNum <= sec.count; r++, qNum++) {
             const y = blockTopY + 4 + r * rowGap;
 
             // question number
-            doc.text(String(qNum), baseX, y);
+            doc.text(String(qNum), blockLeftX, y);
 
             // bubbles A–D (or up to F) under this header
             for (let o = 0; o < optCount; o++) {
-              const cxMm = baseX + numColW + 2 + o * optStep;
+              const cxMm = blockLeftX + numColW + 2 + o * optStep;
               const cyMm = y - 1.0;
 
               doc.circle(cxMm, cyMm, bubbleR);
@@ -1664,10 +1671,11 @@ async function loadImageAsDataURL(src){
         rois.sections.push(secROI);
 
         // Move down for the next section in this column
+        const sectionAdvance = cardH + 6;
         if (inLeftCol) {
-          curYLeft  += cardH + 6;
+          curYLeft  += sectionAdvance;
         } else {
-          curYRight += cardH + 6;
+          curYRight += sectionAdvance;
         }
       });
 
@@ -1895,3 +1903,4 @@ async function loadImageAsDataURL(src){
   </script>
 </body>
 </html>
+
