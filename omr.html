@@ -384,10 +384,10 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
         <div class="h1">Exam Settings</div>
         <div class="sub">Define roll digits, sections, bubble size, QR</div>
       </div>
-      <button class="icon-btn modal-close" type="button"
-              onclick="document.getElementById('dlgExam').close()" aria-label="Close">
-        <i class="fa fa-xmark"></i>
-      </button>
+          <button class="icon-btn modal-close" type="button"
+        onclick="document.getElementById('dlgExam').close()" aria-label="Close">
+  <i class="fa fa-xmark"></i>
+</button>
     </header>
     <div class="content">
       <div class="grid cols-3">
@@ -425,8 +425,8 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
         <div class="h1">Set Answer Key</div>
         <div class="sub">Single or Multiple correct; CSV import supported</div>
       </div>
-      <button class="icon-btn modal-close" type="button"
-              onclick="document.getElementById('dlgKey').close()" aria-label="Close">
+           <button class="icon-btn modal-close" type="button"
+              onclick="closeKeyDialogWithSummary()" aria-label="Close">
         <i class="fa fa-xmark"></i>
       </button>
     </header>
@@ -1051,7 +1051,69 @@ async function buildKeyUI(){
     });
   });
 }
+function getKeySummaryText(){
+  if (!tpl.sections || !tpl.sections.length){
+    return 'No sections added.\n\nNo answer key set.';
+  }
 
+  let totalQ = 0;
+  let setCount = 0;
+  let emptyCount = 0;
+  let eitherCount = 0;
+  let addScoreCount = 0;
+
+  for (const sec of tpl.sections){
+    const secKey = (answerKey && answerKey[sec.name]) ? answerKey[sec.name] : {};
+    const qCount = Number(sec.count) || 0;
+
+    for (let q = 1; q <= qCount; q++){
+      totalQ++;
+      const raw = secKey ? secKey[q] : null;
+      let entry;
+
+      if (Array.isArray(raw)){
+        entry = { options: raw, either:false, addScore:false };
+      } else if (raw && typeof raw === 'object'){
+        entry = {
+          options: Array.isArray(raw.options) ? raw.options : [],
+          either: !!raw.either,
+          addScore: !!raw.addScore
+        };
+      } else {
+        entry = { options: [], either:false, addScore:false };
+      }
+
+      const optsLen = (entry.options || []).length;
+      if (optsLen > 0) setCount++;
+      else emptyCount++;
+
+      if (entry.either)    eitherCount++;
+      if (entry.addScore)  addScoreCount++;
+    }
+  }
+
+  return [
+    `Total questions       : ${totalQ}`,
+    `With answers set      : ${setCount}`,
+    `Without answers       : ${emptyCount}`,
+    `Either toggled        : ${eitherCount}`,
+    `Add-score (grace) set : ${addScoreCount}`
+  ].join('\n');
+}
+
+function closeKeyDialogWithSummary(){
+  // Build summary text
+  const msg = getKeySummaryText()
+    + '\n\nOK = Close\nCancel = Edit again';
+
+  // confirm() has 2 buttons:
+  //  OK     → true  (close)
+  //  Cancel → false (stay / edit)
+  const shouldClose = window.confirm(msg);
+  if (shouldClose){
+    el('dlgKey').close();
+  }
+}
 el('btnKeySave').onclick = async ()=>{
   if(!current.examId) return alert('Pick Class/Section/Exam first');
   await db.collection('omrTemplates').doc(current.examId).set({ answerKey }, {merge:true});
@@ -1341,3 +1403,4 @@ el('btnKeyImport').onclick = ()=>{
   </script>
 </body>
 </html>
+
