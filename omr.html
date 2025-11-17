@@ -460,6 +460,38 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
       </div>
     </div>
   </dialog>
+  <!-- Scan Review Modal: show Roll & Marks with Cancel / Edit / Save -->
+  <dialog id="dlgScanReview" class="modal">
+    <header>
+      <div class="title">
+        <div class="h1">Scan Result</div>
+        <div class="sub">Confirm Roll No. and Marks before saving</div>
+      </div>
+      <button class="icon-btn modal-close" type="button"
+              onclick="document.getElementById('dlgScanReview').close()"
+              aria-label="Close">
+        <i class="fa fa-xmark"></i>
+      </button>
+    </header>
+    <div class="content">
+      <div class="grid cols-3">
+        <div>
+          <div class="label">Roll Number</div>
+          <input id="scanReviewRoll" class="select" type="number" min="1" />
+        </div>
+        <div>
+          <div class="label">Total Marks</div>
+          <input id="scanReviewMarks" class="select" type="number" step="0.25" />
+        </div>
+      </div>
+      <div class="hr"></div>
+      <div class="toolbar" style="justify-content:flex-end; gap:8px;">
+        <button class="btn" type="button" id="btnScanCancel"><i class="fa fa-xmark"></i> Cancel</button>
+        <button class="btn" type="button" id="btnScanEdit"><i class="fa fa-pen"></i> Edit</button>
+        <button class="btn primary" type="button" id="btnScanSave"><i class="fa fa-floppy-disk"></i> Save</button>
+      </div>
+    </div>
+  </dialog>
 
   <script>
     // ==================== CONFIG ====================
@@ -526,7 +558,7 @@ const auth = firebase.auth();
   }
 })();
 
-    // ===== STATE =====
+       // ===== STATE =====
   let current = {
   classId:null, className:null,
   sectionId:null, sectionName:null,
@@ -535,6 +567,7 @@ const auth = firebase.auth();
   examId:null,
   isSubtopic:false, parentExamId:null
 };
+let lastScanPending = null;   // holds latest scan until user presses Save
 let tpl = {
       rollDigits:4,
       bubbleSizeMm:5.5,
@@ -1894,8 +1927,13 @@ async function loadImageAsDataURL(src){
           }catch(e){}
         }
 
-        // Decode roll number (still using prompt-based stub)
+                // Decode roll number automatically from roll bubbles
         const roll = await decodeRoll(ctx, cvs, tpl.rois.roll);
+        if (!roll) {
+          el('pickStatus').innerHTML =
+            `<span class="pill bad">Could not read Roll No. clearly. Please align the sheet to fill the frame and rescan.</span>`;
+          return;
+        }
 
         // Decode answers
         const answers = {};
@@ -1914,7 +1952,7 @@ async function loadImageAsDataURL(src){
         // Score using answerKey and section marking
         const score = scoreAnswers(answers, answerKey, tpl.sections);
 
-               // Save scanned result in browser localStorage
+                       // Build pending scan object; user will confirm/edit before saving
         const out = {
           examId: current.examId,
           classId: current.classId,
@@ -1927,16 +1965,8 @@ async function loadImageAsDataURL(src){
           capturedAt: new Date().toISOString()
         };
 
-        const key = `omrResults_${current.examId}`;
-        const existing = JSON.parse(localStorage.getItem(key) || '[]');
-        existing.push(out);
-        localStorage.setItem(key, JSON.stringify(existing));
+        showScanReview(out);
 
-        // Also push marks into Firestore (student → marks → examId)
-        await saveScanToFirestore(out);
-
-        el('pickStatus').innerHTML =
-          `<span class="pill ok">Scanned (Roll ${roll || '?'} | ${score.total.toFixed(2)} marks) – stored in this browser & Firestore</span>`;
       }catch(err){
         if (stream){
           stream.getTracks().forEach(t=>t.stop());
@@ -1966,11 +1996,77 @@ async function loadImageAsDataURL(src){
       return avg < 130; // threshold — tweak if needed
     }
 
-    async function decodeRoll(ctx, cvs, rollROI){
-      const { x, y, cols, colW, rowH } = rollROI; // mm-space; converted earlier to px for bubbles but here rollROI is in mm-scale — approximate mapping by relative ratios
-      // Fallback: ask user to type roll if alignment uncertain
-      // For MVP, we return null to avoid wrong mapping; advanced impl would compute from fiducials
-      return prompt('Enter Roll Number (temporary until fiducial-based warp is added):')||null;
+        // Measure average brightness inside a bubble (lower = darker)
+    function sampleBubbleBrightness(ctx, cx, cy, r) {
+      const size = Math.floor(r * 2);
+      const startX = Math.max(0, Math.floor(cx - r));
+      const startY = Math.max(0, Math.floor(cy - r));
+      const w = Math.min(size, ctx.canvas.width - startX);
+      const h = Math.min(size, ctx.canvas.height - startY);
+      if (w <= 0 || h <= 0) return 255;
+
+      const data = ctx.getImageData(startX, startY, w, h).data;
+      let sum = 0, count = 0;
+      for (let i = 0; i < data.length; i += 4) {
+        const r0 = data[i];
+        const g0 = data[i + 1];
+        const b0 = data[i + 2];
+        const lum = 0.2126 * r0 + 0.7152 * g0 + 0.0722 * b0;
+        sum += lum;
+        count++;
+      }
+      return count ? sum / count : 255;
+    }
+
+    // Automatic roll detection from roll-bubble grid (no manual prompt)
+    async function decodeRoll(ctx, cvs, rollROI) {
+      if (!rollROI) return null;
+
+      // A4 page size used when generating the PDF
+      const PAGE_W_MM = 210;
+      const PAGE_H_MM = 297;
+
+      const scaleX = cvs.width  / PAGE_W_MM;
+      const scaleY = cvs.height / PAGE_H_MM;
+      const scale  = (scaleX + scaleY) / 2;
+
+      const { x, y, cols, colW, rowH } = rollROI; // all in mm
+      const gapMm      = 3;      // same gap used in PDF between digit columns
+      const bubbleRmm  = 2.2;    // same radius used in PDF
+      const darkLimit  = 185;    // threshold: lower = clearly filled
+
+      let digits = '';
+
+      for (let c = 0; c < cols; c++) {
+        let bestRow = -1;
+        let bestLum = 999;
+
+        // Check digits 0–9 for this column
+        for (let r = 0; r <= 9; r++) {
+          const centerMmX = x + c * (colW + gapMm) + colW / 2;
+          const centerMmY = y + r * rowH;
+
+          const cx = centerMmX * scaleX;
+          const cy = centerMmY * scaleY;
+          const rad = bubbleRmm * scale;
+
+          const lum = sampleBubbleBrightness(ctx, cx, cy, rad);
+
+          if (lum < bestLum) {
+            bestLum = lum;
+            bestRow = r;
+          }
+        }
+
+        // If nothing is clearly dark, abort (we will ask user to rescan)
+        if (bestRow < 0 || bestLum > darkLimit) {
+          return null;
+        }
+
+        digits += String(bestRow);
+      }
+
+      return digits || null;
     }
 
     function scoreAnswers(answers, key, sections){
@@ -2117,6 +2213,100 @@ async function saveScanToFirestore(out){
   }
 }
 
+// ===== SCAN REVIEW (Cancel / Edit / Save) =====
+function showScanReview(out){
+  lastScanPending = out;
+
+  const dlg   = el('dlgScanReview');
+  const rollI = el('scanReviewRoll');
+  const markI = el('scanReviewMarks');
+  const btnCancel = el('btnScanCancel');
+  const btnEdit   = el('btnScanEdit');
+  const btnSave   = el('btnScanSave');
+
+  if (!dlg || !rollI || !markI || !btnCancel || !btnEdit || !btnSave) {
+    console.warn('Scan review dialog elements missing');
+    return;
+  }
+
+  // Fill values
+  rollI.value = out.roll || '';
+  const totalMarks = (out.score && typeof out.score.total === 'number')
+    ? out.score.total.toFixed(2)
+    : '';
+  markI.value = totalMarks;
+
+  // Initially read-only (Edit will enable)
+  rollI.disabled = true;
+  markI.disabled = true;
+
+  // Remove any old handlers
+  btnCancel.onclick = null;
+  btnEdit.onclick   = null;
+  btnSave.onclick   = null;
+
+  btnCancel.onclick = () => {
+    lastScanPending = null;
+    dlg.close();
+    el('pickStatus').innerHTML =
+      '<span class="pill bad">Scan cancelled. Nothing saved.</span>';
+  };
+
+  btnEdit.onclick = () => {
+    rollI.disabled = false;
+    markI.disabled = false;
+    rollI.focus();
+  };
+
+  btnSave.onclick = async () => {
+    if (!lastScanPending) {
+      dlg.close();
+      return;
+    }
+
+    const newRoll  = (rollI.value || '').trim();
+    const newMarks = parseFloat(markI.value);
+
+    if (!newRoll) {
+      alert('Please enter a valid Roll Number.');
+      return;
+    }
+    if (isNaN(newMarks)) {
+      alert('Please enter valid marks.');
+      return;
+    }
+
+    lastScanPending.roll = newRoll;
+    if (!lastScanPending.score) lastScanPending.score = { total: 0, perSection:{} };
+    lastScanPending.score.total = newMarks;
+
+    dlg.close();
+    await finalizeScanSave(lastScanPending);
+    lastScanPending = null;
+  };
+
+  dlg.showModal();
+}
+
+async function finalizeScanSave(out){
+  try{
+    // 1. Save in this browser (for View Reports / Download Excel)
+    const key = `omrResults_${out.examId}`;
+    const existing = JSON.parse(localStorage.getItem(key) || '[]');
+    existing.push(out);
+    localStorage.setItem(key, JSON.stringify(existing));
+
+    // 2. Save in Firestore so that marks appear in Enter Marks page
+    await saveScanToFirestore(out);
+
+    el('pickStatus').innerHTML =
+      `<span class="pill ok">Saved: Roll ${out.roll || '?'} | ${out.score.total.toFixed(2)} marks</span>`;
+  }catch(err){
+    console.error('finalizeScanSave error:', err);
+    alert('Could not save scan. Please try again.');
+  }
+}
+
 // ===== LOCAL RESULTS HELPERS (View Reports / Download Excel) =====
 function getCurrentOmrResultsForSelection(){
   if (!current.examId) return [];
@@ -2209,6 +2399,7 @@ el('btnDownloadExcel').onclick = ()=>{
   </script>
 </body>
 </html>
+
 
 
 
