@@ -493,7 +493,7 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
     </div>
   </dialog>
 
-  <!-- Scan Review Modal: show Roll & Marks with Cancel / Edit / Save -->
+   <!-- Scan Review Modal: show Roll & Marks with Cancel / Edit / Save -->
   <dialog id="dlgScanReview" class="modal">
     <header>
       <div class="title">
@@ -507,6 +507,14 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
       </button>
     </header>
     <div class="content">
+      <!-- OMR page preview -->
+      <div id="scanReviewImageWrap"
+           style="margin-bottom:10px; text-align:center; display:none;">
+        <img id="scanReviewImage"
+             alt="Scanned OMR"
+             style="max-width:100%; border:1px solid #e5e7eb; border-radius:12px;" />
+      </div>
+
       <div class="grid cols-3">
         <div>
           <div class="label">Roll Number</div>
@@ -531,6 +539,7 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
       </div>
     </div>
   </dialog>
+
   <script>
     // ==================== CONFIG ====================
 const firebaseConfig = {
@@ -1875,12 +1884,15 @@ async function loadImageAsDataURL(src){
     // mm to px at 300 dpi (1 inch = 25.4 mm, 300 dpi => 300 px per inch)
         function mmToPx(mm){ return Math.round(mm * 300/25.4); }
 
-       // ===== CAMERA & RECOGNITION =====
-    let stream = null;
-    let hiddenCanvas = null;
+      // ===== CAMERA & RECOGNITION =====
+let stream = null;
+let hiddenCanvas = null;
+let scanLoopId = null;
+let isScanBusy = false;   // true = one sheet is being processed / review open
+let isCameraOpen = false;
 
-// Open camera in a modal with live preview; resolve with captured frame
-async function captureOmrFrame(){
+// Start camera once and keep it open for continuous auto-scan
+async function startCameraAutoScan(){
   const dlg       = el('dlgCamera');
   const video     = el('cameraPreview');
   const btnCancel = el('btnCameraCancel');
@@ -1888,7 +1900,8 @@ async function captureOmrFrame(){
   const statusEl  = el('cameraHint');
 
   if (!dlg || !video || !btnCancel || !btnCap || !statusEl){
-    throw new Error('Camera UI not found');
+    alert('Camera UI not found.');
+    return;
   }
 
   if (!hiddenCanvas){
@@ -1896,162 +1909,188 @@ async function captureOmrFrame(){
   }
 
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
-    throw new Error('Camera not available on this device.');
+    alert('Camera not available on this device.');
+    return;
   }
 
-  // clear old handlers
-  btnCancel.onclick = null;
-  btnCap.onclick    = null;
+  // If camera is already open, just show the dialog again
+  if (isCameraOpen && stream){
+    dlg.showModal();
+    return;
+  }
 
-  return new Promise(async (resolve, reject)=>{
-    try{
-      stream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:'environment' } });
-      video.srcObject = stream;
-      statusEl.textContent = 'Align the OMR sheet fully inside the frame, then tap Capture.';
-      await video.play();
-      dlg.showModal();
-    }catch(err){
-      reject(err);
+  try{
+    stream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:'environment' } });
+    video.srcObject = stream;
+    await video.play();
+    isCameraOpen = true;
+    statusEl.textContent = 'Hold the OMR sheet fully inside the frame. It will auto-scan.';
+    dlg.showModal();
+  }catch(err){
+    alert('Camera error: ' + err.message);
+    return;
+  }
+
+  // Hide the manual Capture button – we don\'t use it now
+  btnCap.style.display = 'none';
+
+  btnCancel.onclick = () => {
+    stopCameraStream();
+    dlg.close();
+    el('pickStatus').innerHTML =
+      '<span class="pill bad">Camera closed. No more auto-scans.</span>';
+  };
+
+  const cvs = hiddenCanvas;
+  const ctx = cvs.getContext('2d');
+
+  async function processFrame(){
+    if (!stream || !isCameraOpen) return;
+    if (!tpl.rois) return;       // no ROIs yet
+    if (isScanBusy) return;      // already handling one sheet
+
+    const vw = video.videoWidth  || 0;
+    const vh = video.videoHeight || 0;
+    if (!vw || !vh) return;
+
+    cvs.width  = vw;
+    cvs.height = vh;
+    ctx.drawImage(video, 0, 0, cvs.width, cvs.height);
+
+    // Try to read QR first – only continue if it matches current exam
+    const imgData = ctx.getImageData(0, 0, cvs.width, cvs.height);
+    const qr = jsQR(imgData.data, imgData.width, imgData.height);
+
+    if (!qr){
+      // No QR in this frame – just wait for next frame
       return;
     }
 
-    function cleanup(){
-      if (stream){
-        stream.getTracks().forEach(t=>t.stop());
-        stream = null;
+    try{
+      const payload = JSON.parse(qr.data);
+      if (payload.examId !== current.examId){
+        el('pickStatus').innerHTML =
+          '<span class="pill bad">QR exam mismatch. Please load the correct exam sheet.</span>';
+        return;
       }
-      video.srcObject = null;
+    }catch(e){
+      // Bad QR content – ignore this frame
+      return;
     }
 
-    btnCancel.onclick = () => {
-      cleanup();
-      dlg.close();
-      reject(new Error('cancelled'));
+    // At this point we believe an OMR sheet is in the frame
+    isScanBusy = true;
+
+    // Decode roll number
+    const roll = await decodeRoll(ctx, cvs, tpl.rois.roll);
+    if (!roll){
+      el('pickStatus').innerHTML =
+        '<span class="pill bad">Could not read Roll No. clearly. Adjust sheet and try again.</span>';
+      isScanBusy = false;
+      return;
+    }
+
+    // Decode bubbles into answers
+    const answers = {};
+    for (const s of tpl.rois.sections){
+      const secName = s.name;
+      answers[secName] = {};
+      for (const b of s.bubbles){
+        const filled = isBubbleFilled(ctx, b.cx, b.cy, b.r);
+        if (filled){
+          if (!answers[secName][b.q]) answers[secName][b.q] = [];
+          answers[secName][b.q].push(b.opt);
+        }
+      }
+    }
+
+    const score = scoreAnswers(answers, answerKey, tpl.sections);
+
+    const out = {
+      examId:       current.examId,
+      classId:      current.classId,
+      sectionId:    current.sectionId,
+      subjectName:  current.subjectName || null,
+      subtopicName: current.subtopicName || null,
+      roll,
+      answers,
+      score,
+      capturedAt:   new Date().toISOString()
     };
 
-    btnCap.onclick = () => {
-      const cvs = hiddenCanvas;
-      const vw  = video.videoWidth  || 1280;
-      const vh  = video.videoHeight || 720;
-      cvs.width  = vw;
-      cvs.height = vh;
-      const ctx  = cvs.getContext('2d');
-      ctx.drawImage(video,0,0,cvs.width,cvs.height);
-      cleanup();
-      dlg.close();
-      resolve({ ctx, canvas:cvs });
-    };
-  });
+    // Build an image of the scanned sheet for preview
+    const previewDataUrl = cvs.toDataURL('image/png');
+
+    // Show review dialog; camera stays ON in the background
+    showScanReview(out, previewDataUrl);
+  }
+
+  async function loop(){
+    if (!stream || !isCameraOpen){
+      scanLoopId = null;
+      return;
+    }
+    await processFrame();
+    scanLoopId = requestAnimationFrame(loop);
+  }
+  loop();
 }
 
-       async function scanAndSaveOnce(){
-      if (!tpl.rois) {
-        alert('Generate OMR to compute ROIs first');
-        return;
-      }
+function stopCameraStream(){
+  isCameraOpen = false;
+  if (scanLoopId){
+    cancelAnimationFrame(scanLoopId);
+    scanLoopId = null;
+  }
+  if (stream){
+    stream.getTracks().forEach(t=>t.stop());
+    stream = null;
+  }
+}
 
-      // If subject has subtopics, make sure one is selected (same logic as before)
-      let subjCfg = null;
-      if (current.subjectName && Array.isArray(examSubjects)){
-        subjCfg = examSubjects.find(s => s && s.name === current.subjectName) || null;
-      }
+// This function now only checks conditions, then starts continuous camera
+async function scanAndSaveOnce(){
+  if (!tpl.rois) {
+    alert('Generate OMR to compute ROIs first');
+    return;
+  }
 
-      let hasSubtopics = false;
-      if (subjCfg){
-        const mode = subjCfg.subtopicsMode || 'none';
-        let stArr = [];
+  // If subject has subtopics, make sure one is selected (same logic as before)
+  let subjCfg = null;
+  if (current.subjectName && Array.isArray(examSubjects)){
+    subjCfg = examSubjects.find(s => s && s.name === current.subjectName) || null;
+  }
 
-        if (mode === 'common') {
-          stArr = Array.isArray(examCommonSubtopics) ? examCommonSubtopics : [];
-        } else if (mode === 'custom') {
-          stArr = Array.isArray(subjCfg.subtopics) ? subjCfg.subtopics : [];
-        }
+  let hasSubtopics = false;
+  if (subjCfg){
+    const mode = subjCfg.subtopicsMode || 'none';
+    let stArr = [];
 
-        hasSubtopics = mode !== 'none' && Array.isArray(stArr) && stArr.length > 0;
-      }
-
-      if (hasSubtopics && !current.subtopicName){
-        alert('Please select the Subtopic before scanning OMR.');
-        return;
-      }
-
-      try{
-        // Open camera dialog, wait for user to press Capture,
-        // and get a single frame as canvas + context
-        const { ctx, canvas:cvs } = await captureOmrFrame();
-
-        // Try read QR to verify examId
-        const imgData = ctx.getImageData(0,0,cvs.width,cvs.height);
-        const qr = jsQR(imgData.data, imgData.width, imgData.height);
-        if (qr){
-          try{
-            const payload = JSON.parse(qr.data);
-            if (payload.examId !== current.examId){
-              el('pickStatus').innerHTML =
-                `<span class="pill bad">QR exam mismatch</span>`;
-              return;
-            }
-          }catch(e){}
-        }
-
-        // Decode roll number automatically from roll bubbles
-        const roll = await decodeRoll(ctx, cvs, tpl.rois.roll);
-        if (!roll) {
-          el('pickStatus').innerHTML =
-            `<span class="pill bad">Could not read Roll No. clearly. Please align the sheet to fill the frame and rescan.</span>`;
-          return;
-        }
-
-        // Decode answers
-        const answers = {};
-        for (const s of tpl.rois.sections){
-          const secName = s.name;
-          answers[secName] = {};
-          for (const b of s.bubbles){
-            const filled = isBubbleFilled(ctx, b.cx, b.cy, b.r);
-            if (filled){
-              if (!answers[secName][b.q]) answers[secName][b.q] = [];
-              answers[secName][b.q].push(b.opt);
-            }
-          }
-        }
-
-        // Score using answerKey and section marking
-        const score = scoreAnswers(answers, answerKey, tpl.sections);
-
-        // Build pending scan object; user will confirm/edit before saving
-        const out = {
-          examId: current.examId,
-          classId: current.classId,
-          sectionId: current.sectionId,
-          subjectName: current.subjectName || null,
-          subtopicName: current.subtopicName || null,
-          roll,
-          answers,
-          score,
-          capturedAt: new Date().toISOString()
-        };
-
-        showScanReview(out);
-
-      }catch(err){
-        if (err && err.message === 'cancelled'){
-          // user closed camera without capturing
-          el('pickStatus').innerHTML =
-            '<span class="pill bad">Scan cancelled. Nothing saved.</span>';
-          return;
-        }
-        alert('Camera error: ' + err.message);
-      }
+    if (mode === 'common') {
+      stArr = Array.isArray(examCommonSubtopics) ? examCommonSubtopics : [];
+    } else if (mode === 'custom') {
+      stArr = Array.isArray(subjCfg.subtopics) ? subjCfg.subtopics : [];
     }
 
-    el('btnScan').onclick = async ()=>{
-      if (!current.examId){
-        alert('Pick Class / Section / Exam first');
-        return;
-      }
-      await scanAndSaveOnce();
-    };
+    hasSubtopics = mode !== 'none' && Array.isArray(stArr) && stArr.length > 0;
+  }
+
+  if (hasSubtopics && !current.subtopicName){
+    alert('Please select the Subtopic before scanning OMR.');
+    return;
+  }
+
+  await startCameraAutoScan();
+}
+
+// Scan & Save button – just starts the continuous scanner
+el('btnScan').onclick = async ()=>{
+  if (!current.examId){
+    alert('Pick Class / Section / Exam first');
+    return;
+  }
+  await scanAndSaveOnce();
+};
 
     function isBubbleFilled(ctx, cx, cy, r){
       // sample average brightness in a smaller inner circle
@@ -2283,19 +2322,30 @@ async function saveScanToFirestore(out){
 }
 
 // ===== SCAN REVIEW (Cancel / Edit / Save) =====
-function showScanReview(out){
+function showScanReview(out, previewDataUrl){
   lastScanPending = out;
 
-  const dlg   = el('dlgScanReview');
-  const rollI = el('scanReviewRoll');
-  const markI = el('scanReviewMarks');
+  const dlg       = el('dlgScanReview');
+  const rollI     = el('scanReviewRoll');
+  const markI     = el('scanReviewMarks');
   const btnCancel = el('btnScanCancel');
   const btnEdit   = el('btnScanEdit');
   const btnSave   = el('btnScanSave');
+  const imgWrap   = el('scanReviewImageWrap');
+  const imgEl     = el('scanReviewImage');
 
   if (!dlg || !rollI || !markI || !btnCancel || !btnEdit || !btnSave) {
     console.warn('Scan review dialog elements missing');
+    isScanBusy = false;
     return;
+  }
+
+  // Set preview image of the scanned OMR (if available)
+  if (imgWrap && imgEl && previewDataUrl){
+    imgEl.src = previewDataUrl;
+    imgWrap.style.display = 'block';
+  } else if (imgWrap){
+    imgWrap.style.display = 'none';
   }
 
   // Fill values
@@ -2317,6 +2367,7 @@ function showScanReview(out){
   btnCancel.onclick = () => {
     lastScanPending = null;
     dlg.close();
+    isScanBusy = false;   // allow next sheet to be auto-scanned
     el('pickStatus').innerHTML =
       '<span class="pill bad">Scan cancelled. Nothing saved.</span>';
   };
@@ -2330,6 +2381,7 @@ function showScanReview(out){
   btnSave.onclick = async () => {
     if (!lastScanPending) {
       dlg.close();
+      isScanBusy = false;
       return;
     }
 
@@ -2338,10 +2390,12 @@ function showScanReview(out){
 
     if (!newRoll) {
       alert('Please enter a valid Roll Number.');
+      isScanBusy = false;
       return;
     }
     if (isNaN(newMarks)) {
       alert('Please enter valid marks.');
+      isScanBusy = false;
       return;
     }
 
@@ -2352,6 +2406,7 @@ function showScanReview(out){
     dlg.close();
     await finalizeScanSave(lastScanPending);
     lastScanPending = null;
+    isScanBusy = false;   // ready for next auto-scan
   };
 
   dlg.showModal();
@@ -2468,6 +2523,7 @@ el('btnDownloadExcel').onclick = ()=>{
   </script>
 </body>
 </html>
+
 
 
 
