@@ -79,10 +79,35 @@
     .sectionTitle{font-weight:700; font-size:14px; color:#111827; display:flex; align-items:center; gap:8px; margin:6px 0 8px}
     .hr{height:1px; background:#e5e7eb; margin:8px 0}
 
-    .videoWrap{position:relative; overflow:hidden; border-radius:12px; border:1px solid #e5e7eb}
+        .videoWrap{position:relative; overflow:hidden; border-radius:12px; border:1px solid #e5e7eb}
     video{width:100%; display:block; background:#000}
     canvas{max-width:100%}
 
+    /* OMR fiducial overlay (4 guide boxes like Evalbee) */
+    #fidOverlay{
+      position:absolute;
+      inset:0;
+      pointer-events:none;
+    }
+    .fid-box{
+      position:absolute;
+      width:64px;
+      height:64px;
+      border:2px solid rgba(37,99,235,.95);
+      box-sizing:border-box;
+      border-radius:6px;
+      box-shadow:0 0 0 1px rgba(15,23,42,.35);
+    }
+    .fid-box.tl{ top:10%; left:8%; }
+    .fid-box.tr{ top:10%; right:8%; }
+    .fid-box.bl{ bottom:10%; left:8%; }
+    .fid-box.br{ bottom:10%; right:8%; }
+
+    /* Turn box green when anchors are confidently detected */
+    .fid-box.ok{
+      border-color:rgba(22,163,74,.95);
+      box-shadow:0 0 0 2px rgba(22,163,74,.55);
+    }
     .status{font-size:12px; color:var(--muted)}
     .pill{display:inline-block; padding:4px 8px; border-radius:999px; font-size:12px; font-weight:700}
     .pill.ok{background:#ecfdf5; color:#065f46}
@@ -461,12 +486,12 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
     </div>
   </dialog>
 
-  <!-- Camera dialog: live preview + Capture -->
+    <!-- Camera dialog: live preview + OMR guide boxes -->
   <dialog id="dlgCamera" class="modal">
     <header>
       <div class="title">
         <div class="h1">Scan OMR</div>
-        <div class="sub">Align the full sheet in the frame and tap Capture</div>
+        <div class="sub">Align the four black squares inside the blue boxes</div>
       </div>
       <button class="icon-btn modal-close" type="button"
               onclick="document.getElementById('dlgCamera').close()"
@@ -478,9 +503,17 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
       <div class="videoWrap">
         <!-- live camera preview -->
         <video id="cameraPreview" playsinline style="width:100%;max-height:60vh;background:#000;border-radius:12px;"></video>
+
+        <!-- 4 fixed guide boxes (Evalbee-style) -->
+        <div id="fidOverlay">
+          <div id="fidBox_tl" class="fid-box tl"></div>
+          <div id="fidBox_tr" class="fid-box tr"></div>
+          <div id="fidBox_bl" class="fid-box bl"></div>
+          <div id="fidBox_br" class="fid-box br"></div>
+        </div>
       </div>
       <div class="status" id="cameraHint" style="margin-top:8px;">
-        Point the camera at the OMR sheet so that the borders and four corner squares are fully visible.
+        Keep the entire OMR sheet in view. All four black squares must sit inside the blue boxes.
       </div>
       <div class="toolbar" style="justify-content:flex-end;gap:8px;margin-top:12px;">
         <button class="btn" type="button" id="btnCameraCancel">
@@ -492,7 +525,6 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
       </div>
     </div>
   </dialog>
-
    <!-- Scan Review Modal: show Roll & Marks with Cancel / Edit / Save -->
   <dialog id="dlgScanReview" class="modal">
     <header>
@@ -1905,7 +1937,17 @@ function dist2D(a,b){
   return Math.sqrt(dx*dx + dy*dy);
 }
 
-// find darkest patch in a corner region – used to locate fiducial squares
+// Toggle green state on the 4 overlay boxes
+function setFidOverlayState(hasAnchors){
+  const on = !!hasAnchors;
+  ['tl','tr','bl','br'].forEach(key=>{
+    const box = document.getElementById('fidBox_' + key);
+    if (!box) return;
+    box.classList.toggle('ok', on);
+  });
+}
+
+// find darkest strong square in a region – used to locate fiducial squares
 function findDarkCornerCenter(imgData, w, h, frac){
   const {x0,x1,y0,y1} = frac;
   const startX = Math.floor(w * x0);
@@ -1913,14 +1955,16 @@ function findDarkCornerCenter(imgData, w, h, frac){
   const startY = Math.floor(h * y0);
   const endY   = Math.floor(h * y1);
 
-  const step   = 8;   // sampling stride
-  const half   = 14;  // half patch size (~28×28 px)
+  const step   = 8;    // sampling stride
+  const half   = 14;   // half patch size (~28×28 px)
   let bestAvg  = 255;
   let bestX = null, bestY = null;
+  let bestDarkFrac = 0;
 
   for(let cy = startY + half; cy <= endY - half; cy += step){
     for(let cx = startX + half; cx <= endX - half; cx += step){
-      let sum = 0, count = 0;
+      let sum = 0, count = 0, darkCount = 0;
+
       for(let yy = cy - half; yy <= cy + half; yy += 4){
         for(let xx = cx - half; xx <= cx + half; xx += 4){
           const idx = (yy * w + xx) * 4;
@@ -1929,35 +1973,79 @@ function findDarkCornerCenter(imgData, w, h, frac){
           const b = imgData[idx+2];
           const lum = 0.2126*r + 0.7152*g + 0.0722*b;
           sum += lum; count++;
+          if (lum < 110) darkCount++;
         }
       }
+
       const avg = sum / (count || 1);
-      if (avg < bestAvg){
+      const darkFrac = count ? darkCount / count : 0;
+
+      // We want a clearly dark patch with a good portion of dark pixels.
+      if (avg < bestAvg && darkFrac >= 0.35){
         bestAvg = avg;
+        bestDarkFrac = darkFrac;
         bestX = cx; bestY = cy;
       }
     }
   }
 
-  // if it isn't really dark, treat as "not found"
-  if (bestX == null || bestAvg > 190) return null;
+  // If it isn't really dark, treat as "not found"
+  if (bestX == null) return null;
+  if (bestAvg > 155 || bestDarkFrac < 0.35) return null;
+
   return {x:bestX, y:bestY, lum:bestAvg};
 }
 
 // Detect 4 page anchor squares (tl,tr,bl,br) from the black boxes
+// Only accept if they look like an A4 rectangle.
 function detectPageAnchors(ctx, cvs){
   const w = cvs.width;
   const h = cvs.height;
-  if (!w || !h) return null;
+  if (!w || !h) {
+    setFidOverlayState(false);
+    return null;
+  }
 
   const imgData = ctx.getImageData(0,0,w,h).data;
 
-  const tl = findDarkCornerCenter(imgData, w, h, {x0:0.00, x1:0.35, y0:0.00, y1:0.40});
-  const tr = findDarkCornerCenter(imgData, w, h, {x0:0.65, x1:1.00, y0:0.00, y1:0.40});
-  const bl = findDarkCornerCenter(imgData, w, h, {x0:0.00, x1:0.35, y0:0.60, y1:1.00});
-  const br = findDarkCornerCenter(imgData, w, h, {x0:0.65, x1:1.00, y0:0.60, y1:1.00});
+  // Regions are roughly aligned with the 4 blue overlay boxes
+  const tl = findDarkCornerCenter(imgData, w, h, {x0:0.02, x1:0.35, y0:0.05, y1:0.40});
+  const tr = findDarkCornerCenter(imgData, w, h, {x0:0.65, x1:0.98, y0:0.05, y1:0.40});
+  const bl = findDarkCornerCenter(imgData, w, h, {x0:0.02, x1:0.35, y0:0.60, y1:0.98});
+  const br = findDarkCornerCenter(imgData, w, h, {x0:0.65, x1:0.98, y0:0.60, y1:0.98});
 
-  if (!tl || !tr || !bl || !br) return null;
+  if (!tl || !tr || !bl || !br) {
+    setFidOverlayState(false);
+    return null;
+  }
+
+  // Geometric checks: should form something close to an A4 rectangle
+  const wTop   = dist2D(tl, tr);
+  const wBot   = dist2D(bl, br);
+  const hLeft  = dist2D(tl, bl);
+  const hRight = dist2D(tr, br);
+
+  const avgW = (wTop + wBot) / 2;
+  const avgH = (hLeft + hRight) / 2;
+
+  const ratio = avgW / (avgH || 1);        // ~0.707 for A4 portrait
+
+  const widthSimilar  = Math.abs(wTop - wBot) / (avgW || 1)   <= 0.22;
+  const heightSimilar = Math.abs(hLeft - hRight) / (avgH || 1)<= 0.22;
+
+  // Require the "page" to occupy a good portion of the frame
+  const bigEnough =
+    avgW >= w * 0.45 &&
+    avgH >= h * 0.55;
+
+  const ratioOk = ratio >= 0.60 && ratio <= 0.80;
+
+  if (!widthSimilar || !heightSimilar || !bigEnough || !ratioOk){
+    setFidOverlayState(false);
+    return null;
+  }
+
+  setFidOverlayState(true);
   return { tl, tr, bl, br };
 }
 
@@ -2107,22 +2195,31 @@ async function decodeRoll(ctx, cvs, rollROI, anchors) {
       const centerMmY = yMm + r * rowH;
 
       const pt = mapPageMmToPixel(centerMmX, centerMmY, anchors);
-      const radPx = 2.3 * scaleAvg;   // bubble radius in px (approx)
+      const radPx = 2.4 * scaleAvg;   // bubble radius in px (approx)
 
       const lum = sampleBubbleBrightness(ctx, pt.x, pt.y, radPx);
       rows.push({ row: r, lum });
     }
 
+    // Sort darkest -> brightest
     rows.sort((a,b)=> a.lum - b.lum);
     const best   = rows[0];
     const second = rows[1];
     const avgLum = rows.reduce((s,r)=> s + r.lum, 0) / rows.length;
 
-    const contrastToAvg = avgLum - best.lum;
-    const diffToSecond  = second.lum - best.lum;
+    const contrastToAvg = avgLum - best.lum;        // how much darker than average
+    const diffToSecond  = second.lum - best.lum;    // how much darker than next row
 
-    // very strict: one clearly darker row per column
-    if (contrastToAvg < 20 || diffToSecond < 10 || best.lum > 180) {
+    // Count how many rows are "almost as dark" as best
+    const closeDark = rows.filter(r => r.lum <= best.lum + 15).length;
+
+    // VERY strict: one clearly darker row per column
+    if (
+      best.lum > 150 ||          // bubble centre must be quite dark
+      contrastToAvg < 40 ||      // must be much darker than background/other digits
+      diffToSecond  < 18 ||      // next candidate must be clearly lighter
+      closeDark     > 2          // at most 2 rows very dark (to avoid big smudges)
+    ){
       return null; // not confident → "no roll"
     }
 
@@ -2131,6 +2228,7 @@ async function decodeRoll(ctx, cvs, rollROI, anchors) {
 
   return digits.length ? digits.join('') : null;
 }
+
 // Decode answers using ROIs (ROIs are stored in 300-dpi px; convert back to mm)
 // Decode answers using ROIs + page anchors (no raw width/height scaling)
 function decodeAnswersFromFrame(ctx, cvs, rois, anchors) {
@@ -2735,6 +2833,7 @@ el('btnDownloadExcel').onclick = ()=>{
   </script>
 </body>
 </html>
+
 
 
 
