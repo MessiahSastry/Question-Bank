@@ -1875,7 +1875,7 @@ async function loadImageAsDataURL(src){
         // Score using answerKey and section marking
         const score = scoreAnswers(answers, answerKey, tpl.sections);
 
-        // Save scanned result ONLY in browser localStorage (no Firestore)
+               // Save scanned result in browser localStorage
         const out = {
           examId: current.examId,
           classId: current.classId,
@@ -1893,8 +1893,11 @@ async function loadImageAsDataURL(src){
         existing.push(out);
         localStorage.setItem(key, JSON.stringify(existing));
 
+        // Also push marks into Firestore (student → marks → examId)
+        await saveScanToFirestore(out);
+
         el('pickStatus').innerHTML =
-          `<span class="pill ok">Scanned (Roll ${roll || '?'} | ${score.total.toFixed(2)} marks) – stored in this browser</span>`;
+          `<span class="pill ok">Scanned (Roll ${roll || '?'} | ${score.total.toFixed(2)} marks) – stored in this browser & Firestore</span>`;
       }catch(err){
         if (stream){
           stream.getTracks().forEach(t=>t.stop());
@@ -2012,6 +2015,69 @@ async function loadImageAsDataURL(src){
    return { total, perSection };
 }
 
+// ===== SAVE SCAN RESULT INTO FIRESTORE (student → marks → examId) =====
+async function saveScanToFirestore(out){
+  try{
+    if (!out.roll){
+      alert('Roll number is required to save marks in Firestore.');
+      return;
+    }
+    if (!out.classId || !out.sectionId || !out.examId){
+      alert('Missing class/section/exam information while saving marks.');
+      return;
+    }
+
+    // 1) Find the student by roll number
+    const yearRef = db.collection('years').doc(academicYear);
+    const studentsRef = yearRef
+      .collection('classes').doc(out.classId)
+      .collection('sections').doc(out.sectionId)
+      .collection('students');
+
+    const rollNum = Number(out.roll);
+    const snap = await studentsRef.where('roll', '==', rollNum).limit(1).get();
+
+    if (snap.empty){
+      alert(`No student found with roll ${out.roll} in this Class & Section.`);
+      return;
+    }
+
+    const stuDoc = snap.docs[0];
+
+    // 2) Existing marks document for this exam (same place your entry-marks page uses)
+    const marksRef = stuDoc.ref.collection('marks').doc(out.examId);
+
+    const totalMarks = (out.score && typeof out.score.total === 'number')
+      ? Number(out.score.total.toFixed(2))
+      : 0;
+
+    // Subject and component names as they appear in your UI
+    const subjectName   = out.subjectName || 'Unknown Subject';
+    // For FA-style exams, subtopic will be things like "Slip Test 1", "Project", "Oral", etc.
+    const componentName = out.subtopicName || 'OMR';
+
+    // Build update object that matches your existing structure:
+    //   __subs -> Subject -> Component : marks
+    // and (optionally) top-level Subject total when this exam is single-component.
+    const updateData = {
+      [`__subs.${subjectName}.${componentName}`]: totalMarks
+    };
+
+    // If there is no subtopic (only one component for this exam),
+    // also store the total directly under the subject field like: Telugu: 33
+    if (!out.subtopicName){
+      updateData[subjectName] = totalMarks;
+    }
+
+    // Merge so that father/name/other subjects are not overwritten
+    await marksRef.set(updateData, { merge:true });
+
+  }catch(err){
+    console.error('saveScanToFirestore error', err);
+    alert('Error saving marks to Firestore: ' + err.message);
+  }
+}
+
 // ===== LOCAL RESULTS HELPERS (View Reports / Download Excel) =====
 function getCurrentOmrResultsForSelection(){
   if (!current.examId) return [];
@@ -2094,7 +2160,7 @@ el('btnDownloadExcel').onclick = ()=>{
   URL.revokeObjectURL(url);
 };
 
- // ===== BOOT =====
+// ===== BOOT =====
 (async()=>{
   // mount empty subtopic dropdown in disabled state
   refreshCdrop('subtopicSel','cdrop-subtopic');
@@ -2104,6 +2170,7 @@ el('btnDownloadExcel').onclick = ()=>{
   </script>
 </body>
 </html>
+
 
 
 
