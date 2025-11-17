@@ -434,7 +434,7 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
     </div>
    </dialog>
 
-  <!-- Answer Key Summary (CampusConnect) -->
+   <!-- Answer Key Summary (CampusConnect) -->
   <dialog id="dlgKeySummary" class="modal">
     <header>
       <div class="title">
@@ -460,6 +460,39 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
       </div>
     </div>
   </dialog>
+
+  <!-- Camera dialog: live preview + Capture -->
+  <dialog id="dlgCamera" class="modal">
+    <header>
+      <div class="title">
+        <div class="h1">Scan OMR</div>
+        <div class="sub">Align the full sheet in the frame and tap Capture</div>
+      </div>
+      <button class="icon-btn modal-close" type="button"
+              onclick="document.getElementById('dlgCamera').close()"
+              aria-label="Close">
+        <i class="fa fa-xmark"></i>
+      </button>
+    </header>
+    <div class="content">
+      <div class="videoWrap">
+        <!-- live camera preview -->
+        <video id="cameraPreview" playsinline style="width:100%;max-height:60vh;background:#000;border-radius:12px;"></video>
+      </div>
+      <div class="status" id="cameraHint" style="margin-top:8px;">
+        Point the camera at the OMR sheet so that the borders and four corner squares are fully visible.
+      </div>
+      <div class="toolbar" style="justify-content:flex-end;gap:8px;margin-top:12px;">
+        <button class="btn" type="button" id="btnCameraCancel">
+          <i class="fa fa-xmark"></i> Cancel
+        </button>
+        <button class="btn primary" type="button" id="btnCameraCapture">
+          <i class="fa fa-camera"></i> Capture
+        </button>
+      </div>
+    </div>
+  </dialog>
+
   <!-- Scan Review Modal: show Roll & Marks with Cancel / Edit / Save -->
   <dialog id="dlgScanReview" class="modal">
     <header>
@@ -486,13 +519,18 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
       </div>
       <div class="hr"></div>
       <div class="toolbar" style="justify-content:flex-end; gap:8px;">
-        <button class="btn" type="button" id="btnScanCancel"><i class="fa fa-xmark"></i> Cancel</button>
-        <button class="btn" type="button" id="btnScanEdit"><i class="fa fa-pen"></i> Edit</button>
-        <button class="btn primary" type="button" id="btnScanSave"><i class="fa fa-floppy-disk"></i> Save</button>
+        <button class="btn" type="button" id="btnScanCancel">
+          <i class="fa fa-xmark"></i> Cancel
+        </button>
+        <button class="btn" type="button" id="btnScanEdit">
+          <i class="fa fa-pen"></i> Edit
+        </button>
+        <button class="btn primary" type="button" id="btnScanSave">
+          <i class="fa fa-floppy-disk"></i> Save
+        </button>
       </div>
     </div>
   </dialog>
-
   <script>
     // ==================== CONFIG ====================
 const firebaseConfig = {
@@ -1835,12 +1873,76 @@ async function loadImageAsDataURL(src){
     };
 
     // mm to px at 300 dpi (1 inch = 25.4 mm, 300 dpi => 300 px per inch)
-    function mmToPx(mm){ return Math.round(mm * 300/25.4); }
+        function mmToPx(mm){ return Math.round(mm * 300/25.4); }
 
        // ===== CAMERA & RECOGNITION =====
     let stream = null;
-    let hiddenVideo = null;
     let hiddenCanvas = null;
+
+// Open camera in a modal with live preview; resolve with captured frame
+async function captureOmrFrame(){
+  const dlg       = el('dlgCamera');
+  const video     = el('scanVideo');
+  const btnCancel = el('btnCamCancel');
+  const btnCap    = el('btnCamCapture');
+  const statusEl  = el('camHint');
+
+  if (!dlg || !video || !btnCancel || !btnCap || !statusEl){
+    throw new Error('Camera UI not found');
+  }
+
+  if (!hiddenCanvas){
+    hiddenCanvas = document.createElement('canvas');
+  }
+
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+    throw new Error('Camera not available on this device.');
+  }
+
+  // clear old handlers
+  btnCancel.onclick = null;
+  btnCap.onclick    = null;
+
+  return new Promise(async (resolve, reject)=>{
+    try{
+      stream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:'environment' } });
+      video.srcObject = stream;
+      statusEl.textContent = 'Align the OMR sheet fully inside the frame, then tap Capture.';
+      await video.play();
+      dlg.showModal();
+    }catch(err){
+      reject(err);
+      return;
+    }
+
+    function cleanup(){
+      if (stream){
+        stream.getTracks().forEach(t=>t.stop());
+        stream = null;
+      }
+      video.srcObject = null;
+    }
+
+    btnCancel.onclick = () => {
+      cleanup();
+      dlg.close();
+      reject(new Error('cancelled'));
+    };
+
+    btnCap.onclick = () => {
+      const cvs = hiddenCanvas;
+      const vw  = video.videoWidth  || 1280;
+      const vh  = video.videoHeight || 720;
+      cvs.width  = vw;
+      cvs.height = vh;
+      const ctx  = cvs.getContext('2d');
+      ctx.drawImage(video,0,0,cvs.width,cvs.height);
+      cleanup();
+      dlg.close();
+      resolve({ ctx, canvas:cvs });
+    };
+  });
+}
 
     async function scanAndSaveOnce(){
       if (!tpl.rois) {
@@ -1873,45 +1975,10 @@ async function loadImageAsDataURL(src){
         return;
       }
 
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
-        alert('Camera not available on this device.');
-        return;
-      }
-
-      // lazy-create hidden video + canvas
-      if (!hiddenVideo){
-        hiddenVideo = document.createElement('video');
-        hiddenVideo.setAttribute('playsinline','true');
-        hiddenVideo.style.display = 'none';
-        document.body.appendChild(hiddenVideo);
-      }
-      if (!hiddenCanvas){
-        hiddenCanvas = document.createElement('canvas');
-      }
-
-      try{
-        stream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:'environment' } });
-        hiddenVideo.srcObject = stream;
-        await hiddenVideo.play();
-
-        // small delay so camera can adjust
-        await new Promise(res => setTimeout(res, 600));
-
-        if (!hiddenVideo.videoWidth){
-          throw new Error('Unable to read camera frame.');
-        }
-
-        const cvs = hiddenCanvas;
-        cvs.width  = hiddenVideo.videoWidth;
-        cvs.height = hiddenVideo.videoHeight;
-        const ctx  = cvs.getContext('2d');
-        ctx.drawImage(hiddenVideo,0,0,cvs.width,cvs.height);
-
-        // stop camera immediately after capture
-        if (stream){
-          stream.getTracks().forEach(t=>t.stop());
-          stream = null;
-        }
+           try{
+        // Open camera dialog, wait for user to press Capture,
+        // and get a single frame as canvas + context
+        const { ctx, canvas:cvs } = await captureOmrFrame();
 
         // Try read QR to verify examId
         const imgData = ctx.getImageData(0,0,cvs.width,cvs.height);
@@ -1927,7 +1994,7 @@ async function loadImageAsDataURL(src){
           }catch(e){}
         }
 
-                // Decode roll number automatically from roll bubbles
+        // Decode roll number automatically from roll bubbles
         const roll = await decodeRoll(ctx, cvs, tpl.rois.roll);
         if (!roll) {
           el('pickStatus').innerHTML =
@@ -1952,7 +2019,7 @@ async function loadImageAsDataURL(src){
         // Score using answerKey and section marking
         const score = scoreAnswers(answers, answerKey, tpl.sections);
 
-                       // Build pending scan object; user will confirm/edit before saving
+        // Build pending scan object; user will confirm/edit before saving
         const out = {
           examId: current.examId,
           classId: current.classId,
@@ -1968,13 +2035,14 @@ async function loadImageAsDataURL(src){
         showScanReview(out);
 
       }catch(err){
-        if (stream){
-          stream.getTracks().forEach(t=>t.stop());
-          stream = null;
+        if (err && err.message === 'cancelled'){
+          // user closed camera without capturing
+          el('pickStatus').innerHTML =
+            '<span class="pill bad">Scan cancelled. Nothing saved.</span>';
+          return;
         }
         alert('Camera error: ' + err.message);
       }
-    }
 
     el('btnScan').onclick = async ()=>{
       if (!current.examId){
@@ -2399,6 +2467,7 @@ el('btnDownloadExcel').onclick = ()=>{
   </script>
 </body>
 </html>
+
 
 
 
