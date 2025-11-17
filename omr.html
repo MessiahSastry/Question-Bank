@@ -1946,7 +1946,11 @@ async function startCameraAutoScan(){
 
   async function processFrame(){
     if (!stream || !isCameraOpen) return;
-    if (!tpl.rois) return;       // no ROIs yet
+        if (!tpl.rois){
+      el('pickStatus').innerHTML =
+        '<span class="pill bad">No ROIs found. Click "Generate OMR (PDF)" once for this exam before scanning.</span>';
+      return;
+    }
     if (isScanBusy) return;      // already handling one sheet
 
     const vw = video.videoWidth  || 0;
@@ -1957,28 +1961,24 @@ async function startCameraAutoScan(){
     cvs.height = vh;
     ctx.drawImage(video, 0, 0, cvs.width, cvs.height);
 
-    // Try to read QR first – only continue if it matches current exam
+        // Optional QR: if present and mismatched, warn + skip; but QR is NOT mandatory
     const imgData = ctx.getImageData(0, 0, cvs.width, cvs.height);
     const qr = jsQR(imgData.data, imgData.width, imgData.height);
 
-    if (!qr){
-      // No QR in this frame – just wait for next frame
-      return;
-    }
-
-    try{
-      const payload = JSON.parse(qr.data);
-      if (payload.examId !== current.examId){
-        el('pickStatus').innerHTML =
-          '<span class="pill bad">QR exam mismatch. Please load the correct exam sheet.</span>';
-        return;
+    if (qr){
+      try{
+        const payload = JSON.parse(qr.data);
+        if (payload.examId && payload.examId !== current.examId){
+          el('pickStatus').innerHTML =
+            '<span class="pill bad">QR exam mismatch for this sheet (frame ignored).</span>';
+          return;
+        }
+      }catch(e){
+        // Invalid QR text – ignore and continue based only on roll bubbles
       }
-    }catch(e){
-      // Bad QR content – ignore this frame
-      return;
     }
 
-    // At this point we believe an OMR sheet is in the frame
+    // At this point we believe an OMR sheet is in the frame (from roll + bubbles)
     isScanBusy = true;
 
     // Decode roll number
@@ -2523,6 +2523,7 @@ el('btnDownloadExcel').onclick = ()=>{
   </script>
 </body>
 </html>
+
 
 
 
