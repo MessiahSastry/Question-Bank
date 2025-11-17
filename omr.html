@@ -353,7 +353,9 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
 <div class="toolbar" style="margin-top:10px">
   <button class="btn" id="btnExamSettings" disabled><i class="fa fa-sliders"></i> Exam Settings</button>
   <button class="btn" id="btnKey" disabled><i class="fa fa-key"></i> Set Answer Key</button>
-  <button class="btn primary" id="btnScan" disabled><i class="fa fa-camera"></i> Scan & Save</button>
+  <button class="btn primary" id="btnScan" disabled><i class="fa fa-camera"></i> Scan &amp; Save</button>
+  <button class="btn" id="btnViewReports" disabled><i class="fa fa-list"></i> View Reports</button>
+  <button class="btn" id="btnDownloadExcel" disabled><i class="fa fa-file-excel"></i> Download Excel</button>
 </div>
       <div class="hr"></div>
       <div class="status" id="pickStatus">Select to load template / save path.</div>
@@ -367,20 +369,6 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
       </div>
       <div class="hr"></div>
       <div id="pdfPreview" class="status">(Preview image will show after generation)</div>
-    </section>
-
-    <section class="card">
-      <div class="sectionTitle"><i class="fa fa-camera"></i> Camera</div>
-      <div class="videoWrap">
-        <video id="video" playsinline></video>
-      </div>
-      <div class="toolbar" style="margin-top:10px">
-        <button class="btn" id="btnStartCam"><i class="fa fa-play"></i> Start Camera</button>
-        <button class="btn" id="btnStopCam"><i class="fa fa-stop"></i> Stop</button>
-        <button class="btn" id="btnCapture"><i class="fa fa-scan"></i> Capture & Recognize</button>
-        <span class="status" id="scanStatus">Idle.</span>
-      </div>
-      <canvas id="frameCanvas" style="display:none"></canvas>
     </section>
   </main>
 
@@ -690,9 +678,12 @@ refreshCdrop('classSel','cdrop-class');
 }
 
 async function loadSections(classId){
- el('subjectSel').innerHTML = ''; el('subjectSel').disabled = true; refreshCdrop('subjectSel','cdrop-subject');
-el('examSel').innerHTML = ''; el('examSel').disabled = true; refreshCdrop('examSel','cdrop-exam');
-  el('btnKey').disabled = true; el('btnScan').disabled = true;
+   el('subjectSel').innerHTML = ''; el('subjectSel').disabled = true; refreshCdrop('subjectSel','cdrop-subject');
+  el('examSel').innerHTML = ''; el('examSel').disabled = true; refreshCdrop('examSel','cdrop-exam');
+  el('btnKey').disabled = true;
+  el('btnScan').disabled = true;
+  el('btnViewReports').disabled = true;
+  el('btnDownloadExcel').disabled = true;
 
   if(!classId){ el('sectionSel').innerHTML=''; return; }
   const root = db.collection('years').doc(academicYear)
@@ -717,8 +708,10 @@ async function loadExamsEffective(){
   subjectSel.disabled = true;
   refreshCdrop('subjectSel','cdrop-subject');
 
-  el('btnKey').disabled = true;
+    el('btnKey').disabled = true;
   el('btnScan').disabled = true;
+  el('btnViewReports').disabled = true;
+  el('btnDownloadExcel').disabled = true;
   btnES = el('btnExamSettings');
   if (btnES) btnES.disabled = true;
 
@@ -828,12 +821,14 @@ async function loadSubjectsFromExam(examId){
     '<option value="">Select Subject</option>' +
     subs.map(s => `<option value="${s.name}">${s.name}</option>`).join('');
 
-  subjectSel.disabled = false;
+   subjectSel.disabled = false;
   refreshCdrop('subjectSel','cdrop-subject');
 
   // enable actions once we at least have subjects
-  el('btnKey').disabled  = false;
-  el('btnScan').disabled = false;
+  el('btnKey').disabled           = false;
+  el('btnScan').disabled          = false;
+  el('btnViewReports').disabled   = false;
+  el('btnDownloadExcel').disabled = false;
 }
 
     // Events
@@ -888,12 +883,16 @@ el('pickStatus').innerHTML =
     await loadSubjectsFromExam(current.examId);
     await loadTemplate();
     if (btnES) btnES.disabled = false;
-  } else {
+    } else {
     el('header-exam').textContent = '';
     el('subjectSel').innerHTML=''; el('subjectSel').disabled=true;
-    el('btnKey').disabled = true; el('btnScan').disabled = true;
+    el('btnKey').disabled = true;
+    el('btnScan').disabled = true;
+    el('btnViewReports').disabled = true;
+    el('btnDownloadExcel').disabled = true;
     if (btnES) btnES.disabled = false; // still allow opening settings for this class/section
   }
+
 });
 
 el('subjectSel').addEventListener('change', (e)=>{
@@ -1766,104 +1765,153 @@ async function loadImageAsDataURL(src){
     // mm to px at 300 dpi (1 inch = 25.4 mm, 300 dpi => 300 px per inch)
     function mmToPx(mm){ return Math.round(mm * 300/25.4); }
 
-    // ===== CAMERA & RECOGNITION =====
-    let stream=null;
-    el('btnStartCam').onclick = async ()=>{
-      try{
-        stream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:'environment' } });
-        el('video').srcObject = stream; await el('video').play();
-        el('scanStatus').textContent = 'Camera started.';
-      }catch(err){ alert('Camera error: '+err.message); }
-    }
-    el('btnStopCam').onclick = ()=>{ if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; el('scanStatus').textContent='Stopped.'; } }
+       // ===== CAMERA & RECOGNITION =====
+    let stream = null;
+    let hiddenVideo = null;
+    let hiddenCanvas = null;
 
-   el('btnCapture').onclick = async ()=>{
-  if(!el('video').videoWidth) return alert('Start camera first');
-  if(!tpl.rois) return alert('Generate OMR to compute ROIs first');
-
-  // If subject has subtopics, make sure one is selected
-   let subjCfg = null;
-  if (current.subjectName && Array.isArray(examSubjects)){
-    subjCfg = examSubjects.find(s => s && s.name === current.subjectName) || null;
-  }
-
-  let hasSubtopics = false;
-  if (subjCfg){
-    const mode = subjCfg.subtopicsMode || 'none';
-    let stArr = [];
-
-    if (mode === 'common') {
-      stArr = Array.isArray(examCommonSubtopics) ? examCommonSubtopics : [];
-    } else if (mode === 'custom') {
-      stArr = Array.isArray(subjCfg.subtopics) ? subjCfg.subtopics : [];
-    }
-
-    hasSubtopics = mode !== 'none' && Array.isArray(stArr) && stArr.length > 0;
-  }
-
-  if (hasSubtopics && !current.subtopicName){
-    return alert('Please select the Subtopic before scanning OMR.');
-  }
-
-  // capture frame
-  const cvs = el('frameCanvas'); const v=el('video');
-  cvs.width = v.videoWidth; cvs.height = v.videoHeight; const ctx = cvs.getContext('2d');
-  ctx.drawImage(v,0,0,cvs.width,cvs.height);
-
-  // Try read QR to verify examId
-  const imgData = ctx.getImageData(0,0,cvs.width,cvs.height);
-  const qr = jsQR(imgData.data, imgData.width, imgData.height);
-  if(qr){
-    try{
-      const payload = JSON.parse(qr.data);
-      if(payload.examId!==current.examId){
-        el('scanStatus').innerHTML = `<span class="pill bad">QR exam mismatch</span>`;
+    async function scanAndSaveOnce(){
+      if (!tpl.rois) {
+        alert('Generate OMR to compute ROIs first');
         return;
       }
-    }catch(e){}
-  }
 
-  // Decode roll number
-  const roll = await decodeRoll(ctx, cvs, tpl.rois.roll);
+      // If subject has subtopics, make sure one is selected (same logic as before)
+      let subjCfg = null;
+      if (current.subjectName && Array.isArray(examSubjects)){
+        subjCfg = examSubjects.find(s => s && s.name === current.subjectName) || null;
+      }
 
-  // Decode answers
-  const answers = {};
-  for(const s of tpl.rois.sections){
-    const secName = s.name; answers[secName] = {};
-    for(const b of s.bubbles){
-      const filled = isBubbleFilled(ctx, b.cx, b.cy, b.r);
-      if(filled){
-        if(!answers[secName][b.q]) answers[secName][b.q] = [];
-        answers[secName][b.q].push(b.opt);
+      let hasSubtopics = false;
+      if (subjCfg){
+        const mode = subjCfg.subtopicsMode || 'none';
+        let stArr = [];
+
+        if (mode === 'common') {
+          stArr = Array.isArray(examCommonSubtopics) ? examCommonSubtopics : [];
+        } else if (mode === 'custom') {
+          stArr = Array.isArray(subjCfg.subtopics) ? subjCfg.subtopics : [];
+        }
+
+        hasSubtopics = mode !== 'none' && Array.isArray(stArr) && stArr.length > 0;
+      }
+
+      if (hasSubtopics && !current.subtopicName){
+        alert('Please select the Subtopic before scanning OMR.');
+        return;
+      }
+
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+        alert('Camera not available on this device.');
+        return;
+      }
+
+      // lazy-create hidden video + canvas
+      if (!hiddenVideo){
+        hiddenVideo = document.createElement('video');
+        hiddenVideo.setAttribute('playsinline','true');
+        hiddenVideo.style.display = 'none';
+        document.body.appendChild(hiddenVideo);
+      }
+      if (!hiddenCanvas){
+        hiddenCanvas = document.createElement('canvas');
+      }
+
+      try{
+        stream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:'environment' } });
+        hiddenVideo.srcObject = stream;
+        await hiddenVideo.play();
+
+        // small delay so camera can adjust
+        await new Promise(res => setTimeout(res, 600));
+
+        if (!hiddenVideo.videoWidth){
+          throw new Error('Unable to read camera frame.');
+        }
+
+        const cvs = hiddenCanvas;
+        cvs.width  = hiddenVideo.videoWidth;
+        cvs.height = hiddenVideo.videoHeight;
+        const ctx  = cvs.getContext('2d');
+        ctx.drawImage(hiddenVideo,0,0,cvs.width,cvs.height);
+
+        // stop camera immediately after capture
+        if (stream){
+          stream.getTracks().forEach(t=>t.stop());
+          stream = null;
+        }
+
+        // Try read QR to verify examId
+        const imgData = ctx.getImageData(0,0,cvs.width,cvs.height);
+        const qr = jsQR(imgData.data, imgData.width, imgData.height);
+        if (qr){
+          try{
+            const payload = JSON.parse(qr.data);
+            if (payload.examId !== current.examId){
+              el('pickStatus').innerHTML =
+                `<span class="pill bad">QR exam mismatch</span>`;
+              return;
+            }
+          }catch(e){}
+        }
+
+        // Decode roll number (still using prompt-based stub)
+        const roll = await decodeRoll(ctx, cvs, tpl.rois.roll);
+
+        // Decode answers
+        const answers = {};
+        for (const s of tpl.rois.sections){
+          const secName = s.name;
+          answers[secName] = {};
+          for (const b of s.bubbles){
+            const filled = isBubbleFilled(ctx, b.cx, b.cy, b.r);
+            if (filled){
+              if (!answers[secName][b.q]) answers[secName][b.q] = [];
+              answers[secName][b.q].push(b.opt);
+            }
+          }
+        }
+
+        // Score using answerKey and section marking
+        const score = scoreAnswers(answers, answerKey, tpl.sections);
+
+        // Save scanned result ONLY in browser localStorage (no Firestore)
+        const out = {
+          examId: current.examId,
+          classId: current.classId,
+          sectionId: current.sectionId,
+          subjectName: current.subjectName || null,
+          subtopicName: current.subtopicName || null,
+          roll,
+          answers,
+          score,
+          capturedAt: new Date().toISOString()
+        };
+
+        const key = `omrResults_${current.examId}`;
+        const existing = JSON.parse(localStorage.getItem(key) || '[]');
+        existing.push(out);
+        localStorage.setItem(key, JSON.stringify(existing));
+
+        el('pickStatus').innerHTML =
+          `<span class="pill ok">Scanned (Roll ${roll || '?'} | ${score.total.toFixed(2)} marks) – stored in this browser</span>`;
+      }catch(err){
+        if (stream){
+          stream.getTracks().forEach(t=>t.stop());
+          stream = null;
+        }
+        alert('Camera error: ' + err.message);
       }
     }
-  }
 
-  // Score using answerKey and section marking
-  const score = scoreAnswers(answers, answerKey, tpl.sections);
+    el('btnScan').onclick = async ()=>{
+      if (!current.examId){
+        alert('Pick Class / Section / Exam first');
+        return;
+      }
+      await scanAndSaveOnce();
+    };
 
-   // Save scanned result ONLY in browser localStorage (no Firestore)
-  const out = {
-    examId: current.examId,
-    classId: current.classId,
-    sectionId: current.sectionId,
-    subjectName: current.subjectName || null,
-    subtopicName: current.subtopicName || null,
-    roll,
-    answers,
-    score,
-    capturedAt: new Date().toISOString()
-  };
-
-  // Keep an array of scans per exam in localStorage
-  const key = `omrResults_${current.examId}`;
-  const existing = JSON.parse(localStorage.getItem(key) || '[]');
-  existing.push(out);
-  localStorage.setItem(key, JSON.stringify(existing));
-
-  el('scanStatus').innerHTML =
-    `<span class="pill ok">Scanned (Roll ${roll || '?'} | ${score.total.toFixed(2)} marks) – stored in this browser</span>`;
-};
     function isBubbleFilled(ctx, cx, cy, r){
       // sample average brightness in a smaller inner circle
       const rad = Math.floor(r*0.8);
@@ -1961,8 +2009,90 @@ async function loadImageAsDataURL(src){
     total += s;
   }
 
-  return { total, perSection };
+   return { total, perSection };
 }
+
+// ===== LOCAL RESULTS HELPERS (View Reports / Download Excel) =====
+function getCurrentOmrResultsForSelection(){
+  if (!current.examId) return [];
+  const key = `omrResults_${current.examId}`;
+  let arr = [];
+  try{
+    arr = JSON.parse(localStorage.getItem(key) || '[]');
+  }catch(e){
+    arr = [];
+  }
+  // filter by subject / subtopic if chosen
+  return arr.filter(r =>
+    (!current.subjectName || r.subjectName === current.subjectName) &&
+    (!current.subtopicName || r.subtopicName === current.subtopicName)
+  );
+}
+
+el('btnViewReports').onclick = ()=>{
+  if (!current.examId){
+    alert('Pick Class / Section / Exam first');
+    return;
+  }
+  const rows = getCurrentOmrResultsForSelection();
+  if (!rows.length){
+    alert('No scans found for this exam/subject in this browser.');
+    return;
+  }
+  let title = `Scans for ${current.examId}`;
+  if (current.subjectName)  title += ` – ${current.subjectName}`;
+  if (current.subtopicName) title += ` (${current.subtopicName})`;
+
+  let msg = title + '\n\n';
+  rows.forEach((r, i)=>{
+    const roll = r.roll || '?';
+    const marks = (r.score && typeof r.score.total === 'number')
+      ? r.score.total.toFixed(2)
+      : '';
+    msg += `${i+1}. Roll ${roll} – ${marks} marks\n`;
+  });
+  alert(msg);
+};
+
+el('btnDownloadExcel').onclick = ()=>{
+  if (!current.examId){
+    alert('Pick Class / Section / Exam first');
+    return;
+  }
+  const rows = getCurrentOmrResultsForSelection();
+  if (!rows.length){
+    alert('No scans found for this exam/subject in this browser.');
+    return;
+  }
+
+  const header = ['Roll','Total Marks','Subject','Subtopic','Captured At'];
+  const lines = [header.join(',')];
+
+  rows.forEach(r=>{
+    const roll   = r.roll || '';
+    const marks  = (r.score && typeof r.score.total === 'number')
+      ? r.score.total.toFixed(2) : '';
+    const subj   = r.subjectName || '';
+    const subtop = r.subtopicName || '';
+    const ts     = r.capturedAt || '';
+
+    const row = [roll, marks, subj, subtop, ts]
+      .map(v => String(v).replace(/"/g,'""'))
+      .map(v => `"${v}"`)
+      .join(',');
+    lines.push(row);
+  });
+
+  const blob = new Blob([lines.join('\r\n')], { type:'text/csv;charset=utf-8;' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url;
+  a.download = `omr_results_${current.examId}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+};
 
  // ===== BOOT =====
 (async()=>{
@@ -1974,6 +2104,7 @@ async function loadImageAsDataURL(src){
   </script>
 </body>
 </html>
+
 
 
 
