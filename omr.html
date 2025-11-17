@@ -2126,56 +2126,72 @@ el('btnScan').onclick = async ()=>{
       return count ? sum / count : 255;
     }
 
-    // Automatic roll detection from roll-bubble grid (no manual prompt)
-    async function decodeRoll(ctx, cvs, rollROI) {
-      if (!rollROI) return null;
+    // Automatic roll detection from roll-bubble grid (very strict)
+// Only returns a roll number when bubbles are clearly & strongly filled.
+async function decodeRoll(ctx, cvs, rollROI) {
+  if (!rollROI) return null;
 
-      // A4 page size used when generating the PDF
-      const PAGE_W_MM = 210;
-      const PAGE_H_MM = 297;
+  // A4 page size used when generating the PDF
+  const PAGE_W_MM = 210;
 
-      const scaleX = cvs.width  / PAGE_W_MM;
-      const scaleY = cvs.height / PAGE_H_MM;
-      const scale  = (scaleX + scaleY) / 2;
+  const scaleX = cvs.width  / PAGE_W_MM;
+  const scaleY = cvs.height / PAGE_W_MM; // we only need relative scaling
+  const scale  = (scaleX + scaleY) / 2;
 
-      const { x, y, cols, colW, rowH } = rollROI; // all in mm
-      const gapMm      = 3;      // same gap used in PDF between digit columns
-      const bubbleRmm  = 2.2;    // same radius used in PDF
-      const darkLimit  = 185;    // threshold: lower = clearly filled
+  const { x, y, cols, colW, rowH } = rollROI; // all in mm
+  const gapMm        = 3;      // same gap used in PDF between digit columns
+  const bubbleRmm    = 2.2;    // same radius used in PDF
 
-      let digits = '';
+  // STRONG conditions so it doesn’t “fake-detect” roll on a random frame
+  const DARK_THRESHOLD = 150;  // must be darker than this
+  const MIN_DIFF       = 25;   // darkest must be clearly darker than 2nd darkest
 
-      for (let c = 0; c < cols; c++) {
-        let bestRow = -1;
-        let bestLum = 999;
+  const digits = [];
 
-        // Check digits 0–9 for this column
-        for (let r = 0; r <= 9; r++) {
-          const centerMmX = x + c * (colW + gapMm) + colW / 2;
-          const centerMmY = y + r * rowH;
+  for (let c = 0; c < cols; c++) {
+    let bestRow   = -1;
+    let bestLum   = 9999;
+    let secondLum = 9999;
 
-          const cx = centerMmX * scaleX;
-          const cy = centerMmY * scaleY;
-          const rad = bubbleRmm * scale;
+    // Check digits 0–9 for this column
+    for (let r = 0; r <= 9; r++) {
+      const centerMmX = x + c * (colW + gapMm) + colW / 2;
+      const centerMmY = y + r * rowH;
 
-          const lum = sampleBubbleBrightness(ctx, cx, cy, rad);
+      const cx  = centerMmX * scaleX;
+      const cy  = centerMmY * scaleY;
+      const rad = bubbleRmm * scale;
 
-          if (lum < bestLum) {
-            bestLum = lum;
-            bestRow = r;
-          }
-        }
+      const lum = sampleBubbleBrightness(ctx, cx, cy, rad);
 
-        // If nothing is clearly dark, abort (we will ask user to rescan)
-        if (bestRow < 0 || bestLum > darkLimit) {
-          return null;
-        }
-
-        digits += String(bestRow);
+      // track darkest & second-darkest for this column
+      if (lum < bestLum) {
+        secondLum = bestLum;
+        bestLum   = lum;
+        bestRow   = r;
+      } else if (lum < secondLum) {
+        secondLum = lum;
       }
-
-      return digits || null;
     }
+
+    // If we couldn’t find a clear dark bubble → NO roll
+    if (bestRow < 0) {
+      return null;
+    }
+
+    const diff = secondLum - bestLum;
+
+    // Must be clearly dark AND clearly separated from other rows
+    if (bestLum > DARK_THRESHOLD || diff < MIN_DIFF) {
+      // This column is not confidently marked → abort whole roll
+      return null;
+    }
+
+    digits.push(String(bestRow));
+  }
+
+  return digits.length ? digits.join('') : null;
+}
 
     function scoreAnswers(answers, key, sections){
   let total = 0;
@@ -2523,6 +2539,7 @@ el('btnDownloadExcel').onclick = ()=>{
   </script>
 </body>
 </html>
+
 
 
 
