@@ -1566,15 +1566,15 @@ async function loadImageAsDataURL(src){
       const rollGridX = boxesStartX;
       const rollGridY = bubblesTopY;
 
-           // ---------- INSTRUCTIONS BOX (snug next to roll bubbles) ----------
+                 // ---------- INSTRUCTIONS BOX (snug next to roll bubbles) ----------
       // Place the box immediately to the right of the roll grid,
-      // using the free space before the inner border.
+      // slightly below the top-right scanning box.
 
       const instrGapX = 4; // small horizontal gap from roll bubbles
 
       // totalBoxesWidth was computed above for Roll No. header
       const instrX = boxesStartX + totalBoxesWidth + instrGapX;
-      const instrY = rollTop - 1; // align nicely with roll grid top
+      const instrY = rollTop + 8; // move box down so it sits below the top square
       const instrW = W - instrX - inner - 4; // up to the inner page border
 
       // 10 short instructions
@@ -1614,18 +1614,17 @@ async function loadImageAsDataURL(src){
       // Reset text colour back to black for rest of page
       doc.setTextColor(0, 0, 0);
 
-      // ---------- SECTIONS BUBBLE GRIDS (5-question blocks, vertical then wrap to next column) ----------
+            // ---------- SECTIONS BUBBLE GRIDS (5-question blocks, centred) ----------
       // Start just under the roll grid, inside the inner page border (not touching)
       const sectionsTopY = bubblesTopY + 10 * rowH + 14;
-      const leftX  = inner + 6;        // a little away from inner border
-      const rightX = W / 2 + 4;
+      const pageCenterX  = W / 2;
 
       const rois = {
         roll: { x: rollGridX, y: rollGridY, cols, colW, rowH },
         sections: []
       };
 
-           // Each block: A–D header + 5 vertical questions (1–5, 6–10, …)
+      // Each block: A–D header + 5 vertical questions (1–5, 6–10, …)
       const rowsPerBlock   = 5;
 
       // Look at the largest section to decide density
@@ -1653,21 +1652,18 @@ async function loadImageAsDataURL(src){
       doc.setDrawColor(23, 98, 167); // deep blue outline
       doc.setLineWidth(0.35);        // thicker circle border
 
-      let curYLeft  = sectionsTopY;
-      let curYRight = sectionsTopY;
+      // We now stack all sections vertically, each one horizontally centred
+      let curY = sectionsTopY;
 
-      tpl.sections.forEach((sec, idx) => {
-        const inLeftCol = (idx % 2 === 0);
-        const baseX     = inLeftCol ? leftX : rightX;
-        const startY    = inLeftCol ? curYLeft : curYRight;
-
+      tpl.sections.forEach((sec) => {
         const optCount    = sec.options;
         const secROI      = { name: sec.name, options: optCount, bubbles: [] };
         const totalBlocks = Math.ceil(sec.count / rowsPerBlock);
 
-        const headerBaseY  = startY + 4;
-        const bottomLimit  = H - inner - 12;              // keep above inner page border
-        const availableH   = bottomLimit - headerBaseY;
+        const startY      = curY;
+        const headerBaseY = startY + 4;
+        const bottomLimit = H - inner - 12;              // keep above inner page border
+        const availableH  = bottomLimit - headerBaseY;
         const blocksPerCol = Math.max(1, Math.floor(availableH / perBlockHeight));
 
         const blockW   = numColW + optCount * optStep + 4;
@@ -1679,29 +1675,37 @@ async function loadImageAsDataURL(src){
           colGap = 4;   // narrower gap between 5-question blocks when many columns
         }
 
-        const cardW = colCount * blockW + (colCount - 1) * colGap + 4;
+        // Total width of all 5-question blocks for this section
+        const gridW = colCount * blockW + (colCount - 1) * colGap;
+
+        // Card is just a light background behind the centred grid
+        const cardW = gridW + 4;
         const cardH = blocksPerCol * perBlockHeight;
-        const cardX = baseX - 2;
+        const cardX = pageCenterX - cardW / 2;
         const cardY = startY - 4;
+
+        // X where the first block starts (centred as a group)
+        const gridStartX = cardX + 2;
 
         // light card background
         doc.setFillColor(248, 250, 252);
         doc.roundedRect(cardX, cardY, cardW, cardH, 2, 2, 'F');
 
-        // section title
+        // section title (centred above the whole grid)
         doc.setFont('helvetica', 'bold');
         doc.setFontSize(11);
         doc.setTextColor(23, 98, 167);
-        doc.text(`${sec.name}`, baseX, startY);
+        doc.text(`${sec.name}`, pageCenterX, startY, { align: 'center' });
         doc.setTextColor(0, 0, 0);
 
+        // ---- SAME 5-QUESTION BLOCK LOGIC AS BEFORE ----
         let qNum = 1;
         for (let b = 0; b < totalBlocks; b++) {
           const colIndex = Math.floor(b / blocksPerCol);  // which column inside this section
           const rowIndex = b % blocksPerCol;              // which block vertically in that column
 
-          const blockTopY   = headerBaseY + rowIndex * perBlockHeight;
-          const blockLeftX  = baseX + colIndex * (blockW + colGap);
+          const blockTopY  = headerBaseY + rowIndex * perBlockHeight;
+          const blockLeftX = gridStartX + colIndex * (blockW + colGap);
 
           // A/B/C/D/E/F header for this 5-question block
           doc.setFont('helvetica', 'bold');
@@ -1740,13 +1744,9 @@ async function loadImageAsDataURL(src){
 
         rois.sections.push(secROI);
 
-        // Move down for the next section in this column
+        // Move down for the next section (vertical stack)
         const sectionAdvance = cardH + 6;
-        if (inLeftCol) {
-          curYLeft  += sectionAdvance;
-        } else {
-          curYRight += sectionAdvance;
-        }
+        curY += sectionAdvance;
       });
 
       // Save ROIs
@@ -1973,6 +1973,7 @@ async function loadImageAsDataURL(src){
   </script>
 </body>
 </html>
+
 
 
 
