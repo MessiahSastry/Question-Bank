@@ -1582,21 +1582,31 @@ async function loadImageAsDataURL(src){
         }
       }
 
-           // ---------- FIDUCIALS ----------
-      // moved slightly inside the page, and top pair just below details box
-      const fid = 7;
-      const fidInsetX = margin + 4;                 // a bit inside from border
-      // infoTop = headerH + 6, infoH = 20 → below box ≈ headerH + 6 + 20 + 4
-      const fidYTop = headerH + 30;                 // below student details box
-      const fidYBot = H - margin - fid - 4;         // slightly above bottom border
+               // ---------- FIDUCIALS (black anchor squares like Evalbee) ----------
+      // slightly inside the inner border; used later for alignment
+      const fidSize  = 5.5;              // mm – compact solid square
+      const fidInsetX = margin + 4;      // a bit in from the left/right border
+      const fidYTop   = headerH + 30;    // below student details box
+      const fidYBot   = H - margin - fidSize - 4; // above bottom border
 
       doc.setDrawColor(0, 0, 0);
-      // Top pair
-      doc.rect(fidInsetX,             fidYTop, fid, fid);                  // TL
-      doc.rect(W - fidInsetX - fid,   fidYTop, fid, fid);                  // TR
-      // Bottom pair
-      doc.rect(fidInsetX,             fidYBot, fid, fid);                  // BL
-      doc.rect(W - fidInsetX - fid,   fidYBot, fid, fid);                  // BR
+      doc.setFillColor(0, 0, 0);
+
+      const drawFid = (x, y) => {
+        // filled black square (not just outline)
+        doc.rect(x, y, fidSize, fidSize, 'F');
+      };
+
+      // 4 main corner anchors
+      drawFid(fidInsetX,                 fidYTop);              // top-left
+      drawFid(W - fidInsetX - fidSize,   fidYTop);              // top-right
+      drawFid(fidInsetX,                 fidYBot);              // bottom-left
+      drawFid(W - fidInsetX - fidSize,   fidYBot);              // bottom-right
+
+      // extra mid-edge anchors on left & right (similar pattern to Evalbee)
+      const fidYMid = (fidYTop + fidYBot) / 2;
+      drawFid(fidInsetX,               fidYMid);                // mid-left
+      drawFid(W - fidInsetX - fidSize, fidYMid);                // mid-right
 
 
            // ---------- STUDENT INFO BOX ----------
@@ -1881,58 +1891,329 @@ async function loadImageAsDataURL(src){
       document.getElementById('tplStatus').textContent = 'PDF generated & ROIs saved.';
     };
 
-    // mm to px at 300 dpi (1 inch = 25.4 mm, 300 dpi => 300 px per inch)
-        function mmToPx(mm){ return Math.round(mm * 300/25.4); }
+   // mm to px at 300 dpi (1 inch = 25.4 mm, 300 dpi => 300 px per inch)
+function mmToPx(mm){ return Math.round(mm * 300/25.4); }
 
-      // ===== CAMERA & RECOGNITION =====
+// ---- Page + fiducial helpers ----
+const PAGE_W_MM = 210;
+const PAGE_H_MM = 297;
+
+// simple distance helper
+function dist2D(a,b){
+  const dx = a.x - b.x;
+  const dy = a.y - b.y;
+  return Math.sqrt(dx*dx + dy*dy);
+}
+
+// find darkest patch in a corner region – used to locate fiducial squares
+function findDarkCornerCenter(imgData, w, h, frac){
+  const {x0,x1,y0,y1} = frac;
+  const startX = Math.floor(w * x0);
+  const endX   = Math.floor(w * x1);
+  const startY = Math.floor(h * y0);
+  const endY   = Math.floor(h * y1);
+
+  const step   = 8;   // sampling stride
+  const half   = 14;  // half patch size (~28×28 px)
+  let bestAvg  = 255;
+  let bestX = null, bestY = null;
+
+  for(let cy = startY + half; cy <= endY - half; cy += step){
+    for(let cx = startX + half; cx <= endX - half; cx += step){
+      let sum = 0, count = 0;
+      for(let yy = cy - half; yy <= cy + half; yy += 4){
+        for(let xx = cx - half; xx <= cx + half; xx += 4){
+          const idx = (yy * w + xx) * 4;
+          const r = imgData[idx];
+          const g = imgData[idx+1];
+          const b = imgData[idx+2];
+          const lum = 0.2126*r + 0.7152*g + 0.0722*b;
+          sum += lum; count++;
+        }
+      }
+      const avg = sum / (count || 1);
+      if (avg < bestAvg){
+        bestAvg = avg;
+        bestX = cx; bestY = cy;
+      }
+    }
+  }
+
+  // if it isn't really dark, treat as "not found"
+  if (bestX == null || bestAvg > 190) return null;
+  return {x:bestX, y:bestY, lum:bestAvg};
+}
+
+// Detect 4 page anchor squares (tl,tr,bl,br) from the black boxes
+function detectPageAnchors(ctx, cvs){
+  const w = cvs.width;
+  const h = cvs.height;
+  if (!w || !h) return null;
+
+  const imgData = ctx.getImageData(0,0,w,h).data;
+
+  const tl = findDarkCornerCenter(imgData, w, h, {x0:0.00, x1:0.35, y0:0.00, y1:0.40});
+  const tr = findDarkCornerCenter(imgData, w, h, {x0:0.65, x1:1.00, y0:0.00, y1:0.40});
+  const bl = findDarkCornerCenter(imgData, w, h, {x0:0.00, x1:0.35, y0:0.60, y1:1.00});
+  const br = findDarkCornerCenter(imgData, w, h, {x0:0.65, x1:1.00, y0:0.60, y1:1.00});
+
+  if (!tl || !tr || !bl || !br) return null;
+  return { tl, tr, bl, br };
+}
+
+// Bilinear mapping from page (mm) → camera pixel using the 4 anchors
+function mapPageMmToPixel(xMm, yMm, anchors){
+  const u = xMm / PAGE_W_MM;
+  const v = yMm / PAGE_H_MM;
+
+  const {tl,tr,bl,br} = anchors;
+
+  // interpolate along top & bottom edges
+  const xTop = tl.x + u * (tr.x - tl.x);
+  const yTop = tl.y + u * (tr.y - tl.y);
+
+  const xBot = bl.x + u * (br.x - bl.x);
+  const yBot = bl.y + u * (br.y - bl.y);
+
+  return {
+    x: xTop + v * (xBot - xTop),
+    y: yTop + v * (yBot - yTop)
+  };
+}
+
+// Approximate mm→px scale from anchors (used for bubble radius)
+function getPageScaleFromAnchors(anchors){
+  const {tl,tr,bl,br} = anchors;
+  const w1 = dist2D(tl,tr);
+  const w2 = dist2D(bl,br);
+  const h1 = dist2D(tl,bl);
+  const h2 = dist2D(tr,br);
+
+  const scaleX = (w1 + w2) / (2 * PAGE_W_MM);
+  const scaleY = (h1 + h2) / (2 * PAGE_H_MM);
+  const avg = (scaleX + scaleY) / 2;
+  return { scaleX, scaleY, scaleAvg: avg };
+}
+
+ // ===== CAMERA & RECOGNITION =====
+// Camera + scan state
 let stream = null;
 let hiddenCanvas = null;
 let scanLoopId = null;
-let isScanBusy = false;     // true = one sheet is being processed / review open
+let isScanBusy = false;     // true = review dialog open / saving
 let isCameraOpen = false;
-let noRollStartTime = null; // for 5–7 sec "no OMR found" timer
+let noRollStartTime = null; // timer for "no OMR sheet found"
+let detectionHistory = [];  // recent detections for stability gating
+
+const DETECTION_WINDOW_MS   = 2000;  // look at last 2 seconds
+const REQUIRED_STABLE_HITS  = 3;     // need 3 consistent frames
+
+// Store a candidate detection and decide if it's stable enough
+function registerStableDetection(candidate) {
+  // candidate: { roll, total, filledCount }
+  const now = Date.now();
+  detectionHistory.push({ ...candidate, t: now });
+  if (detectionHistory.length > 20) detectionHistory.shift();
+
+  const recent = detectionHistory.filter(d => now - d.t <= DETECTION_WINDOW_MS);
+  if (recent.length < REQUIRED_STABLE_HITS) return null;
+
+  if (!candidate.roll) return null;
+
+  // Same roll in enough recent frames
+  const sameRoll = recent.filter(d => d.roll === candidate.roll);
+  if (sameRoll.length < REQUIRED_STABLE_HITS) return null;
+
+  // Marks roughly same in last frames (avoid noise)
+  const avgMarks = sameRoll.reduce((s, d) => s + d.total, 0) / sameRoll.length;
+  const stable = sameRoll.every(d => Math.abs(d.total - avgMarks) <= 0.25);
+
+  if (!stable) return null;
+
+  // Good, clear history so we don't double-fire
+  detectionHistory = [];
+  return {
+    roll: candidate.roll,
+    total: Number(avgMarks.toFixed(2))
+  };
+}
+
+// Basic bubble fill check – darker inner circle → filled
+function isBubbleFilled(ctx, cx, cy, r) {
+  const rad = Math.floor(r * 0.8);
+  const x = Math.floor(cx);
+  const y = Math.floor(cy);
+  const { width, height } = ctx.canvas;
+  let acc = 0, cnt = 0;
+
+  for (let dy = -rad; dy <= rad; dy++) {
+    for (let dx = -rad; dx <= rad; dx++) {
+      const xx = x + dx, yy = y + dy;
+      if (xx < 0 || yy < 0 || xx >= width || yy >= height) continue;
+      if (dx * dx + dy * dy > rad * rad) continue;
+
+      const idx  = (yy * width + xx) * 4;
+      const data = ctx.getImageData(xx, yy, 1, 1).data;
+      const lum  = 0.2126 * data[0] + 0.7152 * data[1] + 0.0722 * data[2];
+      acc += lum;
+      cnt++;
+    }
+  }
+  const avg = acc / (cnt || 1);
+  return avg < 130; // threshold; lower = stricter
+}
+
+// Average brightness in a patch – used by roll decoder
+function sampleBubbleBrightness(ctx, cx, cy, r) {
+  const size   = Math.floor(r * 2);
+  const startX = Math.max(0, Math.floor(cx - r));
+  const startY = Math.max(0, Math.floor(cy - r));
+  const w      = Math.min(size, ctx.canvas.width  - startX);
+  const h      = Math.min(size, ctx.canvas.height - startY);
+  if (w <= 0 || h <= 0) return 255;
+
+  const data = ctx.getImageData(startX, startY, w, h).data;
+  let sum = 0, count = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    const r0 = data[i], g0 = data[i + 1], b0 = data[i + 2];
+    const lum = 0.2126 * r0 + 0.7152 * g0 + 0.0722 * b0;
+    sum += lum; count++;
+  }
+  return count ? sum / count : 255;
+}
+
+// Strict roll detection using page anchors + roll ROI (in mm)
+async function decodeRoll(ctx, cvs, rollROI, anchors) {
+  if (!rollROI || !anchors) return null;
+
+  // values stored in mm
+  const gapMm = rollROI.gapMm != null ? rollROI.gapMm : 3;
+  const xMm   = rollROI.xMm  != null ? rollROI.xMm  : rollROI.x;
+  const yMm   = rollROI.yMm  != null ? rollROI.yMm  : rollROI.y;
+  const colW  = rollROI.colWmm != null ? rollROI.colWmm : rollROI.colW;
+  const rowH  = rollROI.rowHmm != null ? rollROI.rowHmm : rollROI.rowH;
+  const cols  = rollROI.cols || tpl.rollDigits || 4;
+
+  if (xMm == null || yMm == null || !colW || !rowH) return null;
+
+  const { scaleAvg } = getPageScaleFromAnchors(anchors);
+  const digits = [];
+
+  for (let c = 0; c < cols; c++) {
+    const rows = [];
+
+    for (let r = 0; r <= 9; r++) {
+      const centerMmX = xMm + c * (colW + gapMm) + colW / 2;
+      const centerMmY = yMm + r * rowH;
+
+      const pt = mapPageMmToPixel(centerMmX, centerMmY, anchors);
+      const radPx = 2.3 * scaleAvg;   // bubble radius in px (approx)
+
+      const lum = sampleBubbleBrightness(ctx, pt.x, pt.y, radPx);
+      rows.push({ row: r, lum });
+    }
+
+    rows.sort((a,b)=> a.lum - b.lum);
+    const best   = rows[0];
+    const second = rows[1];
+    const avgLum = rows.reduce((s,r)=> s + r.lum, 0) / rows.length;
+
+    const contrastToAvg = avgLum - best.lum;
+    const diffToSecond  = second.lum - best.lum;
+
+    // very strict: one clearly darker row per column
+    if (contrastToAvg < 20 || diffToSecond < 10 || best.lum > 180) {
+      return null; // not confident → "no roll"
+    }
+
+    digits.push(String(best.row));
+  }
+
+  return digits.length ? digits.join('') : null;
+}
+// Decode answers using ROIs (ROIs are stored in 300-dpi px; convert back to mm)
+// Decode answers using ROIs + page anchors (no raw width/height scaling)
+function decodeAnswersFromFrame(ctx, cvs, rois, anchors) {
+  const answers = {};
+  if (!rois || !Array.isArray(rois.sections) || !anchors) return answers;
+
+  const FACTOR_300PX_TO_MM = 25.4 / 300;
+  const pageScale = getPageScaleFromAnchors(anchors);
+
+  for (const sec of rois.sections) {
+    const secName = sec.name;
+    if (!secName || !Array.isArray(sec.bubbles)) continue;
+    if (!answers[secName]) answers[secName] = {};
+
+    for (const b of sec.bubbles) {
+      // convert stored 300-dpi px back to page mm
+      const xMm = (b.xMm != null) ? b.xMm :
+                  (b.cx  != null ? b.cx * FACTOR_300PX_TO_MM : null);
+      const yMm = (b.yMm != null) ? b.yMm :
+                  (b.cy  != null ? b.cy * FACTOR_300PX_TO_MM : null);
+      const rMm = (b.rMm != null) ? b.rMm :
+                  (b.r   != null ? b.r  * FACTOR_300PX_TO_MM : 2.1);
+
+      if (xMm == null || yMm == null) continue;
+
+      const pt  = mapPageMmToPixel(xMm, yMm, anchors);
+      const rPx = rMm * pageScale.scaleAvg;
+
+      const filled = isBubbleFilled(ctx, pt.x, pt.y, rPx);
+      if (filled) {
+        if (!answers[secName][b.q]) answers[secName][b.q] = [];
+        if (!answers[secName][b.q].includes(b.opt)) {
+          answers[secName][b.q].push(b.opt);
+        }
+      }
+    }
+  }
+
+  return answers;
+}
 
 // Start camera once and keep it open for continuous auto-scan
-async function startCameraAutoScan(){
+async function startCameraAutoScan() {
   const dlg       = el('dlgCamera');
   const video     = el('cameraPreview');
   const btnCancel = el('btnCameraCancel');
   const btnCap    = el('btnCameraCapture');
   const statusEl  = el('cameraHint');
 
-  if (!dlg || !video || !btnCancel || !btnCap || !statusEl){
+  if (!dlg || !video || !btnCancel || !btnCap || !statusEl) {
     alert('Camera UI not found.');
     return;
   }
 
-  if (!hiddenCanvas){
+  if (!hiddenCanvas) {
     hiddenCanvas = document.createElement('canvas');
   }
 
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     alert('Camera not available on this device.');
     return;
   }
 
-  // If camera is already open, just show the dialog again
-  if (isCameraOpen && stream){
+  // If camera already open, just show dialog again
+  if (isCameraOpen && stream) {
     dlg.showModal();
     return;
   }
 
-  try{
-    stream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:'environment' } });
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
     video.srcObject = stream;
     await video.play();
     isCameraOpen = true;
-    statusEl.textContent = 'Hold the OMR sheet fully inside the frame. It will auto-scan.';
+    statusEl.textContent =
+      'Keep the full OMR sheet inside the frame. It will auto-scan when stable.';
     dlg.showModal();
-  }catch(err){
+  } catch (err) {
     alert('Camera error: ' + err.message);
     return;
   }
 
-  // Hide the manual Capture button – we don\'t use it now
+  // Only auto-scan; hide manual Capture button
   btnCap.style.display = 'none';
 
   btnCancel.onclick = () => {
@@ -1942,19 +2223,18 @@ async function startCameraAutoScan(){
       '<span class="pill bad">Camera closed. No more auto-scans.</span>';
   };
 
-   const cvs = hiddenCanvas;
+  const cvs = hiddenCanvas;
   const ctx = cvs.getContext('2d');
 
-  async function processFrame(){
+  async function processFrame() {
     if (!stream || !isCameraOpen) return;
-
-    if (!tpl.rois){
+    if (!tpl.rois) {
       el('pickStatus').innerHTML =
         '<span class="pill bad">No ROIs found. Click "Generate OMR (PDF)" once for this exam before scanning.</span>';
       return;
     }
 
-    // If we are already reviewing/saving one sheet, skip this frame
+    // Already reviewing one sheet → skip
     if (isScanBusy) return;
 
     const vw = video.videoWidth  || 0;
@@ -1965,58 +2245,90 @@ async function startCameraAutoScan(){
     cvs.height = vh;
     ctx.drawImage(video, 0, 0, cvs.width, cvs.height);
 
-    // Optional QR: if present and mismatched, warn + skip; but QR is NOT mandatory
-    const imgData = ctx.getImageData(0, 0, cvs.width, cvs.height);
-    const qr = jsQR(imgData.data, imgData.width, imgData.height);
-
-    if (qr){
-      try{
-        const payload = JSON.parse(qr.data);
-        if (payload.examId && payload.examId !== current.examId){
-          el('pickStatus').innerHTML =
-            '<span class="pill bad">QR exam mismatch for this sheet (frame ignored).</span>';
-          return; // do NOT lock scanner, just ignore this frame
-        }
-      }catch(e){
-        // Invalid QR text – ignore and continue based only on roll bubbles
-      }
-    }
-
-    // Try to read roll from this frame (non-blocking: we only lock when roll is found)
-    const roll = await decodeRoll(ctx, cvs, tpl.rois.roll);
-    const now  = Date.now();
-
-   if (!roll){
-  // No clear roll in this frame – start / continue "no OMR" timer
-  if (noRollStartTime === null){
-    noRollStartTime = now;
-  } else if (now - noRollStartTime > 6000){ // ~6 seconds
-    // Show CampusConnect alert POPUP in front of the camera dialog
-    alert('No OMR sheet found or not properly placed. Adjust sheet and try again.');
-    // reset timer so message doesn’t spam every frame
-    noRollStartTime = null;
-  }
-  return; // keep camera live, keep scanning
-}
-    // We have a confident roll -> reset timer and lock scanner for this sheet
-    noRollStartTime = null;
-    isScanBusy      = true;
-
-    // Decode bubbles into answers
-    const answers = {};
-    for (const s of tpl.rois.sections){
-      const secName = s.name;
-      answers[secName] = {};
-      for (const b of s.bubbles){
-        const filled = isBubbleFilled(ctx, b.cx, b.cy, b.r);
-        if (filled){
-          if (!answers[secName][b.q]) answers[secName][b.q] = [];
-          answers[secName][b.q].push(b.opt);
+    // Optional QR check: if present and examId mismatches, ignore this frame
+    try {
+      const imgData = ctx.getImageData(0, 0, cvs.width, cvs.height);
+      const qr = jsQR(imgData.data, imgData.width, imgData.height);
+      if (qr) {
+        try {
+          const payload = JSON.parse(qr.data);
+          if (payload.examId && payload.examId !== current.examId) {
+            el('pickStatus').innerHTML =
+              '<span class="pill bad">QR exam mismatch for this sheet (frame ignored).</span>';
+            return;
+          }
+        } catch (e) {
+          // invalid QR – ignore
         }
       }
+    } catch (e) {
+      // if jsQR fails, just ignore QR and continue
     }
 
-    const score = scoreAnswers(answers, answerKey, tpl.sections);
+    const now = Date.now();
+
+    // Detect page anchors from the black squares.
+    const anchors = detectPageAnchors(ctx, cvs);
+
+    if (!anchors) {
+      // No clear 4-corner anchors → treat as "no OMR" frame.
+      if (noRollStartTime === null) {
+        noRollStartTime = now;
+      } else if (now - noRollStartTime > 6000) {
+        alert('No OMR sheet found or not fully inside the frame. Align sheet so all six black squares are visible.');
+        noRollStartTime = null;
+      }
+      return;
+    }
+
+    // Try to decode roll using anchors
+    const roll = await decodeRoll(ctx, cvs, tpl.rois.roll, anchors);
+
+    if (!roll) {
+      // Anchors found but roll not confidently detected
+      if (noRollStartTime === null) {
+        noRollStartTime = now;
+      } else if (now - noRollStartTime > 6000) {
+        alert('OMR sheet detected, but Roll bubbles are not readable. Check lighting and bubble fill.');
+        noRollStartTime = null;
+      }
+      return;
+    }
+
+    // We have a roll – reset "no OMR" timer
+    noRollStartTime = null;
+
+    // Decode answers & score using anchors
+    const answers = decodeAnswersFromFrame(ctx, cvs, tpl.rois, anchors);
+    const score   = scoreAnswers(answers, answerKey, tpl.sections);
+
+    // Count how many questions have at least one bubble filled
+    let filledCount = 0;
+    Object.values(answers).forEach(secObj => {
+      Object.values(secObj).forEach(arr => {
+        if (Array.isArray(arr) && arr.length) filledCount++;
+      });
+    });
+
+    // Ignore frames with almost no answers (random noise)
+    if (filledCount < 3) {
+      return;
+    }
+
+    const candidate = {
+      roll,
+      total: typeof score.total === 'number' ? score.total : 0,
+      filledCount
+    };
+
+    const stable = registerStableDetection(candidate);
+    if (!stable) {
+      // Not stable yet; keep scanning
+      return;
+    }
+
+    // Stable → lock scanner for this sheet
+    isScanBusy = true;
 
     const out = {
       examId:       current.examId,
@@ -2024,22 +2336,18 @@ async function startCameraAutoScan(){
       sectionId:    current.sectionId,
       subjectName:  current.subjectName || null,
       subtopicName: current.subtopicName || null,
-      roll,
+      roll:         stable.roll,
       answers,
-      score,
+      score:        { total: stable.total, perSection: score.perSection || {} },
       capturedAt:   new Date().toISOString()
     };
 
-    // Build an image of the scanned sheet for preview
     const previewDataUrl = cvs.toDataURL('image/png');
-
-    // Show review dialog; camera stays ON in the background.
-    // isScanBusy will be cleared in the review dialog handlers.
     showScanReview(out, previewDataUrl);
   }
 
-  async function loop(){
-    if (!stream || !isCameraOpen){
+  async function loop() {
+    if (!stream || !isCameraOpen) {
       scanLoopId = null;
       return;
     }
@@ -2049,33 +2357,33 @@ async function startCameraAutoScan(){
   loop();
 }
 
-function stopCameraStream(){
+function stopCameraStream() {
   isCameraOpen = false;
-  if (scanLoopId){
+  if (scanLoopId) {
     cancelAnimationFrame(scanLoopId);
     scanLoopId = null;
   }
-  if (stream){
-    stream.getTracks().forEach(t=>t.stop());
+  if (stream) {
+    stream.getTracks().forEach(t => t.stop());
     stream = null;
   }
 }
 
-// This function now only checks conditions, then starts continuous camera
-async function scanAndSaveOnce(){
+// This function only checks conditions and then starts continuous camera
+async function scanAndSaveOnce() {
   if (!tpl.rois) {
     alert('Generate OMR to compute ROIs first');
     return;
   }
 
-  // If subject has subtopics, make sure one is selected (same logic as before)
+  // If subject has subtopics, make sure one is selected
   let subjCfg = null;
-  if (current.subjectName && Array.isArray(examSubjects)){
+  if (current.subjectName && Array.isArray(examSubjects)) {
     subjCfg = examSubjects.find(s => s && s.name === current.subjectName) || null;
   }
 
   let hasSubtopics = false;
-  if (subjCfg){
+  if (subjCfg) {
     const mode = subjCfg.subtopicsMode || 'none';
     let stArr = [];
 
@@ -2088,130 +2396,43 @@ async function scanAndSaveOnce(){
     hasSubtopics = mode !== 'none' && Array.isArray(stArr) && stArr.length > 0;
   }
 
-  if (hasSubtopics && !current.subtopicName){
+  if (hasSubtopics && !current.subtopicName) {
     alert('Please select the Subtopic before scanning OMR.');
     return;
   }
 
+  detectionHistory = []; // reset stability window
   await startCameraAutoScan();
 }
 
 // Scan & Save button – just starts the continuous scanner
-el('btnScan').onclick = async ()=>{
-  if (!current.examId){
+el('btnScan').onclick = async () => {
+  if (!current.examId) {
     alert('Pick Class / Section / Exam first');
     return;
   }
   await scanAndSaveOnce();
 };
 
-    function isBubbleFilled(ctx, cx, cy, r){
-      // sample average brightness in a smaller inner circle
-      const rad = Math.floor(r*0.8);
-      const x = Math.floor(cx), y=Math.floor(cy); const {width,height} = ctx.canvas;
-      let acc=0, cnt=0; for(let dy=-rad; dy<=rad; dy++) for(let dx=-rad; dx<=rad; dx++){
-        const xx=x+dx, yy=y+dy; if(xx<0||yy<0||xx>=width||yy>=height) continue;
-        if(dx*dx+dy*dy<=rad*rad){ const idx=(yy*width+xx)*4; const r0=ctx.getImageData(xx,yy,1,1).data; const lum = 0.2126*r0[0]+0.7152*r0[1]+0.0722*r0[2]; acc+=lum; cnt++; }
-      }
-      const avg = acc/(cnt||1);
-      return avg < 130; // threshold — tweak if needed
-    }
-
-        // Measure average brightness inside a bubble (lower = darker)
-    function sampleBubbleBrightness(ctx, cx, cy, r) {
-      const size = Math.floor(r * 2);
-      const startX = Math.max(0, Math.floor(cx - r));
-      const startY = Math.max(0, Math.floor(cy - r));
-      const w = Math.min(size, ctx.canvas.width - startX);
-      const h = Math.min(size, ctx.canvas.height - startY);
-      if (w <= 0 || h <= 0) return 255;
-
-      const data = ctx.getImageData(startX, startY, w, h).data;
-      let sum = 0, count = 0;
-      for (let i = 0; i < data.length; i += 4) {
-        const r0 = data[i];
-        const g0 = data[i + 1];
-        const b0 = data[i + 2];
-        const lum = 0.2126 * r0 + 0.7152 * g0 + 0.0722 * b0;
-        sum += lum;
-        count++;
-      }
-      return count ? sum / count : 255;
-    }
-
-    // Automatic roll detection from roll-bubble grid.
-// Uses relative contrast (darkest vs average/second-darkest) so it works
-// under different lighting but still ignores random noise.
-async function decodeRoll(ctx, cvs, rollROI) {
-  if (!rollROI) return null;
-
-  const PAGE_W_MM = 210;
-
-  const scaleX = cvs.width  / PAGE_W_MM;
-  const scaleY = cvs.height / PAGE_W_MM;
-  const scale  = Math.min(scaleX, scaleY);
-
-  const { x, y, cols, colW, rowH } = rollROI; // all in mm
-  const gapMm     = 3;     // same as PDF
-  const bubbleRmm = 2.3;   // slightly bigger sampling radius
-
-  const digits = [];
-
-  for (let c = 0; c < cols; c++) {
-    const rows = [];
-
-    // Measure brightness for rows 0–9 in this column
-    for (let r = 0; r <= 9; r++) {
-      const centerMmX = x + c * (colW + gapMm) + colW / 2;
-      const centerMmY = y + r * rowH;
-
-      const cx  = centerMmX * scaleX;
-      const cy  = centerMmY * scaleY;
-      const rad = bubbleRmm * scale;
-
-      const lum = sampleBubbleBrightness(ctx, cx, cy, rad);
-      rows.push({ row: r, lum });
-    }
-
-    // Sort by darkness (small lum = darker)
-    rows.sort((a, b) => a.lum - b.lum);
-    const best   = rows[0];
-    const second = rows[1];
-    const avgLum = rows.reduce((s, r) => s + r.lum, 0) / rows.length;
-
-    const contrastToAvg = avgLum - best.lum;
-    const diffToSecond  = second.lum - best.lum;
-
-    // Need one row clearly darker than the rest.
-    // These values are tuned for blue/black pen on white paper.
-    if (contrastToAvg < 18 || diffToSecond < 8) {
-      return null; // not confident enough -> treat as "no roll"
-    }
-
-    digits.push(String(best.row));
-  }
-
-  return digits.length ? digits.join('') : null;
-}
-
-    function scoreAnswers(answers, key, sections){
+// ===== SCORING (unchanged logic, but used by scanner) =====
+function scoreAnswers(answers, key, sections) {
   let total = 0;
   const perSection = {};
 
-  for(const sec of sections){
+  for (const sec of sections) {
     const ks = key[sec.name] || {};
     const as = answers[sec.name] || {};
     let s = 0;
 
-    for(let q=1; q<=sec.count; q++){
+    for (let q = 1; q <= sec.count; q++) {
       const entry = ks[q];
       let keyOptions = [];
       let either = false;
       let addScore = false;
 
-      if(Array.isArray(entry)){
+      if (Array.isArray(entry)) {
         keyOptions = entry.slice();
-      } else if(entry && typeof entry === 'object'){
+      } else if (entry && typeof entry === 'object') {
         keyOptions = Array.isArray(entry.options) ? entry.options.slice() : [];
         either = !!entry.either;
         addScore = !!entry.addScore;
@@ -2220,50 +2441,41 @@ async function decodeRoll(ctx, cvs, rollROI) {
       const studentOptions = (as[q] || []).slice().sort();
 
       // Case 1: no option set in key
-      if(keyOptions.length === 0){
-        if(addScore){
-          // Grace marks: full marks regardless of what student has bubbled
+      if (keyOptions.length === 0) {
+        if (addScore) {
           s += sec.mark;
         } else {
-          // Question effectively ignored: 0 marks, no negative
           s += 0;
         }
         continue;
       }
 
-      // Normalised key for comparisons
       const keySorted = keyOptions.slice().sort();
 
-      // Case 2: "Either" logic (teacher has ticked Either toggle)
-      if(either && keyOptions.length >= 2){
+      // Case 2: Either logic
+      if (either && keyOptions.length >= 2) {
         const intersection = studentOptions.filter(x => keySorted.includes(x));
         const hasOnlyKeyChoices = studentOptions.every(x => keySorted.includes(x));
 
-        if(intersection.length === 1 && hasOnlyKeyChoices){
-          // Student has marked exactly one of the allowed "either" options
+        if (intersection.length === 1 && hasOnlyKeyChoices) {
           s += sec.mark;
-        } else if(studentOptions.length === 0){
-          // No attempt: 0 marks (no negative)
+        } else if (studentOptions.length === 0) {
           s += 0;
         } else {
-          // Attempted but not matching the either rule
           s += (sec.negative || 0);
         }
         continue;
       }
 
-      // Case 3: Single / multiple correct (default behaviour)
+      // Case 3: normal single / multiple correct
       const kc = keySorted.join('');
       const ac = studentOptions.join('');
 
-      if(!ac){
-        // No attempt: 0 marks, no negative
+      if (!ac) {
         s += 0;
-      } else if(kc && ac === kc){
-        // Exact match to key
+      } else if (kc && ac === kc) {
         s += sec.mark;
       } else {
-        // Wrong (extra/missing options)
         s += (sec.negative || 0);
       }
     }
@@ -2272,22 +2484,21 @@ async function decodeRoll(ctx, cvs, rollROI) {
     total += s;
   }
 
-   return { total, perSection };
+  return { total, perSection };
 }
 
 // ===== SAVE SCAN RESULT INTO FIRESTORE (student → marks → examId) =====
-async function saveScanToFirestore(out){
-  try{
-    if (!out.roll){
+async function saveScanToFirestore(out) {
+  try {
+    if (!out.roll) {
       alert('Roll number is required to save marks in Firestore.');
       return;
     }
-    if (!out.classId || !out.sectionId || !out.examId){
+    if (!out.classId || !out.sectionId || !out.examId) {
       alert('Missing class/section/exam information while saving marks.');
       return;
     }
 
-    // 1) Find the student by roll number
     const yearRef = db.collection('years').doc(academicYear);
     const studentsRef = yearRef
       .collection('classes').doc(out.classId)
@@ -2297,49 +2508,39 @@ async function saveScanToFirestore(out){
     const rollNum = Number(out.roll);
     const snap = await studentsRef.where('roll', '==', rollNum).limit(1).get();
 
-    if (snap.empty){
+    if (snap.empty) {
       alert(`No student found with roll ${out.roll} in this Class & Section.`);
       return;
     }
 
     const stuDoc = snap.docs[0];
-
-    // 2) Existing marks document for this exam (same place your entry-marks page uses)
     const marksRef = stuDoc.ref.collection('marks').doc(out.examId);
 
     const totalMarks = (out.score && typeof out.score.total === 'number')
       ? Number(out.score.total.toFixed(2))
       : 0;
 
-    // Subject and component names as they appear in your UI
     const subjectName   = out.subjectName || 'Unknown Subject';
-    // For FA-style exams, subtopic will be things like "Slip Test 1", "Project", "Oral", etc.
     const componentName = out.subtopicName || 'OMR';
 
-    // Build update object that matches your existing structure:
-    //   __subs -> Subject -> Component : marks
-    // and (optionally) top-level Subject total when this exam is single-component.
     const updateData = {
       [`__subs.${subjectName}.${componentName}`]: totalMarks
     };
 
-    // If there is no subtopic (only one component for this exam),
-    // also store the total directly under the subject field like: Telugu: 33
-    if (!out.subtopicName){
+    if (!out.subtopicName) {
       updateData[subjectName] = totalMarks;
     }
 
-    // Merge so that father/name/other subjects are not overwritten
-    await marksRef.set(updateData, { merge:true });
+    await marksRef.set(updateData, { merge: true });
 
-  }catch(err){
+  } catch (err) {
     console.error('saveScanToFirestore error', err);
     alert('Error saving marks to Firestore: ' + err.message);
   }
 }
 
 // ===== SCAN REVIEW (Cancel / Edit / Save) =====
-function showScanReview(out, previewDataUrl){
+function showScanReview(out, previewDataUrl) {
   lastScanPending = out;
 
   const dlg       = el('dlgScanReview');
@@ -2357,26 +2558,22 @@ function showScanReview(out, previewDataUrl){
     return;
   }
 
-  // Set preview image of the scanned OMR (if available)
-  if (imgWrap && imgEl && previewDataUrl){
+  if (imgWrap && imgEl && previewDataUrl) {
     imgEl.src = previewDataUrl;
     imgWrap.style.display = 'block';
-  } else if (imgWrap){
+  } else if (imgWrap) {
     imgWrap.style.display = 'none';
   }
 
-  // Fill values
   rollI.value = out.roll || '';
   const totalMarks = (out.score && typeof out.score.total === 'number')
     ? out.score.total.toFixed(2)
     : '';
   markI.value = totalMarks;
 
-  // Initially read-only (Edit will enable)
   rollI.disabled = true;
   markI.disabled = true;
 
-  // Remove any old handlers
   btnCancel.onclick = null;
   btnEdit.onclick   = null;
   btnSave.onclick   = null;
@@ -2384,7 +2581,7 @@ function showScanReview(out, previewDataUrl){
   btnCancel.onclick = () => {
     lastScanPending = null;
     dlg.close();
-    isScanBusy = false;   // allow next sheet to be auto-scanned
+    isScanBusy = false;
     el('pickStatus').innerHTML =
       '<span class="pill bad">Scan cancelled. Nothing saved.</span>';
   };
@@ -2417,32 +2614,30 @@ function showScanReview(out, previewDataUrl){
     }
 
     lastScanPending.roll = newRoll;
-    if (!lastScanPending.score) lastScanPending.score = { total: 0, perSection:{} };
+    if (!lastScanPending.score) lastScanPending.score = { total: 0, perSection: {} };
     lastScanPending.score.total = newMarks;
 
     dlg.close();
     await finalizeScanSave(lastScanPending);
     lastScanPending = null;
-    isScanBusy = false;   // ready for next auto-scan
+    isScanBusy = false;
   };
 
   dlg.showModal();
 }
 
-async function finalizeScanSave(out){
-  try{
-    // 1. Save in this browser (for View Reports / Download Excel)
+async function finalizeScanSave(out) {
+  try {
     const key = `omrResults_${out.examId}`;
     const existing = JSON.parse(localStorage.getItem(key) || '[]');
     existing.push(out);
     localStorage.setItem(key, JSON.stringify(existing));
 
-    // 2. Save in Firestore so that marks appear in Enter Marks page
     await saveScanToFirestore(out);
 
     el('pickStatus').innerHTML =
       `<span class="pill ok">Saved: Roll ${out.roll || '?'} | ${out.score.total.toFixed(2)} marks</span>`;
-  }catch(err){
+  } catch (err) {
     console.error('finalizeScanSave error:', err);
     alert('Could not save scan. Please try again.');
   }
@@ -2540,6 +2735,7 @@ el('btnDownloadExcel').onclick = ()=>{
   </script>
 </body>
 </html>
+
 
 
 
