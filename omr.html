@@ -1888,8 +1888,9 @@ async function loadImageAsDataURL(src){
 let stream = null;
 let hiddenCanvas = null;
 let scanLoopId = null;
-let isScanBusy = false;   // true = one sheet is being processed / review open
+let isScanBusy = false;     // true = one sheet is being processed / review open
 let isCameraOpen = false;
+let noRollStartTime = null; // for 5–7 sec "no OMR found" timer
 
 // Start camera once and keep it open for continuous auto-scan
 async function startCameraAutoScan(){
@@ -1941,17 +1942,20 @@ async function startCameraAutoScan(){
       '<span class="pill bad">Camera closed. No more auto-scans.</span>';
   };
 
-  const cvs = hiddenCanvas;
+   const cvs = hiddenCanvas;
   const ctx = cvs.getContext('2d');
 
   async function processFrame(){
     if (!stream || !isCameraOpen) return;
-        if (!tpl.rois){
+
+    if (!tpl.rois){
       el('pickStatus').innerHTML =
         '<span class="pill bad">No ROIs found. Click "Generate OMR (PDF)" once for this exam before scanning.</span>';
       return;
     }
-    if (isScanBusy) return;      // already handling one sheet
+
+    // If we are already reviewing/saving one sheet, skip this frame
+    if (isScanBusy) return;
 
     const vw = video.videoWidth  || 0;
     const vh = video.videoHeight || 0;
@@ -1961,7 +1965,7 @@ async function startCameraAutoScan(){
     cvs.height = vh;
     ctx.drawImage(video, 0, 0, cvs.width, cvs.height);
 
-        // Optional QR: if present and mismatched, warn + skip; but QR is NOT mandatory
+    // Optional QR: if present and mismatched, warn + skip; but QR is NOT mandatory
     const imgData = ctx.getImageData(0, 0, cvs.width, cvs.height);
     const qr = jsQR(imgData.data, imgData.width, imgData.height);
 
@@ -1971,24 +1975,32 @@ async function startCameraAutoScan(){
         if (payload.examId && payload.examId !== current.examId){
           el('pickStatus').innerHTML =
             '<span class="pill bad">QR exam mismatch for this sheet (frame ignored).</span>';
-          return;
+          return; // do NOT lock scanner, just ignore this frame
         }
       }catch(e){
         // Invalid QR text – ignore and continue based only on roll bubbles
       }
     }
 
-    // At this point we believe an OMR sheet is in the frame (from roll + bubbles)
-    isScanBusy = true;
-
-    // Decode roll number
+    // Try to read roll from this frame (non-blocking: we only lock when roll is found)
     const roll = await decodeRoll(ctx, cvs, tpl.rois.roll);
-    if (!roll){
-      el('pickStatus').innerHTML =
-        '<span class="pill bad">Could not read Roll No. clearly. Adjust sheet and try again.</span>';
-      isScanBusy = false;
-      return;
-    }
+    const now  = Date.now();
+
+   if (!roll){
+  // No clear roll in this frame – start / continue "no OMR" timer
+  if (noRollStartTime === null){
+    noRollStartTime = now;
+  } else if (now - noRollStartTime > 6000){ // ~6 seconds
+    // Show CampusConnect alert POPUP in front of the camera dialog
+    alert('No OMR sheet found or not properly placed. Adjust sheet and try again.');
+    // reset timer so message doesn’t spam every frame
+    noRollStartTime = null;
+  }
+  return; // keep camera live, keep scanning
+}
+    // We have a confident roll -> reset timer and lock scanner for this sheet
+    noRollStartTime = null;
+    isScanBusy      = true;
 
     // Decode bubbles into answers
     const answers = {};
@@ -2021,7 +2033,8 @@ async function startCameraAutoScan(){
     // Build an image of the scanned sheet for preview
     const previewDataUrl = cvs.toDataURL('image/png');
 
-    // Show review dialog; camera stays ON in the background
+    // Show review dialog; camera stays ON in the background.
+    // isScanBusy will be cleared in the review dialog handlers.
     showScanReview(out, previewDataUrl);
   }
 
@@ -2126,34 +2139,28 @@ el('btnScan').onclick = async ()=>{
       return count ? sum / count : 255;
     }
 
-    // Automatic roll detection from roll-bubble grid (very strict)
-// Only returns a roll number when bubbles are clearly & strongly filled.
+    // Automatic roll detection from roll-bubble grid.
+// Uses relative contrast (darkest vs average/second-darkest) so it works
+// under different lighting but still ignores random noise.
 async function decodeRoll(ctx, cvs, rollROI) {
   if (!rollROI) return null;
 
-  // A4 page size used when generating the PDF
   const PAGE_W_MM = 210;
 
   const scaleX = cvs.width  / PAGE_W_MM;
-  const scaleY = cvs.height / PAGE_W_MM; // we only need relative scaling
-  const scale  = (scaleX + scaleY) / 2;
+  const scaleY = cvs.height / PAGE_W_MM;
+  const scale  = Math.min(scaleX, scaleY);
 
   const { x, y, cols, colW, rowH } = rollROI; // all in mm
-  const gapMm        = 3;      // same gap used in PDF between digit columns
-  const bubbleRmm    = 2.2;    // same radius used in PDF
-
-  // STRONG conditions so it doesn’t “fake-detect” roll on a random frame
-  const DARK_THRESHOLD = 150;  // must be darker than this
-  const MIN_DIFF       = 25;   // darkest must be clearly darker than 2nd darkest
+  const gapMm     = 3;     // same as PDF
+  const bubbleRmm = 2.3;   // slightly bigger sampling radius
 
   const digits = [];
 
   for (let c = 0; c < cols; c++) {
-    let bestRow   = -1;
-    let bestLum   = 9999;
-    let secondLum = 9999;
+    const rows = [];
 
-    // Check digits 0–9 for this column
+    // Measure brightness for rows 0–9 in this column
     for (let r = 0; r <= 9; r++) {
       const centerMmX = x + c * (colW + gapMm) + colW / 2;
       const centerMmY = y + r * rowH;
@@ -2163,31 +2170,25 @@ async function decodeRoll(ctx, cvs, rollROI) {
       const rad = bubbleRmm * scale;
 
       const lum = sampleBubbleBrightness(ctx, cx, cy, rad);
-
-      // track darkest & second-darkest for this column
-      if (lum < bestLum) {
-        secondLum = bestLum;
-        bestLum   = lum;
-        bestRow   = r;
-      } else if (lum < secondLum) {
-        secondLum = lum;
-      }
+      rows.push({ row: r, lum });
     }
 
-    // If we couldn’t find a clear dark bubble → NO roll
-    if (bestRow < 0) {
-      return null;
+    // Sort by darkness (small lum = darker)
+    rows.sort((a, b) => a.lum - b.lum);
+    const best   = rows[0];
+    const second = rows[1];
+    const avgLum = rows.reduce((s, r) => s + r.lum, 0) / rows.length;
+
+    const contrastToAvg = avgLum - best.lum;
+    const diffToSecond  = second.lum - best.lum;
+
+    // Need one row clearly darker than the rest.
+    // These values are tuned for blue/black pen on white paper.
+    if (contrastToAvg < 18 || diffToSecond < 8) {
+      return null; // not confident enough -> treat as "no roll"
     }
 
-    const diff = secondLum - bestLum;
-
-    // Must be clearly dark AND clearly separated from other rows
-    if (bestLum > DARK_THRESHOLD || diff < MIN_DIFF) {
-      // This column is not confidently marked → abort whole roll
-      return null;
-    }
-
-    digits.push(String(bestRow));
+    digits.push(String(best.row));
   }
 
   return digits.length ? digits.join('') : null;
@@ -2539,6 +2540,7 @@ el('btnDownloadExcel').onclick = ()=>{
   </script>
 </body>
 </html>
+
 
 
 
