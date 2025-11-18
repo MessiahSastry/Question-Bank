@@ -2232,80 +2232,63 @@ function sampleBubbleBrightness(ctx, cx, cy, r) {
 }
 
 // Roll detection using page anchors + roll ROI (in mm)
-// Relaxed thresholds so real-world bubbles are accepted,
-// but still rejects completely noisy frames.
+// Made more tolerant so normal pen-filled bubbles on printouts are accepted.
 async function decodeRoll(ctx, cvs, rollROI, anchors) {
   if (!rollROI || !anchors) return null;
 
-  // values stored in mm (from ROIs saved at PDF generation time)
-  const gapMm = rollROI.gapMm  != null ? rollROI.gapMm  : 3;
-  const xMm   = rollROI.xMm   != null ? rollROI.xMm   : rollROI.x;
-  const yMm   = rollROI.yMm   != null ? rollROI.yMm   : rollROI.y;
-  const colW  = rollROI.colWmm!= null ? rollROI.colWmm: rollROI.colW;
-  const rowH  = rollROI.rowHmm!= null ? rollROI.rowHmm: rollROI.rowH;
+  // Values stored in mm in tpl.rois.roll
+  const gapMm = (rollROI.gapMm  != null) ? rollROI.gapMm  : 3;          // space between digit columns
+  const xMm   = (rollROI.xMm    != null) ? rollROI.xMm    : rollROI.x;  // left of first digit column
+  const yMm   = (rollROI.yMm    != null) ? rollROI.yMm    : rollROI.y;  // top of "0" row
+  const colW  = (rollROI.colWmm != null) ? rollROI.colWmm : (rollROI.colW || 10);
+  const rowH  = (rollROI.rowHmm != null) ? rollROI.rowHmm : (rollROI.rowH || 6);
   const cols  = rollROI.cols || tpl.rollDigits || 4;
 
   if (xMm == null || yMm == null || !colW || !rowH) return null;
 
   const { scaleAvg } = getPageScaleFromAnchors(anchors);
   const digits = [];
-  let strongCols = 0;  // how many columns are "very clear"
 
   for (let c = 0; c < cols; c++) {
-    const rows = [];
+    const samples = [];
 
+    // sample brightness for rows 0–9 in this column
     for (let r = 0; r <= 9; r++) {
       const centerMmX = xMm + c * (colW + gapMm) + colW / 2;
       const centerMmY = yMm + r * rowH;
 
       const pt    = mapPageMmToPixel(centerMmX, centerMmY, anchors);
-      const radPx = 2.2 * scaleAvg; // slightly smaller sample radius
+      const radPx = 2.6 * scaleAvg;   // a bit larger than bubble radius
 
       const lum = sampleBubbleBrightness(ctx, pt.x, pt.y, radPx);
-      rows.push({ row: r, lum });
+      samples.push({ row: r, lum });
     }
 
-    if (!rows.length) return null;
+    // darkest first
+    samples.sort((a, b) => a.lum - b.lum);
+    const best   = samples[0];
+    const second = samples[1];
+    const avgLum = samples.reduce((s, r) => s + r.lum, 0) / samples.length;
 
-    // darkest -> brightest
-    rows.sort((a, b) => a.lum - b.lum);
-    const best      = rows[0];
-    const second    = rows[1] || rows[0];
-    const avgLum    = rows.reduce((s, r) => s + r.lum, 0) / rows.length;
-    const contrast  = avgLum - best.lum;          // darker than background
-    const diff2     = second.lum - best.lum;      // darker than next candidate
-    const closeDark = rows.filter(r => r.lum <= best.lum + 18).length;
+    const diffToSecond = second.lum - best.lum;
+    const closeDark = samples.filter(r => r.lum <= best.lum + 20).length;
 
-    // "nice and clear" column (tight conditions)
-    const isStrong =
-      best.lum <= 190 &&       // bubble reasonably dark
-      contrast >= 25 &&        // clearly darker than average
-      diff2 >= 10 &&           // clearly darker than second
-      closeDark <= 4;          // not too many equally dark rows
-
-    // "ok but not perfect": still take it, user can correct in review dialog
-    const isAcceptable =
-      best.lum <= 210 &&       // slightly lighter allowed
-      contrast >= 15 &&
-      diff2 >= 6;
-
-    if (!isAcceptable) {
-      // this column is too noisy → give up entirely
-      return null;
+    // NEW: more tolerant rules (classroom lighting, blue pen, slight shadows)
+    //  - best must still be darker than second
+    //  - but we allow more overall darkness variation
+    if (
+      diffToSecond < 8 ||      // best not clearly darker → noisy column
+      closeDark    > 4 ||      // too many equally dark rows → big smudge
+      avgLum       < 40        // frame extremely dark → ignore
+    ) {
+      return null;             // this frame is not reliable
     }
 
-    if (isStrong) strongCols++;
     digits.push(String(best.row));
   }
 
-  // If at least half the columns are "strong", accept the whole roll.
-  if (!digits.length) return null;
-  if (strongCols === 0) {
-    // all columns are weak guesses → treat as no roll
-    return null;
-  }
-
-  return digits.join('');
+  // if we reach here, all columns have a clear darkest row
+  return digits.length ? digits.join('') : null;
 }
 
 // Decode answers using ROIs (ROIs are stored in 300-dpi px; convert back to mm)
@@ -2912,3 +2895,4 @@ el('btnDownloadExcel').onclick = ()=>{
   </script>
 </body>
 </html>
+
