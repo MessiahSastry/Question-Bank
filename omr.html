@@ -1948,6 +1948,7 @@ function setFidOverlayState(hasAnchors){
 }
 
 // find darkest strong square in a region – used to locate fiducial squares
+// find darkest strong square in a region – used to locate fiducial squares
 function findDarkCornerCenter(imgData, w, h, frac){
   const {x0,x1,y0,y1} = frac;
   const startX = Math.floor(w * x0);
@@ -1955,16 +1956,19 @@ function findDarkCornerCenter(imgData, w, h, frac){
   const startY = Math.floor(h * y0);
   const endY   = Math.floor(h * y1);
 
-  const step   = 8;    // sampling stride
-  const half   = 14;   // half patch size (~28×28 px)
-  let bestAvg  = 255;
-  let bestX = null, bestY = null;
+  // sampling stride & patch size
+  const step   = 6;   // a bit tighter than 8 → more chances to catch small squares
+  const half   = 14;  // half patch size (~28×28 px)
+
+  let bestAvg      = 255;
   let bestDarkFrac = 0;
+  let bestX = null, bestY = null;
 
   for(let cy = startY + half; cy <= endY - half; cy += step){
     for(let cx = startX + half; cx <= endX - half; cx += step){
       let sum = 0, count = 0, darkCount = 0;
 
+      // sample every 4 px inside this patch
       for(let yy = cy - half; yy <= cy + half; yy += 4){
         for(let xx = cx - half; xx <= cx + half; xx += 4){
           const idx = (yy * w + xx) * 4;
@@ -1973,31 +1977,37 @@ function findDarkCornerCenter(imgData, w, h, frac){
           const b = imgData[idx+2];
           const lum = 0.2126*r + 0.7152*g + 0.0722*b;
           sum += lum; count++;
-          if (lum < 110) darkCount++;
+          if (lum < 140) darkCount++;     // was 110 → more tolerant
         }
       }
 
-      const avg = sum / (count || 1);
-      const darkFrac = count ? darkCount / count : 0;
+      if (!count) continue;
 
-      // We want a clearly dark patch with a good portion of dark pixels.
-      if (avg < bestAvg && darkFrac >= 0.35){
-        bestAvg = avg;
+      const avg      = sum / count;
+      const darkFrac = darkCount / count;
+
+      // We want a clearly dark patch, but not super strict
+      if (darkFrac >= 0.20 && avg < bestAvg) {  // was 0.35 → now 0.20
+        bestAvg      = avg;
         bestDarkFrac = darkFrac;
         bestX = cx; bestY = cy;
       }
     }
   }
 
-  // If it isn't really dark, treat as "not found"
+  // If nothing clearly dark, treat as not found
   if (bestX == null) return null;
-  if (bestAvg > 155 || bestDarkFrac < 0.35) return null;
 
-  return {x:bestX, y:bestY, lum:bestAvg};
+  // Final sanity check – still must be darker than background
+  if (bestAvg > 200 || bestDarkFrac < 0.20) {   // was 155 / 0.35
+    return null;
+  }
+
+  return { x: bestX, y: bestY, lum: bestAvg };
 }
 
 // Detect 4 page anchor squares (tl,tr,bl,br) from the black boxes
-// Only accept if they look like an A4 rectangle.
+// Only accept if they look roughly like an A4 rectangle.
 function detectPageAnchors(ctx, cvs){
   const w = cvs.width;
   const h = cvs.height;
@@ -2028,23 +2038,26 @@ function detectPageAnchors(ctx, cvs){
   const avgW = (wTop + wBot) / 2;
   const avgH = (hLeft + hRight) / 2;
 
-  const ratio = avgW / (avgH || 1);        // ~0.707 for A4 portrait
+  const ratio = avgW / (avgH || 1); // ~0.707 for A4 portrait
 
-  const widthSimilar  = Math.abs(wTop - wBot) / (avgW || 1)   <= 0.22;
-  const heightSimilar = Math.abs(hLeft - hRight) / (avgH || 1)<= 0.22;
+  // Allow more variation – user may hold phone a bit far / tilted
+  const widthSimilar  = Math.abs(wTop - wBot)   / (avgW || 1) <= 0.30; // was 0.22
+  const heightSimilar = Math.abs(hLeft - hRight)/ (avgH || 1) <= 0.30; // was 0.22
 
-  // Require the "page" to occupy a good portion of the frame
+  // Require page to occupy a decent portion of the frame, but not too strict
   const bigEnough =
-    avgW >= w * 0.45 &&
-    avgH >= h * 0.55;
+    avgW >= w * 0.35 &&   // was 0.45
+    avgH >= h * 0.45;     // was 0.55
 
-  const ratioOk = ratio >= 0.60 && ratio <= 0.80;
+  // Aspect ratio tolerance around A4 (portrait)
+  const ratioOk = ratio >= 0.55 && ratio <= 0.85; // slightly wider range
 
   if (!widthSimilar || !heightSimilar || !bigEnough || !ratioOk){
     setFidOverlayState(false);
     return null;
   }
 
+  // If we are here, anchors look good → turn overlay boxes green
   setFidOverlayState(true);
   return { tl, tr, bl, br };
 }
@@ -2833,6 +2846,7 @@ el('btnDownloadExcel').onclick = ()=>{
   </script>
 </body>
 </html>
+
 
 
 
