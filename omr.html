@@ -2232,7 +2232,8 @@ function sampleBubbleBrightness(ctx, cx, cy, r) {
 }
 
 // Roll detection using page anchors + roll ROI (in mm)
-// Made more tolerant so normal pen-filled bubbles on printouts are accepted.
+// Now very tolerant: once the sheet is detected, we always pick the darkest row
+// for each digit column and let the teacher correct it in the review dialog if needed.
 async function decodeRoll(ctx, cvs, rollROI, anchors) {
   if (!rollROI || !anchors) return null;
 
@@ -2264,30 +2265,18 @@ async function decodeRoll(ctx, cvs, rollROI, anchors) {
       samples.push({ row: r, lum });
     }
 
-    // darkest first
-    samples.sort((a, b) => a.lum - b.lum);
-    const best   = samples[0];
-    const second = samples[1];
-    const avgLum = samples.reduce((s, r) => s + r.lum, 0) / samples.length;
-
-    const diffToSecond = second.lum - best.lum;
-    const closeDark = samples.filter(r => r.lum <= best.lum + 20).length;
-
-    // NEW: more tolerant rules (classroom lighting, blue pen, slight shadows)
-    //  - best must still be darker than second
-    //  - but we allow more overall darkness variation
-    if (
-      diffToSecond < 8 ||      // best not clearly darker → noisy column
-      closeDark    > 4 ||      // too many equally dark rows → big smudge
-      avgLum       < 40        // frame extremely dark → ignore
-    ) {
-      return null;             // this frame is not reliable
+    if (!samples.length) {
+      // something is really wrong with this column → abort roll decoding
+      return null;
     }
+
+    // sort darkest first and just choose the darkest row as the digit
+    samples.sort((a, b) => a.lum - b.lum);
+    const best = samples[0];
 
     digits.push(String(best.row));
   }
 
-  // if we reach here, all columns have a clear darkest row
   return digits.length ? digits.join('') : null;
 }
 
@@ -2895,4 +2884,5 @@ el('btnDownloadExcel').onclick = ()=>{
   </script>
 </body>
 </html>
+
 
