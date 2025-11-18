@@ -5386,7 +5386,44 @@ function attachMapListeners() {
   subs.forEach(el => el.addEventListener('input', () => updateOne(el)));
   // Initial render of hints (for prefilled mappings)
   updateAllHints();
+
+  // --- Custom subtopic dropdowns ---
+  const dropdowns = Array.from(popupContent.querySelectorAll('.subtopicDropdown'));
+  dropdowns.forEach(dd => {
+    const display = dd.querySelector('.subtopicDisplay');
+    const menu = dd.querySelector('.subtopicMenu');
+    const hidden = dd.querySelector('.subtopicValue');
+    if (!display || !menu || !hidden) return;
+
+    // initial label
+    display.textContent = hidden.value || '--Select subtopic--';
+
+    display.onclick = (ev) => {
+      ev.stopPropagation();
+      const openNow = menu.style.display === 'block';
+      // close all menus in this popup
+      popupContent.querySelectorAll('.subtopicMenu').forEach(m => { m.style.display = 'none'; });
+      menu.style.display = openNow ? 'none' : 'block';
+    };
+
+    Array.from(menu.querySelectorAll('.subtopicOption')).forEach(opt => {
+      opt.onclick = (ev) => {
+        ev.stopPropagation();
+        const val = opt.dataset.value || '';
+        hidden.value = val;
+        display.textContent = val || '--Select subtopic--';
+        menu.style.display = 'none';
+      };
+    });
+  });
+
+  // Click outside closes menus
+  document.addEventListener('click', () => {
+    const menus = popupContent.querySelectorAll('.subtopicMenu');
+    menus.forEach(m => { m.style.display = 'none'; });
+  }, { once: true });
 }
+
 
 // load a lightweight preview (headers + 2nd row) when a file is chosen
 function loadPreviewFromFile(file) {
@@ -5514,19 +5551,30 @@ if (marksFileInput) {
 
       const hasSubs = flatSubs.length > 0;
 
-      let subtopicCellHtml = '';
+           let subtopicCellHtml = '';
       if (hasSubs) {
-        const subOptions = ['<option value="">--Select subtopic--</option>'].concat(
-          flatSubs.map(st =>
-            `<option value="${st}" ${presetSub === st ? 'selected' : ''}>${st}</option>`
-          )
-        );
+        const optionHtml = flatSubs.map(st => `
+          <div class="subtopicOption" data-value="${st}"
+               style="padding:8px 10px; font-size:0.94em; cursor:pointer;">
+            ${st}
+          </div>`).join('');
+
+        const displayText = presetSub || '--Select subtopic--';
+
         subtopicCellHtml = `
           <div class="subtopicRow" style="margin-top:6px;">
-            <select class="subtopicSelect" data-subject="${subj.name}"
-         style="width:100%; padding:9px 11px; border:1px solid #ccd7e1; border-radius:10px; background:#f4f7fb; font-size:0.94em;">
-              ${subOptions.join('')}
-            </select>
+            <div class="subtopicDropdown" data-subject="${subj.name}"
+                 style="position:relative; width:100%;">
+              <div class="subtopicDisplay"
+                   style="padding:9px 11px; border:1px solid #ccd7e1; border-radius:10px; background:#f4f7fb; font-size:0.94em;">
+                ${displayText}
+              </div>
+              <div class="subtopicMenu"
+                   style="display:none; position:absolute; left:0; right:0; top:100%; margin-top:4px; background:#fff; border:1px solid #ccd7e1; border-radius:10px; max-height:220px; overflow-y:auto; box-shadow:0 6px 18px rgba(0,0,0,0.16); z-index:50;">
+                ${optionHtml}
+              </div>
+              <input type="hidden" class="subtopicValue" data-subject="${subj.name}" value="${presetSub}">
+            </div>
           </div>`;
       }
 
@@ -5541,6 +5589,7 @@ if (marksFileInput) {
           ${subtopicCellHtml}
         </div>
       `;
+
     }).join('');
 
     colMapArea.innerHTML = rowsHtml;
@@ -5609,10 +5658,10 @@ if (marksFileInput) {
     const missingSubtopicSubjects = []; // column set but no subtopic chosen when required
 
     selectedExam.subjects.forEach(subj => {
-      const el = colInputs.find(inp => inp.dataset.subject === subj.name);
-      const valStr = (el?.value || '').trim();
-      const subSel = popupContent.querySelector(`.subtopicSelect[data-subject="${subj.name}"]`);
-      const subVal = (subSel && subSel.value) ? subSel.value : '';
+        const el = colInputs.find(inp => inp.dataset.subject === subj.name);
+        const v = (el?.value || '').trim();
+        const subHidden = popupContent.querySelector(`.subtopicValue[data-subject="${subj.name}"]`);
+        const subVal = (subHidden && subHidden.value) ? subHidden.value : '';
 
       const hasSubsFlag = el && el.dataset && el.dataset.hasSubs === '1';
       const requiresSub = !!hasSubsFlag;
@@ -5767,5 +5816,6 @@ if (marksFileInput) {
 </script>
 </body>
 </html>
+
 
 
