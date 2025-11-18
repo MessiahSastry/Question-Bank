@@ -2437,8 +2437,9 @@ function sampleBubbleBrightness(ctx, cx, cy, r) {
 }
 
 // Roll detection using page anchors + roll ROI (in mm)
-// Strict: only accept a digit if one row is clearly darker than the others.
-// If not confident, return null instead of guessing a random roll.
+// Darkest-wins: always pick the darkest row in each column so that
+// a roll number is decoded whenever bubbles are even slightly darker.
+// Teacher can fix the roll in the review screen if needed.
 async function decodeRoll(ctx, cvs, rollROI, anchors) {
   if (!rollROI || !anchors) return null;
 
@@ -2454,10 +2455,6 @@ async function decodeRoll(ctx, cvs, rollROI, anchors) {
 
   const { scaleAvg } = getPageScaleFromAnchors(anchors);
   const digits = [];
-
-  // thresholds for "dark enough" and "clearly darker than next candidate"
-  const DARK_MAX = 180;  // lower = stricter; 180 is still quite tolerant
-  const MIN_GAP  = 18;   // minimal difference in brightness to second-best row
 
   for (let c = 0; c < cols; c++) {
     const samples = [];
@@ -2476,20 +2473,9 @@ async function decodeRoll(ctx, cvs, rollROI, anchors) {
 
     if (!samples.length) return null;
 
-    // sort darkest first
+    // sort darkest first, and simply take the darkest row as the chosen digit
     samples.sort((a, b) => a.lum - b.lum);
-    const best   = samples[0];
-    const second = samples[1];
-
-    if (!second) return null;
-
-    const gap = second.lum - best.lum;
-
-    // If the darkest row is not really dark OR not clearly darker than the next,
-    // treat this whole roll as unreadable. No guessing.
-    if (best.lum > DARK_MAX || gap < MIN_GAP) {
-      return null;
-    }
+    const best = samples[0];
 
     digits.push(String(best.row));
   }
@@ -3177,6 +3163,7 @@ el('btnDownloadExcel').onclick = ()=>{
   </script>
 </body>
 </html>
+
 
 
 
