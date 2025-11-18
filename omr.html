@@ -571,6 +571,211 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
       </div>
     </div>
   </dialog>
+// -------------------- OMR EVALUATION HELPERS --------------------
+
+// Strict roll reader – returns rollNumber string or null (NO guessing)
+function decodeRollStrict(rollCanvas) {
+  if (!rollCanvas) return null;
+  const w = rollCanvas.width;
+  const h = rollCanvas.height;
+  if (!w || !h) return null;
+
+  const ctx = rollCanvas.getContext("2d");
+  const { data } = ctx.getImageData(0, 0, w, h);
+
+  const COLS = 4;   // 4 digits
+  const ROWS = 10;  // 0–9
+  const colW = w / COLS;
+  const rowH = h / ROWS;
+
+  function avgBrightness(x0, y0, x1, y1) {
+    const ix0 = Math.max(0, Math.floor(x0));
+    const iy0 = Math.max(0, Math.floor(y0));
+    const ix1 = Math.min(w - 1, Math.floor(x1));
+    const iy1 = Math.min(h - 1, Math.floor(y1));
+    let sum = 0;
+    let count = 0;
+    for (let y = iy0; y <= iy1; y++) {
+      for (let x = ix0; x <= ix1; x++) {
+        const idx = (y * w + x) * 4;
+        const r = data[idx];
+        const g = data[idx + 1];
+        const b = data[idx + 2];
+        sum += (r + g + b) / 3;
+        count++;
+      }
+    }
+    return count ? sum / count : 255;
+  }
+
+  const digits = [];
+
+  for (let c = 0; c < COLS; c++) {
+    const x0 = c * colW;
+    const x1 = (c + 1) * colW;
+
+    const rows = [];
+    for (let r = 0; r < ROWS; r++) {
+      const y0 = r * rowH;
+      const y1 = (r + 1) * rowH;
+      const bright = avgBrightness(x0, y0, x1, y1);
+      rows.push({ row: r, bright });
+    }
+
+    rows.sort((a, b) => a.bright - b.bright); // darker first
+    const best = rows[0];
+    const second = rows[1];
+
+    const DARK_MAX = 180;  // how dark the filled bubble must be
+    const MIN_GAP  = 25;   // how much darker than the next row
+
+    const gap = second.bright - best.bright;
+
+    // If bubble is not dark enough OR not clearly darker than others → FAIL
+    if (best.bright > DARK_MAX || gap < MIN_GAP) {
+      // Not confident → NO roll number
+      return null;
+    }
+
+    digits.push(best.row);
+  }
+
+  return digits.join("");
+}
+
+// Compute isCorrect + totalMarks
+// answerKey = ['A','C',...], answers = ['B','C',...]
+function evaluateAnswers(answers, answerKey, marksPerQuestion) {
+  const perQuestion = [];
+  const key = Array.isArray(answerKey) ? answerKey : [];
+  const mq = marksPerQuestion || 1;
+  let total = 0;
+
+  for (let i = 0; i < answers.length; i++) {
+    const given = answers[i] || null;
+    const correct = key[i] || null;
+    const isCorrect =
+      given !== null && correct !== null && given === correct;
+
+    if (isCorrect) total += mq;
+
+    perQuestion.push({
+      index: i + 1,
+      given,
+      correct,
+      isCorrect
+    });
+  }
+
+  return { perQuestion, totalMarks: total };
+}
+
+// Compute approximate bubble centers for your layout (1–35)
+// This uses the sheet design in your photo (blocks of 5 questions).
+function computeBubbleCentersForSheet(omrCanvas, totalQuestions) {
+  const w = omrCanvas.width;
+  const h = omrCanvas.height;
+  const centers = [];
+
+  if (!w || !h) return centers;
+
+  // Fractions tuned for your sheet layout (can tweak later if needed)
+  const left   = w * 0.16;
+  const right  = w * 0.86;
+  const top    = h * 0.35;
+  const bottom = h * 0.92;
+
+  const answerWidth  = right - left;
+  const answerHeight = bottom - top;
+
+  const COLS = 3;       // 3 columns of blocks
+  const BLOCK_ROWS = 3; // up to 3 block rows
+  const Q_PER_BLOCK = 5;
+
+  const bubbleRadius = Math.min(answerWidth / 40, answerHeight / 40);
+
+  // Block positions for 35 questions (1–5,6–10,11–15,16–20,21–25,26–30,31–35)
+  const blockPos = [
+    { col: 0, row: 0 }, // 1–5
+    { col: 0, row: 1 }, // 6–10
+    { col: 0, row: 2 }, // 11–15
+    { col: 1, row: 0 }, // 16–20
+    { col: 1, row: 1 }, // 21–25
+    { col: 1, row: 2 }, // 26–30
+    { col: 2, row: 0 }  // 31–35
+  ];
+
+  for (let q = 0; q < totalQuestions; q++) {
+    const blockIndex = Math.floor(q / Q_PER_BLOCK);
+    const pos = blockPos[Math.min(blockIndex, blockPos.length - 1)];
+    const rowInBlock = q % Q_PER_BLOCK;
+
+    const blockLeft  = left + (pos.col * answerWidth) / COLS;
+    const blockRight = left + ((pos.col + 1) * answerWidth) / COLS;
+
+    const blockTop    = top + (pos.row * answerHeight) / BLOCK_ROWS;
+    const blockBottom = top + ((pos.row + 1) * answerHeight) / BLOCK_ROWS;
+
+    const rowGap = (blockBottom - blockTop) / (Q_PER_BLOCK + 1);
+    const cy = blockTop + (rowInBlock + 1) * rowGap;
+
+    const colGap = (blockRight - blockLeft) / 6;
+    const optionCentersX = [
+      blockLeft + 2 * colGap, // A
+      blockLeft + 3 * colGap, // B
+      blockLeft + 4 * colGap, // C
+      blockLeft + 5 * colGap  // D
+    ];
+
+    centers.push({
+      qIndex: q + 1,
+      cy,
+      optionsCx: optionCentersX,
+      radius: bubbleRadius
+    });
+  }
+
+  return centers;
+}
+
+// Draw green/red circles on preview canvas
+function drawAnswerOverlayOnPreview(previewCanvas, evalData, bubbleCenters, answers) {
+  if (!previewCanvas || !evalData || !bubbleCenters) return;
+  const ctx = previewCanvas.getContext("2d");
+  if (!ctx) return;
+
+  ctx.save();
+  ctx.lineWidth = 2;
+
+  const results = evalData.perQuestion;
+  const ABCD = "ABCD";
+
+  for (let i = 0; i < results.length; i++) {
+    const res = results[i];
+    const bubble = bubbleCenters[i];
+    if (!bubble) continue;
+
+    const given = answers[i] || "";
+    const optIndex = ABCD.indexOf(given);
+    if (optIndex < 0 || optIndex >= bubble.optionsCx.length) continue;
+
+    const cx = bubble.optionsCx[optIndex];
+    const cy = bubble.cy;
+    const r  = bubble.radius;
+
+    let color;
+    if (res.isCorrect === true) color = "#00c853";   // green
+    else if (res.isCorrect === false) color = "#ff1744"; // red
+    else color = "#ffa000"; // unanswered / no key
+
+    ctx.beginPath();
+    ctx.strokeStyle = color;
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
 
   <script>
     // ==================== CONFIG ====================
@@ -2232,8 +2437,8 @@ function sampleBubbleBrightness(ctx, cx, cy, r) {
 }
 
 // Roll detection using page anchors + roll ROI (in mm)
-// Now very tolerant: once the sheet is detected, we always pick the darkest row
-// for each digit column and let the teacher correct it in the review dialog if needed.
+// Strict: only accept a digit if one row is clearly darker than the others.
+// If not confident, return null instead of guessing a random roll.
 async function decodeRoll(ctx, cvs, rollROI, anchors) {
   if (!rollROI || !anchors) return null;
 
@@ -2250,6 +2455,10 @@ async function decodeRoll(ctx, cvs, rollROI, anchors) {
   const { scaleAvg } = getPageScaleFromAnchors(anchors);
   const digits = [];
 
+  // thresholds for "dark enough" and "clearly darker than next candidate"
+  const DARK_MAX = 180;  // lower = stricter; 180 is still quite tolerant
+  const MIN_GAP  = 18;   // minimal difference in brightness to second-best row
+
   for (let c = 0; c < cols; c++) {
     const samples = [];
 
@@ -2265,19 +2474,28 @@ async function decodeRoll(ctx, cvs, rollROI, anchors) {
       samples.push({ row: r, lum });
     }
 
-    if (!samples.length) {
-      // something is really wrong with this column → abort roll decoding
+    if (!samples.length) return null;
+
+    // sort darkest first
+    samples.sort((a, b) => a.lum - b.lum);
+    const best   = samples[0];
+    const second = samples[1];
+
+    if (!second) return null;
+
+    const gap = second.lum - best.lum;
+
+    // If the darkest row is not really dark OR not clearly darker than the next,
+    // treat this whole roll as unreadable. No guessing.
+    if (best.lum > DARK_MAX || gap < MIN_GAP) {
       return null;
     }
-
-    // sort darkest first and just choose the darkest row as the digit
-    samples.sort((a, b) => a.lum - b.lum);
-    const best = samples[0];
 
     digits.push(String(best.row));
   }
 
-  return digits.length ? digits.join('') : null;
+  if (digits.length !== cols) return null;
+  return digits.join('');
 }
 
 // Decode answers using ROIs (ROIs are stored in 300-dpi px; convert back to mm)
@@ -2319,6 +2537,59 @@ function decodeAnswersFromFrame(ctx, cvs, rois, anchors) {
   }
 
   return answers;
+}
+// Draw green/red circles around student's chosen bubbles on the current frame
+// Green = correct, Red = wrong. Uses ROIs + perQuestionStatus.
+function drawAnswerOverlayFromROIs(ctx, rois, anchors, answers, score) {
+  if (!ctx || !rois || !Array.isArray(rois.sections) || !anchors || !answers) return;
+
+  const perQ = (score && score.perQuestionStatus) ? score.perQuestionStatus : {};
+  const FACTOR_300PX_TO_MM = 25.4 / 300;
+  const pageScale = getPageScaleFromAnchors(anchors);
+
+  ctx.save();
+  ctx.lineWidth = 2;
+  ctx.globalAlpha = 0.95;
+
+  for (const sec of rois.sections) {
+    const secName = sec.name;
+    if (!secName || !Array.isArray(sec.bubbles)) continue;
+
+    const secAnswers = answers[secName] || {};
+    const qStatusMap = perQ[secName] || {};
+
+    for (const b of sec.bubbles) {
+      const qNo = b.q;
+      const opt = b.opt;
+
+      const chosen = secAnswers[qNo] || [];
+      if (!Array.isArray(chosen) || !chosen.includes(opt)) continue;
+
+      const st = qStatusMap[qNo];
+      if (!st || typeof st.isCorrect === 'undefined' || st.isCorrect === null) continue;
+
+      const color = st.isCorrect ? '#00c853' : '#ff1744';
+
+      const xMm = (b.xMm != null) ? b.xMm :
+                  (b.cx  != null ? b.cx * FACTOR_300PX_TO_MM : null);
+      const yMm = (b.yMm != null) ? b.yMm :
+                  (b.cy  != null ? b.cy * FACTOR_300PX_TO_MM : null);
+      const rMm = (b.rMm != null) ? b.rMm :
+                  (b.r   != null ? b.r  * FACTOR_300PX_TO_MM : 2.1);
+
+      if (xMm == null || yMm == null) continue;
+
+      const pt  = mapPageMmToPixel(xMm, yMm, anchors);
+      const rPx = rMm * pageScale.scaleAvg * 1.25; // slightly larger than bubble
+
+      ctx.beginPath();
+      ctx.strokeStyle = color;
+      ctx.arc(pt.x, pt.y, rPx, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+
+  ctx.restore();
 }
 
 // Start camera once and keep it open for continuous auto-scan
@@ -2448,7 +2719,7 @@ async function startCameraAutoScan() {
     noRollStartTime = null;
 
     // Decode answers & score using anchors
-    const answers = decodeAnswersFromFrame(ctx, cvs, tpl.rois, anchors);
+        const answers = decodeAnswersFromFrame(ctx, cvs, tpl.rois, anchors);
     const score   = scoreAnswers(answers, answerKey, tpl.sections);
 
     // Count how many questions have at least one bubble filled
@@ -2476,6 +2747,9 @@ async function startCameraAutoScan() {
       return;
     }
 
+    // We have a stable reading for this sheet – draw green/red overlay
+    drawAnswerOverlayFromROIs(ctx, tpl.rois, anchors, answers, score);
+
     // Stable → lock scanner for this sheet
     isScanBusy = true;
 
@@ -2487,6 +2761,7 @@ async function startCameraAutoScan() {
       subtopicName: current.subtopicName || null,
       roll:         stable.roll,
       answers,
+      // keep the same public shape used earlier; full `score` still available above
       score:        { total: stable.total, perSection: score.perSection || {} },
       capturedAt:   new Date().toISOString()
     };
@@ -2563,15 +2838,18 @@ el('btnScan').onclick = async () => {
   await scanAndSaveOnce();
 };
 
-// ===== SCORING (unchanged logic, but used by scanner) =====
+// ===== SCORING (per-question status + totals, used by scanner & overlay) =====
 function scoreAnswers(answers, key, sections) {
   let total = 0;
   const perSection = {};
+  const perQuestionStatus = {}; // { secName: { q: { isCorrect, answered } } }
 
   for (const sec of sections) {
     const ks = key[sec.name] || {};
     const as = answers[sec.name] || {};
     let s = 0;
+
+    perQuestionStatus[sec.name] = {};
 
     for (let q = 1; q <= sec.count; q++) {
       const entry = ks[q];
@@ -2588,14 +2866,20 @@ function scoreAnswers(answers, key, sections) {
       }
 
       const studentOptions = (as[q] || []).slice().sort();
+      const answered = studentOptions.length > 0;
+      let isCorrect = null; // null = no judgement (e.g., no key, blank etc.)
 
       // Case 1: no option set in key
       if (keyOptions.length === 0) {
         if (addScore) {
           s += sec.mark;
+          // treat as correct-for-everyone
+          isCorrect = true;
         } else {
           s += 0;
+          isCorrect = null;
         }
+        perQuestionStatus[sec.name][q] = { isCorrect, answered };
         continue;
       }
 
@@ -2608,11 +2892,15 @@ function scoreAnswers(answers, key, sections) {
 
         if (intersection.length === 1 && hasOnlyKeyChoices) {
           s += sec.mark;
+          isCorrect = true;
         } else if (studentOptions.length === 0) {
           s += 0;
+          isCorrect = null;
         } else {
           s += (sec.negative || 0);
+          isCorrect = false;
         }
+        perQuestionStatus[sec.name][q] = { isCorrect, answered };
         continue;
       }
 
@@ -2622,18 +2910,23 @@ function scoreAnswers(answers, key, sections) {
 
       if (!ac) {
         s += 0;
+        isCorrect = null;
       } else if (kc && ac === kc) {
         s += sec.mark;
+        isCorrect = true;
       } else {
         s += (sec.negative || 0);
+        isCorrect = false;
       }
+
+      perQuestionStatus[sec.name][q] = { isCorrect, answered };
     }
 
     perSection[sec.name] = s;
     total += s;
   }
 
-  return { total, perSection };
+  return { total, perSection, perQuestionStatus };
 }
 
 // ===== SAVE SCAN RESULT INTO FIRESTORE (student → marks → examId) =====
@@ -2884,5 +3177,6 @@ el('btnDownloadExcel').onclick = ()=>{
   </script>
 </body>
 </html>
+
 
 
