@@ -5465,7 +5465,7 @@ if (marksFileInput) {
       return;
     }
 
-          let rowsHtml = selectedExam.subjects.map(subj => {
+                   let rowsHtml = selectedExam.subjects.map(subj => {
       // Backward-compatible preset (string or { col, subtopic })
       let presetCol = '';
       let presetSub = '';
@@ -5505,32 +5505,38 @@ if (marksFileInput) {
       }
 
       const flatSubs = effectiveSubs
-        .map(st =>
-          typeof st === 'string'
-            ? st
-            : (st && st.name ? st.name : '')
-        )
+        .map(st => {
+          if (typeof st === 'string') return st;
+          if (!st || typeof st !== 'object') return '';
+          return st.name || st.label || st.title || st.text || '';
+        })
         .filter(Boolean);
 
       const hasSubs = flatSubs.length > 0;
-      const subOptions = hasSubs
-        ? ['<option value="">--Select subtopic--</option>'].concat(
-            flatSubs.map(st =>
-              `<option value="${st}" ${presetSub === st ? 'selected' : ''}>${st}</option>`
-            )
-          )
-        : ['<option value="">(No subtopics)</option>'];
 
-      return `
-        <div style="display:grid; grid-template-columns:140px 1fr 1fr; gap:8px; align-items:center; margin-bottom:6px;">
-          <div>${subj.name}</div>
-          <input type="text" class="colInput" data-subject="${subj.name}"
-       placeholder="A, B, C…" value="${presetCol}" maxlength="3"
-       style="padding:8px 10px; border:1px solid #ccd7e1; border-radius:8px;">
+      let subtopicCellHtml = '';
+      if (hasSubs) {
+        const subOptions = ['<option value="">--Select subtopic--</option>'].concat(
+          flatSubs.map(st =>
+            `<option value="${st}" ${presetSub === st ? 'selected' : ''}>${st}</option>`
+          )
+        );
+        subtopicCellHtml = `
           <select class="subtopicSelect" data-subject="${subj.name}"
        style="padding:8px 10px; border:1px solid #ccd7e1; border-radius:8px;">
             ${subOptions.join('')}
-          </select>
+          </select>`;
+      }
+
+      const gridCols = hasSubs ? '140px 1fr 1fr' : '140px 1fr';
+
+      return `
+        <div style="display:grid; grid-template-columns:${gridCols}; gap:8px; align-items:center; margin-bottom:6px;">
+          <div>${subj.name}</div>
+          <input type="text" class="colInput" data-subject="${subj.name}" data-has-subs="${hasSubs ? '1' : '0'}"
+       placeholder="A, B, C…" value="${presetCol}" maxlength="3"
+       style="padding:8px 10px; border:1px solid #ccd7e1; border-radius:8px;">
+          ${subtopicCellHtml}
         </div>
       `;
     }).join('');
@@ -5594,17 +5600,11 @@ if (marksFileInput) {
       return;
     }
 
-        const colIndexes = {};
+              const colIndexes = {};
     const subtopicMap = {};
     const unmappedSubjects = [];   // left blank by user
     const invalidSubjects = [];    // invalid/out-of-range inputs
     const missingSubtopicSubjects = []; // column set but no subtopic chosen when required
-
-    // comman/common/custom → all treated as "has subtopics"
-    const mode = (selectedExam.subtopicsMode || '').toLowerCase();
-    const examHasSubtopicsMode =
-      mode === 'comman' || mode === 'common' || mode === 'custom';
-
 
     selectedExam.subjects.forEach(subj => {
       const el = colInputs.find(inp => inp.dataset.subject === subj.name);
@@ -5612,8 +5612,8 @@ if (marksFileInput) {
       const subSel = popupContent.querySelector(`.subtopicSelect[data-subject="${subj.name}"]`);
       const subVal = (subSel && subSel.value) ? subSel.value : '';
 
-      const hasSubs = Array.isArray(subj.subtopics) && subj.subtopics.length > 0;
-      const requiresSub = examHasSubtopicsMode || hasSubs;
+      const hasSubsFlag = el && el.dataset && el.dataset.hasSubs === '1';
+      const requiresSub = !!hasSubsFlag;
 
       if (!valStr) {
         unmappedSubjects.push(subj.name);
@@ -5700,9 +5700,8 @@ if (marksFileInput) {
           const num = Number(val);
           const mark = isNaN(num) ? 0 : num;
 
-          const subtopicName = subtopicMap[subj.name] || '';
-          const hasSubs = Array.isArray(subj.subtopics) && subj.subtopics.length > 0;
-          const shouldUseSub = (examHasSubtopicsMode || hasSubs) && subtopicName;
+                    const subtopicName = subtopicMap[subj.name] || '';
+          const shouldUseSub = !!subtopicName;
 
           if (shouldUseSub) {
             if (!marksObj.__subs) marksObj.__subs = {};
@@ -5766,44 +5765,3 @@ if (marksFileInput) {
 </script>
 </body>
 </html>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
