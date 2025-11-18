@@ -5465,15 +5465,39 @@ if (marksFileInput) {
       return;
     }
 
-    let rowsHtml = selectedExam.subjects.map(subj => {
-      const preset = (saved && saved.subjects && saved.subjects[subj.name]) ? saved.subjects[subj.name] : '';
+       let rowsHtml = selectedExam.subjects.map(subj => {
+      // Backward-compatible preset (string or { col, subtopic })
+      let presetCol = '';
+      let presetSub = '';
+      if (saved && saved.subjects && saved.subjects[subj.name]) {
+        const sv = saved.subjects[subj.name];
+        if (typeof sv === 'string') {
+          presetCol = sv;
+        } else {
+          presetCol = sv.col || '';
+          presetSub = sv.subtopic || '';
+        }
+      }
+
+      const hasSubs = Array.isArray(subj.subtopics) && subj.subtopics.length > 0;
+      const subOptions = hasSubs
+        ? ['<option value="">--Select subtopic--</option>'].concat(
+            subj.subtopics.map(st =>
+              `<option value="${st}" ${presetSub === st ? 'selected' : ''}>${st}</option>`
+            )
+          )
+        : ['<option value="">(No subtopics)</option>'];
+
       return `
-        <div style="display:grid; grid-template-columns:140px 1fr; gap:8px; align-items:center; margin-bottom:6px;">
+        <div style="display:grid; grid-template-columns:140px 1fr 1fr; gap:8px; align-items:center; margin-bottom:6px;">
           <div>${subj.name}</div>
           <input type="text" class="colInput" data-subject="${subj.name}"
-       placeholder="A, B, C…" value="${preset}" maxlength="3"
+       placeholder="A, B, C…" value="${presetCol}" maxlength="3"
        style="padding:8px 10px; border:1px solid #ccd7e1; border-radius:8px;">
-
+          <select class="subtopicSelect" data-subject="${subj.name}"
+       style="padding:8px 10px; border:1px solid #ccd7e1; border-radius:8px;">
+            ${subOptions.join('')}
+          </select>
         </div>
       `;
     }).join('');
@@ -5537,16 +5561,27 @@ if (marksFileInput) {
       return;
     }
 
-    const colIndexes = {};
+       const colIndexes = {};
+    const subtopicMap = {};
     const unmappedSubjects = [];   // left blank by user
     const invalidSubjects = [];    // invalid/out-of-range inputs
+    const missingSubtopicSubjects = []; // column set but no subtopic chosen when required
+
+    const examHasSubtopicsMode = selectedExam.subtopicsMode && selectedExam.subtopicsMode !== 'none';
 
     selectedExam.subjects.forEach(subj => {
       const el = colInputs.find(inp => inp.dataset.subject === subj.name);
       const valStr = (el?.value || '').trim();
+      const subSel = popupContent.querySelector(`.subtopicSelect[data-subject="${subj.name}"]`);
+      const subVal = (subSel && subSel.value) ? subSel.value : '';
+
+      const hasSubs = Array.isArray(subj.subtopics) && subj.subtopics.length > 0;
+      const requiresSub = examHasSubtopicsMode || hasSubs;
+
       if (!valStr) {
         unmappedSubjects.push(subj.name);
         colIndexes[subj.name] = -1;
+        subtopicMap[subj.name] = subVal || '';
       } else {
         const idx = colToIndex(valStr);
         if (idx < 0 || idx > lastColIndex) {
@@ -5554,6 +5589,10 @@ if (marksFileInput) {
           colIndexes[subj.name] = -1;
         } else {
           colIndexes[subj.name] = idx;
+          subtopicMap[subj.name] = subVal || '';
+          if (requiresSub && !subVal) {
+            missingSubtopicSubjects.push(subj.name);
+          }
         }
       }
     });
@@ -5563,7 +5602,12 @@ if (marksFileInput) {
       return;
     }
 
-    // Optionally remember this mapping
+    if (missingSubtopicSubjects.length > 0) {
+      alert(`Please choose a subtopic for these subjects:\n• ${missingSubtopicSubjects.join('\n• ')}`);
+      return;
+    }
+
+        // Optionally remember this mapping
     if (rememberChk && rememberChk.checked) {
       const saveObj = {
         remember: true,
@@ -5573,7 +5617,14 @@ if (marksFileInput) {
       selectedExam.subjects.forEach(subj => {
         const el = colInputs.find(inp => inp.dataset.subject === subj.name);
         const v = (el?.value || '').trim();
-        if (v) saveObj.subjects[subj.name] = v.toUpperCase();
+        const subSel = popupContent.querySelector(`.subtopicSelect[data-subject="${subj.name}"]`);
+        const subVal = (subSel && subSel.value) ? subSel.value : '';
+        if (v || subVal) {
+          saveObj.subjects[subj.name] = {
+            col: v ? v.toUpperCase() : '',
+            subtopic: subVal
+          };
+        }
       });
       try { localStorage.setItem(storageKey, JSON.stringify(saveObj)); } catch (_) {}
     }
@@ -5604,13 +5655,26 @@ if (marksFileInput) {
       }
       matchedRolls.push(roll);
 
-      const marksObj = {};
+           const marksObj = {};
       selectedExam.subjects.forEach(subj => {
         const idx = colIndexes[subj.name];
         if (idx >= 0) {
           const val = row[idx];
-          // keep original behavior: non-numeric -> 0
-          marksObj[subj.name] = isNaN(val) ? 0 : Number(val);
+          const num = Number(val);
+          const mark = isNaN(num) ? 0 : num;
+
+          const subtopicName = subtopicMap[subj.name] || '';
+          const hasSubs = Array.isArray(subj.subtopics) && subj.subtopics.length > 0;
+          const shouldUseSub = (examHasSubtopicsMode || hasSubs) && subtopicName;
+
+          if (shouldUseSub) {
+            if (!marksObj.__subs) marksObj.__subs = {};
+            if (!marksObj.__subs[subj.name]) marksObj.__subs[subj.name] = {};
+            marksObj.__subs[subj.name][subtopicName] = mark;
+          } else {
+            // fall back to top-level subject total
+            marksObj[subj.name] = mark;
+          }
         }
       });
 
@@ -5665,6 +5729,7 @@ if (marksFileInput) {
 </script>
 </body>
 </html>
+
 
 
 
