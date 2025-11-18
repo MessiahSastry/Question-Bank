@@ -2007,7 +2007,7 @@ function findDarkCornerCenter(imgData, w, h, frac){
 }
 
 // Detect 4 page anchor squares (tl,tr,bl,br) from the black boxes
-// Only accept if they look roughly like an A4 rectangle.
+// RELAXED: as soon as we have 4 dark squares in the 4 regions, we trust them.
 function detectPageAnchors(ctx, cvs){
   const w = cvs.width;
   const h = cvs.height;
@@ -2024,12 +2024,13 @@ function detectPageAnchors(ctx, cvs){
   const bl = findDarkCornerCenter(imgData, w, h, {x0:0.02, x1:0.35, y0:0.60, y1:0.98});
   const br = findDarkCornerCenter(imgData, w, h, {x0:0.65, x1:0.98, y0:0.60, y1:0.98});
 
+  // If any corner is missing we still treat it as "no sheet"
   if (!tl || !tr || !bl || !br) {
     setFidOverlayState(false);
     return null;
   }
 
-  // Geometric checks: should form something close to an A4 rectangle
+  // Very light sanity check: make sure anchors are not all squashed together
   const wTop   = dist2D(tl, tr);
   const wBot   = dist2D(bl, br);
   const hLeft  = dist2D(tl, bl);
@@ -2038,30 +2039,20 @@ function detectPageAnchors(ctx, cvs){
   const avgW = (wTop + wBot) / 2;
   const avgH = (hLeft + hRight) / 2;
 
-  const ratio = avgW / (avgH || 1); // ~0.707 for A4 portrait
+  const minW = w * 0.15;   // just avoid tiny noise near one corner
+  const minH = h * 0.20;
 
-  // Allow more variation – user may hold phone a bit far / tilted
-  const widthSimilar  = Math.abs(wTop - wBot)   / (avgW || 1) <= 0.30; // was 0.22
-  const heightSimilar = Math.abs(hLeft - hRight)/ (avgH || 1) <= 0.30; // was 0.22
-
-  // Require page to occupy a decent portion of the frame, but not too strict
-  const bigEnough =
-    avgW >= w * 0.35 &&   // was 0.45
-    avgH >= h * 0.45;     // was 0.55
-
-  // Aspect ratio tolerance around A4 (portrait)
-  const ratioOk = ratio >= 0.55 && ratio <= 0.85; // slightly wider range
-
-  if (!widthSimilar || !heightSimilar || !bigEnough || !ratioOk){
+  if (avgW < minW || avgH < minH) {
     setFidOverlayState(false);
     return null;
   }
 
-  // If we are here, anchors look good → turn overlay boxes green
+  // No A4 aspect / "bigEnough" / similarity checks:
+  // if we see four distinct dark squares in the four zones,
+  // we trust them and let the stability + review logic handle noise.
   setFidOverlayState(true);
   return { tl, tr, bl, br };
 }
-
 // Bilinear mapping from page (mm) → camera pixel using the 4 anchors
 function mapPageMmToPixel(xMm, yMm, anchors){
   const u = xMm / PAGE_W_MM;
@@ -2846,6 +2837,7 @@ el('btnDownloadExcel').onclick = ()=>{
   </script>
 </body>
 </html>
+
 
 
 
