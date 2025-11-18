@@ -374,14 +374,18 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
   </div>
 </div>
 
-<!-- Place these UNDER the Exam dropdown -->
 <div class="toolbar" style="margin-top:10px">
   <button class="btn" id="btnExamSettings" disabled><i class="fa fa-sliders"></i> Exam Settings</button>
   <button class="btn" id="btnKey" disabled><i class="fa fa-key"></i> Set Answer Key</button>
   <button class="btn primary" id="btnScan" disabled><i class="fa fa-camera"></i> Scan &amp; Save</button>
+  <button class="btn" id="btnAsposeScan" disabled><i class="fa fa-cloud"></i> Aspose OMR (Photo)</button>
   <button class="btn" id="btnViewReports" disabled><i class="fa fa-list"></i> View Reports</button>
   <button class="btn" id="btnDownloadExcel" disabled><i class="fa fa-file-excel"></i> Download Excel</button>
 </div>
+
+<!-- Hidden input used only for Aspose photo capture (camera or gallery) -->
+<input type="file" id="aspImageInput" accept="image/*" capture="environment" style="display:none;">
+
       <div class="hr"></div>
       <div class="status" id="pickStatus">Select to load template / save path.</div>
     </section>
@@ -585,10 +589,114 @@ firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 const auth = firebase.auth();
 
+// ===== Aspose OMR (photo upload) helpers =====
+
+// 1) Backend endpoint that talks to Aspose.
+//    Change this URL to your Cloud Function / Node endpoint.
+const ASPOSE_OMR_ENDPOINT = '/api/aspose-omr-scan';
+
+// 2) Send one image file (from file input) to backend → get parsed JSON
+async function sendImageFileToAsposeOMR(file) {
+  if (!file) {
+    throw new Error('No image selected for Aspose OMR.');
+  }
+
+  const form = new FormData();
+  form.append('image', file, file.name || 'omr.jpg');
+
+  // Extra context so backend can attach exam / subject etc.
+  form.append('academicYear', academicYear || '');
+  form.append('classId', current.classId || '');
+  form.append('className', current.className || '');
+  form.append('sectionId', current.sectionId || '');
+  form.append('sectionName', current.sectionName || '');
+  form.append('examId', current.examId || '');
+  form.append('subjectName', current.subjectName || '');
+  form.append('subtopicName', current.subtopicName || '');
+
+  const res = await fetch(ASPOSE_OMR_ENDPOINT, {
+    method: 'POST',
+    body: form
+  });
+
+  if (!res.ok) {
+    const txt = await res.text().catch(() => '');
+    console.error('Aspose OMR error', res.status, txt);
+    throw new Error('Aspose OMR request failed (' + res.status + ').');
+  }
+
+  const json = await res.json();
+  return json;
+}
+
+// 3) Save Aspose JSON into Firestore under years/{year}/omr_scans/{examId_subject_roll}
+async function saveAsposeOmrResult(json) {
+  // Expecting JSON like: { rollNumber: "9003", totalMarks: 32, answers: [...] }
+  const roll = String(json.rollNumber || '').trim();
+  if (!roll) {
+    throw new Error('Aspose JSON has no rollNumber.');
+  }
+
+  const totalMarks =
+    typeof json.totalMarks === 'number'
+      ? Number(json.totalMarks.toFixed(2))
+      : null;
+
+  const docId =
+    (current.examId || 'noExam') + '_' +
+    (current.subjectName || 'noSubject') + '_' +
+    roll;
+
+  const payload = {
+    rollNumber: roll,
+    totalMarks,
+    answers: json.answers || null,
+    raw: json,
+
+    examId: current.examId || null,
+    subjectName: current.subjectName || null,
+    subtopicName: current.subtopicName || null,
+    classId: current.classId || null,
+    className: current.className || null,
+    sectionId: current.sectionId || null,
+    sectionName: current.sectionName || null,
+    academicYear: academicYear || null,
+
+    createdAt: firebase.firestore.FieldValue.serverTimestamp()
+  };
+
+  await db
+    .collection('years').doc(academicYear)
+    .collection('omr_scans')
+    .doc(docId)
+    .set(payload, { merge: true });
+
+  return payload;
+}
+
+// 4) Full flow used by the button: pick image → Aspose → Firestore
+async function runAsposePhotoFlow(file) {
+  try {
+    const parsed = await sendImageFileToAsposeOMR(file);
+    const saved = await saveAsposeOmrResult(parsed);
+
+    const msg =
+      'Aspose OMR saved for Roll ' +
+      (saved.rollNumber || '?') +
+      (saved.totalMarks != null ? ' (Marks: ' + saved.totalMarks + ')' : '');
+
+    alert(msg);
+  } catch (err) {
+    console.error(err);
+    alert(err.message || 'Aspose OMR failed.');
+  }
+}
+
 // CampusConnect custom alert (replaces window.alert)
 (function setupCampusConnectAlert(){
   const dlgId = 'dlgAppAlert';
   if (document.getElementById(dlgId)) return;
+
 
   const wrapper = document.createElement('div');
   wrapper.innerHTML = `
@@ -828,10 +936,12 @@ refreshCdrop('classSel','cdrop-class');
 }
 
 async function loadSections(classId){
-   el('subjectSel').innerHTML = ''; el('subjectSel').disabled = true; refreshCdrop('subjectSel','cdrop-subject');
+      el('subjectSel').innerHTML = ''; el('subjectSel').disabled = true; refreshCdrop('subjectSel','cdrop-subject');
   el('examSel').innerHTML = ''; el('examSel').disabled = true; refreshCdrop('examSel','cdrop-exam');
   el('btnKey').disabled = true;
   el('btnScan').disabled = true;
+  const aspBtn1 = el('btnAsposeScan');
+  if (aspBtn1) aspBtn1.disabled = true;
   el('btnViewReports').disabled = true;
   el('btnDownloadExcel').disabled = true;
 
@@ -849,7 +959,7 @@ async function loadExamsEffective(){
   const examSel = el('examSel');
   const subjectSel = el('subjectSel');
 
-  // RESET exam + subject + buttons
+    // RESET exam + subject + buttons
   examSel.innerHTML = '<option value="">Loading exams…</option>';
   examSel.disabled = true;
   refreshCdrop('examSel','cdrop-exam');
@@ -860,6 +970,8 @@ async function loadExamsEffective(){
 
     el('btnKey').disabled = true;
   el('btnScan').disabled = true;
+  const aspBtn2 = el('btnAsposeScan');
+  if (aspBtn2) aspBtn2.disabled = true;
   el('btnViewReports').disabled = true;
   el('btnDownloadExcel').disabled = true;
   btnES = el('btnExamSettings');
@@ -967,7 +1079,7 @@ async function loadSubjectsFromExam(examId){
   // keep full objects for subtopics
   examSubjects = subs;
 
-  subjectSel.innerHTML =
+   subjectSel.innerHTML =
     '<option value="">Select Subject</option>' +
     subs.map(s => `<option value="${s.name}">${s.name}</option>`).join('');
 
@@ -977,6 +1089,8 @@ async function loadSubjectsFromExam(examId){
   // enable actions once we at least have subjects
   el('btnKey').disabled           = false;
   el('btnScan').disabled          = false;
+  const aspBtn4 = el('btnAsposeScan');
+  if (aspBtn4) aspBtn4.disabled = false;
   el('btnViewReports').disabled   = false;
   el('btnDownloadExcel').disabled = false;
 }
@@ -1033,16 +1147,17 @@ el('pickStatus').innerHTML =
     await loadSubjectsFromExam(current.examId);
     await loadTemplate();
     if (btnES) btnES.disabled = false;
-    } else {
+        } else {
     el('header-exam').textContent = '';
     el('subjectSel').innerHTML=''; el('subjectSel').disabled=true;
     el('btnKey').disabled = true;
     el('btnScan').disabled = true;
+    const aspBtn3 = el('btnAsposeScan');
+    if (aspBtn3) aspBtn3.disabled = true;
     el('btnViewReports').disabled = true;
     el('btnDownloadExcel').disabled = true;
     if (btnES) btnES.disabled = false; // still allow opening settings for this class/section
   }
-
 });
 
 el('subjectSel').addEventListener('change', (e)=>{
@@ -2609,14 +2724,180 @@ async function scanAndSaveOnce() {
   await startCameraAutoScan();
 }
 
-// Scan & Save button – just starts the continuous scanner
+// Scan & Save button – capture still photo and send to backend OMR API
 el('btnScan').onclick = async () => {
+  // 1) Basic checks: exam + subject/subtopic (same idea as scanAndSaveOnce)
   if (!current.examId) {
     alert('Pick Class / Section / Exam first');
     return;
   }
-  await scanAndSaveOnce();
+
+  // If subject has subtopics, make sure one is selected
+  let subjCfg = null;
+  if (current.subjectName && Array.isArray(examSubjects)) {
+    subjCfg = examSubjects.find(s => s && s.name === current.subjectName) || null;
+  }
+
+  let hasSubtopics = false;
+  if (subjCfg) {
+    const mode = subjCfg.subtopicsMode || 'none';
+    let stArr = [];
+
+    if (mode === 'common') {
+      stArr = Array.isArray(examCommonSubtopics) ? examCommonSubtopics : [];
+    } else if (mode === 'custom') {
+      stArr = Array.isArray(subjCfg.subtopics) ? subjCfg.subtopics : [];
+    }
+
+    hasSubtopics = mode !== 'none' && Array.isArray(stArr) && stArr.length > 0;
+  }
+
+  if (hasSubtopics && !current.subtopicName) {
+    alert('Please select the Subtopic before scanning OMR.');
+    return;
+  }
+
+  // 2) Open a one-time file picker (camera / gallery)
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'image/*';
+  // Hint to mobiles: use back camera
+  input.capture = 'environment';
+
+  input.onchange = async () => {
+    const file = input.files && input.files[0];
+    if (!file) return;
+
+    try {
+      el('pickStatus').innerHTML =
+        '<span class="pill">Uploading OMR photo…</span>';
+
+      const form = new FormData();
+      form.append('image', file);
+      form.append('examId',    current.examId    || '');
+      form.append('classId',   current.classId   || '');
+      form.append('sectionId', current.sectionId || '');
+      if (current.subjectName)  form.append('subjectName',  current.subjectName);
+      if (current.subtopicName) form.append('subtopicName', current.subtopicName);
+
+      // TODO: change URL to match your backend route
+      const resp = await fetch('/api/aspose-omr-scan', {
+        method: 'POST',
+        body: form
+      });
+
+      if (!resp.ok) {
+        throw new Error('Server responded with ' + resp.status);
+      }
+
+      const data = await resp.json();
+      // EXPECTED JSON FROM BACKEND (example):
+      // {
+      //   roll: "12",
+      //   totalMarks: 32.5,
+      //   perSection: { "Section-1": 12, "Section-2": 20.5 },
+      //   answers: { "Section-1": { 1:["B"], 2:["C"] }, ... },
+      //   imageDataUrl: "data:image/png;base64,..."  // optional
+      // }
+
+      const totalMarks = typeof data.totalMarks === 'number'
+        ? data.totalMarks
+        : 0;
+
+      const out = {
+        examId:       current.examId,
+        classId:      current.classId,
+        sectionId:    current.sectionId,
+        subjectName:  current.subjectName || null,
+        subtopicName: current.subtopicName || null,
+        roll:         String(data.roll || '').trim(),
+        answers:      data.answers || {},
+        score: {
+          total:      Number(totalMarks.toFixed(2)),
+          perSection: data.perSection || {}
+        },
+        capturedAt:   new Date().toISOString()
+      };
+
+      // Use existing review + save flow
+      const previewUrl = data.imageDataUrl || null;
+      showScanReview(out, previewUrl);
+
+      el('pickStatus').innerHTML =
+        '<span class="pill ok">Photo uploaded. Review marks before saving.</span>';
+    } catch (err) {
+      console.error('OMR upload error:', err);
+      alert('OMR scan failed: ' + err.message);
+      el('pickStatus').innerHTML =
+        '<span class="pill bad">Scan failed. Please retake the photo.</span>';
+    }
+  };
+
+  input.click();
 };
+
+// ===== Aspose photo button wiring (uses hidden #aspImageInput + runAsposePhotoFlow) =====
+(function setupAsposePhotoButton(){
+  const btn   = el('btnAsposeScan');
+  const input = el('aspImageInput');
+  if (!btn || !input) return;
+
+  // Reuse the same exam / subtopic checks as btnScan
+  btn.onclick = async () => {
+    if (!current.examId) {
+      alert('Pick Class / Section / Exam first');
+      return;
+    }
+
+    let subjCfg = null;
+    if (current.subjectName && Array.isArray(examSubjects)) {
+      subjCfg = examSubjects.find(s => s && s.name === current.subjectName) || null;
+    }
+
+    let hasSubtopics = false;
+    if (subjCfg) {
+      const mode = subjCfg.subtopicsMode || 'none';
+      let stArr = [];
+
+      if (mode === 'common') {
+        stArr = Array.isArray(examCommonSubtopics) ? examCommonSubtopics : [];
+      } else if (mode === 'custom') {
+        stArr = Array.isArray(subjCfg.subtopics) ? subjCfg.subtopics : [];
+      }
+
+      hasSubtopics = mode !== 'none' && Array.isArray(stArr) && stArr.length > 0;
+    }
+
+    if (hasSubtopics && !current.subtopicName) {
+      alert('Please select the Subtopic before scanning OMR.');
+      return;
+    }
+
+    // Trigger the existing hidden input so mobile shows camera / gallery
+    input.value = '';
+    input.click();
+  };
+
+  input.onchange = async () => {
+    const file = input.files && input.files[0];
+    if (!file) return;
+
+    try {
+      el('pickStatus').innerHTML =
+        '<span class="pill">Uploading Aspose OMR photo…</span>';
+      await runAsposePhotoFlow(file);
+      el('pickStatus').innerHTML =
+        '<span class="pill ok">Aspose OMR saved successfully.</span>';
+    } catch (err) {
+      console.error(err);
+      alert(err.message || 'Aspose OMR failed.');
+      el('pickStatus').innerHTML =
+        '<span class="pill bad">Aspose OMR failed. Please retake the photo.</span>';
+    } finally {
+      input.value = '';
+    }
+  };
+})();
 
 // ===== SCORING (per-question status + totals, used by scanner & overlay) =====
 function scoreAnswers(answers, key, sections) {
@@ -2952,11 +3233,35 @@ el('btnDownloadExcel').onclick = ()=>{
   // mount empty subtopic dropdown in disabled state
   refreshCdrop('subtopicSel','cdrop-subtopic');
   await loadClasses();
+
+  // Aspose photo flow: button + hidden file input
+  const aspBtn = el('btnAsposeScan');
+  const aspInput = el('aspImageInput');
+
+  if (aspBtn && aspInput) {
+    aspBtn.addEventListener('click', () => {
+      if (!current.examId) {
+        alert('Pick Class / Section / Exam first.');
+        return;
+      }
+      // reset old file and trigger camera/gallery
+      aspInput.value = '';
+      aspInput.click();
+    });
+
+    aspInput.addEventListener('change', () => {
+      const file = aspInput.files && aspInput.files[0];
+      if (!file) return;
+      runAsposePhotoFlow(file);
+    });
+  }
 })();
+
 
   </script>
 </body>
 </html>
+
 
 
 
