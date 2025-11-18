@@ -5465,7 +5465,7 @@ if (marksFileInput) {
       return;
     }
 
-       let rowsHtml = selectedExam.subjects.map(subj => {
+          let rowsHtml = selectedExam.subjects.map(subj => {
       // Backward-compatible preset (string or { col, subtopic })
       let presetCol = '';
       let presetSub = '';
@@ -5479,10 +5479,43 @@ if (marksFileInput) {
         }
       }
 
-      const hasSubs = Array.isArray(subj.subtopics) && subj.subtopics.length > 0;
+      // --------- Resolve subtopics for this subject ----------
+      // 1) Subject-level custom subtopics: subj.subtopics
+      // 2) Exam-level common subtopics: selectedExam.subtopics / subtopicsCommon / commonSubtopics
+      let effectiveSubs = [];
+
+      if (Array.isArray(subj.subtopics) && subj.subtopics.length) {
+        // per-subject custom subtopics
+        effectiveSubs = subj.subtopics;
+      } else {
+        // exam-level common subtopics (support a few possible field names)
+        const examSubsRaw =
+          (Array.isArray(selectedExam.subtopics) && selectedExam.subtopics) ||
+          (Array.isArray(selectedExam.subtopicsCommon) && selectedExam.subtopicsCommon) ||
+          (Array.isArray(selectedExam.commonSubtopics) && selectedExam.commonSubtopics) ||
+          [];
+
+        if (
+          selectedExam.subtopicsMode &&
+          selectedExam.subtopicsMode !== 'none' &&
+          examSubsRaw.length
+        ) {
+          effectiveSubs = examSubsRaw;
+        }
+      }
+
+      const flatSubs = effectiveSubs
+        .map(st =>
+          typeof st === 'string'
+            ? st
+            : (st && st.name ? st.name : '')
+        )
+        .filter(Boolean);
+
+      const hasSubs = flatSubs.length > 0;
       const subOptions = hasSubs
         ? ['<option value="">--Select subtopic--</option>'].concat(
-            subj.subtopics.map(st =>
+            flatSubs.map(st =>
               `<option value="${st}" ${presetSub === st ? 'selected' : ''}>${st}</option>`
             )
           )
@@ -5561,13 +5594,17 @@ if (marksFileInput) {
       return;
     }
 
-       const colIndexes = {};
+        const colIndexes = {};
     const subtopicMap = {};
     const unmappedSubjects = [];   // left blank by user
     const invalidSubjects = [];    // invalid/out-of-range inputs
     const missingSubtopicSubjects = []; // column set but no subtopic chosen when required
 
-    const examHasSubtopicsMode = selectedExam.subtopicsMode && selectedExam.subtopicsMode !== 'none';
+    // comman/common/custom → all treated as "has subtopics"
+    const mode = (selectedExam.subtopicsMode || '').toLowerCase();
+    const examHasSubtopicsMode =
+      mode === 'comman' || mode === 'common' || mode === 'custom';
+
 
     selectedExam.subjects.forEach(subj => {
       const el = colInputs.find(inp => inp.dataset.subject === subj.name);
@@ -5729,6 +5766,7 @@ if (marksFileInput) {
 </script>
 </body>
 </html>
+
 
 
 
