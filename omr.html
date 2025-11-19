@@ -1586,34 +1586,46 @@ async function loadImageAsDataURL(src){
       // Reset text colour
       doc.setTextColor(0, 0, 0);
 
-      // ---------- QR CODE (optional) ----------
+           // ---------- QR CODE (optional) ----------
       let qrBox = null;
-      if (tpl.qrEnabled) {
+      if (tpl.qrEnabled && window.QRCode) {
         const qrSize = 22;
-        const qrDiv = document.createElement('div');
-        new QRCode(qrDiv, {
+        const container = document.createElement('div');
+
+        new QRCode(container, {
           text: JSON.stringify({
             examId: current.examId,
             classId: current.classId,
             sectionId: current.sectionId
           }),
-          width: qrSize * 3,
-          height: qrSize * 3
+          width:  qrSize * 4,
+          height: qrSize * 4,
+          correctLevel: QRCode.CorrectLevel.H
         });
-        const img = qrDiv.querySelector('img') || qrDiv.querySelector('canvas');
-        if (img) {
-          const canvas = document.createElement('canvas');
-          canvas.width = img.width;
-          canvas.height = img.height;
-          const ctx = canvas.getContext('2d');
-          ctx.drawImage(img, 0, 0);
-          const dataUrl = canvas.toDataURL('image/png');
-          doc.addImage(dataUrl, 'PNG', W - margin - qrSize, headerH + 4, qrSize, qrSize);
-          qrBox = { x: W - margin - qrSize, y: headerH + 4, w: qrSize, h: qrSize };
+
+        const canvasEl = container.querySelector('canvas');
+        if (canvasEl) {
+          try {
+            // jsPDF can take a canvas directly
+            doc.addImage(canvasEl, 'PNG',
+              W - margin - qrSize,
+              headerH + 4,
+              qrSize,
+              qrSize
+            );
+            qrBox = {
+              x: W - margin - qrSize,
+              y: headerH + 4,
+              w: qrSize,
+              h: qrSize
+            };
+          } catch (e) {
+            console.warn('Header QR embed failed', e);
+          }
         }
       }
 
-             // ---------- CORNER QR FIDUCIALS (4 unique anchors) ----------
+            // ---------- CORNER QR FIDUCIALS (4 unique anchors) ----------
       // Each corner has a tiny QR: { type:"omrCorner", examId, classId, sectionId, corner:"tl|tr|bl|br" }
       // Scanner will only run roll/marks logic when all 4 are visible.
 
@@ -1621,31 +1633,32 @@ async function loadImageAsDataURL(src){
       const cornerInset  = inner + 1.5;  // slightly inside inner border
 
       function addCornerQr(corner, x, y) {
-        const tmp = document.createElement('div');
-        new QRCode(tmp, {
+        if (!window.QRCode) return;
+
+        const container = document.createElement('div');
+        new QRCode(container, {
           text: JSON.stringify({
-            type:     'omrCorner',
-            examId:   current.examId || '',
-            classId:  current.classId || '',
+            type    : 'omrCorner',
+            examId  : current.examId  || '',
+            classId : current.classId || '',
             sectionId: current.sectionId || '',
-            corner    : corner         // "tl", "tr", "bl", "br"
+            corner  : corner          // "tl", "tr", "bl", "br"
           }),
-          width:  cornerQrSize * 3,   // high resolution, we shrink in PDF
-          height: cornerQrSize * 3,
+          width:  cornerQrSize * 4,   // render bigger, shrink in PDF
+          height: cornerQrSize * 4,
+          correctLevel: QRCode.CorrectLevel.H,
           margin: 0
         });
 
-        const img = tmp.querySelector('img') || tmp.querySelector('canvas');
-        if (!img) return;
+        const canvasEl = container.querySelector('canvas');
+        if (!canvasEl) return;
 
-        const c = document.createElement('canvas');
-        c.width  = img.width;
-        c.height = img.height;
-        const ctx = c.getContext('2d');
-        ctx.drawImage(img, 0, 0);
-        const dataUrl = c.toDataURL('image/png');
-
-        doc.addImage(dataUrl, 'PNG', x, y, cornerQrSize, cornerQrSize);
+        try {
+          // embed the canvas directly as PNG
+          doc.addImage(canvasEl, 'PNG', x, y, cornerQrSize, cornerQrSize);
+        } catch (e) {
+          console.warn('Corner QR embed failed for', corner, e);
+        }
       }
 
       // Positions for the 4 corner QRs in mm (page coordinates)
@@ -2920,4 +2933,5 @@ el('btnDownloadExcel').onclick = ()=>{
   </script>
 </body>
 </html>
+
 
