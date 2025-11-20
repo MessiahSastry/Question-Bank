@@ -989,19 +989,35 @@ await nextFrame();
     const exam = examDoc.exists ? examDoc.data() : { subjects: [] };
 
     // Fetch marks
-    for(const stu of students){
+       // Fetch marks (total from stored subject totals)
+    for (const stu of students) {
       const mDoc = await db.collection('years').doc(academicYear)
         .collection('classes').doc(classId)
         .collection('sections').doc(sectionId)
         .collection('students').doc(stu.id)
         .collection('marks').doc(examId).get();
-      let marks = mDoc.exists ? mDoc.data() : {};
+
+      const marks = mDoc.exists ? mDoc.data() : {};
+
+      // Keys that are NOT subjects
+      const skipKeys = new Set([
+        "childId", "father", "name", "parentPhone",
+        "photoPath", "photoUrl", "__subs",
+        "className", "sectionName", "examId", "examName",
+        "grandTotal", "total", "totalMarks",
+        "percentage", "percent",
+        "rank", "overallRank", "classRank"
+      ]);
+
       let total = 0;
-(exam.subjects || []).forEach(s => {
-  if (!s || s.excludeFromTotal) return;
-  total += Number(marks[s.name] || 0);
-});
-stu.total = total;
+      Object.entries(marks).forEach(([key, value]) => {
+        if (skipKeys.has(key)) return;
+        if (typeof value !== "number") return;
+        if (!Number.isFinite(value)) return;
+        total += value;            // sum of stored subject marks
+      });
+
+      stu.total = total;
     }
 
     // Rank
@@ -5816,6 +5832,7 @@ if (marksFileInput) {
 </script>
 </body>
 </html>
+
 
 
 
