@@ -989,7 +989,7 @@ await nextFrame();
     const exam = examDoc.exists ? examDoc.data() : { subjects: [] };
 
     // Fetch marks
-       // Fetch marks (total from stored subject totals)
+          // Fetch marks (use same totalMarks as memos)
     for (const stu of students) {
       const mDoc = await db.collection('years').doc(academicYear)
         .collection('classes').doc(classId)
@@ -999,35 +999,34 @@ await nextFrame();
 
       const marks = mDoc.exists ? mDoc.data() : {};
 
-      // Keys that are NOT subjects
-      const skipKeys = new Set([
-        "childId", "father", "name", "parentPhone",
-        "photoPath", "photoUrl", "__subs",
-        "className", "sectionName", "examId", "examName",
-        "grandTotal", "total", "totalMarks",
-        "percentage", "percent",
-        "rank", "overallRank", "classRank"
-      ]);
+      // totalMarks is what memos use for ranking
+      const tm = (marks.totalMarks ??
+                  marks.grandTotal ??
+                  marks.total ??
+                  0);
 
-      let total = 0;
-      Object.entries(marks).forEach(([key, value]) => {
-        if (skipKeys.has(key)) return;
-        if (typeof value !== "number") return;
-        if (!Number.isFinite(value)) return;
-        total += value;            // sum of stored subject marks
-      });
-
-      stu.total = total;
+      stu.totalMarks = Number(tm) || 0;
     }
 
     // Rank
-    students.sort((a,b)=>b.total-a.total);
-    let rank=1;
-    for(let i=0;i<students.length;i++){
-      if(i>0 && students[i].total<students[i-1].total) rank=i+1;
-      students[i].rank=rank;
-    }
-    const top3=students.filter(s=>s.rank<=3);
+       // Rank using memo logic (by totalMarks)
+    const ranked = [...students].sort((a, b) => (b.totalMarks || 0) - (a.totalMarks || 0));
+
+    let lastTotal = null;
+    let rank = 1;
+    let lastRank = 1;
+
+    ranked.forEach((d, i) => {
+      if (d.totalMarks !== lastTotal) {
+        rank = i + 1;
+        lastTotal = d.totalMarks;
+        lastRank = rank;
+      }
+      d.rank = lastRank;   // same as memo code
+    });
+
+    // Top 3 ranks (including ties)
+    const top3 = ranked.filter(s => s.rank <= 3);
 
     if(top3.length===0){ alert("No students with ranks."); return; }
 
@@ -5832,6 +5831,7 @@ if (marksFileInput) {
 </script>
 </body>
 </html>
+
 
 
 
