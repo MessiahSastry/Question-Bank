@@ -404,9 +404,27 @@ function _isModeCommon(subject) { return _modeOf(subject) === 'common' || _modeO
 function _isModeCustom(subject) { return _modeOf(subject) === 'custom'; }
 function _isModeNone(subject)   { return _modeOf(subject) === 'none'; }
 
-/* Expand subject list into a row plan: common=1 row, custom=2 rows (header+data), none=1 row */
+/* Expand subject list into a row plan: common=1 row, custom=2 rows (header+data), none=1 row.
+   For CUSTOM subjects: if their subtopic headings are effectively the SAME as the main header
+   subtopics (ignoring (marks) and case), we SKIP the extra custom-header row and only keep data row. */
 function _makeRowPlan(subjects) {
   const rows = [];
+
+  // Build normalized MAIN header subtopic list once (for this exam)
+  const mainSchema = getExamSubtopicSchema();
+  const normalizeLabel = (label) =>
+    String(label || "")
+      .toUpperCase()
+      .replace(/\([^)]*\)/g, "")  // remove anything in brackets, e.g. (20), (80), (10), (40)
+      .replace(/\s+/g, " ")
+      .trim();
+
+  const mainNorm = Array.isArray(mainSchema)
+    ? mainSchema
+        .map(st => normalizeLabel(st?.name || st?.label || ""))
+        .filter(l => l.length)
+    : [];
+
   (subjects || []).forEach(s => {
     // If old pre-expanded items slipped in, honor them
     if (s && s.__rowKind === 'custom-header') {
@@ -420,12 +438,33 @@ function _makeRowPlan(subjects) {
 
     // Fresh, not-expanded subjects
     if (_isModeCustom(s)) {
-      rows.push({ kind: 'custom-header', subject: s });
-      rows.push({ kind: 'custom-data',   subject: s });
+      // Collect this subject's unique subtopic labels (in order)
+      const labels = [];
+      (Array.isArray(s.subtopics) ? s.subtopics : []).forEach(st => {
+        const raw = (st?.name || st?.label || "").trim();
+        if (!raw) return;
+        if (!labels.includes(raw)) labels.push(raw);
+      });
+
+      const subjNorm = labels.map(normalizeLabel).filter(l => l.length);
+
+      // Compare with MAIN header (any subject: Physics, Biology, or others)
+      const sameAsMain =
+        subjNorm.length > 0 &&
+        subjNorm.length === mainNorm.length &&
+        subjNorm.every((v, i) => v === mainNorm[i]);
+
+      // Only add custom-header row if headings DIFFER from main header
+      if (!sameAsMain) {
+        rows.push({ kind: 'custom-header', subject: s });
+      }
+      // Always add the data row
+      rows.push({ kind: 'custom-data', subject: s });
     } else {
       rows.push({ kind: 'normal', subject: s });
     }
   });
+
   return rows;
 }
  
@@ -4268,6 +4307,7 @@ dd.style.position = 'relative';
 </script>
 </body>
 </html>
+
 
 
 
