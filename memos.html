@@ -405,8 +405,8 @@ function _isModeCustom(subject) { return _modeOf(subject) === 'custom'; }
 function _isModeNone(subject)   { return _modeOf(subject) === 'none'; }
 
 /* Expand subject list into a row plan: common=1 row, custom=2 rows (header+data), none=1 row.
-   For CUSTOM subjects: if their subtopic headings are effectively the SAME as the main header
-   subtopics (ignoring (marks) and case), we SKIP the extra custom-header row and only keep data row. */
+   For CUSTOM subjects: if ANY of their subtopic headings matches a MAIN header subtopic
+   (ignoring (marks), case, and punctuation), we SKIP the extra custom-header row and only keep data row. */
 function _makeRowPlan(subjects) {
   const rows = [];
 
@@ -415,8 +415,8 @@ function _makeRowPlan(subjects) {
   const normalizeLabel = (label) =>
     String(label || "")
       .toUpperCase()
-      .replace(/\([^)]*\)/g, "")  // remove anything in brackets, e.g. (20), (80), (10), (40)
-      .replace(/\s+/g, " ")
+      .replace(/\([^)]*\)/g, "")   // remove anything in brackets, e.g. (20), (80), (10), (40)
+      .replace(/[^A-Z0-9]+/g, " ") // remove punctuation / odd chars, collapse to spaces
       .trim();
 
   const mainNorm = Array.isArray(mainSchema)
@@ -446,16 +446,19 @@ function _makeRowPlan(subjects) {
         if (!labels.includes(raw)) labels.push(raw);
       });
 
-      const subjNorm = labels.map(normalizeLabel).filter(l => l.length);
+      const subjNorm = labels
+        .map(normalizeLabel)
+        .filter(l => l.length);
 
-      // Compare with MAIN header (any subject: Physics, Biology, or others)
-      const sameAsMain =
+      // If EVEN ONE normalized subject subtopic matches ANY normalized main header subtopic,
+      // we treat it as "same heading" and DO NOT print a separate custom-header row.
+      const overlapsMain =
         subjNorm.length > 0 &&
-        subjNorm.length === mainNorm.length &&
-        subjNorm.every((v, i) => v === mainNorm[i]);
+        mainNorm.length > 0 &&
+        subjNorm.some(v => mainNorm.includes(v));
 
-      // Only add custom-header row if headings DIFFER from main header
-      if (!sameAsMain) {
+      // Only add custom-header row if headings do NOT overlap with main header
+      if (!overlapsMain) {
         rows.push({ kind: 'custom-header', subject: s });
       }
       // Always add the data row
@@ -4307,6 +4310,7 @@ dd.style.position = 'relative';
 </script>
 </body>
 </html>
+
 
 
 
