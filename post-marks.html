@@ -604,21 +604,95 @@ sectionSel.addEventListener('change', async () => {
     return out;
   };
 
-  function computeRanks() {
+    function computeRanks() {
     if (!ROWS || !ROWS.length) return;
-    const sorted = [...ROWS].sort((a,b) => b.obtained - a.obtained);
-    let lastScore = null, lastRank = 0, i = 0;
-    for (const r of sorted) {
-      i++;
-      if (r.obtained !== lastScore) {
-        lastRank = i;
-        lastScore = r.obtained;
-      }
-      r.rank = lastRank;
-    }
-    // ranks are on the same row objects referenced by ROWS
-  }
 
+    // small normalizer (same idea as other modules)
+    const nkey = (s) => String(s || '').trim().toLowerCase();
+
+    // Build tie-break info for each row
+    const enriched = (ROWS || []).map(row => {
+      const per = new Map();
+
+      // Map subject name → numeric mark (AB and invalid treated as 0)
+      (SUBJECTS || []).forEach((s, idx) => {
+        if (!s) return;
+        const key = nkey(s.name);
+        const raw = (row.subjMarks || [])[idx];
+        let val = 0;
+        if (raw === 'AB') {
+          val = 0;
+        } else {
+          const num = Number(raw);
+          val = Number.isFinite(num) ? num : 0;
+        }
+        per.set(key, val);
+      });
+
+      const get = (aliases) => {
+        for (const name of aliases) {
+          const v = per.get(nkey(name));
+          if (typeof v === 'number' && !isNaN(v)) return v;
+        }
+        return 0;
+      };
+
+      const total = Number.isFinite(+row.obtained) ? +row.obtained : 0;
+
+      // Maths 1 + Maths 2 combined
+      const m1 = get(['math 1','math-1','maths 1','maths-1','mathematics 1','mathematics-1']);
+      const m2 = get(['math 2','math-2','maths 2','maths-2','mathematics 2','mathematics-2']);
+      const mathCombo = m1 + m2;
+
+      // Physics / Biology / Chemistry (common labels)
+      const physics   = get(['physics','physical science','phy']);
+      const biology   = get(['biology','bio','life science']);
+      const chemistry = get(['chemistry','chem']);
+
+      const rollNum = Number.isFinite(+row.roll) ? +row.roll : 999999;
+
+      return {
+        row,
+        total,
+        mathCombo,
+        physics,
+        biology,
+        chemistry,
+        roll: rollNum
+      };
+    });
+
+    // Sort with tie-break:
+    // 1) Total
+    // 2) Math1+Math2
+    // 3) Physics
+    // 4) Biology
+    // 5) Chemistry
+    // 6) Lower roll number
+    enriched.sort((A, B) => {
+      if (B.total     !== A.total)     return B.total     - A.total;
+      if (B.mathCombo !== A.mathCombo) return B.mathCombo - A.mathCombo;
+      if (B.physics   !== A.physics)   return B.physics   - A.physics;
+      if (B.biology   !== A.biology)   return B.biology   - A.biology;
+      if (B.chemistry !== A.chemistry) return B.chemistry - A.chemistry;
+      return A.roll - B.roll;
+    });
+
+    // Dense ranking based on TOTAL marks (same style as memos/certificates)
+    let lastScore = null;
+    let lastRank  = 0;
+    let i = 0;
+
+    for (const e of enriched) {
+      i++;
+      if (e.total !== lastScore) {
+        lastRank  = i;
+        lastScore = e.total;
+      }
+      e.row.rank = lastRank;
+    }
+    // ranks are now on the same ROW objects
+  }
   function renderTable() {
     // Build header
     const subjHeads = (SUBJECTS||[]).map(s => `<th class="cell-center">${escapeHtml(s.name)}<br><span class="pill">/${s.max||0}</span></th>`).join('');
@@ -847,6 +921,7 @@ document.addEventListener('DOMContentLoaded', wireBulkOverlay);
 </script>
  </body>
 </html>
+
 
 
 
