@@ -988,7 +988,17 @@ await nextFrame();
       .collection(classGroup).doc(examId).get();
     const exam = examDoc.exists ? examDoc.data() : { subjects: [] };
 
-       // Fetch marks – compute totalMarks like memos
+           // Fetch marks – compute totalMarks + per-subject for tie-break (same scale as memos)
+    // Robust structure for this exam (subjects + subtopics)
+    const struct = await getExamStructureForExamId(examId);
+
+    // Build a set of subjects excluded from TOTAL (from the exam definition)
+    const excludeSet = new Set(
+      (exam.subjects || [])
+        .filter(s => s && s.excludeFromTotal)
+        .map(s => nkey(s.name))
+    );
+
     for (const stu of students) {
       const mDoc = await db.collection('years').doc(academicYear)
         .collection('classes').doc(classId)
@@ -996,23 +1006,86 @@ await nextFrame();
         .collection('students').doc(stu.id)
         .collection('marks').doc(examId).get();
 
-      const marks = mDoc.exists ? mDoc.data() : {};
+      const marks = mDoc.exists ? (mDoc.data() || {}) : {};
 
+      // Per-subject totals using the same helper as memos/back-page
+      const subs = _extractSubjectTotalsFromMarks(marks, struct); // [{name,total,max}]
+      const perMap = new Map();
+      subs.forEach(s => {
+        if (typeof s.total === 'number') {
+          perMap.set(nkey(s.name), s.total);
+        }
+      });
+
+      // Overall TOTAL = sum of numeric subject totals, skipping excluded subjects
       let totalMarks = 0;
-      (exam.subjects || []).forEach(s => {
-        if (!s || s.excludeFromTotal) return;
-        const v = Number(marks[s.name] || 0);
-        if (!Number.isFinite(v)) return;
-        totalMarks += v;
+      subs.forEach(s => {
+        if (!excludeSet.size || !excludeSet.has(nkey(s.name))) {
+          if (typeof s.total === 'number' && !isNaN(s.total)) {
+            totalMarks += s.total;
+          }
+        }
       });
 
       stu.totalMarks = totalMarks;
+      stu.__perSubjectTotals = perMap; // store for tie-break use
     }
 
+    // Helper: derive tie-break vector for a student
+    function buildTieVector(stu) {
+      const map = stu.__perSubjectTotals || new Map();
+      const get = (aliases) => {
+        for (const name of aliases) {
+          const v = map.get(nkey(name));
+          if (typeof v === 'number' && !isNaN(v)) return v;
+        }
+        return -Infinity;
+      };
 
-       // Rank by totalMarks (same as memos, dense ranking)
-    const ranked = [...students].sort((a, b) => (b.totalMarks || 0) - (a.totalMarks || 0));
+      // Maths 1 & 2 combined
+      const m1 = get(['math 1','math-1','maths 1','maths-1','mathematics 1','mathematics-1']);
+      const m2 = get(['math 2','math-2','maths 2','maths-2','mathematics 2','mathematics-2']);
+      const mathCombo = (Number.isFinite(m1) ? m1 : 0) + (Number.isFinite(m2) ? m2 : 0);
 
+      // Physics / Biology / Chemistry (support common variants)
+      const physics   = get(['physics','physical science','phy']);
+      const biology   = get(['biology','bio','life science']);
+      const chemistry = get(['chemistry','chem']);
+
+      const rollNum = Number.isFinite(+stu.roll) ? +stu.roll : 999999;
+
+      return {
+        total: Number.isFinite(+stu.totalMarks) ? +stu.totalMarks : -Infinity,
+        mathCombo,
+        physics:   Number.isFinite(physics)   ? physics   : -Infinity,
+        biology:   Number.isFinite(biology)   ? biology   : -Infinity,
+        chemistry: Number.isFinite(chemistry) ? chemistry : -Infinity,
+        roll: rollNum
+      };
+    }
+
+    // Rank by TOTAL with tie-break:
+    // 1) TOTAL marks
+    // 2) (Math-1 + Math-2)
+    // 3) Physics
+    // 4) Biology
+    // 5) Chemistry
+    // 6) Lower roll number wins
+    const ranked = [...students].sort((a, b) => {
+      const A = buildTieVector(a);
+      const B = buildTieVector(b);
+
+      if (B.total     !== A.total)     return B.total     - A.total;
+      if (B.mathCombo !== A.mathCombo) return B.mathCombo - A.mathCombo;
+      if (B.physics   !== A.physics)   return B.physics   - A.physics;
+      if (B.biology   !== A.biology)   return B.biology   - A.biology;
+      if (B.chemistry !== A.chemistry) return B.chemistry - A.chemistry;
+
+      // final fallback: lower roll number gets better rank
+      return A.roll - B.roll;
+    });
+
+    // Dense ranking over the sorted list
     let last = null;
     let rank = 1;
     let lastRank = 1;
@@ -5831,6 +5904,7 @@ if (marksFileInput) {
 </script>
 </body>
 </html>
+
 
 
 
