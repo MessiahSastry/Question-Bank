@@ -3300,13 +3300,66 @@ async function getAllStudentFullData(){
     (students || []).map(stu => limit(() => fetchStudentData(stu)))
   );
 
-  // rank by totalMarks (dense ranking)
-  const ranked = [...results].sort((a,b)=> b.totalMarks - a.totalMarks);
-  let last = null, rank = 1, lastRank = 1;
-  ranked.forEach((d,i) => {
-    if (d.totalMarks !== last) { rank = i+1; last = d.totalMarks; lastRank = rank; }
+   // rank by totalMarks with tie-break:
+  // 1) (Math 1 + Math 2) total
+  // 2) Physics marks
+  // 3) Biology marks
+  // 4) Chemistry marks
+  function getSubMark(d, keyNorm) {
+    if (!Array.isArray(d.subjects)) return 0;
+    const hit = d.subjects.find(s => nkey(s.name) === keyNorm);
+    const v = hit ? hit.marks : null;
+    if (typeof v === 'number' && !isNaN(v)) return v;
+    if (v !== null && v !== undefined && v !== 'AB' && Number.isFinite(+v)) return +v;
+    return 0; // treat AB / blank / non-numeric as 0 for tie-break
+  }
+
+  function buildRankKey(d) {
+    const tot  = (typeof d.totalMarks === 'number' && !isNaN(d.totalMarks)) ? d.totalMarks : 0;
+    const m1   = getSubMark(d, 'math1');
+    const m2   = getSubMark(d, 'math2');
+    const phy  = getSubMark(d, 'physics');
+    const bio  = getSubMark(d, 'biology');
+    const chem = getSubMark(d, 'chemistry');
+    return {
+      tot,
+      mSum: m1 + m2,
+      phy,
+      bio,
+      chem
+    };
+  }
+
+  const ranked = [...results].sort((a, b) => {
+    const ka = buildRankKey(a);
+    const kb = buildRankKey(b);
+
+    if (kb.tot  !== ka.tot)  return kb.tot  - ka.tot;   // total marks
+    if (kb.mSum !== ka.mSum) return kb.mSum - ka.mSum;  // Math1+Math2
+    if (kb.phy  !== ka.phy)  return kb.phy  - ka.phy;   // Physics
+    if (kb.bio  !== ka.bio)  return kb.bio  - ka.bio;   // Biology
+    if (kb.chem !== ka.chem) return kb.chem - ka.chem;  // Chemistry
+    return 0;
+  });
+
+  let lastKey = null, rank = 1, lastRank = 1;
+  ranked.forEach((d, i) => {
+    const k = buildRankKey(d);
+    if (
+      !lastKey ||
+      k.tot  !== lastKey.tot ||
+      k.mSum !== lastKey.mSum ||
+      k.phy  !== lastKey.phy ||
+      k.bio  !== lastKey.bio ||
+      k.chem !== lastKey.chem
+    ) {
+      rank = i + 1;
+      lastKey = k;
+      lastRank = rank;
+    }
     d.rank = lastRank;
   });
+
 
   // restore original student order for rendering
   results.sort((a,b)=> {
@@ -4310,6 +4363,7 @@ dd.style.position = 'relative';
 </script>
 </body>
 </html>
+
 
 
 
