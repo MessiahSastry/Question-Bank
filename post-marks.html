@@ -593,16 +593,44 @@ sectionSel.addEventListener('change', async () => {
   };
 </script>
 <script>
-  // ================= PART 3: RENDER + RANK + ACTIONS =================
+   // ================= PART 3: RENDER + RANK + ACTIONS =================
 
   // Hook: wrap loadStudentsAndMarks so any existing listeners will auto-render after loading
   const _origLoadStudentsAndMarks = loadStudentsAndMarks;
   window.loadStudentsAndMarks = async function() {
     const out = await _origLoadStudentsAndMarks();
+
+    // 🔹 Make EXAMS + SUBJECTS match memo logic (use effective exam with overrides)
+    await syncEffectiveSubjectsForCurrentExam();
+
     computeRanks();
     renderTable();
     return out;
   };
+
+  // Use the same effective-exam logic as memos to build SUBJECTS
+  async function syncEffectiveSubjectsForCurrentExam() {
+    if (!classSel || !examSel) return;
+
+    const classId = classSel.value;
+    if (!classId) return;
+
+    const className = (CLASSES.find(c => c.id === classId)?.name) || '';
+    if (!className) return;
+
+    // fetch exams with class / subject overrides applied (same helper as memos)
+    const examsEff = await fetchEffectiveExams(classId, className);
+    EXAMS = examsEff || [];
+
+    const examId = examSel.value;
+    if (!examId) {
+      SUBJECTS = [];
+      return;
+    }
+
+    const exam = EXAMS.find(e => e.id === examId) || null;
+    SUBJECTS = exam ? (exam.subjects || []) : [];
+  }
 
     function computeRanks() {
     if (!ROWS || !ROWS.length) return;
@@ -921,6 +949,7 @@ document.addEventListener('DOMContentLoaded', wireBulkOverlay);
 </script>
  </body>
 </html>
+
 
 
 
