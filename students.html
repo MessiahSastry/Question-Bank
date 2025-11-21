@@ -757,6 +757,91 @@ setupDropdown('certExamDropdown','certExamSelected','certExamList');
 }
 
 // ======================= ACTUAL CERTIFICATE GENERATION =========================
+
+// helper: normalise subject keys (same as memos logic)
+function nkey(name) {
+  return (name || '')
+    .toString()
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+}
+
+// helper: get EFFECTIVE exam structure (subjects + subtopics) for this class
+async function getExamStructureForExamId(examId, classId, className) {
+  try {
+    const exams = await fetchEffectiveExams(classId, className);
+    const found = (exams || []).find(e => e.id === examId);
+    if (found) {
+      return {
+        subjects: Array.isArray(found.subjects) ? found.subjects : []
+      };
+    }
+  } catch (e) {
+    console.warn('getExamStructureForExamId failed:', e);
+  }
+  return { subjects: [] };
+}
+
+// helper: compute per-subject totals from marks + struct (same idea as memos/back page)
+function _extractSubjectTotalsFromMarks(marks, struct) {
+  const result = [];
+  const subs = (struct && Array.isArray(struct.subjects)) ? struct.subjects : [];
+
+  subs.forEach(sub => {
+    if (!sub || !sub.name) return;
+
+    let total = 0;
+    let max = 0;
+
+    const subtopics = Array.isArray(sub.subtopics) ? sub.subtopics : [];
+
+    if (subtopics.length) {
+      // subject with subtopics
+      subtopics.forEach(st => {
+        if (!st) return;
+        const key =
+          st.markKey ||
+          st.key ||
+          `${sub.name}__${st.name || ''}`;
+        const raw = marks[key];
+
+        if (raw === 'AB') {
+          // absent → treat as 0 for totals
+        } else {
+          const v = Number(raw);
+          if (Number.isFinite(v)) total += v;
+        }
+
+        const mx = Number(st.maxMarks || st.max || 0);
+        if (Number.isFinite(mx)) max += mx;
+      });
+    } else {
+      // plain subject without subtopics
+      const key = sub.markKey || sub.name;
+      const raw = marks[key];
+
+      if (raw === 'AB') {
+        // absent
+      } else {
+        const v = Number(raw);
+        if (Number.isFinite(v)) total += v;
+      }
+
+      const mx = Number(sub.maxMarks || sub.max || 0);
+      if (Number.isFinite(mx)) max += mx;
+    }
+
+    result.push({
+      name: sub.name,
+      total,
+      max
+    });
+  });
+
+  return result;
+}
+
 async function generateCertificatesForExam(classId, className, sectionId, sectionName, examId, examName) {
   showPopup(`
     <div class="popup-title">Certificates: ${examName}</div>
@@ -793,385 +878,391 @@ async function generateCertificatesForExam(classId, className, sectionId, sectio
   // Assets
   const bgUrl = "https://raw.githubusercontent.com/MessiahSastry/Question-Bank/main/certificate.png";
   let bgImg = new Image();
-bgImg.crossOrigin = "anonymous";
-bgImg.src = bgUrl;
+  bgImg.crossOrigin = "anonymous";
+  bgImg.src = bgUrl;
 
-// signatures removed
-const directorImg = null;
-const teacherImg  = null;
+  // signatures removed
+  const directorImg = null;
+  const teacherImg  = null;
   
- // Rank badges
+  // Rank badges
   const rank1Img = new Image(), rank2Img = new Image(), rank3Img = new Image();
   [rank1Img, rank2Img, rank3Img].forEach(i => (i.crossOrigin = "anonymous"));
   rank1Img.src = "https://raw.githubusercontent.com/MessiahSastry/Progress-card-app/main/rank-1.png";
   rank2Img.src = "https://raw.githubusercontent.com/MessiahSastry/Progress-card-app/main/rank-2.png";
   rank3Img.src = "https://raw.githubusercontent.com/MessiahSastry/Progress-card-app/main/rank-3.png";
-  // Preload all assets once and reuse
-const decodeImg = (img) =>
-  ("decode" in img)
-    ? img.decode()
-    : new Promise((res, rej) => { img.onload = res; img.onerror = rej; });
-const withTimeout = (p, ms) =>
-  Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), ms))]);
 
-const assetsReady = Promise.allSettled([
-  withTimeout(decodeImg(bgImg),    8000),
-  withTimeout(decodeImg(rank1Img), 4000),
-  withTimeout(decodeImg(rank2Img), 4000),
-  withTimeout(decodeImg(rank3Img), 4000),
-]); 
+  // Preload all assets once and reuse
+  const decodeImg = (img) =>
+    ("decode" in img)
+      ? img.decode()
+      : new Promise((res, rej) => { img.onload = res; img.onerror = rej; });
+  const withTimeout = (p, ms) =>
+    Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), ms))]);
+
+  const assetsReady = Promise.allSettled([
+    withTimeout(decodeImg(bgImg),    8000),
+    withTimeout(decodeImg(rank1Img), 4000),
+    withTimeout(decodeImg(rank2Img), 4000),
+    withTimeout(decodeImg(rank3Img), 4000),
+  ]); 
  
   // -- photo loader (with tiny cache) --
-const imgCache = new Map();
-async function loadPhoto(url) {
-  if (!url) return null;
-  if (imgCache.has(url)) return imgCache.get(url);
-  try {
-    const im = new Image();
-    im.crossOrigin = "anonymous";
-    im.referrerPolicy = "no-referrer";
-    im.src = url;
-    await withTimeout(decodeImg(im), 8000);
-    imgCache.set(url, im);
-    return im;
-  } catch (e) {
-    console.warn("Photo load failed:", e);
-    imgCache.set(url, null);
+  const imgCache = new Map();
+  async function loadPhoto(url) {
+    if (!url) return null;
+    if (imgCache.has(url)) return imgCache.get(url);
+    try {
+      const im = new Image();
+      im.crossOrigin = "anonymous";
+      im.referrerPolicy = "no-referrer";
+      im.src = url;
+      await withTimeout(decodeImg(im), 8000);
+      imgCache.set(url, im);
+      return im;
+    } catch (e) {
+      console.warn("Photo load failed:", e);
+      imgCache.set(url, null);
+      return null;
+    }
+  }
+
+  function drawSquareImageCover(img, x, y, size) {
+    const sw = img.naturalWidth || img.width;
+    const sh = img.naturalHeight || img.height;
+    const s  = Math.min(sw, sh);                 // center-crop to square
+    const sx = Math.floor((sw - s) / 2);
+    const sy = Math.floor((sh - s) / 2);
+
+    ctx.drawImage(img, sx, sy, s, s, x, y, size, size);
+
+    // optional border
+    ctx.lineWidth = 8;
+    ctx.strokeStyle = "#D4AF37";
+    ctx.strokeRect(x, y, size, size);
+  }
+
+  function drawCircleImageCover(img, cx, cy, size) {
+    const sw = img.naturalWidth || img.width;
+    const sh = img.naturalHeight || img.height;
+    const s  = Math.min(sw, sh);                 // center-crop to square
+    const sx = Math.floor((sw - s) / 2);
+    const sy = Math.floor((sh - s) / 2);
+    const dx = cx - size / 2;
+    const dy = cy - size / 2;
+
+    // clip to circle and draw
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, size / 2, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.drawImage(img, sx, sy, s, s, dx, dy, size, size);
+    ctx.restore();
+
+    // border ring
+    ctx.lineWidth = 8;
+    ctx.strokeStyle = "#D4AF37";   
+    ctx.beginPath();
+    ctx.arc(cx, cy, size / 2, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // Prefer stu.photoUrl; if missing, resolve from Firebase Storage using photoPath
+  async function resolveStudentPhoto(stu) {
+    if (stu && stu.photoUrl) return stu.photoUrl;
+    if (stu && stu.photoPath) {
+      try {
+        const url = await storage.ref().child(stu.photoPath).getDownloadURL();
+        return url;
+      } catch (e) {
+        console.warn("getDownloadURL failed for", stu.photoPath, e);
+      }
+    }
     return null;
   }
-}
-  function drawSquareImageCover(img, x, y, size) {
-  const sw = img.naturalWidth || img.width;
-  const sh = img.naturalHeight || img.height;
-  const s  = Math.min(sw, sh);                 // center-crop to square
-  const sx = Math.floor((sw - s) / 2);
-  const sy = Math.floor((sh - s) / 2);
 
-  ctx.drawImage(img, sx, sy, s, s, x, y, size, size);
-
-  // optional border
-  ctx.lineWidth = 8;
-  ctx.strokeStyle = "#D4AF37";
-  ctx.strokeRect(x, y, size, size);
-}
-  function drawCircleImageCover(img, cx, cy, size) {
-  const sw = img.naturalWidth || img.width;
-  const sh = img.naturalHeight || img.height;
-  const s  = Math.min(sw, sh);                 // center-crop to square
-  const sx = Math.floor((sw - s) / 2);
-  const sy = Math.floor((sh - s) / 2);
-  const dx = cx - size / 2;
-  const dy = cy - size / 2;
-
-  // clip to circle and draw
-  ctx.save();
-  ctx.beginPath();
-  ctx.arc(cx, cy, size / 2, 0, Math.PI * 2);
-  ctx.clip();
-  ctx.drawImage(img, sx, sy, s, s, dx, dy, size, size);
-  ctx.restore();
-
-  // border ring
-  ctx.lineWidth = 8;
-  ctx.strokeStyle = "#D4AF37";   
-  ctx.beginPath();
-  ctx.arc(cx, cy, size / 2, 0, Math.PI * 2);
-  ctx.stroke();
-}
-// Prefer stu.photoUrl; if missing, resolve from Firebase Storage using photoPath
-async function resolveStudentPhoto(stu) {
-  if (stu && stu.photoUrl) return stu.photoUrl;
-  if (stu && stu.photoPath) {
-    try {
-      const url = await storage.ref().child(stu.photoPath).getDownloadURL();
-      return url;
-    } catch (e) {
-      console.warn("getDownloadURL failed for", stu.photoPath, e);
+  function drawCertificate(stu, rank, photoImg){
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    if (bgImg && bgImg.naturalWidth > 0) {
+      ctx.drawImage(bgImg, 0, 0, canvas.width, canvas.height);
+    } else {
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
     }
-  }
-  return null;
-}
-   function drawCertificate(stu, rank, photoImg){
-  ctx.clearRect(0,0,canvas.width,canvas.height);
-  if (bgImg && bgImg.naturalWidth > 0) {
-    ctx.drawImage(bgImg, 0, 0, canvas.width, canvas.height);
-  } else {
-    ctx.fillStyle = "#fff";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-  }
-  ctx.fillStyle="#000"; ctx.textAlign="center";
+    ctx.fillStyle="#000"; ctx.textAlign="center";
 
-  // Exam name
-  ctx.font = "bold 64px 'Segoe UI'";
-  ctx.fillText(examName,1211,600);
+    // Exam name
+    ctx.font = "bold 64px 'Segoe UI'";
+    ctx.fillText(examName,1211,600);
 
-  // Student Name
-  ctx.font = "72px 'Segoe Script'";
-  ctx.fillStyle="#0f3d6b";
-  ctx.fillText(stu.name,1223,800);
+    // Student Name
+    ctx.font = "72px 'Segoe Script'";
+    ctx.fillStyle="#0f3d6b";
+    ctx.fillText(stu.name,1223,800);
 
-  // Class & Section
-  ctx.font = "46px 'Segoe UI'";
-  ctx.fillText(`(${className} / ${sectionName})`,1214,880);
+    // Class & Section
+    ctx.font = "46px 'Segoe UI'";
+    ctx.fillText(`(${className} / ${sectionName})`,1214,880);
 
-  // Rank badge
-  let rankImg = rank === 1 ? rank1Img : rank === 2 ? rank2Img : rank === 3 ? rank3Img : null;
-  if (rankImg && rankImg.complete && rankImg.naturalWidth > 0) {
-    const w = 300;
-    const h = (rankImg.naturalHeight / rankImg.naturalWidth) * w;
-    ctx.drawImage(rankImg, 1850, 600, w, h);
-  }
+    // Rank badge
+    let rankImg = rank === 1 ? rank1Img : rank === 2 ? rank2Img : rank === 3 ? rank3Img : null;
+    if (rankImg && rankImg.complete && rankImg.naturalWidth > 0) {
+      const w = 300;
+      const h = (rankImg.naturalHeight / rankImg.naturalWidth) * w;
+      ctx.drawImage(rankImg, 1850, 600, w, h);
+    }
 
-// --- Photo on left side (square) ---
-const size = 360;
-const x    = 250;
-const y    = 540; // moved up ~60px
-const cx   = x + size / 2;
-const cy   = y + size / 2;
+    // --- Photo on left side (circle) ---
+    const size = 360;
+    const x    = 250;
+    const y    = 540;
+    const cx   = x + size / 2;
+    const cy   = y + size / 2;
 
-if (photoImg && photoImg.complete && photoImg.naturalWidth > 0) {
-  drawCircleImageCover(photoImg, cx, cy, size);
-} else {
-  // circular fallback with initials
-  ctx.save();
-  ctx.beginPath();
-  ctx.arc(cx, cy, size / 2, 0, Math.PI * 2);
-  ctx.closePath();
-  ctx.fillStyle = "#e7f1fb";
-  ctx.fill();
-  ctx.lineWidth = 8;
-  ctx.strokeStyle = "#0f3d6b";
-  ctx.stroke();
+    if (photoImg && photoImg.complete && photoImg.naturalWidth > 0) {
+      drawCircleImageCover(photoImg, cx, cy, size);
+    } else {
+      // circular fallback with initials
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(cx, cy, size / 2, 0, Math.PI * 2);
+      ctx.closePath();
+      ctx.fillStyle = "#e7f1fb";
+      ctx.fill();
+      ctx.lineWidth = 8;
+      ctx.strokeStyle = "#0f3d6b";
+      ctx.stroke();
 
-  const initials = getInitials(stu.name || '');
-  ctx.fillStyle = "#0f3d6b";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.font = `bold ${Math.floor(size * 0.36)}px 'Segoe UI'`;
-  ctx.fillText(initials, cx, cy + 2);
-  ctx.restore();
-}
-}  
+      const initials = getInitials(stu.name || '');
+      ctx.fillStyle = "#0f3d6b";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.font = `bold ${Math.floor(size * 0.36)}px 'Segoe UI'`;
+      ctx.fillText(initials, cx, cy + 2);
+      ctx.restore();
+    }
+  }  
+
   async function generateCertificates(mode){
-  const statusEl = document.getElementById("downloadStatus");
-  const statusText = document.getElementById("statusText");
-  const nextFrame = () => new Promise(r => requestAnimationFrame(() => r()));
-  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+    const statusEl = document.getElementById("downloadStatus");
+    const statusText = document.getElementById("statusText");
+    const nextFrame = () => new Promise(r => requestAnimationFrame(() => r()));
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-  // show spinner immediately
-  statusEl.style.display = "block";
-  statusText.textContent = "Preparing download...";
+    // show spinner immediately
+    statusEl.style.display = "block";
+    statusText.textContent = "Preparing download...";
 
-  // give the browser time to paint & start the CSS animation
-  await nextFrame(); 
-  await nextFrame();
+    // give the browser time to paint & start the CSS animation
+    await nextFrame(); 
+    await nextFrame();
     statusText.textContent = "Loading certificate assets...";
-await assetsReady;        // <-- ensures images are ready
-await nextFrame();
-   try {
-  // Fetch students
-    const stuSnap = await db.collection('years').doc(academicYear)
-      .collection('classes').doc(classId)
-      .collection('sections').doc(sectionId)
-      .collection('students').orderBy('roll').get();
-
-    let students=[];
-    stuSnap.forEach(d=>{ 
-      const x=d.data(); 
-      if(!x.isDeleted) students.push({id:d.id,...x,cls:className,sec:sectionName}); 
-    });
-
-    // Fetch exam details
-    const classGroup = getClassGroupName(className);
-    const examDoc = await db.collection('years').doc(academicYear)
-      .collection('exams').doc('classGroups')
-      .collection(classGroup).doc(examId).get();
-    const exam = examDoc.exists ? examDoc.data() : { subjects: [] };
-
-           // Fetch marks – compute totalMarks + per-subject for tie-break (same scale as memos)
-    // Robust structure for this exam (subjects + subtopics)
-    const struct = await getExamStructureForExamId(examId);
-
-    // Build a set of subjects excluded from TOTAL (from the exam definition)
-    const excludeSet = new Set(
-      (exam.subjects || [])
-        .filter(s => s && s.excludeFromTotal)
-        .map(s => nkey(s.name))
-    );
-
-    for (const stu of students) {
-      const mDoc = await db.collection('years').doc(academicYear)
+    await assetsReady;        // <-- ensures images are ready
+    await nextFrame();
+    try {
+      // Fetch students
+      const stuSnap = await db.collection('years').doc(academicYear)
         .collection('classes').doc(classId)
         .collection('sections').doc(sectionId)
-        .collection('students').doc(stu.id)
-        .collection('marks').doc(examId).get();
+        .collection('students').orderBy('roll').get();
 
-      const marks = mDoc.exists ? (mDoc.data() || {}) : {};
-
-      // Per-subject totals using the same helper as memos/back-page
-      const subs = _extractSubjectTotalsFromMarks(marks, struct); // [{name,total,max}]
-      const perMap = new Map();
-      subs.forEach(s => {
-        if (typeof s.total === 'number') {
-          perMap.set(nkey(s.name), s.total);
-        }
+      let students=[];
+      stuSnap.forEach(d=>{ 
+        const x=d.data(); 
+        if(!x.isDeleted) students.push({id:d.id,...x,cls:className,sec:sectionName}); 
       });
 
-      // Overall TOTAL = sum of numeric subject totals, skipping excluded subjects
-      let totalMarks = 0;
-      subs.forEach(s => {
-        if (!excludeSet.size || !excludeSet.has(nkey(s.name))) {
-          if (typeof s.total === 'number' && !isNaN(s.total)) {
-            totalMarks += s.total;
+      // Fetch exam details
+      const classGroup = getClassGroupName(className);
+      const examDoc = await db.collection('years').doc(academicYear)
+        .collection('exams').doc('classGroups')
+        .collection(classGroup).doc(examId).get();
+      const exam = examDoc.exists ? examDoc.data() : { subjects: [] };
+
+      // Robust structure for this exam (subjects + subtopics) – EFFECTIVE exam
+      const struct = await getExamStructureForExamId(examId, classId, className);
+
+      // Build a set of subjects excluded from TOTAL (from the exam definition)
+      const excludeSet = new Set(
+        (exam.subjects || [])
+          .filter(s => s && s.excludeFromTotal)
+          .map(s => nkey(s.name))
+      );
+
+      for (const stu of students) {
+        const mDoc = await db.collection('years').doc(academicYear)
+          .collection('classes').doc(classId)
+          .collection('sections').doc(sectionId)
+          .collection('students').doc(stu.id)
+          .collection('marks').doc(examId).get();
+
+        const marks = mDoc.exists ? (mDoc.data() || {}) : {};
+
+        // Per-subject totals using the same helper as memos/back-page
+        const subs = _extractSubjectTotalsFromMarks(marks, struct); // [{name,total,max}]
+        const perMap = new Map();
+        subs.forEach(s => {
+          if (typeof s.total === 'number') {
+            perMap.set(nkey(s.name), s.total);
           }
-        }
+        });
+
+        // Overall TOTAL = sum of numeric subject totals, skipping excluded subjects
+        let totalMarks = 0;
+        subs.forEach(s => {
+          if (!excludeSet.size || !excludeSet.has(nkey(s.name))) {
+            if (typeof s.total === 'number' && !isNaN(s.total)) {
+              totalMarks += s.total;
+            }
+          }
+        });
+
+        stu.totalMarks = totalMarks;
+        stu.__perSubjectTotals = perMap; // store for tie-break use
+      }
+
+      // Helper: derive tie-break vector for a student
+      function buildTieVector(stu) {
+        const map = stu.__perSubjectTotals || new Map();
+        const get = (aliases) => {
+          for (const name of aliases) {
+            const v = map.get(nkey(name));
+            if (typeof v === 'number' && !isNaN(v)) return v;
+          }
+          return -Infinity;
+        };
+
+        // Maths 1 & 2 combined
+        const m1 = get(['math 1','math-1','maths 1','maths-1','mathematics 1','mathematics-1']);
+        const m2 = get(['math 2','math-2','maths 2','maths-2','mathematics 2','mathematics-2']);
+        const mathCombo = (Number.isFinite(m1) ? m1 : 0) + (Number.isFinite(m2) ? m2 : 0);
+
+        // Physics / Biology / Chemistry (support common variants)
+        const physics   = get(['physics','physical science','phy']);
+        const biology   = get(['biology','bio','life science']);
+        const chemistry = get(['chemistry','chem']);
+
+        const rollNum = Number.isFinite(+stu.roll) ? +stu.roll : 999999;
+
+        return {
+          total: Number.isFinite(+stu.totalMarks) ? +stu.totalMarks : -Infinity,
+          mathCombo,
+          physics:   Number.isFinite(physics)   ? physics   : -Infinity,
+          biology:   Number.isFinite(biology)   ? biology   : -Infinity,
+          chemistry: Number.isFinite(chemistry) ? chemistry : -Infinity,
+          roll: rollNum
+        };
+      }
+
+      // Rank by TOTAL with tie-break:
+      // 1) TOTAL marks
+      // 2) (Math-1 + Math-2)
+      // 3) Physics
+      // 4) Biology
+      // 5) Chemistry
+      // 6) Lower roll number wins
+      const ranked = [...students].sort((a, b) => {
+        const A = buildTieVector(a);
+        const B = buildTieVector(b);
+
+        if (B.total     !== A.total)     return B.total     - A.total;
+        if (B.mathCombo !== A.mathCombo) return B.mathCombo - A.mathCombo;
+        if (B.physics   !== A.physics)   return B.physics   - A.physics;
+        if (B.biology   !== A.biology)   return B.biology   - A.biology;
+        if (B.chemistry !== A.chemistry) return B.chemistry - A.chemistry;
+
+        // final fallback: lower roll number gets better rank
+        return A.roll - B.roll;
       });
 
-      stu.totalMarks = totalMarks;
-      stu.__perSubjectTotals = perMap; // store for tie-break use
-    }
+      // Dense ranking over the sorted list
+      let last = null;
+      let rank = 1;
+      let lastRank = 1;
 
-    // Helper: derive tie-break vector for a student
-    function buildTieVector(stu) {
-      const map = stu.__perSubjectTotals || new Map();
-      const get = (aliases) => {
-        for (const name of aliases) {
-          const v = map.get(nkey(name));
-          if (typeof v === 'number' && !isNaN(v)) return v;
+      ranked.forEach((d, i) => {
+        if (d.totalMarks !== last) {
+          rank = i + 1;
+          last = d.totalMarks;
+          lastRank = rank;
         }
-        return -Infinity;
-      };
+        d.rank = lastRank;
+      });
 
-      // Maths 1 & 2 combined
-      const m1 = get(['math 1','math-1','maths 1','maths-1','mathematics 1','mathematics-1']);
-      const m2 = get(['math 2','math-2','maths 2','maths-2','mathematics 2','mathematics-2']);
-      const mathCombo = (Number.isFinite(m1) ? m1 : 0) + (Number.isFinite(m2) ? m2 : 0);
+      // Top 3 ranks (including ties)
+      const top3 = ranked.filter(s => s.rank <= 3);
+      if(top3.length===0){ alert("No students with ranks."); return; }
 
-      // Physics / Biology / Chemistry (support common variants)
-      const physics   = get(['physics','physical science','phy']);
-      const biology   = get(['biology','bio','life science']);
-      const chemistry = get(['chemistry','chem']);
+      const { PDFDocument } = PDFLib;
+      const pdf=await PDFDocument.create();
 
-      const rollNum = Number.isFinite(+stu.roll) ? +stu.roll : 999999;
-
-      return {
-        total: Number.isFinite(+stu.totalMarks) ? +stu.totalMarks : -Infinity,
-        mathCombo,
-        physics:   Number.isFinite(physics)   ? physics   : -Infinity,
-        biology:   Number.isFinite(biology)   ? biology   : -Infinity,
-        chemistry: Number.isFinite(chemistry) ? chemistry : -Infinity,
-        roll: rollNum
-      };
-    }
-
-    // Rank by TOTAL with tie-break:
-    // 1) TOTAL marks
-    // 2) (Math-1 + Math-2)
-    // 3) Physics
-    // 4) Biology
-    // 5) Chemistry
-    // 6) Lower roll number wins
-    const ranked = [...students].sort((a, b) => {
-      const A = buildTieVector(a);
-      const B = buildTieVector(b);
-
-      if (B.total     !== A.total)     return B.total     - A.total;
-      if (B.mathCombo !== A.mathCombo) return B.mathCombo - A.mathCombo;
-      if (B.physics   !== A.physics)   return B.physics   - A.physics;
-      if (B.biology   !== A.biology)   return B.biology   - A.biology;
-      if (B.chemistry !== A.chemistry) return B.chemistry - A.chemistry;
-
-      // final fallback: lower roll number gets better rank
-      return A.roll - B.roll;
-    });
-
-    // Dense ranking over the sorted list
-    let last = null;
-    let rank = 1;
-    let lastRank = 1;
-
-    ranked.forEach((d, i) => {
-      if (d.totalMarks !== last) {
-        rank = i + 1;
-        last = d.totalMarks;
-        lastRank = rank;
-      }
-      d.rank = lastRank;
-    });
-
-    // Top 3 ranks (including ties)
-    const top3 = ranked.filter(s => s.rank <= 3);
-    if(top3.length===0){ alert("No students with ranks."); return; }
-
-    const { PDFDocument } = PDFLib;
-    const pdf=await PDFDocument.create();
-
-    for (let i = 0; i < top3.length; i++) {
-    const stu = top3[i];
-       // 🔹 Progress update goes here
-     statusText.textContent = `Generating ${i+1} of ${top3.length}...`;
-await nextFrame();
+      for (let i = 0; i < top3.length; i++) {
+        const stu = top3[i];
+        // 🔹 Progress update
+        statusText.textContent = `Generating ${i+1} of ${top3.length}...`;
+        await nextFrame();
     
-      const url = await resolveStudentPhoto(stu);
-      const photoImg = await loadPhoto(url);
-      drawCertificate(stu, stu.rank, photoImg);
-      const dataUrl=canvas.toDataURL("image/jpeg",0.95);
-      const imgBytes=Uint8Array.from(atob(dataUrl.split(",")[1]),c=>c.charCodeAt(0));
-      const jpg=await pdf.embedJpg(imgBytes);
-      const page=pdf.addPage([842,595]);
-      const s=Math.min(842/jpg.width,595/jpg.height);
-      page.drawImage(jpg,{x:(842-jpg.width*s)/2,y:(595-jpg.height*s)/2,width:jpg.width*s,height:jpg.height*s});
+        const url = await resolveStudentPhoto(stu);
+        const photoImg = await loadPhoto(url);
+        drawCertificate(stu, stu.rank, photoImg);
+        const dataUrl=canvas.toDataURL("image/jpeg",0.95);
+        const imgBytes=Uint8Array.from(atob(dataUrl.split(",")[1]),c=>c.charCodeAt(0));
+        const jpg=await pdf.embedJpg(imgBytes);
+        const page=pdf.addPage([842,595]);
+        const s=Math.min(842/jpg.width,595/jpg.height);
+        page.drawImage(jpg,{x:(842-jpg.width*s)/2,y:(595-jpg.height*s)/2,width:jpg.width*s,height:jpg.height*s});
 
+        if (mode === "separate") {
+          statusText.textContent = "Saving certificate...";
+          await nextFrame();
+          const one = await PDFDocument.create();
+          const [p] = await one.copyPages(pdf, [pdf.getPageCount() - 1]);
+          one.addPage(p);
+          const bytes = await one.save();
+          const a = document.createElement("a");
+          a.href = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
+          a.download = `Certificate_${stu.name}_${className}_${sectionName}_${examName}.pdf`;
+          a.click();
+        }
+      }
+
+      if (mode === "one") {
+        statusText.textContent = "Generating all certificates...";
+        await nextFrame();
+        const bytes = await pdf.save();
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
+        a.download = `Certificates_${className}_${sectionName}_${examName}.pdf`;
+        a.click();
+
+        statusText.textContent = "Download complete!";
+        await sleep(1200);
+      }
+
+      // after the loop, if separate mode, show done message
       if (mode === "separate") {
-  statusText.textContent = "Saving certificate...";
-  await nextFrame();
-  const one = await PDFDocument.create();
-  const [p] = await one.copyPages(pdf, [pdf.getPageCount() - 1]);
-  one.addPage(p);
-  const bytes = await one.save();
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
-  a.download = `Certificate_${stu.name}_${className}_${sectionName}_${examName}.pdf`;
-  a.click();
-}
+        statusText.textContent = "All certificates saved!";
+        await sleep(1200);
+      }
+    } catch (err) {
+      console.error(err);
+      statusText.textContent = "Something went wrong. Please try again.";
+      await sleep(1200);
+    } finally {
+      statusEl.style.display = "none";
+      statusText.textContent = "Preparing download...";
     }
-     if (mode === "one") {
-  statusText.textContent = "Generating all certificates...";
-  await nextFrame();
-  const bytes = await pdf.save();
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
-  a.download = `Certificates_${className}_${sectionName}_${examName}.pdf`;
-  a.click();
+  } 
 
-  statusText.textContent = "Download complete!";
-  await sleep(1200); // small delay so the user sees it
-}
+  document.getElementById("certOnePdfBtn").onclick = () => generateCertificates("one");
+  document.getElementById("certSeparateBtn").onclick = () => generateCertificates("separate");
 
-// after the loop, if separate mode, show done message
-if (mode === "separate") {
-  statusText.textContent = "All certificates saved!";
-  await sleep(1200);
-}
-} catch (err) {
-  console.error(err);
-  statusText.textContent = "Something went wrong. Please try again.";
-  await sleep(1200);
-} finally {
-  statusEl.style.display = "none";
-  statusText.textContent = "Preparing download...";
-}
-} 
-
-document.getElementById("certOnePdfBtn").onclick = () => generateCertificates("one");
-document.getElementById("certSeparateBtn").onclick = () => generateCertificates("separate");
-
-// NEW: Back button → reopen the selector
-document.getElementById("certBackBtn").onclick = () => {
-  closePopup();
-  // reopen the selection popup (no prefill needed; works like a true “Back”)
-  openCertificateGenerator();
-};
+  // NEW: Back button → reopen the selector
+  document.getElementById("certBackBtn").onclick = () => {
+    closePopup();
+    // reopen the selection popup (no prefill needed; works like a true “Back”)
+    openCertificateGenerator();
+  };
 }
  // =========== ADD/EDIT STUDENT POPUP =========================
 function showAddStudentPopup() {
@@ -5904,6 +5995,7 @@ if (marksFileInput) {
 </script>
 </body>
 </html>
+
 
 
 
