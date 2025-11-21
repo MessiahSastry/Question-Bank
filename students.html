@@ -988,8 +988,7 @@ await nextFrame();
       .collection(classGroup).doc(examId).get();
     const exam = examDoc.exists ? examDoc.data() : { subjects: [] };
 
-    // Fetch marks
-          // Fetch marks (use same totalMarks as memos)
+       // Fetch marks – compute totalMarks like memos
     for (const stu of students) {
       const mDoc = await db.collection('years').doc(academicYear)
         .collection('classes').doc(classId)
@@ -999,35 +998,36 @@ await nextFrame();
 
       const marks = mDoc.exists ? mDoc.data() : {};
 
-      // totalMarks is what memos use for ranking
-      const tm = (marks.totalMarks ??
-                  marks.grandTotal ??
-                  marks.total ??
-                  0);
+      let totalMarks = 0;
+      (exam.subjects || []).forEach(s => {
+        if (!s || s.excludeFromTotal) return;
+        const v = Number(marks[s.name] || 0);
+        if (!Number.isFinite(v)) return;
+        totalMarks += v;
+      });
 
-      stu.totalMarks = Number(tm) || 0;
+      stu.totalMarks = totalMarks;
     }
 
-    // Rank
-       // Rank using memo logic (by totalMarks)
+
+       // Rank by totalMarks (same as memos, dense ranking)
     const ranked = [...students].sort((a, b) => (b.totalMarks || 0) - (a.totalMarks || 0));
 
-    let lastTotal = null;
+    let last = null;
     let rank = 1;
     let lastRank = 1;
 
     ranked.forEach((d, i) => {
-      if (d.totalMarks !== lastTotal) {
+      if (d.totalMarks !== last) {
         rank = i + 1;
-        lastTotal = d.totalMarks;
+        last = d.totalMarks;
         lastRank = rank;
       }
-      d.rank = lastRank;   // same as memo code
+      d.rank = lastRank;
     });
 
     // Top 3 ranks (including ties)
     const top3 = ranked.filter(s => s.rank <= 3);
-
     if(top3.length===0){ alert("No students with ranks."); return; }
 
     const { PDFDocument } = PDFLib;
@@ -5831,6 +5831,7 @@ if (marksFileInput) {
 </script>
 </body>
 </html>
+
 
 
 
