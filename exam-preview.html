@@ -839,26 +839,16 @@ function renderPrintPreview() {
     const imageHTML = q.image ? `<div class="question-img-block"><img class="question-img" src="${q.image}" alt="Question Image" /></div>` : '';
 
     // <-- 3. FINAL HTML (avoid double-formatting)
-    const finalQuestionHTML = (()=>{
-  let h = isAlreadyFormatted ? ensureOrAB(questionContentHTML) : questionContentHTML;
-  h = h.replace(/<\/p>/gi,'<br>').replace(/<p[^>]*>/gi,'').replace(/<br\s*\/?>/gi,'\n');
-  const m = h.match(/\(\s*A\s*\)\s*([\s\S]*?)\s*(?:\(\s*OR\s*\)\s*)?\(\s*B\s*\)\s*([\s\S]*)/i);
-  if (m) {
-    const a = m[1].trim(), b = m[2].trim();
-    let out = `<div class="pair-a"><span class="label">(A)</span><span class="txt">${a}</span></div>
-               <div class="pair-or">(OR)</div><div class="ab-gap"></div>
-               <div class="pair-b"><span class="label">(B)</span><span class="txt">${b}</span></div>`;
-    out = out.replace(/(<span class="txt">)([\s\S]*?)(<\/span>)/g,
-      (_, p1, mid, p3) => p1 + stripABPrefix(mid) + p3);
-    return out;
-  } else {
-    let out = forceOrAB(formatSubQuestions(h));
-    out = out.replace(/(<span class="txt">)([\s\S]*?)(<\/span>)/g,
-      (_, p1, mid, p3) => p1 + stripABPrefix(mid) + p3);
-    return out;
-  }
-})();
-
+       const finalQuestionHTML = (() => {
+      let h = questionContentHTML || '';
+      // Normalise basic block tags only; DO NOT touch (A)/(B)/(OR)
+      h = h
+        .replace(/<\/p>/gi, '<br>')
+        .replace(/<p[^>]*>/gi, '')
+        .replace(/<div[^>]*>/gi, '<br>')
+        .replace(/<\/div>/gi, '');
+      return h;
+    })();
     return `
       <div class="question-container">
         <div class="question-number">${currentQNum}.</div>
@@ -977,11 +967,15 @@ if (section.questions && section.questions.length > 0) {
     const imageHTML = q.image ? `<div class="question-img-block"><img class="question-img" src="${q.image}" alt="Question Image" /></div>` : '';
 
     // <-- 3. FINAL HTML (avoid double-formatting)
-    const finalQuestionHTML = (()=>{
-  let h = isAlreadyFormatted ? ensureOrAB(questionContentHTML) : questionContentHTML;
-  // let the formatter try first; DOM normalizers will still fix residual cases
-  return forceOrAB(formatSubQuestions(h));
-})();
+       const finalQuestionHTML = (() => {
+      let h = questionContentHTML || '';
+      h = h
+        .replace(/<\/p>/gi, '<br>')
+        .replace(/<p[^>]*>/gi, '')
+        .replace(/<div[^>]*>/gi, '<br>')
+        .replace(/<\/div>/gi, '');
+      return h;
+    })();
     // --- END ---
 
     return `
@@ -1003,216 +997,40 @@ if (section.questions && section.questions.length > 0) {
     }
   }
 
-  page.innerHTML += contentHTML;
+   page.innerHTML += contentHTML;
   page.innerHTML += `<div class="print-footer-spacer"></div>`;
   container.appendChild(page);
-setTimeout(()=>{ insertManualOrBoxes(page); },0);
 
+  // NOTE: Internal-choice A/B auto-splitting is disabled in preview for now.
+  // setTimeout(()=>{ insertManualOrBoxes(page); },0);
 
-// ---- IMMEDIATE (A)/(B) NORMALIZER (handles single-block + sibling cases) ----
-page.querySelectorAll('.question-text').forEach(qt => {
-  if (qt.querySelector('.pair-a') && qt.querySelector('.pair-b') && qt.querySelector('.pair-or')) return;
+  container.classList.add('mjx-process');
 
-  // 1) Single-block case: (A) ... [optional (OR)] ... (B) ... (works across <br>, <p>)
-  let html = (qt.innerHTML || '').trim()
-    .replace(/<\/p>/gi, '<br>')
-    .replace(/<p[^>]*>/gi, '')
-    .replace(/\r/g, '');
-
-  const m = html.match(/\(\s*A\s*\)\s*([\s\S]*?)\s*(?:\(\s*OR\s*\)\s*)?\(\s*B\s*\)\s*([\s\S]*?)$/i);
-  if (m) {
-    const a = stripABPrefix(m[1].trim());
-    const b = stripABPrefix(m[2].trim());
-    qt.innerHTML =
-      `<div class="pair-a"><span class="label">(A)</span><span class="txt">${a}</span></div>` +
-      `<div class="pair-or">(OR)</div><div class="ab-gap"></div>` +
-      `<div class="pair-b"><span class="label">(B)</span><span class="txt">${b}</span></div>`;
-    return;
-  }
-
-  // 2) Fallback: two consecutive sibling nodes "(A)" then "(B)"
-const blocks = [...qt.childNodes].filter(n =>
-  n.nodeType === 1 || (n.nodeType === 3 && n.textContent.trim())
-);
-for (let i = 0; i < blocks.length - 1; i++) {
-  const aEl = blocks[i], bEl = blocks[i + 1];
-  const aTxt = (aEl.textContent || '').trim();
-  const bTxt = (bEl.textContent || '').trim();
-  if (!/^\(\s*A\s*\)/i.test(aTxt) || !/^\(\s*B\s*\)/i.test(bTxt)) continue;
-
-  const aHTML = (aEl.innerHTML || aEl.textContent || '').replace(/^\s*\(\s*A\s*\)\s*/i, '').trim();
-  const bHTML = (bEl.innerHTML || bEl.textContent || '').replace(/^\s*\(\s*B\s*\)\s*/i, '').trim();
-
-  const wrap = document.createElement('div');
-  wrap.innerHTML =
-    `<div class="pair-a"><span class="label">(A)</span><span class="txt">${aHTML}</span></div>` +
-    `<div class="pair-or">(OR)</div><div class="ab-gap"></div>` +
-    `<div class="pair-b"><span class="label">(B)</span><span class="txt">${bHTML}</span></div>`;
-
-  qt.insertBefore(wrap.firstElementChild, aEl);
-  qt.insertBefore(wrap.children[1], aEl.nextSibling);
-  qt.insertBefore(wrap.children[2], aEl.nextSibling);
-  aEl.remove();
-  bEl.remove();
-  return; // ← was break; make it return so we don't run 2.5 for this case
-}
-
-// 2.5) NEW: (B) is in a following sibling of .question-text (e.g., .options-block)
-{
-  const sibs = [...qt.parentElement.children];
-  const idx  = sibs.indexOf(qt);
-  const bEl  = sibs.slice(idx + 1).find(el =>
-    el.tagName === 'DIV' && /^\s*(\(\s*B\s*\)|B[\)\.\:])\s*/i.test((el.textContent || '').trim())
-  );
-
-  if (/^\s*(\(\s*A\s*\)|A[\)\.\:])\s*/i.test((qt.textContent || '').trim()) && bEl) {
-    const strip = (h, re) => String(h).replace(re, '').trim();
-    const aHTML = strip(qt.innerHTML, /^\s*(\(\s*A\s*\)|A[\)\.\:])\s*/i);
-    const bHTML = strip(bEl.innerHTML, /^\s*(\(\s*B\s*\)|B[\)\.\:])\s*/i);
-
-    qt.innerHTML =
-      `<div class="pair-a"><span class="label">(A)</span><span class="txt">${aHTML}</span></div>` +
-      `<div class="pair-or">(OR)</div><div class="ab-gap"></div>` +
-      `<div class="pair-b"><span class="label">(B)</span><span class="txt">${bHTML}</span></div>`;
-
-    bEl.remove();
-    return;
-  }
-}
-});
-
-container.classList.add('mjx-process');
-
-  function doTypeset() {
-  // --- HARD normalizer: build pair markup even if author forgot OR or line-breaks ---
-  (function hardAB(root=document){
-    root.querySelectorAll('.question-body .question-text').forEach(qt=>{
-   
-     // Only skip if the OR input already exists
-if (qt.querySelector('.pair-a') && qt.querySelector('.pair-b') && qt.querySelector('.pair-or')) return;
-
-      const html = (qt.innerHTML || '').trim();
-
-      // Match (A) ... [optional (OR)] ... (B) ...  (works across tags/newlines)
-      const m = html.match(/\(\s*A\s*\)\s*([\s\S]*?)\s*(?:\(\s*OR\s*\)\s*)?\(\s*B\s*\)\s*([\s\S]*)/i);
-      if (m) {
-        const aHTML = m[1].trim();
-        const bHTML = m[2].trim();
-        qt.innerHTML =
-          `<div class="pair-a"><span class="label">(A)</span><span class="txt">${aHTML}</span></div>` +
-          `<div class="pair-or">(OR)</div><div class="ab-gap"></div>` +
-          `<div class="pair-b"><span class="label">(B)</span><span class="txt">${bHTML}</span></div>`;
-        return;
+   function doTypeset() {
+    // Build options HTML BEFORE MathJax
+    document.querySelectorAll('.options-block[data-options]').forEach(node => {
+      try {
+        const raw = node.getAttribute('data-options') || '[]';
+        const arr = JSON.parse(decodeURIComponent(raw));
+        if (Array.isArray(arr) && arr.length) {
+          node.innerHTML = renderOptionsLayout(arr);
+        }
+      } catch (e) {
+        console.error('options-block parse failed', e);
       }
     });
-  })();
 
-  // Normalize A / OR / B when they arrive as three sibling lines
-  (function normalizeInternalChoices(root = document) {
-  const A_RE = /^\s*(?:\(\s*A\s*\)|A[\)\.\:])\s*/i;
-  const B_RE = /^\s*(?:\(\s*B\s*\)|B[\)\.\:])\s*/i;
-  const OR_RE = /^\s*\(?\s*OR\s*\)?\s*$/i;
-
-  root.querySelectorAll('.question-body .question-text').forEach(qt => {
-    const elms = [...qt.children];
-    if (elms.length < 2) return;
-
-    // --- Case 1: two-sibling "(A)" then "(B)" (no explicit OR line) ---
-    for (let i = 0; i < elms.length - 1; i++) {
-      const a = elms[i], b = elms[i + 1];
-      const aT = (a.textContent || '').trim();
-      const bT = (b.textContent || '').trim();
-      if (A_RE.test(aT) && B_RE.test(bT)) {
-        const strip = (h, re) => String(h).replace(re, '').trim();
-        const html =
-          `<div class="pair-a"><span class="label">(A)</span><span class="txt">${strip(a.innerHTML, A_RE)}</span></div>
-           <div class="pair-or">(OR)</div><div class="ab-gap"></div>
-           <div class="pair-b"><span class="label">(B)</span><span class="txt">${strip(b.innerHTML, B_RE)}</span></div>`;
-        a.insertAdjacentHTML('beforebegin', html);
-        a.remove(); b.remove();
-        return; // done for this question
-      }
+    // Typeset MathJax (no extra A/B auto-formatting)
+    const target = document.getElementById('print-preview');
+    if (window.MathJax && typeof window.MathJax.typesetPromise === 'function' && target) {
+      return window.MathJax.typesetPromise([target])
+        .catch(err => console.error('MathJax typeset failed:', err))
+        .then(() => dedupePairText(document));
     }
 
-    // --- Case 2: three-sibling "(A)" "(OR)" "(B)" ---
-    if (elms.length < 3) return;
-    for (let i = 0; i < elms.length - 2; i++) {
-      const a = elms[i], o = elms[i + 1], b = elms[i + 2];
-      const aT = (a.textContent || '').trim();
-      const oT = (o.textContent || '').trim();
-      const bT = (b.textContent || '').trim();
-      if (A_RE.test(aT) && OR_RE.test(oT) && B_RE.test(bT)) {
-        const strip = (h, re) => String(h).replace(re, '').trim();
-        const html =
-          `<div class="pair-a"><span class="label">(A)</span><span class="txt">${strip(a.innerHTML, A_RE)}</span></div>
-           <div class="pair-or">(OR)</div><div class="ab-gap"></div>
-           <div class="pair-b"><span class="label">(B)</span><span class="txt">${strip(b.innerHTML, B_RE)}</span></div>`;
-        a.insertAdjacentHTML('beforebegin', html);
-        a.remove(); o.remove(); b.remove();
-        return; // done for this question
-      }
-    }
-  });
-})(document);
-
-  // Ensure (OR) exists between pair-a and pair-b if something built pairs without OR
-  (function ensureOrBetweenPairs(root=document){
-  root.querySelectorAll('.question-body .question-text').forEach(qt=>{
-    const a = qt.querySelector(':scope > .pair-a');
-    const b = qt.querySelector(':scope > .pair-b');
-    if (!(a && b)) return;
-
-    const mid = a.nextElementSibling;
-
-    // If nothing (or wrong thing) between A and B → insert gaps + INPUT box
-    if (!mid || !mid.classList || (!mid.classList.contains('pair-or'))) {
-     const g1 = document.createElement('div'); g1.className = 'ab-gap';
-      const or = document.createElement('div');
-      or.className = 'pair-or';
-      or.textContent = '(OR)';
-      const g2 = document.createElement('div'); g2.className = 'ab-gap';
-      a.insertAdjacentElement('afterend', g1);
-      g1.insertAdjacentElement('afterend', or);
-      or.insertAdjacentElement('afterend', g2);
-      return;
-    }
-  });
-})(document);
-/* --- UPGRADE ANY LEGACY .pair-or INTO THE EDITABLE INPUT (safety net) --- */
-(function upgradeHiddenPairOr(root=document){
-  root.querySelectorAll('.question-text .pair-or').forEach(mid=>{
-    const a = mid.previousElementSibling;
-    const b = mid.nextElementSibling;
-    // Only when structure is .pair-a [pair-or] .pair-b
-    if (a?.classList?.contains('pair-a') && b?.classList?.contains('pair-b')) {
-      const g1 = document.createElement('div'); g1.className = 'ab-gap';
-      or.className = 'pair-or';
-      or.textContent = '(OR)';
-      const g2 = document.createElement('div'); g2.className = 'ab-gap';
-      mid.replaceWith(g1);
-      g1.after(or);
-      or.after(g2);
-    }
-  });
-})(document);
-  // Build options HTML BEFORE MathJax
-  document.querySelectorAll('.options-block[data-options]').forEach(node => {
-    try {
-      const raw = node.getAttribute('data-options') || '[]';
-      const arr = JSON.parse(decodeURIComponent(raw));
-      if (Array.isArray(arr) && arr.length) node.innerHTML = renderOptionsLayout(arr);
-    } catch (e) {}
-  });
-
- // Typeset MathJax
-if (window.MathJax && typeof window.MathJax.typesetPromise === 'function') {
-  return window.MathJax.typesetPromise([document.getElementById('print-preview')])
-    .catch(err => console.error('MathJax typeset failed:', err))
-    .then(() => dedupePairText(document));
-}
-// no-MathJax fallback:
-return Promise.resolve().then(() => dedupePairText(document));
-}
+    // No-MathJax fallback
+    return Promise.resolve().then(() => dedupePairText(document));
+  }
   if (window.MathJax?.startup?.promise) {
     window.MathJax.startup.promise.then(doTypeset);
   } else if (window.MathJax?.typesetPromise) {
@@ -1416,43 +1234,10 @@ window.addEventListener('DOMContentLoaded', () => {
 </style>
 <script>
 (function () {
-  function pairInternalChoices(root){
-    const texts=[...((root||document).querySelectorAll('#print-preview .question-text'))];
-    let count=0;
-    for(let i=0;i<texts.length-1;i++){
-      const A=texts[i], B=texts[i+1];
-      if(!A||!B) continue;
-      if(A.closest('.ab-pair')||B.closest('.ab-pair')) continue;
-      const sameParent=A.parentElement===B.parentElement;
-      const aTxt=(A.textContent||'').trim();
-      const bTxt=(B.textContent||'').trim();
-      if(!sameParent||!/^\(A\)/i.test(aTxt)||!/^\(B\)/i.test(bTxt)) continue;
-
-      const wrap=document.createElement('div');
-      wrap.className='ab-pair';
-
-      const aHTML=A.innerHTML.replace(/^\(A\)\s*/i,'');
-      const bHTML=B.innerHTML.replace(/^\(B\)\s*/i,'');
-      wrap.innerHTML=
-        '<div class="pair-a"><span class="label">(A)</span><span class="txt">'+aHTML+'</span></div>'+
-        '<div class="pair-or">(OR)</div><div class="ab-gap"></div>'+
-        '<div class="pair-b"><span class="label">(B)</span><span class="txt">'+bHTML+'</span></div>';
-
-      const p=A.parentElement;
-      p.insertBefore(wrap,A);
-      p.removeChild(A);
-      p.removeChild(B);
-      count++;
-    }
-    return count;
-  }
-
-  function run(){ try{ pairInternalChoices(document); }catch(e){} }
-  if(document.readyState==='loading'){ document.addEventListener('DOMContentLoaded',run); } else { run(); }
-  // run again shortly (after MathJax/typeset or late DOM work)
-  setTimeout(run, 400);
+  // Internal-choice (A/B) auto-pairing is temporarily disabled in preview.
 })();
 </script>
 </body>
 </html>
+
 
