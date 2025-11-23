@@ -1121,7 +1121,7 @@ async function generateCertificatesForExam(classId, className, sectionId, sectio
         stu.__perSubjectTotals = perMap; // store for tie-break use
       }
 
-      // Helper: derive tie-break vector for a student
+           // Helper: derive tie-break vector for a student
       function buildTieVector(stu) {
         const map = stu.__perSubjectTotals || new Map();
         const get = (aliases) => {
@@ -1129,13 +1129,20 @@ async function generateCertificatesForExam(classId, className, sectionId, sectio
             const v = map.get(nkey(name));
             if (typeof v === 'number' && !isNaN(v)) return v;
           }
-          return -Infinity;
+          // Treat missing / AB as 0, same as memo logic
+          return 0;
         };
+
+        // Single-paper Math (if present)
+        const mathSingle = get(['math','maths','mathematics']);
 
         // Maths 1 & 2 combined
         const m1 = get(['math 1','math-1','maths 1','maths-1','mathematics 1','mathematics-1']);
         const m2 = get(['math 2','math-2','maths 2','maths-2','mathematics 2','mathematics-2']);
-        const mathCombo = (Number.isFinite(m1) ? m1 : 0) + (Number.isFinite(m2) ? m2 : 0);
+        const mathFromPapers = m1 + m2;
+
+        // Prefer single "Math" if present (>0), else use Math1 + Math2
+        const mathTotal = (mathSingle > 0 ? mathSingle : mathFromPapers);
 
         // Physics / Biology / Chemistry (support common variants)
         const physics   = get(['physics','physical science','phy']);
@@ -1145,18 +1152,18 @@ async function generateCertificatesForExam(classId, className, sectionId, sectio
         const rollNum = Number.isFinite(+stu.roll) ? +stu.roll : 999999;
 
         return {
-          total: Number.isFinite(+stu.totalMarks) ? +stu.totalMarks : -Infinity,
-          mathCombo,
-          physics:   Number.isFinite(physics)   ? physics   : -Infinity,
-          biology:   Number.isFinite(biology)   ? biology   : -Infinity,
-          chemistry: Number.isFinite(chemistry) ? chemistry : -Infinity,
+          total: Number.isFinite(+stu.totalMarks) ? +stu.totalMarks : 0,
+          mathTotal,
+          physics,
+          biology,
+          chemistry,
           roll: rollNum
         };
       }
 
-      // Rank by TOTAL with tie-break:
+           // Rank by TOTAL with tie-break:
       // 1) TOTAL marks
-      // 2) (Math-1 + Math-2)
+      // 2) Math total (single "Math" OR "Math 1 + Math 2")
       // 3) Physics
       // 4) Biology
       // 5) Chemistry
@@ -1166,7 +1173,7 @@ async function generateCertificatesForExam(classId, className, sectionId, sectio
         const B = buildTieVector(b);
 
         if (B.total     !== A.total)     return B.total     - A.total;
-        if (B.mathCombo !== A.mathCombo) return B.mathCombo - A.mathCombo;
+        if (B.mathTotal !== A.mathTotal) return B.mathTotal - A.mathTotal;
         if (B.physics   !== A.physics)   return B.physics   - A.physics;
         if (B.biology   !== A.biology)   return B.biology   - A.biology;
         if (B.chemistry !== A.chemistry) return B.chemistry - A.chemistry;
@@ -1175,24 +1182,30 @@ async function generateCertificatesForExam(classId, className, sectionId, sectio
         return A.roll - B.roll;
       });
 
-          // Ranking logic SAME as memos:
-    // use the FULL tie-break vector so that
-    // Total + Math combo + Phy + Bio + Chem + Roll
-    // all decide whether a new rank is given.
-    let lastKey = null;
+                  // Ranking logic SAME as memos:
+    // Only marks (Total + Math total + Phy + Bio + Chem) decide ties.
+    // If all these are equal, students share the same rank.
+    let lastVec = null;
     let rank = 1;
 
     ranked.forEach((d, i) => {
-      const v = buildTieVector(d);         // { total, mathCombo, physics, biology, chemistry, roll }
-      const key = JSON.stringify(v);       // stable key for comparison
+      const v = buildTieVector(d);  // { total, mathTotal, physics, biology, chemistry, roll }
 
-      if (key !== lastKey) {
-        rank = i + 1;                      // new rank whenever tie-vector changes
-        lastKey = key;
+      if (
+        !lastVec ||
+        v.total     !== lastVec.total ||
+        v.mathTotal !== lastVec.mathTotal ||
+        v.physics   !== lastVec.physics ||
+        v.biology   !== lastVec.biology ||
+        v.chemistry !== lastVec.chemistry
+      ) {
+        rank = i + 1;      // new rank whenever any mark differs
+        lastVec = v;
       }
 
       d.rank = rank;
     });
+
 
       // Top 3 ranks (including ties)
       const top3 = ranked.filter(s => s.rank <= 3);
@@ -6000,6 +6013,7 @@ if (marksFileInput) {
 </script>
 </body>
 </html>
+
 
 
 
