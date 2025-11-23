@@ -702,7 +702,7 @@ sectionSel.addEventListener('change', async () => {
     SUBJECTS = exam ? (exam.subjects || []) : [];
   }
 
-    function computeRanks() {
+     function computeRanks() {
     if (!ROWS || !ROWS.length) return;
 
     // small normalizer (same idea as other modules)
@@ -727,7 +727,7 @@ sectionSel.addEventListener('change', async () => {
         per.set(key, val);
       });
 
-      const get = (aliases) => {
+      const getAny = (aliases) => {
         for (const name of aliases) {
           const v = per.get(nkey(name));
           if (typeof v === 'number' && !isNaN(v)) return v;
@@ -737,22 +737,24 @@ sectionSel.addEventListener('change', async () => {
 
       const total = Number.isFinite(+row.obtained) ? +row.obtained : 0;
 
-      // Maths 1 + Maths 2 combined
-      const m1 = get(['math 1','math-1','maths 1','maths-1','mathematics 1','mathematics-1']);
-      const m2 = get(['math 2','math-2','maths 2','maths-2','mathematics 2','mathematics-2']);
-      const mathCombo = m1 + m2;
+      // Math total: single-paper "Math" OR (Math1 + Math2) like memos/certificates
+      const mathSingle     = getAny(['math','maths','mathematics']);
+      const m1             = getAny(['math 1','math-1','maths 1','maths-1','mathematics 1','mathematics-1']);
+      const m2             = getAny(['math 2','math-2','maths 2','maths-2','mathematics 2','mathematics-2']);
+      const mathFromPapers = m1 + m2;
+      const mathTotal      = (mathSingle > 0 ? mathSingle : mathFromPapers);
 
       // Physics / Biology / Chemistry (common labels)
-      const physics   = get(['physics','physical science','phy']);
-      const biology   = get(['biology','bio','life science']);
-      const chemistry = get(['chemistry','chem']);
+      const physics   = getAny(['physics','physical science','phy']);
+      const biology   = getAny(['biology','bio','life science']);
+      const chemistry = getAny(['chemistry','chem']);
 
       const rollNum = Number.isFinite(+row.roll) ? +row.roll : 999999;
 
       return {
         row,
         total,
-        mathCombo,
+        mathTotal,
         physics,
         biology,
         chemistry,
@@ -760,35 +762,43 @@ sectionSel.addEventListener('change', async () => {
       };
     });
 
-    // Sort with tie-break:
-    // 1) Total
-    // 2) Math1+Math2
+    // Sort with tie-break IDENTICAL style to certificates:
+    // 1) TOTAL
+    // 2) Math total (Math OR Math1+Math2)
     // 3) Physics
     // 4) Biology
     // 5) Chemistry
     // 6) Lower roll number
     enriched.sort((A, B) => {
       if (B.total     !== A.total)     return B.total     - A.total;
-      if (B.mathCombo !== A.mathCombo) return B.mathCombo - A.mathCombo;
+      if (B.mathTotal !== A.mathTotal) return B.mathTotal - A.mathTotal;
       if (B.physics   !== A.physics)   return B.physics   - A.physics;
       if (B.biology   !== A.biology)   return B.biology   - A.biology;
       if (B.chemistry !== A.chemistry) return B.chemistry - A.chemistry;
       return A.roll - B.roll;
     });
 
-    // Dense ranking based on TOTAL marks (same style as memos/certificates)
-    let lastScore = null;
-    let lastRank  = 0;
-    let i = 0;
+    // Dense ranking based on the FULL tie vector:
+    // Total + Math + Physics + Biology + Chemistry
+    let lastKey = null;
+    let lastRank = 0;
 
-    for (const e of enriched) {
-      i++;
-      if (e.total !== lastScore) {
-        lastRank  = i;
-        lastScore = e.total;
+    enriched.forEach((e, idx) => {
+      const key = JSON.stringify({
+        total:     e.total,
+        mathTotal: e.mathTotal,
+        physics:   e.physics,
+        biology:   e.biology,
+        chemistry: e.chemistry
+      });
+
+      if (key !== lastKey) {
+        lastRank = idx + 1;   // new rank when any of the marks differ
+        lastKey  = key;
       }
+
       e.row.rank = lastRank;
-    }
+    });
     // ranks are now on the same ROW objects
   }
   function renderTable() {
@@ -1019,6 +1029,7 @@ document.addEventListener('DOMContentLoaded', wireBulkOverlay);
 </script>
  </body>
 </html>
+
 
 
 
