@@ -3300,8 +3300,8 @@ async function getAllStudentFullData(){
     (students || []).map(stu => limit(() => fetchStudentData(stu)))
   );
 
-   // rank by totalMarks with tie-break:
-  // 1) (Math 1 + Math 2) total
+     // rank by totalMarks with tie-break:
+  // 1) Math total (single "Math" OR "Math 1" + "Math 2")
   // 2) Physics marks
   // 3) Biology marks
   // 4) Chemistry marks
@@ -3314,16 +3314,23 @@ async function getAllStudentFullData(){
     return 0; // treat AB / blank / non-numeric as 0 for tie-break
   }
 
-  function buildRankKey(d) {
-    const tot  = (typeof d.totalMarks === 'number' && !isNaN(d.totalMarks)) ? d.totalMarks : 0;
-    const m1   = getSubMark(d, 'math1');
-    const m2   = getSubMark(d, 'math2');
+   function buildRankKey(d) {
+    const tot        = (typeof d.totalMarks === 'number' && !isNaN(d.totalMarks)) ? d.totalMarks : 0;
+
+    // Math can be single-paper ("Math") OR two papers ("Math 1" and "Math 2").
+    const mathSingle = getSubMark(d, 'math');
+    const m1         = getSubMark(d, 'math1');
+    const m2         = getSubMark(d, 'math2');
+
+    // Prefer single "Math" if present and > 0, otherwise use Math1 + Math2.
+    const mathTotal  = (mathSingle && mathSingle > 0) ? mathSingle : (m1 + m2);
+
     const phy  = getSubMark(d, 'physics');
     const bio  = getSubMark(d, 'biology');
     const chem = getSubMark(d, 'chemistry');
     return {
       tot,
-      mSum: m1 + m2,
+      mathTotal,
       phy,
       bio,
       chem
@@ -3334,9 +3341,10 @@ async function getAllStudentFullData(){
     const ka = buildRankKey(a);
     const kb = buildRankKey(b);
 
-    if (kb.tot  !== ka.tot)  return kb.tot  - ka.tot;   // total marks
-    if (kb.mSum !== ka.mSum) return kb.mSum - ka.mSum;  // Math1+Math2
-    if (kb.phy  !== ka.phy)  return kb.phy  - ka.phy;   // Physics
+       if (kb.tot       !== ka.tot)       return kb.tot       - ka.tot;      // total marks
+    if (kb.mathTotal !== ka.mathTotal) return kb.mathTotal - ka.mathTotal; // Math (single) OR Math1+Math2
+    if (kb.phy       !== ka.phy)       return kb.phy       - ka.phy;      // Physics
+
     if (kb.bio  !== ka.bio)  return kb.bio  - ka.bio;   // Biology
     if (kb.chem !== ka.chem) return kb.chem - ka.chem;  // Chemistry
     return 0;
@@ -3346,12 +3354,12 @@ async function getAllStudentFullData(){
   ranked.forEach((d, i) => {
     const k = buildRankKey(d);
     if (
-      !lastKey ||
-      k.tot  !== lastKey.tot ||
-      k.mSum !== lastKey.mSum ||
-      k.phy  !== lastKey.phy ||
-      k.bio  !== lastKey.bio ||
-      k.chem !== lastKey.chem
+          !lastKey ||
+      k.tot       !== lastKey.tot ||
+      k.mathTotal !== lastKey.mathTotal ||
+      k.phy       !== lastKey.phy ||
+      k.bio       !== lastKey.bio ||
+      k.chem      !== lastKey.chem
     ) {
       rank = i + 1;
       lastKey = k;
@@ -4363,6 +4371,7 @@ dd.style.position = 'relative';
 </script>
 </body>
 </html>
+
 
 
 
