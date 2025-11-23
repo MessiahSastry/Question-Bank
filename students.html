@@ -1121,38 +1121,41 @@ async function generateCertificatesForExam(classId, className, sectionId, sectio
         stu.__perSubjectTotals = perMap; // store for tie-break use
       }
 
-           // Helper: derive tie-break vector for a student
+                     // Helper: derive tie-break vector for a student
+      // Uses the SAME normalized keys idea as memo ranking:
+      // "math" OR ("math1" + "math2"), then physics, biology, chemistry.
       function buildTieVector(stu) {
         const map = stu.__perSubjectTotals || new Map();
-        const get = (aliases) => {
-          for (const name of aliases) {
-            const v = map.get(nkey(name));
-            if (typeof v === 'number' && !isNaN(v)) return v;
-          }
-          // Treat missing / AB as 0, same as memo logic
-          return 0;
+
+        // map already uses nkey(name) as key; here we pass the keyNorm directly
+        const get = (keyNorm) => {
+          const v = map.get(keyNorm);
+          return (typeof v === 'number' && !isNaN(v)) ? v : 0; // treat missing / AB as 0
         };
 
-        // Single-paper Math (if present)
-        const mathSingle = get(['math','maths','mathematics']);
+        const total = (typeof stu.totalMarks === 'number' && !isNaN(stu.totalMarks))
+          ? stu.totalMarks
+          : 0;
 
-        // Maths 1 & 2 combined
-        const m1 = get(['math 1','math-1','maths 1','maths-1','mathematics 1','mathematics-1']);
-        const m2 = get(['math 2','math-2','maths 2','maths-2','mathematics 2','mathematics-2']);
+        // Single-paper Math (if present)
+        const mathSingle = get('math');
+
+        // Two-paper Math (Math1 + Math2)
+        const m1 = get('math1');
+        const m2 = get('math2');
         const mathFromPapers = m1 + m2;
 
         // Prefer single "Math" if present (>0), else use Math1 + Math2
         const mathTotal = (mathSingle > 0 ? mathSingle : mathFromPapers);
 
-        // Physics / Biology / Chemistry (support common variants)
-        const physics   = get(['physics','physical science','phy']);
-        const biology   = get(['biology','bio','life science']);
-        const chemistry = get(['chemistry','chem']);
+        const physics   = get('physics');
+        const biology   = get('biology');
+        const chemistry = get('chemistry');
 
         const rollNum = Number.isFinite(+stu.roll) ? +stu.roll : 999999;
 
         return {
-          total: Number.isFinite(+stu.totalMarks) ? +stu.totalMarks : 0,
+          total,
           mathTotal,
           physics,
           biology,
@@ -1161,9 +1164,9 @@ async function generateCertificatesForExam(classId, className, sectionId, sectio
         };
       }
 
-           // Rank by TOTAL with tie-break:
+                 // Rank by TOTAL with tie-break:
       // 1) TOTAL marks
-      // 2) Math total (single "Math" OR "Math 1 + Math 2")
+      // 2) Math total (single "Math" OR "Math1 + Math2")
       // 3) Physics
       // 4) Biology
       // 5) Chemistry
@@ -1182,9 +1185,10 @@ async function generateCertificatesForExam(classId, className, sectionId, sectio
         return A.roll - B.roll;
       });
 
-                  // Ranking logic SAME as memos:
+          // Ranking logic SAME as memos:
     // Only marks (Total + Math total + Phy + Bio + Chem) decide ties.
-    // If all these are equal, students share the same rank.
+    // If all these are equal, students share the same rank,
+    // even if their roll numbers differ.
     let lastVec = null;
     let rank = 1;
 
@@ -1205,7 +1209,6 @@ async function generateCertificatesForExam(classId, className, sectionId, sectio
 
       d.rank = rank;
     });
-
 
       // Top 3 ranks (including ties)
       const top3 = ranked.filter(s => s.rank <= 3);
@@ -6013,6 +6016,7 @@ if (marksFileInput) {
 </script>
 </body>
 </html>
+
 
 
 
