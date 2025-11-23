@@ -784,62 +784,83 @@ async function getExamStructureForExamId(examId, classId, className) {
 }
 
 // helper: compute per-subject totals from marks + struct (same idea as memos/back page)
-function _extractSubjectTotalsFromMarks(marks, struct) {
-  const result = [];
-  const subs = (struct && Array.isArray(struct.subjects)) ? struct.subjects : [];
+// RULE: if no numeric entries at all → total === 'AB'.
+//       If a number exists (including 0) → sum the numbers.
+function _extractSubjectTotalsFromMarks(marksObj, structure) {
+  const subjects = [];
+  const subsRoot = (marksObj && typeof marksObj.__subs === 'object') ? marksObj.__subs : {};
 
-  subs.forEach(sub => {
-    if (!sub || !sub.name) return;
+  const baseSubjects = (structure?.subjects?.length
+    ? structure.subjects.map(s => s.name)
+    : Object.keys(marksObj).filter(k =>
+        !/^__subs(\b|[.\[])/i.test(k) && !/^__/.test(k)
+      )
+  );
+
+  for (const subjName of baseSubjects) {
+    // locate values for this subject
+    const keyRoot = Object.keys(marksObj).find(k => nkey(k) === nkey(subjName));
+    const subjVal = keyRoot ? marksObj[keyRoot] : marksObj[subjName];
+
+    const keySubs = Object.keys(subsRoot || {}).find(k => nkey(k) === nkey(subjName));
+    const subsObj = keySubs ? subsRoot[keySubs] : null;
 
     let total = 0;
-    let max = 0;
+    let max   = 0;
+    let sawNumeric = false; // ← decisive flag
 
-    const subtopics = Array.isArray(sub.subtopics) ? sub.subtopics : [];
-
-    if (subtopics.length) {
-      // subject with subtopics
-      subtopics.forEach(st => {
-        if (!st) return;
-        const key =
-          st.markKey ||
-          st.key ||
-          `${sub.name}__${st.name || ''}`;
-        const raw = marks[key];
-
-        if (raw === 'AB') {
-          // absent → treat as 0 for totals
-        } else {
-          const v = Number(raw);
-          if (Number.isFinite(v)) total += v;
+    // Prefer __subs breakdown
+    if (subsObj && typeof subsObj === 'object') {
+      for (const [k, v] of Object.entries(subsObj)) {
+        if (typeof v === 'number' && !isNaN(v)) {      // includes 0
+          total += +v;
+          sawNumeric = true;
         }
-
-        const mx = Number(st.maxMarks || st.max || 0);
-        if (Number.isFinite(mx)) max += mx;
-      });
-    } else {
-      // plain subject without subtopics
-      const key = sub.markKey || sub.name;
-      const raw = marks[key];
-
-      if (raw === 'AB') {
-        // absent
-      } else {
-        const v = Number(raw);
-        if (Number.isFinite(v)) total += v;
+        // infer max from exam structure if known
+        const subjDef = structure?.subjects?.find(s => nkey(s.name) === nkey(subjName));
+        const stDef   = subjDef?.subtopics?.find(t => nkey(t.name) === nkey(k));
+        if (typeof stDef?.max === 'number') max += stDef.max;
       }
-
-      const mx = Number(sub.maxMarks || sub.max || 0);
-      if (Number.isFinite(mx)) max += mx;
+      // fallback subjectMax when we couldn't sum subtopic maxes
+      if (max === 0) {
+        const subjDef = structure?.subjects?.find(s => nkey(s.name) === nkey(subjName));
+        if (typeof subjDef?.subjectMax === 'number') max = subjDef.subjectMax;
+      }
+    }
+    // Or: object stored directly at the subject key
+    else if (subjVal && typeof subjVal === 'object' && !Array.isArray(subjVal)) {
+      for (const [, v] of Object.entries(subjVal)) {
+        if (typeof v === 'number' && !isNaN(v)) {
+          total += +v;
+          sawNumeric = true;
+        }
+      }
+      // no reliable max here
+    }
+    // Or: a scalar at the subject key
+    else if (subjVal !== undefined) {
+      if (typeof subjVal === 'number' && !isNaN(subjVal)) {
+        total = +subjVal;      // 0 is valid
+        sawNumeric = true;
+      } else {
+        // explicit AB / blank → no numbers seen
+        sawNumeric = false;
+      }
+      // try structure max
+      const subjDef = structure?.subjects?.find(s => nkey(s.name) === nkey(subjName));
+      if (typeof subjDef?.subjectMax === 'number') max = subjDef.subjectMax;
     }
 
-    result.push({
-      name: sub.name,
-      total,
-      max
-    });
-  });
+    // Finalize per our rule
+    const finalTotal = sawNumeric ? total : 'AB';
 
-  return result;
+    // only include subjects that either have a number or are AB (skip truly missing subjects)
+    if (sawNumeric || finalTotal === 'AB') {
+      subjects.push({ name: subjName, total: finalTotal, max });
+    }
+  }
+
+  return subjects;
 }
 
 async function generateCertificatesForExam(classId, className, sectionId, sectionName, examId, examName) {
@@ -6016,6 +6037,7 @@ if (marksFileInput) {
 </script>
 </body>
 </html>
+
 
 
 
