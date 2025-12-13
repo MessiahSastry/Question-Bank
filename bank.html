@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!DOCTYPE html> 
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
@@ -369,21 +369,8 @@ const qtypeHeaderLine = __chosenTypes.join(', ');
 // inject minimal CSS so headings stick with first question and blocks don't split
 const avoidCSS = document.createElement('style');
 avoidCSS.textContent = `
-  .keep-with-next { page-break-after: avoid; break-after: avoid; page-break-inside: avoid; break-inside: avoid; }
-  .no-split { page-break-inside: avoid; break-inside: avoid; }
-  .no-split * { page-break-inside: avoid; break-inside: avoid; }
-
-  /* REAL PAGE WRAPPER (prevents html2canvas slice cutting) */
-  .pdf-page{
-    width: 21cm;
-    min-height: 29.7cm;
-    box-sizing: border-box;
-    padding: 1.5cm 1.5cm 2.6cm 1.5cm; /* top/right/bottom/left safe area */
-    page-break-after: always;
-    break-after: page;
-    background:#fff;
-  }
-  .pdf-page:last-child{ page-break-after:auto; break-after:auto; }
+  .keep-with-next { page-break-inside: avoid; break-inside: avoid; page-break-after: avoid; break-after: avoid; }
+  .no-split, .no-split * img { page-break-inside: avoid; break-inside: avoid; }
 `;
 printable.prepend(avoidCSS);
       printable.id = 'printable-export';
@@ -393,7 +380,7 @@ printable.prepend(avoidCSS);
       printable.style.fontSize = "11pt";
       printable.style.maxWidth = "820px";
       printable.style.margin = "0 auto";
-      printable.style.padding = "0 0 2.4cm 0"; // safe footer space to prevent bottom-line clipping
+      printable.style.padding = "0";
       printable.style.lineHeight = "1.6";
 
       // Header
@@ -425,9 +412,8 @@ printable.prepend(avoidCSS);
         <div style="font-size:1.15em;font-weight:800;letter-spacing:0.02em;text-align:center;margin:16px 0 8px 0;">
           ${singleChapter.toUpperCase()}
         </div>` : ``}
-           `;
-      // IMPORTANT: printable.innerHTML overwrites children, so re-add the pagination CSS now
-      printable.prepend(avoidCSS);
+      `;
+
       const displayArea = document.getElementById('questions-display-area');
       const nodes = displayArea.querySelectorAll('.question-item');
       if (!nodes.length) {
@@ -654,19 +640,18 @@ if (selChaptersForHeader.length >= 2) {
 // helpers
 function renderCenteredChapterTitle(text) {
   const t = document.createElement('div');
-  t.className = 'keep-with-next';
-  t.style.cssText = 'font-size:1.15em;font-weight:800;letter-spacing:0.02em;text-align:center;margin:16px 0 8px 0;';
+  t.style.cssText = 'font-size:1.15em;font-weight:800;letter-spacing:0.02em;text-align:center;margin:16px 0 8px 0;page-break-inside:avoid;break-inside:avoid;';
   t.textContent = String(text || 'Unspecified').toUpperCase();
   printable.appendChild(t);
 }
 
 function renderLeftHeading(text) {
   const h = document.createElement('div');
-  h.className = 'keep-with-next';
   h.style.cssText = 'font-size:1.05em;font-weight:800;letter-spacing:0.01em;text-align:left;margin:8px 0 6px 0;';
   h.textContent = text;
   printable.appendChild(h);
 }
+
 // Decide layout mode
 const includesDescriptive = (selectedQtypes.length === 0) || selectedQtypes.includes('Descriptive');
 const includesAnyMCQ = (selectedQtypes.length === 0) || selectedQtypes.includes('MCQ (Single)') || selectedQtypes.includes('MCQ (Multiple)');
@@ -815,116 +800,12 @@ async function __waitForImages(root){
 }
 await __waitForImages(printable);
 
-/* ===== MANUAL PAGINATION (FIXED): build exact A4 pages (NO CUTTING) ===== */
-function __pxPerCm(){
-  const d = document.createElement('div');
-  d.style.cssText = 'position:absolute;left:-1000px;top:-1000px;width:1cm;height:1cm;';
-  document.body.appendChild(d);
-  const px = d.getBoundingClientRect().width || 37.795;
-  document.body.removeChild(d);
-  return px;
-}
-
-function __paginatePrintable(root){
-  const pxcm = __pxPerCm();
-
-  const pageH = 29.7 * pxcm;
-  const padTop = 1.5 * pxcm;
-  const padBot = 2.6 * pxcm;
-  const padLR  = 1.5 * pxcm;
-  const avail = pageH - padTop - padBot;
-
-  // keep style tags
-  const styles = Array.from(root.querySelectorAll('style'));
-
-  // take all content nodes except styles + pure whitespace text nodes
-  const items = Array.from(root.childNodes).filter(n => {
-    if (n.nodeType === 1 && n.tagName === 'STYLE') return false;
-    if (n.nodeType === 3 && !String(n.textContent || '').trim()) return false;
-    return true;
-  });
-
-  // rebuild root
-  root.innerHTML = '';
-  styles.forEach(s => root.appendChild(s));
-
-  const makePage = () => {
-    const p = document.createElement('div');
-    p.className = 'pdf-page';
-    return p;
-  };
-
-  // measurer WITHOUT min-height (this was the bug)
-  const meas = document.createElement('div');
-  meas.style.cssText = `
-    position:absolute;left:-200vw;top:0;visibility:hidden;
-    width:21cm; box-sizing:border-box;
-    padding:${padTop}px ${padLR}px ${padBot}px ${padLR}px;
-    background:#fff; color:#000;
-    font-family:'Times New Roman', Times, serif;
-    font-size:11pt; line-height:1.6;
-  `;
-  document.body.appendChild(meas);
-
-  function fits(pageEl, addNode){
-    meas.innerHTML = '';
-    // clone current page children
-    Array.from(pageEl.childNodes).forEach(n => meas.appendChild(n.cloneNode(true)));
-    // clone candidate node
-    if (addNode) meas.appendChild(addNode.cloneNode(true));
-    return meas.scrollHeight <= (avail + 2); // small tolerance
-  }
-
-  let page = makePage();
-  root.appendChild(page);
-
-  for (let i = 0; i < items.length; i++){
-    const node = items[i];
-
-    const isKeep = (node.nodeType === 1 && node.classList && node.classList.contains('keep-with-next'));
-    const nextNode = items[i + 1];
-
-    // If it fits on current page, just add
-    if (fits(page, node)) {
-      page.appendChild(node);
-      continue;
-    }
-
-    // Start new page
-    page = makePage();
-    root.appendChild(page);
-
-    // keep-with-next: place heading + next together if possible
-    if (isKeep && nextNode) {
-      page.appendChild(node);
-
-      // try to keep next on same page, else push next to next page
-      if (fits(page, nextNode)) {
-        page.appendChild(nextNode);
-      } else {
-        page = makePage();
-        root.appendChild(page);
-        page.appendChild(nextNode);
-      }
-      i++; // consumed nextNode
-      continue;
-    }
-
-    // normal: add to fresh page
-    page.appendChild(node);
-  }
-
-  document.body.removeChild(meas);
-}
-
-__paginatePrintable(printable);
-
       html2pdf().set({
-        margin: [0, 0, 0, 0], // margins handled by .pdf-page padding (prevents cutting)
+        margin: [1.5, 1.5, 1.5, 1.5],
         filename: `Question_Bank_${(classVal || '').replace(/ /g, "_")}_${(subjectVal || '').replace(/ /g, "_")}_${((selChaptersForHeader.join('_')) || 'All').replace(/ /g, "_")}.pdf`,
         html2canvas: { scale: 2, useCORS: true },
         jsPDF: { unit: 'cm', format: 'a4', orientation: 'portrait' },
-        pagebreak: { mode: ['avoid-all', 'css', 'legacy'], avoid: ['.no-split', '.keep-with-next'] }
+        pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
       }).from(printable)
         .toPdf()
         .get('pdf')
@@ -1979,8 +1860,3 @@ All the Best`;
   </div>
 </body>
 </html>
-
-
-
-
-
