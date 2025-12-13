@@ -815,7 +815,7 @@ async function __waitForImages(root){
 }
 await __waitForImages(printable);
 
-/* ===== MANUAL PAGINATION: build exact A4 pages (NO CUTTING) ===== */
+/* ===== MANUAL PAGINATION (FIXED): build exact A4 pages (NO CUTTING) ===== */
 function __pxPerCm(){
   const d = document.createElement('div');
   d.style.cssText = 'position:absolute;left:-1000px;top:-1000px;width:1cm;height:1cm;';
@@ -824,25 +824,29 @@ function __pxPerCm(){
   document.body.removeChild(d);
   return px;
 }
+
 function __paginatePrintable(root){
-  // keep the style tag (avoidCSS) at the top of root
-  const styleEls = Array.from(root.querySelectorAll('style'));
-  // take all other children as content
-  const content = Array.from(root.childNodes).filter(n => !(n.nodeType===1 && n.tagName==='STYLE'));
-
-  // clear root, re-attach styles
-  root.innerHTML = '';
-  styleEls.forEach(s => root.appendChild(s));
-
   const pxcm = __pxPerCm();
-  const pageH = 29.7 * pxcm; // total A4 height in px
 
-  // measure padding (must match .pdf-page padding above)
+  const pageH = 29.7 * pxcm;
   const padTop = 1.5 * pxcm;
   const padBot = 2.6 * pxcm;
-
-  // available content height per page
+  const padLR  = 1.5 * pxcm;
   const avail = pageH - padTop - padBot;
+
+  // keep style tags
+  const styles = Array.from(root.querySelectorAll('style'));
+
+  // take all content nodes except styles + pure whitespace text nodes
+  const items = Array.from(root.childNodes).filter(n => {
+    if (n.nodeType === 1 && n.tagName === 'STYLE') return false;
+    if (n.nodeType === 3 && !String(n.textContent || '').trim()) return false;
+    return true;
+  });
+
+  // rebuild root
+  root.innerHTML = '';
+  styles.forEach(s => root.appendChild(s));
 
   const makePage = () => {
     const p = document.createElement('div');
@@ -850,54 +854,69 @@ function __paginatePrintable(root){
     return p;
   };
 
+  // measurer WITHOUT min-height (this was the bug)
+  const meas = document.createElement('div');
+  meas.style.cssText = `
+    position:absolute;left:-200vw;top:0;visibility:hidden;
+    width:21cm; box-sizing:border-box;
+    padding:${padTop}px ${padLR}px ${padBot}px ${padLR}px;
+    background:#fff; color:#000;
+    font-family:'Times New Roman', Times, serif;
+    font-size:11pt; line-height:1.6;
+  `;
+  document.body.appendChild(meas);
+
+  function fits(pageEl, addNode){
+    meas.innerHTML = '';
+    // clone current page children
+    Array.from(pageEl.childNodes).forEach(n => meas.appendChild(n.cloneNode(true)));
+    // clone candidate node
+    if (addNode) meas.appendChild(addNode.cloneNode(true));
+    return meas.scrollHeight <= (avail + 2); // small tolerance
+  }
+
   let page = makePage();
   root.appendChild(page);
 
-  // temp measurer (same width as page)
-  const meas = document.createElement('div');
-  meas.className = 'pdf-page';
-  meas.style.cssText = 'position:absolute;left:-200vw;top:0;visibility:hidden;';
-  document.body.appendChild(meas);
+  for (let i = 0; i < items.length; i++){
+    const node = items[i];
 
-  function pageUsedHeight(p){
-    // measure height inside the same padding rules
-    meas.innerHTML = '';
-    Array.from(p.childNodes).forEach(n => meas.appendChild(n.cloneNode(true)));
-    const h = meas.scrollHeight;
-    return h;
-  }
+    const isKeep = (node.nodeType === 1 && node.classList && node.classList.contains('keep-with-next'));
+    const nextNode = items[i + 1];
 
-  for (let i=0;i<content.length;i++){
-    const node = content[i];
-
-    // keep-with-next: move heading + next block together
-    const isKeep = (node.nodeType===1 && node.classList && node.classList.contains('keep-with-next'));
-    const nextNode = content[i+1];
-
-    // try append
-    page.appendChild(node);
-
-    let used = pageUsedHeight(page);
-
-    if (used > avail){
-      // doesn't fit -> start new page
-      page.removeChild(node);
-
-      // if it's a keep-with-next heading, move heading and next together
-      if (isKeep && nextNode){
-        page = makePage(); root.appendChild(page);
-        page.appendChild(node);
-        page.appendChild(nextNode);
-        i++; // consumed nextNode
-      } else {
-        page = makePage(); root.appendChild(page);
-        page.appendChild(node);
-      }
+    // If it fits on current page, just add
+    if (fits(page, node)) {
+      page.appendChild(node);
+      continue;
     }
+
+    // Start new page
+    page = makePage();
+    root.appendChild(page);
+
+    // keep-with-next: place heading + next together if possible
+    if (isKeep && nextNode) {
+      page.appendChild(node);
+
+      // try to keep next on same page, else push next to next page
+      if (fits(page, nextNode)) {
+        page.appendChild(nextNode);
+      } else {
+        page = makePage();
+        root.appendChild(page);
+        page.appendChild(nextNode);
+      }
+      i++; // consumed nextNode
+      continue;
+    }
+
+    // normal: add to fresh page
+    page.appendChild(node);
   }
 
   document.body.removeChild(meas);
 }
+
 __paginatePrintable(printable);
 
       html2pdf().set({
@@ -1960,6 +1979,7 @@ All the Best`;
   </div>
 </body>
 </html>
+
 
 
 
