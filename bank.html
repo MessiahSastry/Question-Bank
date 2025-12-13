@@ -372,6 +372,18 @@ avoidCSS.textContent = `
   .keep-with-next { page-break-after: avoid; break-after: avoid; page-break-inside: avoid; break-inside: avoid; }
   .no-split { page-break-inside: avoid; break-inside: avoid; }
   .no-split * { page-break-inside: avoid; break-inside: avoid; }
+
+  /* REAL PAGE WRAPPER (prevents html2canvas slice cutting) */
+  .pdf-page{
+    width: 21cm;
+    min-height: 29.7cm;
+    box-sizing: border-box;
+    padding: 1.5cm 1.5cm 2.6cm 1.5cm; /* top/right/bottom/left safe area */
+    page-break-after: always;
+    break-after: page;
+    background:#fff;
+  }
+  .pdf-page:last-child{ page-break-after:auto; break-after:auto; }
 `;
 printable.prepend(avoidCSS);
       printable.id = 'printable-export';
@@ -803,8 +815,93 @@ async function __waitForImages(root){
 }
 await __waitForImages(printable);
 
+/* ===== MANUAL PAGINATION: build exact A4 pages (NO CUTTING) ===== */
+function __pxPerCm(){
+  const d = document.createElement('div');
+  d.style.cssText = 'position:absolute;left:-1000px;top:-1000px;width:1cm;height:1cm;';
+  document.body.appendChild(d);
+  const px = d.getBoundingClientRect().width || 37.795;
+  document.body.removeChild(d);
+  return px;
+}
+function __paginatePrintable(root){
+  // keep the style tag (avoidCSS) at the top of root
+  const styleEls = Array.from(root.querySelectorAll('style'));
+  // take all other children as content
+  const content = Array.from(root.childNodes).filter(n => !(n.nodeType===1 && n.tagName==='STYLE'));
+
+  // clear root, re-attach styles
+  root.innerHTML = '';
+  styleEls.forEach(s => root.appendChild(s));
+
+  const pxcm = __pxPerCm();
+  const pageH = 29.7 * pxcm; // total A4 height in px
+
+  // measure padding (must match .pdf-page padding above)
+  const padTop = 1.5 * pxcm;
+  const padBot = 2.6 * pxcm;
+
+  // available content height per page
+  const avail = pageH - padTop - padBot;
+
+  const makePage = () => {
+    const p = document.createElement('div');
+    p.className = 'pdf-page';
+    return p;
+  };
+
+  let page = makePage();
+  root.appendChild(page);
+
+  // temp measurer (same width as page)
+  const meas = document.createElement('div');
+  meas.className = 'pdf-page';
+  meas.style.cssText = 'position:absolute;left:-200vw;top:0;visibility:hidden;';
+  document.body.appendChild(meas);
+
+  function pageUsedHeight(p){
+    // measure height inside the same padding rules
+    meas.innerHTML = '';
+    Array.from(p.childNodes).forEach(n => meas.appendChild(n.cloneNode(true)));
+    const h = meas.scrollHeight;
+    return h;
+  }
+
+  for (let i=0;i<content.length;i++){
+    const node = content[i];
+
+    // keep-with-next: move heading + next block together
+    const isKeep = (node.nodeType===1 && node.classList && node.classList.contains('keep-with-next'));
+    const nextNode = content[i+1];
+
+    // try append
+    page.appendChild(node);
+
+    let used = pageUsedHeight(page);
+
+    if (used > avail){
+      // doesn't fit -> start new page
+      page.removeChild(node);
+
+      // if it's a keep-with-next heading, move heading and next together
+      if (isKeep && nextNode){
+        page = makePage(); root.appendChild(page);
+        page.appendChild(node);
+        page.appendChild(nextNode);
+        i++; // consumed nextNode
+      } else {
+        page = makePage(); root.appendChild(page);
+        page.appendChild(node);
+      }
+    }
+  }
+
+  document.body.removeChild(meas);
+}
+__paginatePrintable(printable);
+
       html2pdf().set({
-        margin: [1.5, 1.5, 2.6, 1.5], // bigger bottom margin = no slicing at page edge
+        margin: [0, 0, 0, 0], // margins handled by .pdf-page padding (prevents cutting)
         filename: `Question_Bank_${(classVal || '').replace(/ /g, "_")}_${(subjectVal || '').replace(/ /g, "_")}_${((selChaptersForHeader.join('_')) || 'All').replace(/ /g, "_")}.pdf`,
         html2canvas: { scale: 2, useCORS: true },
         jsPDF: { unit: 'cm', format: 'a4', orientation: 'portrait' },
@@ -1863,6 +1960,7 @@ All the Best`;
   </div>
 </body>
 </html>
+
 
 
 
