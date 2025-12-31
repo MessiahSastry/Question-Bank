@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Download Calendar</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
+
+  <!-- Firebase v8 (matches your db.collection style) -->
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-storage.js"></script>
+
+  <style>
+    body{ margin:0; font-family:system-ui, -apple-system, Segoe UI, Roboto, Arial; background:#f4f7fb; color:#123; }
+    .topbar{
+      background:#0f3d6b; color:#fff; padding:14px 12px;
+      display:flex; align-items:center; justify-content:space-between; gap:10px;
+      position:sticky; top:0; z-index:10;
+    }
+    .topbar .t{ font-weight:800; letter-spacing:.3px; text-align:center; flex:1; }
+    .topbar button{
+      border:none; background:#ffffff22; color:#fff;
+      padding:10px 12px; border-radius:10px; cursor:pointer; font-weight:700;
+      min-width:74px;
+    }
+    .wrap{ max-width:1100px; margin:14px auto 40px; padding:0 12px; }
+    .grid{ display:grid; grid-template-columns: 360px 1fr; gap:12px; align-items:start; }
+    @media (max-width: 900px){ .grid{ grid-template-columns:1fr; } }
+    .card{
+      background:#fff; border:1px solid #d6e2ef; border-radius:16px;
+      box-shadow:0 8px 22px rgba(15,61,107,0.08);
+      padding:12px;
+    }
+    .card h3{ margin:0 0 10px; color:#0f3d6b; }
+    label{ display:block; font-size:.9rem; font-weight:700; margin:10px 0 6px; }
+    .custom-dropdown{ position:relative; }
+    .dropdown-selected{
+      border:1px solid #ccd7e1; border-radius:12px; padding:10px 12px;
+      background:#fff; cursor:pointer; user-select:none;
+    }
+    .dropdown-list{
+      position:absolute; left:0; right:0; top:46px;
+      border:1px solid #ccd7e1; background:#fff; border-radius:12px;
+      max-height:240px; overflow:auto; z-index:20; display:none;
+      box-shadow:0 12px 26px rgba(0,0,0,0.10);
+    }
+    .dropdown-option{ padding:10px 12px; cursor:pointer; }
+    .dropdown-option:hover{ background:#eef5ff; }
+    .btnRow{ display:flex; gap:10px; flex-wrap:wrap; margin-top:12px; }
+    .btn{
+      border:none; border-radius:12px; padding:11px 14px; cursor:pointer;
+      font-weight:800;
+    }
+    .btn.primary{ background:#0f3d6b; color:#fff; }
+    .btn.gray{ background:#e9eef5; color:#123; }
+    .hint{ font-size:.86rem; color:#556; line-height:1.35; margin-top:10px; }
+    .warn{ color:#b3261e; font-weight:700; margin-top:10px; display:none; }
+    .previewBox{ background:#fff; border:1px solid #d6e2ef; border-radius:16px; padding:10px; overflow:auto; }
+    canvas{ width:100%; height:auto; display:block; border-radius:12px; }
+  </style>
+</head>
+<body>
+
+  <div class="topbar">
+    <button id="backBtn">Back</button>
+    <div class="t">Download Calendar</div>
+    <button id="homeBtn">Home</button>
+  </div>
+
+  <div class="wrap">
+    <div class="grid">
+      <div class="card">
+        <h3>Select Student</h3>
+
+        <label>Class</label>
+        <div class="custom-dropdown" id="calClassDropdown">
+          <div class="dropdown-selected" id="calClassSelected" data-value="">--Select--</div>
+          <div class="dropdown-list" id="calClassList"></div>
+        </div>
+
+        <label>Section</label>
+        <div class="custom-dropdown" id="calSectionDropdown">
+          <div class="dropdown-selected" id="calSectionSelected" data-value="">--Select Class First--</div>
+          <div class="dropdown-list" id="calSectionList"></div>
+        </div>
+
+        <label>Student</label>
+        <div class="custom-dropdown" id="calStudentDropdown">
+          <div class="dropdown-selected" id="calStudentSelected" data-value="">--Select Section First--</div>
+          <div class="dropdown-list" id="calStudentList"></div>
+        </div>
+
+        <div class="btnRow">
+          <button class="btn primary" id="generateBtn">Generate & Download</button>
+          <button class="btn gray" id="previewBtn">Preview Only</button>
+        </div>
+
+        <div class="hint">
+          Keep <b>calender.png</b> in the same root folder.
+          Canvas size is fixed: <b>2000 × 1414</b>.
+          Photo placed at <b>(1721, 232)</b>.
+        </div>
+
+        <div id="warn" class="warn"></div>
+      </div>
+
+      <div class="card">
+        <h3>Preview</h3>
+        <div class="previewBox">
+          <canvas id="calCanvas" width="2000" height="1414"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+  // ====== PASTE SAME FIREBASE CONFIG USED IN YOUR APP ======
+  const firebaseConfig = {
+    // apiKey: "...",
+    // authDomain: "...",
+    // projectId: "...",
+    // storageBucket: "...",
+    // messagingSenderId: "...",
+    // appId: "..."
+  };
+  if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+
+  const db = firebase.firestore();
+  const storage = firebase.storage();
+
+  const academicYear = (localStorage.getItem('academicYear') || localStorage.getItem('selectedAcademicYear') || '').trim();
+
+  const canvas = document.getElementById('calCanvas');
+  const ctx = canvas.getContext('2d');
+
+  // ====== REQUIRED COORDINATES / SIZE ======
+  const BG_SRC   = "calender.png";     // file in root
+  const PHOTO_X  = 1721;
+  const PHOTO_Y  = 232;
+
+  // change these if you want later
+  const PHOTO_W  = 220;
+  const PHOTO_H  = 260;
+
+  // text below photo (you can adjust)
+  const NAME_X   = 1721;
+  const NAME_Y   = 520;
+  const FATHER_X = 1721;
+  const FATHER_Y = 580;
+
+  let bgImg = null;
+  let selected = { classId:'', className:'', sectionId:'', sectionName:'', studentId:'', student:null };
+
+  function warn(msg){
+    const w = document.getElementById('warn');
+    w.style.display = msg ? 'block' : 'none';
+    w.textContent = msg || '';
+  }
+
+  const decodeImg = (img) =>
+    ("decode" in img) ? img.decode() : new Promise((res, rej) => { img.onload = res; img.onerror = rej; });
+
+  async function loadBg(){
+    if (bgImg) return bgImg;
+    const im = new Image();
+    im.crossOrigin = "anonymous";
+    im.src = BG_SRC;
+    await decodeImg(im);
+    bgImg = im;
+    return bgImg;
+  }
+
+  // same cropping idea as certificate (cover-fit inside a rectangle)
+  function drawImageCover(img, x, y, w, h){
+    const sw = img.naturalWidth || img.width;
+    const sh = img.naturalHeight || img.height;
+    const ir = sw / sh;
+    const br = w / h;
+
+    let sx=0, sy=0, sww=sw, shh=sh;
+    if (ir > br) {
+      shh = sh;
+      sww = sh * br;
+      sx = (sw - sww) / 2;
+      sy = 0;
+    } else {
+      sww = sw;
+      shh = sw / br;
+      sx = 0;
+      sy = (sh - shh) / 2;
+    }
+    ctx.drawImage(img, sx, sy, sww, shh, x, y, w, h);
+  }
+
+  async function resolveStudentPhoto(stu){
+    if (!stu) return null;
+    if (stu.photoUrl) return stu.photoUrl;
+    if (stu.photoURL) return stu.photoURL;
+    if (stu.photoPath) {
+      try {
+        const url = await storage.ref().child(stu.photoPath).getDownloadURL();
+        return url;
+      } catch(e) {}
+    }
+    return null;
+  }
+
+  async function loadPhoto(url){
+    if (!url) return null;
+    try{
+      const im = new Image();
+      im.crossOrigin = "anonymous";
+      im.referrerPolicy = "no-referrer";
+      im.src = url;
+      await decodeImg(im);
+      return im;
+    }catch(e){
+      return null;
+    }
+  }
+
+  async function drawCalendarPreview(){
+    warn('');
+    if (!academicYear) { warn('academicYear not found in localStorage.'); return; }
+    if (!selected.student) { warn('Please select a student.'); return; }
+
+    await loadBg();
+
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    ctx.drawImage(bgImg, 0, 0, 2000, 1414);
+
+    const stu = selected.student;
+
+    // photo
+    const url = await resolveStudentPhoto(stu);
+    const pimg = await loadPhoto(url);
+    if (pimg) {
+      drawImageCover(pimg, PHOTO_X, PHOTO_Y, PHOTO_W, PHOTO_H);
+    }
+
+    // text
+    ctx.save();
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+
+    ctx.fillStyle = "#111";
+    ctx.font = "700 40px 'Segoe UI'";
+    ctx.fillText((stu.name || ''), NAME_X, NAME_Y);
+
+    ctx.font = "600 32px 'Segoe UI'";
+    const father = stu.fatherName || stu.father || '';
+    ctx.fillText(father, FATHER_X, FATHER_Y);
+
+    ctx.restore();
+  }
+
+  function downloadPNG(){
+    const a = document.createElement('a');
+    const stu = selected.student || {};
+    a.download = `Calendar_${(stu.roll||'')}_${(stu.name||'Student')}.png`.replace(/[^\w\-\. ]+/g,'_');
+    a.href = canvas.toDataURL('image/png');
+    a.click();
+  }
+
+  // custom dropdown helper (same style you use)
+  function setupDropdown(dropdownId, selectedId, listId, onSelect) {
+    const dropdown = document.getElementById(dropdownId);
+    const selectedEl = document.getElementById(selectedId);
+    const list = document.getElementById(listId);
+    if (!dropdown || !selectedEl || !list) return;
+
+    selectedEl.onclick = () => {
+      list.style.display = (list.style.display === "block" ? "none" : "block");
+    };
+
+    list.querySelectorAll(".dropdown-option").forEach(opt => {
+      opt.onclick = () => {
+        selectedEl.textContent = opt.textContent;
+        selectedEl.dataset.value = opt.dataset.id || opt.dataset.value || "";
+        list.style.display = "none";
+        if (onSelect) onSelect(opt.dataset.id || opt.dataset.value, opt.textContent);
+      };
+    });
+
+    document.addEventListener("click", function handler(e) {
+      if (!dropdown.contains(e.target)) {
+        list.style.display = "none";
+        document.removeEventListener("click", handler);
+      }
+    });
+  }
+
+  async function loadClasses(){
+    const classSnap = await db.collection('years').doc(academicYear)
+      .collection('classes').orderBy('name').get();
+
+    const list = document.getElementById('calClassList');
+    const classes = [];
+    classSnap.forEach(d => classes.push({id:d.id, ...(d.data()||{})}));
+
+    list.innerHTML = classes.map(c => `<div class="dropdown-option" data-id="${c.id}">${c.name || c.id}</div>`).join('');
+    setupDropdown('calClassDropdown','calClassSelected','calClassList', async (classId, className) => {
+      selected.classId = classId; selected.className = className;
+      selected.sectionId=''; selected.sectionName='';
+      selected.studentId=''; selected.student=null;
+
+      document.getElementById('calSectionSelected').textContent = '--Select--';
+      document.getElementById('calSectionSelected').dataset.value = '';
+      document.getElementById('calStudentSelected').textContent = '--Select Section First--';
+      document.getElementById('calStudentSelected').dataset.value = '';
+
+      await loadSections(classId);
+    });
+  }
+
+  async function loadSections(classId){
+    const secSnap = await db.collection('years').doc(academicYear)
+      .collection('classes').doc(classId)
+      .collection('sections').orderBy('name').get();
+
+    const list = document.getElementById('calSectionList');
+    const secs = [];
+    secSnap.forEach(d => secs.push({id:d.id, ...(d.data()||{})}));
+
+    list.innerHTML = secs.map(s => `<div class="dropdown-option" data-id="${s.id}">${s.name || s.id}</div>`).join('');
+    setupDropdown('calSectionDropdown','calSectionSelected','calSectionList', async (sectionId, sectionName) => {
+      selected.sectionId = sectionId; selected.sectionName = sectionName;
+      selected.studentId=''; selected.student=null;
+
+      document.getElementById('calStudentSelected').textContent = '--Select--';
+      document.getElementById('calStudentSelected').dataset.value = '';
+
+      await loadStudents(selected.classId, sectionId);
+    });
+  }
+
+  async function loadStudents(classId, sectionId){
+    const stuSnap = await db.collection('years').doc(academicYear)
+      .collection('classes').doc(classId)
+      .collection('sections').doc(sectionId)
+      .collection('students').orderBy('roll').get();
+
+    const list = document.getElementById('calStudentList');
+    const students = [];
+    stuSnap.forEach(d => {
+      const x = d.data() || {};
+      if (x.isDeleted) return;
+      students.push({id:d.id, ...x});
+    });
+
+    list.innerHTML = students.map(s => {
+      const roll = (s.roll !== undefined && s.roll !== null && s.roll !== '') ? (s.roll + '. ') : '';
+      return `<div class="dropdown-option" data-id="${s.id}">${roll}${s.name || ''}</div>`;
+    }).join('');
+
+    setupDropdown('calStudentDropdown','calStudentSelected','calStudentList', (studentId) => {
+      selected.studentId = studentId;
+      selected.student = students.find(s => s.id === studentId) || null;
+    });
+  }
+
+  document.getElementById('backBtn').onclick = () => window.history.back();
+  document.getElementById('homeBtn').onclick = () => window.location.href = "dashboard.html";
+
+  document.getElementById('previewBtn').onclick = async () => {
+    await drawCalendarPreview();
+  };
+
+  document.getElementById('generateBtn').onclick = async () => {
+    await drawCalendarPreview();
+    if (!selected.student) return;
+    downloadPNG();
+  };
+
+  firebase.auth().onAuthStateChanged(async (user) => {
+    // if you want forced login, uncomment:
+    // if (!user) { window.location.href = "login.html"; return; }
+
+    try{
+      await loadClasses();
+      await loadBg();
+      ctx.drawImage(bgImg, 0, 0, 2000, 1414);
+    }catch(e){
+      warn('calender.png missing or Firebase config not set.');
+    }
+  });
+</script>
+
+</body>
+</html>
