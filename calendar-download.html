@@ -128,7 +128,44 @@
   const db = firebase.firestore();
   const storage = firebase.storage();
 
-  const academicYear = (localStorage.getItem('academicYear') || localStorage.getItem('selectedAcademicYear') || '').trim();
+  let academicYear = '';
+
+async function resolveAcademicYear() {
+  // 1) Try local/session storage (different pages may use different keys)
+  const keys = [
+    'academicYear',
+    'selectedAcademicYear',
+    'activeAcademicYear',
+    'currentAcademicYear',
+    'year',
+    'selectedYear'
+  ];
+
+  for (const k of keys) {
+    const v = (localStorage.getItem(k) || sessionStorage.getItem(k) || '').trim();
+    if (v) return v;
+  }
+
+  // 2) Try URL param: ?year=2025-26
+  const qp = (new URLSearchParams(location.search).get('year') || '').trim();
+  if (qp) return qp;
+
+  // 3) Firestore fallback: use isActive/active if present, else pick latest by start-year
+  const snap = await db.collection('years').get();
+  const years = snap.docs.map(d => ({ id: d.id, ...(d.data() || {}) }));
+  if (!years.length) return '';
+
+  const active = years.find(y => y.isActive === true || y.active === true);
+  if (active) return active.id;
+
+  const startYear = (s) => {
+    const m = String(s || '').match(/(\d{4})/);
+    return m ? parseInt(m[1], 10) : 0;
+  };
+
+  years.sort((a, b) => startYear(b.id || b.name) - startYear(a.id || a.name));
+  return years[0].id;
+}
 
   const canvas = document.getElementById('calCanvas');
   const ctx = canvas.getContext('2d');
@@ -451,6 +488,7 @@
 
 </body>
 </html>
+
 
 
 
