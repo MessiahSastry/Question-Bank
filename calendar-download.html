@@ -209,10 +209,28 @@ const FATHER_Y = NAME_Y + 42;
 
 
   function warn(msg){
-    const w = document.getElementById('warn');
-    w.style.display = msg ? 'block' : 'none';
-    w.textContent = msg || '';
-  }
+  const w = document.getElementById('warn');
+  w.style.display = msg ? 'block' : 'none';
+  w.textContent = msg || '';
+}
+
+function showLoading(main, sub){
+  const o = document.getElementById('loadingOverlay');
+  if (!o) return;
+  document.getElementById('loadingText').textContent = main || 'Please wait...';
+  document.getElementById('loadingSub').textContent  = sub || '';
+  o.style.display = 'flex';
+}
+
+function updateLoading(sub){
+  const el = document.getElementById('loadingSub');
+  if (el) el.textContent = sub || '';
+}
+
+function hideLoading(){
+  const o = document.getElementById('loadingOverlay');
+  if (o) o.style.display = 'none';
+}
 
   const decodeImg = (img) =>
     ("decode" in img) ? img.decode() : new Promise((res, rej) => { img.onload = res; img.onerror = rej; });
@@ -489,47 +507,65 @@ ctx.restore();
   };
 
  document.getElementById('generateBtn').onclick = async () => {
-  if (!selected.classId || !selected.sectionId) { warn('Please select Class and Section.'); return; }
-  if (!studentsInSection.length) await loadStudentsForSection(selected.classId, selected.sectionId);
-  if (!studentsInSection.length) { warn('No students found in this section.'); return; }
+  try {
+    if (!selected.classId || !selected.sectionId) { warn('Please select Class and Section.'); return; }
+    if (!studentsInSection.length) await loadStudentsForSection(selected.classId, selected.sectionId);
+    if (!studentsInSection.length) { warn('No students found in this section.'); return; }
 
-  warn(`Generating PDF (${studentsInSection.length} students)...`);
+    showLoading('Generating PDF...', `0 / ${studentsInSection.length}`);
+    await new Promise(r => requestAnimationFrame(r)); // force paint
 
-  const { PDFDocument } = PDFLib;
-  const pdf = await PDFDocument.create();
+    const { PDFDocument } = PDFLib;
+    const pdf = await PDFDocument.create();
 
-  // A3 landscape size in points
-  const A3_W = 1190.55;
-  const A3_H = 841.89;
+    const A3_W = 1190.55;
+    const A3_H = 841.89;
 
-  for (let i = 0; i < studentsInSection.length; i++) {
-    warn(`Generating PDF... ${i + 1} / ${studentsInSection.length}`);
+    for (let i = 0; i < studentsInSection.length; i++) {
+      updateLoading(`${i + 1} / ${studentsInSection.length}`);
+      await new Promise(r => setTimeout(r, 0)); // keep UI responsive
 
-    const ok = await drawCalendarForStudent(studentsInSection[i]);
-    if (!ok) continue;
+      const ok = await drawCalendarForStudent(studentsInSection[i]);
+      if (!ok) continue;
 
-    const dataUrl = canvas.toDataURL("image/jpeg", 0.95);
-    const imgBytes = Uint8Array.from(atob(dataUrl.split(",")[1]), c => c.charCodeAt(0));
+      const dataUrl = canvas.toDataURL("image/jpeg", 0.95);
+      const imgBytes = Uint8Array.from(atob(dataUrl.split(",")[1]), c => c.charCodeAt(0));
 
-    const jpg = await pdf.embedJpg(imgBytes);
-    const page = pdf.addPage([A3_W, A3_H]); // ✅ A3 landscape
+      const jpg = await pdf.embedJpg(imgBytes);
+      const page = pdf.addPage([A3_W, A3_H]);
 
-    const s = Math.min(A3_W / jpg.width, A3_H / jpg.height);
+      const s = Math.min(A3_W / jpg.width, A3_H / jpg.height);
+      page.drawImage(jpg, {
+        x: (A3_W - jpg.width * s) / 2,
+        y: (A3_H - jpg.height * s) / 2,
+        width: jpg.width * s,
+        height: jpg.height * s
+      });
+    }
 
-    page.drawImage(jpg, {
-      x: (A3_W - jpg.width * s) / 2,
-      y: (A3_H - jpg.height * s) / 2,
-      width: jpg.width * s,
-      height: jpg.height * s
-    });
+    updateLoading('Finalizing PDF...');
+    await new Promise(r => requestAnimationFrame(r));
+
+    const bytes = await pdf.save();
+    const blobUrl = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
+
+    const a = document.createElement("a");
+    a.href = blobUrl;
+    a.download = `Calendars_${selected.className || 'Class'}_${selected.sectionName || 'Section'}.pdf`.replace(/[^\w\-\. ]+/g,'_');
+    a.click();
+
+    updateLoading('Download completed ✅');
+    setTimeout(() => {
+      hideLoading();
+      URL.revokeObjectURL(blobUrl);
+    }, 900);
+
+    warn('');
+  } catch (e) {
+    console.error(e);
+    warn('Error: ' + (e && e.message ? e.message : e));
+    hideLoading();
   }
-
-  const bytes = await pdf.save();
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
-  a.download = `Calendars_${selected.className || 'Class'}_${selected.sectionName || 'Section'}.pdf`.replace(/[^\w\-\. ]+/g,'_');
-  a.click();
-  warn('');
 };
 
 
@@ -558,8 +594,6 @@ ctx.restore();
     warn('Unable to load Classes: ' + (e && e.message ? e.message : e));
   }
 });
-
-</script>
 <div id="loadingOverlay">
   <div id="loadingBox">
     <div id="spinner"></div>
@@ -567,8 +601,10 @@ ctx.restore();
     <div id="loadingSub">Please wait</div>
   </div>
 </div>
+</script>
 </body>
 </html>
+
 
 
 
