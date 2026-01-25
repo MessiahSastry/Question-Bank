@@ -479,8 +479,27 @@ printable.prepend(avoidCSS);
           </div>`;
       }
 
-      // For MathJax rendering
-      let mathElements = [];
+     // For MathJax rendering
+let mathElements = [];
+
+// ✅ Mount printable off-screen so getBoundingClientRect() returns REAL width in PDF
+const __mount = document.createElement('div');
+__mount.style.cssText = `
+  position: fixed;
+  left: -99999px;
+  top: 0;
+  width: 820px;
+  background: white;
+  z-index: -1;
+  opacity: 0;
+  pointer-events: none;
+`;
+document.body.appendChild(__mount);
+__mount.appendChild(printable);
+
+function __cleanupMount(){
+  try { __mount.remove(); } catch(e) {}
+}
 
      // === Chapter-wise rendering rules ===
 // Single chapter → box shows chapter; flat render
@@ -565,56 +584,56 @@ function buildQuestionHTML(item) {
               return String.fromCharCode(65 + i) + ") " + text;
             });
 
-              function fitsInLine(a, b) {
-                let d = document.createElement('span');
-                d.style.cssText = 'visibility:hidden;position:absolute;white-space:nowrap;padding:0;margin:0;border:none;font-family:Times New Roman,Times,serif;font-size:11pt;';
-                d.innerText = a + " " + b;
-                document.body.appendChild(d);
-
-                // Use REAL available width from the export container (more reliable than fixed 450)
-                const pw = (typeof printable !== 'undefined' && printable.getBoundingClientRect)
-                  ? printable.getBoundingClientRect().width
-                  : 820;
-                const maxLine = Math.max(320, pw - 220); // padding + answer bubble + indent safety
-
-                let fits = d.offsetWidth <= maxLine;
-                document.body.removeChild(d);
-                return fits;
-              }
-
-              let dummyDiv = document.createElement('div');
-              dummyDiv.style.cssText = 'visibility:hidden;position:absolute;white-space:nowrap;padding:0;margin:0;border:none;z-index:-1;font-family:Times New Roman,Times,serif;font-size:11pt;';
-              dummyDiv.innerHTML = optionLines.map(opt => `<span style="display:inline-block;vertical-align:middle;margin-right:32px;">${opt.trim()}</span>`).join('');
-              document.body.appendChild(dummyDiv);
-              const pw4 = (typeof printable !== 'undefined' && printable.getBoundingClientRect)
-                ? printable.getBoundingClientRect().width
-                : 820;
-              const maxFour = Math.max(420, pw4 - 120); // safe available width for 4-in-one-line
-              let fitsFour = dummyDiv.offsetWidth <= maxFour;
-              document.body.removeChild(dummyDiv);
-
-              let abFits = fitsInLine(optionLines[0], optionLines[1]);
-              let cdFits = fitsInLine(optionLines[2], optionLines[3]);
-
-              if (fitsFour) {
-                return `
-                  <div style="display:flex;gap:32px;flex-wrap:wrap;margin-bottom:3px;">
-                    ${optionLines.map(opt => `<span style="min-width:70px;display:inline-block;vertical-align:top;">${opt.trim()}</span>`).join('')}
-                  </div>`;
-              } else if (abFits && cdFits) {
-                return `
-                 <div style="display:grid;grid-template-columns:auto auto;column-gap:24px;row-gap:0;margin-bottom:2px;width:max-content;">
-                    <span style="min-width:70px;display:inline-block;vertical-align:top;">${optionLines[0]}</span>
-                    <span style="min-width:70px;display:inline-block;vertical-align:top;">${optionLines[1]}</span>
-                    <span style="min-width:70px;display:inline-block;vertical-align:top;">${optionLines[2]}</span>
-                    <span style="min-width:70px;display:inline-block;vertical-align:top;">${optionLines[3]}</span>
-                  </div>`;
-              } else {
-                return optionLines
-                .map(opt => `<div style="margin-bottom:2px;">${opt.trim().replace(/\n/g, '<br>')}</div>`)
-                .join('');
-
-              }
+              // ✅ 4-in-one-line → else 2+2 → else one-by-one (PDF-stable)
+        const pw = printable.getBoundingClientRect().width || 820;
+        
+        function measureRowHTML(html) {
+          const d = document.createElement('div');
+          d.style.cssText = `
+            visibility:hidden; position:absolute; left:-99999px; top:0;
+            white-space:nowrap; padding:0; margin:0; border:none;
+            font-family:Times New Roman,Times,serif; font-size:11pt;
+          `;
+          d.innerHTML = html;
+          document.body.appendChild(d);
+          const w = d.getBoundingClientRect().width;
+          d.remove();
+          return w;
+        }
+        
+        // 1) Try all 4 in one line
+        const fourRowHTML = optionLines.map(opt =>
+          `<span style="display:inline-block;margin-right:32px;min-width:70px;">${opt.trim()}</span>`
+        ).join('');
+        
+        const maxFour = Math.max(420, pw - 120);
+        const fitsFour = measureRowHTML(fourRowHTML) <= maxFour;
+        
+        if (fitsFour) {
+          return `
+            <div style="display:flex;flex-wrap:nowrap;gap:32px;margin-bottom:3px;width:100%;">
+              ${optionLines.map(opt => `<span style="min-width:70px;display:inline-block;">${opt.trim()}</span>`).join('')}
+            </div>`;
+        }
+        
+        // 2) Else try 2+2 only if not too long
+        const TOO_LONG = 70; // adjust if needed
+        const anyTooLong = optionLines.some(o => o.replace(/<[^>]*>/g,'').trim().length > TOO_LONG);
+        
+        if (!anyTooLong) {
+          return `
+            <div style="display:grid;grid-template-columns:1fr 1fr;column-gap:24px;row-gap:2px;margin-bottom:2px;width:100%;">
+              <span style="min-width:70px;">${optionLines[0]}</span>
+              <span style="min-width:70px;">${optionLines[1]}</span>
+              <span style="min-width:70px;">${optionLines[2]}</span>
+              <span style="min-width:70px;">${optionLines[3]}</span>
+            </div>`;
+        }
+        
+        // 3) Else one-by-one
+        return optionLines
+          .map(opt => `<div style="margin-bottom:2px;">${opt.trim().replace(/\n/g, '<br>')}</div>`)
+          .join('');
             })()
             : (options.length > 0
                 ? options.map(opt => `<div style="margin-bottom:2px;">${opt.trim().replace(/\n/g, '<br>')}</div>`).join('')
@@ -841,15 +860,17 @@ await __waitForImages(printable);
           }
         })
         .save()
-        .then(() => {
-          pdfBtn.innerHTML = '<i class="fa-solid fa-file-pdf"></i> Download Worksheet';
-          pdfBtn.disabled = false;
-        })
-        .catch((err) => {
-          alert("Failed to export PDF: " + err);
-          pdfBtn.innerHTML = '<i class="fa-solid fa-file-pdf"></i> Download Worksheet';
-          pdfBtn.disabled = false;
-        });
+    .then(() => {
+      __cleanupMount();
+      pdfBtn.innerHTML = '<i class="fa-solid fa-file-pdf"></i> Download Worksheet';
+      pdfBtn.disabled = false;
+    })
+    .catch((err) => {
+      __cleanupMount();
+      alert("Failed to export PDF: " + err);
+      pdfBtn.innerHTML = '<i class="fa-solid fa-file-pdf"></i> Download Worksheet';
+      pdfBtn.disabled = false;
+    });
     }
 
     async function exportWord() {
@@ -1883,6 +1904,7 @@ All the Best`;
   </div>
 </body>
 </html>
+
 
 
 
