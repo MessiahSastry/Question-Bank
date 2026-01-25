@@ -368,32 +368,24 @@ const qtypeHeaderLine = __chosenTypes.join(', ');
      const printable = document.createElement('div');
 
 // inject minimal CSS so headings stick with first question and blocks don't split
+const avoidCSS = document.createElement('style');
+avoidCSS.textContent = `
+  .keep-with-next { page-break-inside: avoid; break-inside: avoid; page-break-after: avoid; break-after: avoid; }
+  .no-split, .no-split * img { page-break-inside: avoid; break-inside: avoid; }
+`;
+printable.prepend(avoidCSS);
       printable.id = 'printable-export';
       printable.style.background = "#fff";
       printable.style.color = "#000";
       printable.style.fontFamily = "'Times New Roman', Times, serif";
       printable.style.fontSize = "11pt";
       printable.style.maxWidth = "820px";
-      printable.style.width = "820px";
-      printable.style.boxSizing = "border-box";
       printable.style.margin = "0 auto";
       printable.style.padding = "0";
-     printable.style.lineHeight = "1.6";
+      printable.style.lineHeight = "1.6";
 
-   // IMPORTANT: mount printable so widths are real AND html2canvas can capture (not behind page)
-    printable.style.position = 'absolute';
-    printable.style.left = '0px';
-    printable.style.top = '120vh';          // keep it off-screen (below), but still renderable
-    printable.style.pointerEvents = 'none';
-    printable.style.zIndex = '1';           // NEVER negative (can cause blank PDF)
-    printable.style.opacity = '0.01';       // tiny visibility to avoid "not painted" issues
-    document.body.appendChild(printable);
       // Header
      printable.innerHTML = `
-      <style>
-        .keep-with-next { page-break-inside: avoid; break-inside: avoid; page-break-after: avoid; break-after: avoid; }
-        .no-split, .no-split * img { page-break-inside: avoid; break-inside: avoid; }
-      </style>
         <div style="display:flex;align-items:center;justify-content:center;margin-bottom:10px;gap:30px;">
           <img src="schoollogo1.png" style="height:72px;width:auto;margin-right:8px;" onerror="this.style.display='none';">
           <div style="flex:1;text-align:center;">
@@ -426,12 +418,11 @@ const qtypeHeaderLine = __chosenTypes.join(', ');
       const displayArea = document.getElementById('questions-display-area');
       const nodes = displayArea.querySelectorAll('.question-item');
       if (!nodes.length) {
-  if (printable && printable.parentNode) printable.parentNode.removeChild(printable);
-  alert("No questions to export!");
-  pdfBtn.innerHTML = '<i class="fa-solid fa-file-pdf"></i> Download Worksheet';
-  pdfBtn.disabled = false;
-  return;
-}
+        alert("No questions to export!");
+        pdfBtn.innerHTML = '<i class="fa-solid fa-file-pdf"></i> Download Worksheet';
+        pdfBtn.disabled = false;
+        return;
+      }
 
       // Helper for hanging indent
       function createHangingDiv(qNum, text, isMCQ = false) {
@@ -558,30 +549,73 @@ function buildQuestionHTML(item) {
         ${imgHtml ? imgHtml : ''}
         <div class="options-block" style="margin-top:2px;padding-left:20px;">
           ${
-           isMCQ ? (() => {
-            let optionLinesRaw = options.slice(0, 4).map((opt) => {
+            isMCQ ? (() => {
+              let optionLinesRaw = options.slice(0, 4).map((opt) => {
               return opt.replace(/^[A-D][\)\.\-]\s*/, '').trim();
             });
-          
+            
             if (shuffleExport) {
               for (let i = optionLinesRaw.length - 1; i > 0; i--) {
                 const j = Math.floor(Math.random() * (i + 1));
                 [optionLinesRaw[i], optionLinesRaw[j]] = [optionLinesRaw[j], optionLinesRaw[i]];
               }
             }
-          
-            const optionLines = optionLinesRaw.map((text, i) => {
+            
+            let optionLines = optionLinesRaw.map((text, i) => {
               return String.fromCharCode(65 + i) + ") " + text;
             });
-          
-            return `
-              <div class="mcq-options" style="margin-top:2px;">
-                ${optionLines.map(opt => `
-                  <div class="mcq-opt" style="margin-bottom:2px;">${opt}</div>
-                `).join('')}
-              </div>
-            `;
-          })()
+
+              function fitsInLine(a, b) {
+                let d = document.createElement('span');
+                d.style.cssText = 'visibility:hidden;position:absolute;white-space:nowrap;padding:0;margin:0;border:none;font-family:Times New Roman,Times,serif;font-size:11pt;';
+                d.innerText = a + " " + b;
+                document.body.appendChild(d);
+
+                // Use REAL available width from the export container (more reliable than fixed 450)
+                const pw = (typeof printable !== 'undefined' && printable.getBoundingClientRect)
+                  ? printable.getBoundingClientRect().width
+                  : 820;
+                const maxLine = Math.max(320, pw - 220); // padding + answer bubble + indent safety
+
+                let fits = d.offsetWidth <= maxLine;
+                document.body.removeChild(d);
+                return fits;
+              }
+
+              let dummyDiv = document.createElement('div');
+              dummyDiv.style.cssText = 'visibility:hidden;position:absolute;white-space:nowrap;padding:0;margin:0;border:none;z-index:-1;font-family:Times New Roman,Times,serif;font-size:11pt;';
+              dummyDiv.innerHTML = optionLines.map(opt => `<span style="display:inline-block;vertical-align:middle;margin-right:32px;">${opt.trim()}</span>`).join('');
+              document.body.appendChild(dummyDiv);
+              const pw4 = (typeof printable !== 'undefined' && printable.getBoundingClientRect)
+                ? printable.getBoundingClientRect().width
+                : 820;
+              const maxFour = Math.max(420, pw4 - 120); // safe available width for 4-in-one-line
+              let fitsFour = dummyDiv.offsetWidth <= maxFour;
+              document.body.removeChild(dummyDiv);
+
+              let abFits = fitsInLine(optionLines[0], optionLines[1]);
+              let cdFits = fitsInLine(optionLines[2], optionLines[3]);
+
+              if (fitsFour) {
+                return `
+                  <div style="display:flex;gap:32px;flex-wrap:wrap;margin-bottom:3px;">
+                    ${optionLines.map(opt => `<span style="min-width:70px;display:inline-block;vertical-align:top;">${opt.trim()}</span>`).join('')}
+                  </div>`;
+              } else if (abFits && cdFits) {
+                return `
+                 <div style="display:grid;grid-template-columns:auto auto;column-gap:24px;row-gap:0;margin-bottom:2px;width:max-content;">
+                    <span style="min-width:70px;display:inline-block;vertical-align:top;">${optionLines[0]}</span>
+                    <span style="min-width:70px;display:inline-block;vertical-align:top;">${optionLines[1]}</span>
+                    <span style="min-width:70px;display:inline-block;vertical-align:top;">${optionLines[2]}</span>
+                    <span style="min-width:70px;display:inline-block;vertical-align:top;">${optionLines[3]}</span>
+                  </div>`;
+              } else {
+                return optionLines
+                .map(opt => `<div style="margin-bottom:2px;">${opt.trim().replace(/\n/g, '<br>')}</div>`)
+                .join('');
+
+              }
+            })()
             : (options.length > 0
                 ? options.map(opt => `<div style="margin-bottom:2px;">${opt.trim().replace(/\n/g, '<br>')}</div>`).join('')
                 : '')
@@ -780,63 +814,8 @@ if (!multipleChaptersSelected) {
   
      if (window.MathJax && typeof window.MathJax.typesetPromise === 'function') {
   await window.MathJax.typesetPromise([printable]);
-  await new Promise(res => requestAnimationFrame(res)); // ensure layout updated
-  __optimizeMcqLayoutsAfterMathJax(printable);
-  await new Promise(res => setTimeout(res, 80));
+  await new Promise(res => setTimeout(res, 150));
 }
-function __optimizeMcqLayoutsAfterMathJax(root) {
-  const GAP_4 = 32; // gap for 1-line layout
-  const GAP_2 = 24; // gap for 2-line layout
-
-  root.querySelectorAll('.mcq-options').forEach(block => {
-    const opts = Array.from(block.querySelectorAll('.mcq-opt'));
-    if (opts.length !== 4) return;
-
-    // Ensure real measurement (MathJax already rendered)
-    block.style.display = 'block';
-
-    opts.forEach(o => {
-      o.style.display = 'inline-block';
-      o.style.whiteSpace = 'nowrap';   // critical for accurate “fit” test
-      o.style.marginBottom = '0px';
-      o.style.verticalAlign = 'top';
-    });
-
-    let avail = Math.max(260, block.getBoundingClientRect().width || block.clientWidth || 0);
-    // safety buffer so "barely fits" doesn't clip in PDF
-    avail = Math.max(260, avail - 36);
-
-    const w = opts.map(o => Math.ceil(o.getBoundingClientRect().width));
-
-    const fitsFour = (w[0] + w[1] + w[2] + w[3] + (GAP_4 * 3)) <= avail;
-    const abFits   = (w[0] + w[1] + GAP_2) <= avail;
-    const cdFits   = (w[2] + w[3] + GAP_2) <= avail;
-
-    if (fitsFour) {
-      // 1 line
-      block.style.display = 'flex';
-      block.style.flexWrap = 'nowrap';
-      block.style.gap = GAP_4 + 'px';
-      opts.forEach(o => { o.style.display = 'inline-block'; });
-    } else if (abFits && cdFits) {
-      // 2 lines (A,B then C,D)
-      block.style.display = 'grid';
-      block.style.gridTemplateColumns = 'auto auto';
-      block.style.columnGap = GAP_2 + 'px';
-      block.style.rowGap = '0px';
-      opts.forEach(o => { o.style.display = 'inline-block'; });
-    } else {
-      // 4 lines (and allow wrapping for long options)
-      block.style.display = 'block';
-      opts.forEach(o => {
-        o.style.display = 'block';
-        o.style.whiteSpace = 'normal';
-        o.style.marginBottom = '2px';
-      });
-    }
-  });
-}
-
 // wait for all images inside the printable node before pagination
 async function __waitForImages(root){
   const imgs = Array.from(root.querySelectorAll('img'));
@@ -863,16 +842,14 @@ await __waitForImages(printable);
         })
         .save()
         .then(() => {
-      if (printable && printable.parentNode) printable.parentNode.removeChild(printable);
-      pdfBtn.innerHTML = '<i class="fa-solid fa-file-pdf"></i> Download Worksheet';
-      pdfBtn.disabled = false;
-    })
+          pdfBtn.innerHTML = '<i class="fa-solid fa-file-pdf"></i> Download Worksheet';
+          pdfBtn.disabled = false;
+        })
         .catch((err) => {
-      if (printable && printable.parentNode) printable.parentNode.removeChild(printable);
-      alert("Failed to export PDF: " + err);
-      pdfBtn.innerHTML = '<i class="fa-solid fa-file-pdf"></i> Download Worksheet';
-      pdfBtn.disabled = false;
-    });
+          alert("Failed to export PDF: " + err);
+          pdfBtn.innerHTML = '<i class="fa-solid fa-file-pdf"></i> Download Worksheet';
+          pdfBtn.disabled = false;
+        });
     }
 
     async function exportWord() {
@@ -1906,10 +1883,6 @@ All the Best`;
   </div>
 </body>
 </html>
-
-
-
-
 
 
 
