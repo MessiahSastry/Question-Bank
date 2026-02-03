@@ -602,8 +602,7 @@ function fitsInLine(option1, option2, maxWidth = 700) {
     document.body.removeChild(dummy);
     return fits;
 }
-   // NEW: unified renderer for MCQ option blocks (4 inline → 2x2 → stacked)
-function renderOptionsLayout(optionLines, hostNode) {
+  function renderOptionsLayout(optionLines, hostNode) {
   if (!Array.isArray(optionLines) || optionLines.length === 0) return '';
 
   // Non-4 options → always stacked
@@ -613,83 +612,68 @@ function renderOptionsLayout(optionLines, hostNode) {
     ).join('');
   }
 
-  // We enforce: 1 line OR 2 lines (A+B / C+D) OR 4 lines.
-  // Never allow 3 lines.
+  // --- Bank.html style: measure using printable width (PDF-stable) ---
+  const pageEl =
+    (hostNode && hostNode.closest && hostNode.closest('.a4-page')) ||
+    document.querySelector('.a4-page') ||
+    document.body;
 
-  // Get the real available width inside the options area
-  const getAvailableWidth = () => {
-  const body = document.querySelector('.question-body');
-  if (body && body.clientWidth) {
-    // question-body already excludes the number column, so do NOT subtract big value
-    return Math.max(380, body.clientWidth - 10);
-  }
-  const page = document.querySelector('.a4-page') || document.body;
-  const w = page ? page.clientWidth : 900;
-  // fallback for cases where question-body is not measurable yet
-  return Math.max(380, w - 140);
-};
+  const pwRaw = (pageEl && pageEl.getBoundingClientRect().width) || 820;
+  const pw = Math.min(pwRaw, 680); // conservative A4 content width
 
-  // Measure width of a "flex row" with the SAME gap/min-width as render
-  const measureRow = (items) => {
-    const wrap = document.createElement('div');
-    wrap.style.cssText =
-      "visibility:hidden;position:absolute;left:-9999px;top:-9999px;display:flex;flex-wrap:nowrap;gap:32px;font-family:'Times New Roman',Times,serif;font-size:1.15em;";
-
-    items.forEach(txt => {
-      const s = document.createElement('span');
-      s.style.cssText = "min-width:70px;display:inline-block;white-space:nowrap;vertical-align:top;";
-      s.textContent = String(txt).trim();
-      wrap.appendChild(s);
-    });
-
-    document.body.appendChild(wrap);
-    const width = wrap.getBoundingClientRect().width;
-    document.body.removeChild(wrap);
-    return width;
-  };
-
- const available = Math.max(
-  380,
-  (hostNode && hostNode.clientWidth ? hostNode.clientWidth : getAvailableWidth()) - 6
-);
-
-  // 1) Try single line with all 4
-  const all4Width = measureRow(optionLines);
-  if (all4Width <= available) {
-    // IMPORTANT: no wrapping here (flex-wrap:nowrap)
-    return `<div style="display:flex;gap:32px;flex-wrap:nowrap;margin-bottom:3px;margin-left:2px;">
-      ${optionLines.map(opt => `<span style="min-width:70px;display:inline-block;white-space:nowrap;vertical-align:top;">${String(opt).trim()}</span>`).join('')}
-    </div>`;
-  }
-
-  // 2) Try exactly 2 lines: (A,B) then (C,D) — each row must fit
-  const rowAB = measureRow([optionLines[0], optionLines[1]]);
-  const rowCD = measureRow([optionLines[2], optionLines[3]]);
-
-  if (rowAB <= available && rowCD <= available) {
-    return `
-      <div style="display:flex;flex-direction:column;row-gap:2px;margin-bottom:0;margin-left:2px;">
-        <div style="display:flex;gap:32px;flex-wrap:nowrap;">
-          <span style="min-width:70px;display:inline-block;white-space:nowrap;vertical-align:top;">${String(optionLines[0]).trim()}</span>
-          <span style="min-width:70px;display:inline-block;white-space:nowrap;vertical-align:top;">${String(optionLines[1]).trim()}</span>
-        </div>
-        <div style="display:flex;gap:32px;flex-wrap:nowrap;">
-          <span style="min-width:70px;display:inline-block;white-space:nowrap;vertical-align:top;">${String(optionLines[2]).trim()}</span>
-          <span style="min-width:70px;display:inline-block;white-space:nowrap;vertical-align:top;">${String(optionLines[3]).trim()}</span>
-        </div>
-      </div>
+  function measureRowHTML(html) {
+    const d = document.createElement('div');
+    d.style.cssText = `
+      visibility:hidden; position:absolute; left:-99999px; top:0;
+      white-space:nowrap; padding:0; margin:0; border:none;
+      font-family:Times New Roman,Times,serif; font-size:11pt;
     `;
+    d.innerHTML = html;
+    document.body.appendChild(d);
+    const w = d.getBoundingClientRect().width;
+    d.remove();
+    return w;
   }
 
-  // 3) Otherwise: 4 lines (stacked)
-  return `
-    <div>
-      <div style="margin-bottom:2px;margin-left:2px;">${String(optionLines[0]).trim().replace(/\n/g,'<br>')}</div>
-      <div style="margin-bottom:2px;margin-left:2px;">${String(optionLines[1]).trim().replace(/\n/g,'<br>')}</div>
-      <div style="margin-bottom:2px;margin-left:2px;">${String(optionLines[2]).trim().replace(/\n/g,'<br>')}</div>
-      <div style="margin-bottom:2px;margin-left:2px;">${String(optionLines[3]).trim().replace(/\n/g,'<br>')}</div>
-    </div>
-  `;
+  // 1) Try all 4 in one line
+  const fourRowHTML = optionLines.map(opt =>
+    `<span style="display:inline-block;margin-right:32px;min-width:70px;">${String(opt).trim()}</span>`
+  ).join('');
+
+  const maxFour = Math.max(420, pw - 120);
+  const fitsFour = measureRowHTML(fourRowHTML) <= maxFour;
+
+  if (fitsFour) {
+    return `
+      <div style="display:flex;flex-wrap:nowrap;gap:32px;margin-bottom:3px;width:100%;margin-left:2px;">
+        ${optionLines.map(opt => `<span style="min-width:70px;display:inline-block;">${String(opt).trim()}</span>`).join('')}
+      </div>`;
+  }
+
+  // 2) Else try 2+2 ONLY if each option fits comfortably in half width
+  const colGap = 24;
+  const halfWidth = Math.max(240, (pw - colGap) / 2);
+
+  const optWidths = optionLines.map(opt => measureRowHTML(
+    `<span style="display:inline-block;font-family:Times New Roman,Times,serif;font-size:11pt;">${String(opt).trim()}</span>`
+  ));
+
+  const anyTooWideForTwoCols = optWidths.some(w => w > halfWidth);
+
+  if (!anyTooWideForTwoCols) {
+    return `
+      <div class="opt-grid-2x2" style="display:grid;grid-template-columns:1fr 1fr;column-gap:${colGap}px;row-gap:2px;margin-bottom:2px;width:100%;margin-left:2px;">
+        <span style="min-width:70px;display:block;width:100%;">${String(optionLines[0]).trim()}</span>
+        <span style="min-width:70px;display:block;width:100%;">${String(optionLines[1]).trim()}</span>
+        <span style="min-width:70px;display:block;width:100%;">${String(optionLines[2]).trim()}</span>
+        <span style="min-width:70px;display:block;width:100%;">${String(optionLines[3]).trim()}</span>
+      </div>`;
+  }
+
+  // 3) Else one-by-one (4 lines)
+  return optionLines
+    .map(opt => `<div style="margin-bottom:2px;margin-left:2px;">${String(opt).trim().replace(/\n/g,'<br>')}</div>`)
+    .join('');
 }
 
 function formatQuestionText(text) {
@@ -1267,6 +1251,7 @@ window.addEventListener('DOMContentLoaded', () => {
 </script>
 </body>
 </html>
+
 
 
 
