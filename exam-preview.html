@@ -605,55 +605,75 @@ function fitsInLine(option1, option2, maxWidth = 700) {
    // NEW: unified renderer for MCQ option blocks (4 inline → 2x2 → stacked)
 function renderOptionsLayout(optionLines) {
   if (!Array.isArray(optionLines) || optionLines.length === 0) return '';
+
+  // Non-4 options → always stacked
   if (optionLines.length !== 4) {
-    // Non-4 options → simple stacked
     return optionLines.map(opt =>
       `<div style="margin-bottom:2px;margin-left:2px;">${String(opt).trim().replace(/\n/g,'<br>')}</div>`
     ).join('');
   }
 
-  const containsMath = optionLines.some(opt =>
-    String(opt).includes('mjx-container') ||
-    /\$[^$]+\$|\\\(|\\\[/.test(String(opt))
-  );
- 
-  let dummy = document.createElement('span');
-  dummy.style.cssText = 'visibility:hidden;position:absolute;white-space:nowrap;padding:0;margin:0;border:none;font-family:Times New Roman, Times, serif;font-size:1.15em;';
-  dummy.textContent = optionLines.join('    ');
-  document.body.appendChild(dummy);
-  const fitsFour = dummy.offsetWidth < 700;
-  document.body.removeChild(dummy);
+  // We enforce: 1 line OR 2 lines (A+B / C+D) OR 4 lines.
+  // Never allow 3 lines.
 
-  const abFits = fitsInLine(optionLines[0], optionLines[1]);
-  const cdFits = fitsInLine(optionLines[2], optionLines[3]);
+  // Get the real available width inside the options area
+  const getAvailableWidth = () => {
+    const sample = document.querySelector('.question-body') || document.querySelector('.a4-page') || document.body;
+    const w = sample ? sample.clientWidth : 900;
+    // subtract question number column + inner padding/gaps
+    return Math.max(380, w - 140);
+  };
 
-  // 1) Math present → use flex wrap (keeps formulas readable)
-  if (containsMath) {
-    return `<div style="display:flex;gap:32px;flex-wrap:wrap;margin-bottom:3px;margin-left:2px;">
-      ${optionLines.map(opt => `<span style="min-width:70px;display:inline-block;vertical-align:top;">${String(opt).trim()}</span>`).join('')}
+  // Measure width of a "flex row" with the SAME gap/min-width as render
+  const measureRow = (items) => {
+    const wrap = document.createElement('div');
+    wrap.style.cssText =
+      "visibility:hidden;position:absolute;left:-9999px;top:-9999px;display:flex;flex-wrap:nowrap;gap:32px;font-family:'Times New Roman',Times,serif;font-size:1.15em;";
+
+    items.forEach(txt => {
+      const s = document.createElement('span');
+      s.style.cssText = "min-width:70px;display:inline-block;white-space:nowrap;vertical-align:top;";
+      s.textContent = String(txt).trim();
+      wrap.appendChild(s);
+    });
+
+    document.body.appendChild(wrap);
+    const width = wrap.getBoundingClientRect().width;
+    document.body.removeChild(wrap);
+    return width;
+  };
+
+  const available = getAvailableWidth();
+
+  // 1) Try single line with all 4
+  const all4Width = measureRow(optionLines);
+  if (all4Width <= available) {
+    // IMPORTANT: no wrapping here (flex-wrap:nowrap)
+    return `<div style="display:flex;gap:32px;flex-wrap:nowrap;margin-bottom:3px;margin-left:2px;">
+      ${optionLines.map(opt => `<span style="min-width:70px;display:inline-block;white-space:nowrap;vertical-align:top;">${String(opt).trim()}</span>`).join('')}
     </div>`;
   }
 
-  // 2) All four fit in one line
-  if (fitsFour) {
-    return `<div style="display:flex;gap:32px;flex-wrap:wrap;margin-bottom:3px;margin-left:2px;">
-      ${optionLines.map(opt => `<span style="min-width:70px;display:inline-block;vertical-align:top;">${String(opt).trim()}</span>`).join('')}
-    </div>`;
-  }
+  // 2) Try exactly 2 lines: (A,B) then (C,D) — each row must fit
+  const rowAB = measureRow([optionLines[0], optionLines[1]]);
+  const rowCD = measureRow([optionLines[2], optionLines[3]]);
 
-  // 3) 2×2 grid if (A,B) and (C,D) pairs fit side by side
-  if (abFits && cdFits) {
+  if (rowAB <= available && rowCD <= available) {
     return `
-      <div style="display:grid;grid-template-columns:1fr 1fr;column-gap:32px;row-gap:0;margin-bottom:0;margin-left:2px;width:max-content;">
-        <span style="min-width:70px;display:inline-block;">${optionLines[0]}</span>
-        <span style="min-width:70px;display:inline-block;">${optionLines[1]}</span>
-        <span style="min-width:70px;display:inline-block;">${optionLines[2]}</span>
-        <span style="min-width:70px;display:inline-block;">${optionLines[3]}</span>
+      <div style="display:flex;flex-direction:column;row-gap:2px;margin-bottom:0;margin-left:2px;">
+        <div style="display:flex;gap:32px;flex-wrap:nowrap;">
+          <span style="min-width:70px;display:inline-block;white-space:nowrap;vertical-align:top;">${String(optionLines[0]).trim()}</span>
+          <span style="min-width:70px;display:inline-block;white-space:nowrap;vertical-align:top;">${String(optionLines[1]).trim()}</span>
+        </div>
+        <div style="display:flex;gap:32px;flex-wrap:nowrap;">
+          <span style="min-width:70px;display:inline-block;white-space:nowrap;vertical-align:top;">${String(optionLines[2]).trim()}</span>
+          <span style="min-width:70px;display:inline-block;white-space:nowrap;vertical-align:top;">${String(optionLines[3]).trim()}</span>
+        </div>
       </div>
     `;
   }
 
-  // 4) Fallback: stacked
+  // 3) Otherwise: 4 lines (stacked)
   return `
     <div>
       <div style="margin-bottom:2px;margin-left:2px;">${String(optionLines[0]).trim().replace(/\n/g,'<br>')}</div>
@@ -1239,6 +1259,7 @@ window.addEventListener('DOMContentLoaded', () => {
 </script>
 </body>
 </html>
+
 
 
 
