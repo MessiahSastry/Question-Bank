@@ -1014,14 +1014,18 @@ document.getElementById('apply-json-btn').onclick = async function() {
     // remove trailing commas
   sub = sub.replace(/,(\s*[}\]])/g, '$1');
 
-  // First try parse as-is (for already-correct JSON like \\(\\frac{1}{2}\\))
-  try {
-    return JSON.parse(sub);
-  } catch (e) {
-    // If it fails, then repair illegal backslashes and parse again
-    sub = sub.replace(/\\(?![\\\/"bfnrtu]|u[0-9a-fA-F]{4})/g, '\\\\');
-    return JSON.parse(sub);
-  }
+    // Repair LaTeX backslashes BEFORE parsing, so JSON does NOT turn \t \f \n \r into tab/formfeed/newline.
+  // 1) Fix LaTeX commands that start with t/f/n/r (e.g., \text, \times, \frac) so they don't become JSON escapes.
+  sub = sub
+    .replace(/\\t(?=[A-Za-z])/g, '\\\\t')
+    .replace(/\\f(?=[A-Za-z])/g, '\\\\f')
+    .replace(/\\n(?=[A-Za-z])/g, '\\\\n')
+    .replace(/\\r(?=[A-Za-z])/g, '\\\\r');
+
+  // 2) Fix all other invalid backslashes (e.g., \cap, \frac, \alpha) that are not valid JSON escapes
+  sub = sub.replace(/\\(?![\\\/"bfnrtu]|u[0-9a-fA-F]{4})/g, '\\\\');
+
+  return JSON.parse(sub);
 }
 
 let items;
@@ -1128,6 +1132,7 @@ if (!qObj.text || !qObj.text.trim()) {
 </script>
 </body>
 </html>
+
 
 
 
