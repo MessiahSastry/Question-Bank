@@ -873,9 +873,11 @@ const auth = firebase.auth();
       const initialBoard = (aiGeneratorConfig.boards && aiGeneratorConfig.boards[0]) ? aiGeneratorConfig.boards[0] : 'Other';
       const initialSubjects = aiGeneratorConfig.getSubjectsForBoard(initialBoard);
 
-      const subjectsHTML = initialSubjects
+     const initialSubjectsWithOther = Array.from(new Set([...(initialSubjects || []), "Other"]));
+const subjectsHTML = initialSubjectsWithOther
         .map(s => `<div data-value="${s}">${s}</div>`)
         .join('');
+
 
       const qTypesHTML = aiGeneratorConfig.questionTypes
         .map(qt => `<div data-value="${qt}">${qt}</div>`)
@@ -885,13 +887,20 @@ const auth = firebase.auth();
         <h2>AI Question Generator</h2>
         <form id="ai-setup-form">
           <div class="form-group">
-            <label>Class:</label>
-            <div id="class-dropdown-ai" class="custom-dropdown">
-              <input type="hidden" id="class-value-ai" value="${aiGeneratorConfig.classes[0]}">
-              <div class="selected-option">${aiGeneratorConfig.classes[0]}</div>
-              <div class="dropdown-options">${classesHTML}</div>
-            </div>
-          </div>
+  <label>Subject:</label>
+  <div id="subject-dropdown-ai" class="custom-dropdown">
+    <input type="hidden" id="subject-value-ai" value="${(initialSubjectsWithOther[0] || '')}">
+    <div class="selected-option">${(initialSubjectsWithOther[0] || 'Select Subject')}</div>
+    <div class="dropdown-options">${subjectsHTML}</div>
+  </div>
+
+  <!-- NEW: show only when Subject = Other -->
+  <div id="subject-other-wrap" style="display:none;margin-top:10px;">
+    <label style="font-size:0.95em;">Type Subject Name:</label>
+    <input type="text" id="subject-other-input" placeholder="Enter Subject Name" />
+  </div>
+</div>
+
 
             <div class="form-group">
             <label>Name of the Board:</label>
@@ -953,10 +962,15 @@ const auth = firebase.auth();
         </form>
       `;
 
-      const initialChapters =
+      const _initialSubjectFinal =
+  ((initialSubjectsWithOther[0] || '') === 'Other')
+    ? ((document.getElementById('subject-other-input')?.value || '').trim() || 'Other')
+    : (initialSubjectsWithOther[0] || '');
+
+const initialChapters =
         textbooks[aiGeneratorConfig.classes[0]] &&
-        textbooks[aiGeneratorConfig.classes[0]][initialSubjects[0]]
-          ? textbooks[aiGeneratorConfig.classes[0]][initialSubjects[0]]
+        textbooks[aiGeneratorConfig.classes[0]][_initialSubjectFinal]
+          ? textbooks[aiGeneratorConfig.classes[0]][_initialSubjectFinal]
           : [];
 
       const chaptersHTML = initialChapters
@@ -969,7 +983,19 @@ const auth = firebase.auth();
 
       chapterDropdown.innerHTML = chaptersHTML;
       chapterSelected.textContent = initialChapters[0] || 'Select Chapter';
-      chapterInput.value = initialChapters[0] || '';
+chapterInput.value = initialChapters[0] || '';
+
+/* NEW: Subject Other toggle on initial load */
+const __subWrap = document.getElementById('subject-other-wrap');
+const __subOther = document.getElementById('subject-other-input');
+const __subVal = document.getElementById('subject-value-ai')?.value || '';
+if (__subVal === 'Other') {
+  if (__subWrap) __subWrap.style.display = 'block';
+  if (__subOther) __subOther.focus();
+} else {
+  if (__subWrap) __subWrap.style.display = 'none';
+  if (__subOther) __subOther.value = '';
+}
 
       setupCustomDropdownsForForm();
 
@@ -984,10 +1010,14 @@ const auth = firebase.auth();
         const otherBoard = (document.getElementById('board-other-input')?.value || '').trim();
         const finalBoard = (rawBoard === 'Other') ? (otherBoard || 'Other') : rawBoard;
 
-        const sessionParams = {
+        const rawSubject = document.getElementById('subject-value-ai') ? document.getElementById('subject-value-ai').value : '';
+const otherSubject = (document.getElementById('subject-other-input')?.value || '').trim();
+const finalSubject = (rawSubject === 'Other') ? (otherSubject || 'Other') : rawSubject;
+
+const sessionParams = {
           class: document.getElementById('class-value-ai').value,
           board: finalBoard,
-          subject: document.getElementById('subject-value-ai').value,
+          subject: finalSubject,
           questionType: document.getElementById('qtype-value-ai').value,
           chapter: document.getElementById('chapter-value-ai').value,
           levelPlan: planRaw || '20 Level 2',
@@ -1190,9 +1220,22 @@ function setupCustomDropdownsForForm() {
 
     const selectedBoard = document.getElementById('board-value-ai').value;
     const newSubjects = aiGeneratorConfig.getSubjectsForBoard(selectedBoard);
-   subjectOptions.innerHTML = newSubjects.map(s => `<div data-value="${s}">${s}</div>`).join('');
-    subjectSelected.textContent = newSubjects[0] || 'Select Subject';
-    subjectInput.value = newSubjects[0] || '';
+const newSubjectsWithOther = Array.from(new Set([...(newSubjects || []), "Other"]));
+
+subjectOptions.innerHTML = newSubjectsWithOther.map(s => `<div data-value="${s}">${s}</div>`).join('');
+subjectSelected.textContent = newSubjectsWithOther[0] || 'Select Subject';
+subjectInput.value = newSubjectsWithOther[0] || '';
+
+/* NEW: toggle Subject Other UI after refresh */
+const sWrap = document.getElementById('subject-other-wrap');
+const sOther = document.getElementById('subject-other-input');
+if (subjectInput.value === 'Other') {
+  if (sWrap) sWrap.style.display = 'block';
+  if (sOther) sOther.focus();
+} else {
+  if (sWrap) sWrap.style.display = 'none';
+  if (sOther) sOther.value = '';
+}
 
     updateChapterDropdown(selectedClass, newSubjects[0] || '');
 
@@ -1208,9 +1251,24 @@ function setupCustomDropdownsForForm() {
   });
 
   setupCustomDropdown('subject-dropdown-ai', 'subject-value-ai', (selectedSubject) => {
-    const selectedClass = document.getElementById('class-value-ai').value;
-    updateChapterDropdown(selectedClass, selectedSubject);
-  });
+  const wrap = document.getElementById('subject-other-wrap');
+  const otherInput = document.getElementById('subject-other-input');
+
+  if (selectedSubject === 'Other') {
+    if (wrap) wrap.style.display = 'block';
+    if (otherInput) otherInput.focus();
+  } else {
+    if (wrap) wrap.style.display = 'none';
+    if (otherInput) otherInput.value = '';
+  }
+
+  const selectedClass = document.getElementById('class-value-ai').value;
+  const finalSubject = (selectedSubject === 'Other')
+    ? ((otherInput?.value || '').trim() || 'Other')
+    : selectedSubject;
+
+  updateChapterDropdown(selectedClass, finalSubject);
+});
 
      setupCustomDropdown('board-dropdown-ai', 'board-value-ai', (selectedBoard) => {
     const wrap = document.getElementById('board-other-wrap');
@@ -1232,10 +1290,23 @@ function setupCustomDropdownsForForm() {
     const subjectSelected = subjectDropdown.querySelector('.selected-option');
     const subjectInput = document.getElementById('subject-value-ai');
 
-    const newSubjects = aiGeneratorConfig.getSubjectsForBoard(selectedBoard);
-    subjectOptions.innerHTML = newSubjects.map(s => `<div data-value="${s}">${s}</div>`).join('');
-    subjectSelected.textContent = newSubjects[0] || 'Select Subject';
-    subjectInput.value = newSubjects[0] || '';
+   const newSubjects = aiGeneratorConfig.getSubjectsForBoard(selectedBoard);
+const newSubjectsWithOther = Array.from(new Set([...(newSubjects || []), "Other"]));
+
+subjectOptions.innerHTML = newSubjectsWithOther.map(s => `<div data-value="${s}">${s}</div>`).join('');
+subjectSelected.textContent = newSubjectsWithOther[0] || 'Select Subject';
+subjectInput.value = newSubjectsWithOther[0] || '';
+
+/* NEW: toggle Subject Other UI after refresh */
+const sWrap = document.getElementById('subject-other-wrap');
+const sOther = document.getElementById('subject-other-input');
+if (subjectInput.value === 'Other') {
+  if (sWrap) sWrap.style.display = 'block';
+  if (sOther) sOther.focus();
+} else {
+  if (sWrap) sWrap.style.display = 'none';
+  if (sOther) sOther.value = '';
+}
 
     updateChapterDropdown(selectedClass, newSubjects[0] || '');
 
@@ -3044,6 +3115,7 @@ function showEditPopupForQuestion(index) {
 </script> 
 </body> 
 </html>
+
 
 
 
