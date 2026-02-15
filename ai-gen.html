@@ -950,19 +950,42 @@ const subjectsHTML = initialSubjectsWithOther
           </div>
 
          
-          <!-- NEW: Single input for Questions & Levels -->
-          <div class="form-group">
-            <label>Questions & Levels:</label>
-            <input
-              type="text"
-              id="qlevel-plan-ai"
-              placeholder="e.g., 20 Level 2 | 20 Mixed (L1–L3) | 15 (L1:5, L2:5, L3:5)"
-            />
-            <div style="font-size:12px;color:#5b6b7a;margin-top:6px;">
-              Examples: <em>20 Level 2</em> · <em>20 Mixed (L1–L3)</em> ·
-              <em>15 (L1:5, L2:5, L3:5)</em>
-            </div>
-          </div>
+         <!-- NEW: Levels (L1/L2/L3) + Total (auto) -->
+<div class="form-group" id="levels-wrap-ai">
+  <label>Questions by Level:</label>
+
+  <div style="display:flex;gap:10px;flex-wrap:wrap;">
+    <div style="flex:1;min-width:120px;">
+      <label style="font-size:0.92em;">Level 1</label>
+      <input type="number" id="lvl1-ai" min="0" value="0" />
+    </div>
+
+    <div style="flex:1;min-width:120px;">
+      <label style="font-size:0.92em;">Level 2</label>
+      <input type="number" id="lvl2-ai" min="0" value="0" />
+    </div>
+
+    <div style="flex:1;min-width:120px;">
+      <label style="font-size:0.92em;">Level 3</label>
+      <input type="number" id="lvl3-ai" min="0" value="0" />
+    </div>
+
+    <div style="flex:1;min-width:140px;">
+      <label style="font-size:0.92em;">Total</label>
+      <input type="number" id="lvl-total-ai" value="0" readonly />
+    </div>
+  </div>
+
+  <!-- Only for Descriptive -->
+  <div id="desc-marks-wrap-ai" style="display:none;margin-top:10px;">
+    <label style="font-size:0.95em;">Marks:</label>
+    <input type="number" id="desc-marks-ai" min="0" placeholder="Enter Marks" />
+  </div>
+
+  <div style="font-size:12px;color:#5b6b7a;margin-top:6px;">
+    Tip: Enter Level 1/2/3 counts. Total will update automatically.
+  </div>
+</div>
 
           <button type="submit">Start Generating</button>
         </form>
@@ -1066,14 +1089,56 @@ if (__subOpts) {
   __subOpts.addEventListener('click', () => setTimeout(__syncOtherToggles, 0));
 }
 
-      setupCustomDropdownsForForm();
+     setupCustomDropdownsForForm();
+
+/* NEW: Auto Total + Descriptive Marks toggle */
+const __l1 = document.getElementById('lvl1-ai');
+const __l2 = document.getElementById('lvl2-ai');
+const __l3 = document.getElementById('lvl3-ai');
+const __total = document.getElementById('lvl-total-ai');
+
+function __syncTotal() {
+  const a = parseInt(__l1?.value || '0', 10) || 0;
+  const b = parseInt(__l2?.value || '0', 10) || 0;
+  const c = parseInt(__l3?.value || '0', 10) || 0;
+  if (__total) __total.value = String(a + b + c);
+}
+
+[__l1, __l2, __l3].forEach(inp => {
+  if (inp) inp.addEventListener('input', __syncTotal);
+});
+__syncTotal();
+
+const __qtypeHidden = document.getElementById('qtype-value-ai');
+const __descMarksWrap = document.getElementById('desc-marks-wrap-ai');
+
+function __syncMarksToggle() {
+  const qv = (__qtypeHidden?.value || '').trim();
+  const isDesc = (qv === 'Descriptive');
+  if (__descMarksWrap) __descMarksWrap.style.display = isDesc ? 'block' : 'none';
+  if (!isDesc) {
+    const m = document.getElementById('desc-marks-ai');
+    if (m) m.value = '';
+  }
+}
+
+// on load + when qtype dropdown changes
+__syncMarksToggle();
+const __qtypeOpts = document.querySelector('#qtype-dropdown-ai .dropdown-options');
+if (__qtypeOpts) {
+  __qtypeOpts.addEventListener('click', () => setTimeout(__syncMarksToggle, 0));
+}
 
       document.getElementById("ai-setup-form").onsubmit = (e) => {
         e.preventDefault();
 
-        const planRaw = (document.getElementById('qlevel-plan-ai').value || '').trim();
-        const numMatch = planRaw.match(/\d+/); // first integer in the plan
-        const derivedCount = numMatch ? parseInt(numMatch[0], 10) : 20; // fallback 20
+       const l1 = parseInt(document.getElementById('lvl1-ai')?.value || '0', 10) || 0;
+        const l2 = parseInt(document.getElementById('lvl2-ai')?.value || '0', 10) || 0;
+        const l3 = parseInt(document.getElementById('lvl3-ai')?.value || '0', 10) || 0;
+        const derivedCount = l1 + l2 + l3;
+
+        const planRaw = `L1:${l1}, L2:${l2}, L3:${l3}`;
+
 
                   const rawBoard = document.getElementById('board-value-ai') ? document.getElementById('board-value-ai').value : '';
         const otherBoard = (document.getElementById('board-other-input')?.value || '').trim();
@@ -1083,17 +1148,24 @@ if (__subOpts) {
 const otherSubject = (document.getElementById('subject-other-input')?.value || '').trim();
 const finalSubject = (rawSubject === 'Other') ? (otherSubject || 'Other') : rawSubject;
 
-const sessionParams = {
-          class: document.getElementById('class-value-ai').value,
-          board: finalBoard,
-          subject: finalSubject,
-          questionType: document.getElementById('qtype-value-ai').value,
-         chapter: (document.getElementById('chapter-input-ai')?.value || '').trim(),
-          levelPlan: planRaw || '20 Level 2',
-          numQuestions: derivedCount
-        };
+const qTypeFinal = document.getElementById('qtype-value-ai').value;
 
+const sessionParams = {
+  class: document.getElementById('class-value-ai').value,
+  board: finalBoard,
+  subject: finalSubject,
+  questionType: qTypeFinal,
+  chapter: document.getElementById('chapter-value-ai').value,
+  levelPlan: planRaw,
+  numQuestions: derivedCount,
+  marks: (qTypeFinal === 'Descriptive')
+    ? (parseInt(document.getElementById('desc-marks-ai')?.value || '0', 10) || 0)
+    : 0
+};
         if (!sessionParams.chapter || !sessionParams.subject) return;
+if (!sessionParams.numQuestions || sessionParams.numQuestions <= 0) return;
+if (sessionParams.questionType === 'Descriptive' && (!sessionParams.marks || sessionParams.marks <= 0)) return;
+
 
         history.pushState({ page: 'chat', sessionParams: sessionParams }, 'Chat', '#chat');
         loadAiChatInterface(sessionParams);
@@ -3184,6 +3256,7 @@ function showEditPopupForQuestion(index) {
 </script> 
 </body> 
 </html>
+
 
 
 
