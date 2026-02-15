@@ -788,9 +788,19 @@ const auth = firebase.auth();
   ]
 },
 
-      questionTypes: ["MCQ (Single)", "MCQ (Multiple)", "Descriptive", "Text Book (MCQ Single)", "Text Book (MCQ Multiple)"],
-      getSubjectsForClass: function (className) {
-        return this.subjectMappings[className] || [];
+           questionTypes: ["MCQ (Single)", "MCQ (Multiple)", "Descriptive", "Text Book (MCQ Single)", "Text Book (MCQ Multiple)"],
+
+      // NEW: Board-wise subjects (your data is in boardSubjectMappings)
+      getSubjectsForBoard: function (boardName) {
+        const b = (boardName || '').trim();
+        const map = this.boardSubjectMappings || {};
+        return Array.isArray(map[b]) ? map[b] : (Array.isArray(map["Other"]) ? map["Other"] : []);
+      },
+
+      // BACKWARD COMPAT: if any old code still calls this
+      getSubjectsForClass: function () {
+        const firstBoard = (this.boards && this.boards[0]) ? this.boards[0] : 'Other';
+        return this.getSubjectsForBoard(firstBoard);
       }
     };
 
@@ -857,7 +867,7 @@ const auth = firebase.auth();
       container.innerHTML = '<div class="setup-form-container"></div>';
       const formContainer = container.querySelector('.setup-form-container');
 
-            const classesHTML = aiGeneratorConfig.classes
+                  const classesHTML = aiGeneratorConfig.classes
         .map(c => `<div data-value="${c}">${c}</div>`)
         .join('');
 
@@ -865,7 +875,9 @@ const auth = firebase.auth();
         .map(b => `<div data-value="${b}">${b}</div>`)
         .join('');
 
-      const initialSubjects = aiGeneratorConfig.getSubjectsForClass(aiGeneratorConfig.classes[0]);
+      const initialBoard = (aiGeneratorConfig.boards && aiGeneratorConfig.boards[0]) ? aiGeneratorConfig.boards[0] : 'Other';
+      const initialSubjects = aiGeneratorConfig.getSubjectsForBoard(initialBoard);
+
       const subjectsHTML = initialSubjects
         .map(s => `<div data-value="${s}">${s}</div>`)
         .join('');
@@ -1205,7 +1217,7 @@ function setupCustomDropdownsForForm() {
     updateChapterDropdown(selectedClass, selectedSubject);
   });
 
-    setupCustomDropdown('board-dropdown-ai', 'board-value-ai', (selectedBoard) => {
+     setupCustomDropdown('board-dropdown-ai', 'board-value-ai', (selectedBoard) => {
     const wrap = document.getElementById('board-other-wrap');
     const otherInput = document.getElementById('board-other-input');
 
@@ -1216,6 +1228,29 @@ function setupCustomDropdownsForForm() {
       if (wrap) wrap.style.display = 'none';
       if (otherInput) otherInput.value = '';
     }
+
+    // NEW: refresh subjects when board changes
+    const selectedClass = document.getElementById('class-value-ai').value;
+
+    const subjectDropdown = document.getElementById('subject-dropdown-ai');
+    const subjectOptions = subjectDropdown.querySelector('.dropdown-options');
+    const subjectSelected = subjectDropdown.querySelector('.selected-option');
+    const subjectInput = document.getElementById('subject-value-ai');
+
+    const newSubjects = aiGeneratorConfig.getSubjectsForBoard(selectedBoard);
+    subjectOptions.innerHTML = newSubjects.map(s => `<div data-value="${s}">${s}</div>`).join('');
+    subjectSelected.textContent = newSubjects[0] || 'Select Subject';
+    subjectInput.value = newSubjects[0] || '';
+
+    updateChapterDropdown(selectedClass, newSubjects[0] || '');
+
+    optionsContainerListener(
+      subjectOptions,
+      subjectSelected,
+      subjectInput,
+      subjectDropdown,
+      (newSubject) => updateChapterDropdown(selectedClass, newSubject)
+    );
   });
 
   setupCustomDropdown('qtype-dropdown-ai', 'qtype-value-ai');
@@ -3014,6 +3049,7 @@ function showEditPopupForQuestion(index) {
 </script> 
 </body> 
 </html>
+
 
 
 
