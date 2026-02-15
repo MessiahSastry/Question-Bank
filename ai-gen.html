@@ -707,46 +707,87 @@ const auth = firebase.auth();
         "AP State Board (SCERT)",
         "Other"
       ],
-      subjectMappings: {
-        "3rd Class": ["Telugu", "Hindi", "English", "Math", "Science", "Social"],
-        "4th Class": ["Telugu", "Hindi", "English", "Math", "Science", "Social"],
-        "5th Class": ["Telugu", "Hindi", "English", "Math", "Science", "Social"],
-        "6th Class": [
-          "Telugu", "Hindi", "English 1", "English 2",
-          "Math 1", "Math 1 IIT", "Math 2", "Math 2 IIT",
-          "Physics", "Physics IIT & NEET",
-          "Chemistry", "Chemistry IIT & NEET",
-          "Biology", "Biology NEET", "Social"
-        ],
-        "7th Class": [
-          "Telugu", "Hindi", "English 1", "English 2",
-          "Math 1", "Math 1 IIT", "Math 2", "Math 2 IIT",
-          "Physics", "Physics IIT & NEET",
-          "Chemistry", "Chemistry IIT & NEET",
-          "Biology", "Biology NEET", "Social"
-        ],
-        "8th Class": [
-          "Telugu", "Hindi", "English 1", "English 2",
-          "Math 1", "Math 1 IIT", "Math 2", "Math 2 IIT",
-          "Physics", "Physics IIT & NEET",
-          "Chemistry", "Chemistry IIT & NEET",
-          "Biology", "Biology NEET", "Social"
-        ],
-        "9th Class": [
-          "Telugu", "Hindi", "English 1", "English 2",
-          "Math 1", "Math 1 IIT", "Math 2", "Math 2 IIT",
-          "Physics", "Physics IIT & NEET",
-          "Chemistry", "Chemistry IIT & NEET",
-          "Biology", "Biology NEET", "Social"
-        ],
-        "10th Class": [
-          "Telugu", "Hindi", "English 1", "English 2",
-          "Math 1", "Math 1 IIT", "Math 2", "Math 2 IIT",
-          "Physics", "Physics IIT & NEET",
-          "Chemistry", "Chemistry IIT & NEET",
-          "Biology", "Biology NEET", "Social"
-        ]
-      },
+      boardSubjectMappings: {
+  "CBSE": [
+    "English",
+    "Hindi",
+    "Mathematics",
+    "Science",
+    "Social Science",
+    "Computer Science / IT",
+    "Sanskrit",
+    "Physical Education",
+    "General Knowledge",
+    "Environmental Studies",
+    "Other"
+  ],
+  "ICSE": [
+    "English Language",
+    "English Literature",
+    "Second Language",
+    "Mathematics",
+    "Physics",
+    "Chemistry",
+    "Biology",
+    "History & Civics",
+    "Geography",
+    "Computer Applications",
+    "Environmental Education",
+    "Commercial Studies / Economics",
+    "Other"
+  ],
+  "Olympiad": [
+    "Mathematics",
+    "Science",
+    "English",
+    "Reasoning",
+    "General Knowledge",
+    "Cyber / Computer",
+    "Other"
+  ],
+  "IIT & NEET Foundation": [
+    "Mathematics",
+    "Physics",
+    "Chemistry",
+    "Biology",
+    "Reasoning",
+    "Other"
+  ],
+  "JEE Mains": [
+    "Physics",
+    "Chemistry",
+    "Mathematics",
+    "Other"
+  ],
+  "JEE Advance": [
+    "Physics",
+    "Chemistry",
+    "Mathematics",
+    "Other"
+  ],
+  "NEET": [
+    "Physics",
+    "Chemistry",
+    "Biology",
+    "Other"
+  ],
+  "AP State Board (SCERT)": [
+    "Telugu",
+    "Hindi",
+    "English",
+    "Mathematics",
+    "Physical Science",
+    "Biological Science",
+    "Social Studies",
+    "General Science",
+    "Computer / ICT",
+    "Other"
+  ],
+  "Other": [
+    "Other"
+  ]
+},
+
       questionTypes: ["MCQ (Single)", "MCQ (Multiple)", "Descriptive", "Text Book (MCQ Single)", "Text Book (MCQ Multiple)"],
       getSubjectsForClass: function (className) {
         return this.subjectMappings[className] || [];
@@ -845,12 +886,18 @@ const auth = firebase.auth();
             </div>
           </div>
 
-                    <div class="form-group">
+            <div class="form-group">
             <label>Name of the Board:</label>
             <div id="board-dropdown-ai" class="custom-dropdown">
               <input type="hidden" id="board-value-ai" value="${(aiGeneratorConfig.boards && aiGeneratorConfig.boards[0]) ? aiGeneratorConfig.boards[0] : ''}">
               <div class="selected-option">${(aiGeneratorConfig.boards && aiGeneratorConfig.boards[0]) ? aiGeneratorConfig.boards[0] : 'Select Board'}</div>
               <div class="dropdown-options">${boardsHTML}</div>
+            </div>
+
+            <!-- NEW: show only when Board = Other -->
+            <div id="board-other-wrap" style="display:none;margin-top:10px;">
+              <label style="font-size:0.95em;">Type Board Name:</label>
+              <input type="text" id="board-other-input" placeholder="Enter Board Name" />
             </div>
           </div>
 
@@ -926,14 +973,18 @@ const auth = firebase.auth();
         const numMatch = planRaw.match(/\d+/); // first integer in the plan
         const derivedCount = numMatch ? parseInt(numMatch[0], 10) : 20; // fallback 20
 
-          const sessionParams = {
+                  const rawBoard = document.getElementById('board-value-ai') ? document.getElementById('board-value-ai').value : '';
+        const otherBoard = (document.getElementById('board-other-input')?.value || '').trim();
+        const finalBoard = (rawBoard === 'Other') ? (otherBoard || 'Other') : rawBoard;
+
+        const sessionParams = {
           class: document.getElementById('class-value-ai').value,
-          board: document.getElementById('board-value-ai') ? document.getElementById('board-value-ai').value : '',
+          board: finalBoard,
           subject: document.getElementById('subject-value-ai').value,
           questionType: document.getElementById('qtype-value-ai').value,
           chapter: document.getElementById('chapter-value-ai').value,
-          levelPlan: planRaw || '20 Level 2', // NEW: free-form plan text the user typed
-          numQuestions: derivedCount // NEW: numeric count derived from plan
+          levelPlan: planRaw || '20 Level 2',
+          numQuestions: derivedCount
         };
 
         if (!sessionParams.chapter || !sessionParams.subject) return;
@@ -1130,7 +1181,8 @@ function setupCustomDropdownsForForm() {
     const subjectSelected = subjectDropdown.querySelector('.selected-option');
     const subjectInput = document.getElementById('subject-value-ai');
 
-    const newSubjects = aiGeneratorConfig.getSubjectsForClass(selectedClass);
+    const selectedBoard = document.getElementById('board-value-ai').value;
+    const newSubjects = aiGeneratorConfig.getSubjectsForBoard(selectedBoard);
    subjectOptions.innerHTML = newSubjects.map(s => `<div data-value="${s}">${s}</div>`).join('');
     subjectSelected.textContent = newSubjects[0] || 'Select Subject';
     subjectInput.value = newSubjects[0] || '';
@@ -1153,7 +1205,19 @@ function setupCustomDropdownsForForm() {
     updateChapterDropdown(selectedClass, selectedSubject);
   });
 
-  setupCustomDropdown('board-dropdown-ai', 'board-value-ai');
+    setupCustomDropdown('board-dropdown-ai', 'board-value-ai', (selectedBoard) => {
+    const wrap = document.getElementById('board-other-wrap');
+    const otherInput = document.getElementById('board-other-input');
+
+    if (selectedBoard === 'Other') {
+      if (wrap) wrap.style.display = 'block';
+      if (otherInput) otherInput.focus();
+    } else {
+      if (wrap) wrap.style.display = 'none';
+      if (otherInput) otherInput.value = '';
+    }
+  });
+
   setupCustomDropdown('qtype-dropdown-ai', 'qtype-value-ai');
   setupCustomDropdown('chapter-dropdown-ai', 'chapter-value-ai');
 }
@@ -2950,6 +3014,7 @@ function showEditPopupForQuestion(index) {
 </script> 
 </body> 
 </html>
+
 
 
 
