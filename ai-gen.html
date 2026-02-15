@@ -1014,10 +1014,17 @@ const subjectsHTML = initialSubjectsWithOther
         style="width:52px;text-align:center;padding:10px 12px;border:2px solid #cfd3d8;border-radius:14px;background:#f6f6f6;outline:none;font-size:18px;font-weight:800;box-shadow:0 1px 0 rgba(0,0,0,0.03) inset;" />
     </div>
 
-    <!-- Placeholder for NEXT STEP (Add another set) -->
-    <div style="margin-top:6px;font-size:12px;color:#5b6b7a;">
-      (Next step: “+ Add another set” will come here.)
-    </div>
+    <!-- Descriptive Sets -->
+<div id="desc-sets-ai" style="display:flex;flex-direction:column;gap:10px;margin-top:6px;"></div>
+
+<button type="button" id="add-desc-set-ai"
+  style="margin-top:6px;padding:10px 12px;border:none;border-radius:14px;background:#0f3d6b;color:#fff;font-weight:800;cursor:pointer;">
+  + Add another set
+</button>
+
+<div style="margin-top:6px;font-size:12px;color:#5b6b7a;">
+  Tip: Each set can have its own Marks + (L1/L2/L3). Total will add all sets.
+</div>
 
   </div>
 </div>
@@ -1124,7 +1131,127 @@ if (__subOpts) {
   __subOpts.addEventListener('click', () => setTimeout(__syncOtherToggles, 0));
 }
 
-     setupCustomDropdownsForForm();
+    setupCustomDropdownsForForm();
+
+/* NEW: Descriptive “Add another set” + Total across sets */
+(function () {
+  const descWrap = document.getElementById('desc-levels-wrap-ai');
+  const setsHost = document.getElementById('desc-sets-ai');
+  const addBtn   = document.getElementById('add-desc-set-ai');
+  const totalBox = document.getElementById('dlvl-total-ai');
+
+  // If the host isn't present, do nothing
+  if (!descWrap || !setsHost || !addBtn) return;
+
+  function makeSetRow(initialMarks='1', l1='0', l2='0', l3='0') {
+    const row = document.createElement('div');
+    row.className = 'desc-set-row';
+    row.style.cssText = 'border:1px solid #e4eef9;border-radius:14px;padding:10px;background:#fbfdff;';
+
+    row.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px;">
+        <div style="min-width:90px;font-weight:800;color:#0f3d6b;">Marks</div>
+        <input type="number" class="dset-marks" min="1" value="${initialMarks}"
+          style="width:52px;text-align:center;padding:10px 12px;border:2px solid #cfe0f1;border-radius:14px;background:#f4fbff;outline:none;font-size:18px;font-weight:700;" />
+      </div>
+
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+        <div style="min-width:90px;font-weight:700;color:#0f3d6b;">Level 1</div>
+        <input type="number" class="dset-l1" min="0" value="${l1}"
+          style="width:52px;text-align:center;padding:10px 12px;border:2px solid #cfe0f1;border-radius:14px;background:#f4fbff;outline:none;font-size:18px;font-weight:700;" />
+      </div>
+
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:10px;">
+        <div style="min-width:90px;font-weight:700;color:#0f3d6b;">Level 2</div>
+        <input type="number" class="dset-l2" min="0" value="${l2}"
+          style="width:52px;text-align:center;padding:10px 12px;border:2px solid #cfe0f1;border-radius:14px;background:#f4fbff;outline:none;font-size:18px;font-weight:700;" />
+      </div>
+
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:10px;">
+        <div style="min-width:90px;font-weight:700;color:#0f3d6b;">Level 3</div>
+        <input type="number" class="dset-l3" min="0" value="${l3}"
+          style="width:52px;text-align:center;padding:10px 12px;border:2px solid #cfe0f1;border-radius:14px;background:#f4fbff;outline:none;font-size:18px;font-weight:700;" />
+      </div>
+
+      <div style="display:flex;justify-content:flex-end;margin-top:10px;">
+        <button type="button" class="dset-remove"
+          style="padding:8px 10px;border:none;border-radius:12px;background:#c82333;color:#fff;font-weight:800;cursor:pointer;">
+          Remove
+        </button>
+      </div>
+    `;
+
+    // wire events
+    const inputs = row.querySelectorAll('input');
+    inputs.forEach(inp => inp.addEventListener('input', syncDescTotalAllSets));
+    row.querySelector('.dset-remove').onclick = () => {
+      row.remove();
+      syncDescTotalAllSets();
+    };
+
+    return row;
+  }
+
+  function syncDescTotalAllSets() {
+    // Base single-set inputs (your original dlvl fields)
+    const baseL1 = parseInt(document.getElementById('dlvl1-ai')?.value || '0', 10) || 0;
+    const baseL2 = parseInt(document.getElementById('dlvl2-ai')?.value || '0', 10) || 0;
+    const baseL3 = parseInt(document.getElementById('dlvl3-ai')?.value || '0', 10) || 0;
+
+    let sum = baseL1 + baseL2 + baseL3;
+
+    // Added sets
+    setsHost.querySelectorAll('.desc-set-row').forEach(row => {
+      const a = parseInt(row.querySelector('.dset-l1')?.value || '0', 10) || 0;
+      const b = parseInt(row.querySelector('.dset-l2')?.value || '0', 10) || 0;
+      const c = parseInt(row.querySelector('.dset-l3')?.value || '0', 10) || 0;
+      sum += (a + b + c);
+    });
+
+    if (totalBox) totalBox.value = String(sum);
+  }
+
+  // Add button: create one more set
+  addBtn.onclick = () => {
+    setsHost.appendChild(makeSetRow('1','0','0','0'));
+    syncDescTotalAllSets();
+  };
+
+  // Ensure totals update when base fields change too
+  ['dlvl1-ai','dlvl2-ai','dlvl3-ai'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('input', syncDescTotalAllSets);
+  });
+
+  // initial
+  syncDescTotalAllSets();
+
+  // expose helper so submit logic can reuse it
+  window.__getDescSetsPlan = function () {
+    const sets = [];
+
+    // base set (existing UI)
+    sets.push({
+      marks: parseInt(document.getElementById('desc-marks-ai')?.value || '0', 10) || 0,
+      l1: parseInt(document.getElementById('dlvl1-ai')?.value || '0', 10) || 0,
+      l2: parseInt(document.getElementById('dlvl2-ai')?.value || '0', 10) || 0,
+      l3: parseInt(document.getElementById('dlvl3-ai')?.value || '0', 10) || 0,
+    });
+
+    // added sets
+    setsHost.querySelectorAll('.desc-set-row').forEach(row => {
+      sets.push({
+        marks: parseInt(row.querySelector('.dset-marks')?.value || '0', 10) || 0,
+        l1: parseInt(row.querySelector('.dset-l1')?.value || '0', 10) || 0,
+        l2: parseInt(row.querySelector('.dset-l2')?.value || '0', 10) || 0,
+        l3: parseInt(row.querySelector('.dset-l3')?.value || '0', 10) || 0,
+      });
+    });
+
+    return sets;
+  };
+
+})();
 
 /* NEW: Toggle MCQ vs Descriptive block (Marks + Levels) */
 (function () {
@@ -1147,53 +1274,80 @@ if (__subOpts) {
   if (qtypeOpts) qtypeOpts.addEventListener('click', () => setTimeout(syncLevelsMode, 0));
 })();
 
-/* NEW: Auto Total + Descriptive Marks toggle */
+/* NEW: Auto Total (MCQ + Descriptive) */
 const __l1 = document.getElementById('lvl1-ai');
 const __l2 = document.getElementById('lvl2-ai');
 const __l3 = document.getElementById('lvl3-ai');
 const __total = document.getElementById('lvl-total-ai');
 
-function __syncTotal() {
+const __dl1 = document.getElementById('dlvl1-ai');
+const __dl2 = document.getElementById('dlvl2-ai');
+const __dl3 = document.getElementById('dlvl3-ai');
+const __dtotal = document.getElementById('dlvl-total-ai');
+
+function __syncTotalMcq() {
   const a = parseInt(__l1?.value || '0', 10) || 0;
   const b = parseInt(__l2?.value || '0', 10) || 0;
   const c = parseInt(__l3?.value || '0', 10) || 0;
   if (__total) __total.value = String(a + b + c);
 }
 
-[__l1, __l2, __l3].forEach(inp => {
-  if (inp) inp.addEventListener('input', __syncTotal);
-});
-__syncTotal();
+function __syncTotalDescSingle() {
+  const a = parseInt(__dl1?.value || '0', 10) || 0;
+  const b = parseInt(__dl2?.value || '0', 10) || 0;
+  const c = parseInt(__dl3?.value || '0', 10) || 0;
+  if (__dtotal) __dtotal.value = String(a + b + c);
+}
 
+[__l1, __l2, __l3].forEach(inp => inp && inp.addEventListener('input', __syncTotalMcq));
+[__dl1, __dl2, __dl3].forEach(inp => inp && inp.addEventListener('input', __syncTotalDescSingle));
+
+__syncTotalMcq();
+__syncTotalDescSingle();
+
+/* NEW: Descriptive marks reset when switching away (optional cleanup) */
 const __qtypeHidden = document.getElementById('qtype-value-ai');
-const __descMarksWrap = document.getElementById('desc-marks-wrap-ai');
 
-function __syncMarksToggle() {
+function __syncMarksCleanup() {
   const qv = (__qtypeHidden?.value || '').trim();
   const isDesc = (qv === 'Descriptive');
-  if (__descMarksWrap) __descMarksWrap.style.display = isDesc ? 'block' : 'none';
   if (!isDesc) {
     const m = document.getElementById('desc-marks-ai');
-    if (m) m.value = '';
+    if (m) m.value = '1';
+    if (__dl1) __dl1.value = '0';
+    if (__dl2) __dl2.value = '0';
+    if (__dl3) __dl3.value = '0';
+    __syncTotalDescSingle();
   }
 }
 
-// on load + when qtype dropdown changes
-__syncMarksToggle();
+__syncMarksCleanup();
 const __qtypeOpts = document.querySelector('#qtype-dropdown-ai .dropdown-options');
-if (__qtypeOpts) {
-  __qtypeOpts.addEventListener('click', () => setTimeout(__syncMarksToggle, 0));
-}
+if (__qtypeOpts) __qtypeOpts.addEventListener('click', () => setTimeout(__syncMarksCleanup, 0));
 
       document.getElementById("ai-setup-form").onsubmit = (e) => {
         e.preventDefault();
 
-       const l1 = parseInt(document.getElementById('lvl1-ai')?.value || '0', 10) || 0;
-        const l2 = parseInt(document.getElementById('lvl2-ai')?.value || '0', 10) || 0;
-        const l3 = parseInt(document.getElementById('lvl3-ai')?.value || '0', 10) || 0;
-        const derivedCount = l1 + l2 + l3;
+       const qTypeFinal = document.getElementById('qtype-value-ai').value;
 
-        const planRaw = `L1:${l1}, L2:${l2}, L3:${l3}`;
+let derivedCount = 0;
+let planRaw = '';
+
+if (qTypeFinal === 'Descriptive') {
+  const sets = (window.__getDescSetsPlan ? window.__getDescSetsPlan() : []);
+  derivedCount = sets.reduce((s, x) => s + (x.l1 + x.l2 + x.l3), 0);
+
+  // Example: Set1(M1: L1:2,L2:0,L3:1) | Set2(M2: L1:1,L2:1,L3:0)
+  planRaw = sets.map((x, i) =>
+    `Set${i+1}(M${x.marks}: L1:${x.l1}, L2:${x.l2}, L3:${x.l3})`
+  ).join(' | ');
+} else {
+  const l1 = parseInt(document.getElementById('lvl1-ai')?.value || '0', 10) || 0;
+  const l2 = parseInt(document.getElementById('lvl2-ai')?.value || '0', 10) || 0;
+  const l3 = parseInt(document.getElementById('lvl3-ai')?.value || '0', 10) || 0;
+  derivedCount = l1 + l2 + l3;
+  planRaw = `L1:${l1}, L2:${l2}, L3:${l3}`;
+}
 
 
                   const rawBoard = document.getElementById('board-value-ai') ? document.getElementById('board-value-ai').value : '';
@@ -2969,9 +3123,6 @@ questionData.parsedMeta = `Q${currentSessionQuestions.length + 1}: ${level}, ${m
 
 // Randomize A/B/C/D and remap the Ans: letters accordingly
 shuffleOptionsForQuestion(questionData);
-
-      shuffleOptionsForQuestion(questionData);
-
     } else {
       // DESCRIPTIVE: no options, no "Ans:"
       questionData.question = rawBody.trim().split('\n')[0] || '';
@@ -3312,6 +3463,7 @@ function showEditPopupForQuestion(index) {
 </script> 
 </body> 
 </html>
+
 
 
 
