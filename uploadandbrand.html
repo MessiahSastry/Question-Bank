@@ -320,7 +320,13 @@ function getSectionConfig() {
 // Detect “Section A/B/C/D” anchor positions (only detection, no marks parsing)
 async function detectSectionAnchors(srcBytes) {
   const anchors = []; // {pageIndex, letter, x, y}
-  const pdf = await pdfjsLib.getDocument({ data: srcBytes }).promise;
+
+  // IMPORTANT: PDF.js may detach buffers when using workers.
+  // So always pass a COPY to PDF.js, never the original buffer used by pdf-lib.
+  const bytes = (srcBytes instanceof Uint8Array) ? srcBytes : new Uint8Array(srcBytes);
+  const pdfjsBytes = new Uint8Array(bytes); // copy
+
+  const pdf = await pdfjsLib.getDocument({ data: pdfjsBytes }).promise;
 
   for (let p = 1; p <= pdf.numPages; p++) {
     const page = await pdf.getPage(p);
@@ -452,13 +458,15 @@ async function process(mode = 'download') {
     const time = (document.getElementById('time').value || '').trim();
     const maxMarks = (document.getElementById('maxMarks').value || '').trim();
 
-    const srcBytes = await pdfFile.arrayBuffer();
+   const srcBuffer = await pdfFile.arrayBuffer();
+const srcBytes = new Uint8Array(srcBuffer);
 
 // Detect Section anchors (PDF.js) + read manual inputs
-const sectionAnchors = await detectSectionAnchors(srcBytes);
+const sectionAnchors = await detectSectionAnchors(new Uint8Array(srcBytes)); // copy
 const sectionCfg = getSectionConfig();
 
-const srcDoc = await PDFLib.PDFDocument.load(srcBytes);
+// pdf-lib uses its own copy (safe even if PDF.js detached its copy)
+const srcDoc = await PDFLib.PDFDocument.load(new Uint8Array(srcBytes));
 const outDoc = await PDFLib.PDFDocument.create();
 
     // Fonts & assets for the output doc
@@ -720,6 +728,7 @@ document.getElementById('pdfFile').addEventListener('change', async () => {
 </div>
 </body>
 </html>
+
 
 
 
