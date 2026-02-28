@@ -180,25 +180,19 @@
 </div>
 
 <!-- Section Inputs (manual) -->
+<!-- Sections (Dynamic) -->
 <div class="form-group" style="margin-top:8px;">
   <label>Sections (for black ribbon):</label>
 
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-    <input type="text" id="secA_q" placeholder="Section A: No. of Qs (e.g., 6)">
-    <input type="text" id="secA_m" placeholder="A: Marks each (e.g., 1)">
+  <div id="sectionsContainer" style="display:flex;flex-direction:column;gap:10px;"></div>
 
-    <input type="text" id="secB_q" placeholder="Section B: No. of Qs">
-    <input type="text" id="secB_m" placeholder="B: Marks each">
-
-    <input type="text" id="secC_q" placeholder="Section C: No. of Qs">
-    <input type="text" id="secC_m" placeholder="C: Marks each">
-
-    <input type="text" id="secD_q" placeholder="Section D: No. of Qs">
-    <input type="text" id="secD_m" placeholder="D: Marks each">
-  </div>
+  <button type="button" id="addSectionBtn"
+    style="margin-top:10px;width:100%;height:42px;border-radius:8px;border:1.3px dashed #bcd6ef;background:#fff;color:#1762a7;font-weight:700;cursor:pointer;">
+    + Add Section
+  </button>
 
   <small style="color:#54656f;display:block;margin-top:6px;">
-    (PDF will detect only “Section A/B/C/D” positions. You enter Q-count & marks.)
+    (PDF detects “Section X” positions. Add sections like A, B, C, D, E… and enter rules.)
   </small>
 </div>
 <button class="submit-btn" id="processBtn">Add Header & Download</button>
@@ -301,19 +295,104 @@ function formatDuration(minutes) {
   return `${m} min`;
 }
 
+function addSectionRow(prefill = {}) {
+  const wrap = document.getElementById('sectionsContainer');
+  if (!wrap) return;
+
+  const row = document.createElement('div');
+  row.className = 'sec-row';
+  row.style.cssText = "border:1px solid #bcd6ef;border-radius:10px;padding:10px;background:#f7fafd;";
+
+  row.innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+      <input type="text" class="sec-key" placeholder="Anchor (A/B/C...)" value="${prefill.key || ''}"
+        style="width:100%;padding:10px 12px;border-radius:6px;border:1.3px solid #bcd6ef;height:42px;box-sizing:border-box;">
+      <input type="text" class="sec-title" placeholder="Section Title (optional)" value="${prefill.title || ''}"
+        style="width:100%;padding:10px 12px;border-radius:6px;border:1.3px solid #bcd6ef;height:42px;box-sizing:border-box;">
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px;">
+      <select class="sec-mode"
+        style="width:100%;padding:10px 12px;border-radius:6px;border:1.3px solid #bcd6ef;height:42px;box-sizing:border-box;background:#fff;">
+        <option value="all">Answer all</option>
+        <option value="any">Answer any</option>
+      </select>
+
+      <button type="button" class="sec-remove"
+        style="width:100%;height:42px;border-radius:8px;border:1.3px solid #bcd6ef;background:#fff;color:#b00020;font-weight:700;cursor:pointer;">
+        Remove
+      </button>
+    </div>
+
+    <div class="sec-anywrap" style="display:none;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px;">
+      <input type="text" class="sec-any" placeholder="Answer any (e.g., 2)"
+        value="${prefill.any || ''}"
+        style="width:100%;padding:10px 12px;border-radius:6px;border:1.3px solid #bcd6ef;height:42px;box-sizing:border-box;">
+      <input type="text" class="sec-total" placeholder="Out of (e.g., 3)"
+        value="${prefill.total || ''}"
+        style="width:100%;padding:10px 12px;border-radius:6px;border:1.3px solid #bcd6ef;height:42px;box-sizing:border-box;">
+    </div>
+
+    <div class="sec-allwrap" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px;">
+      <input type="text" class="sec-q" placeholder="No. of Questions (e.g., 6)"
+        value="${prefill.q || ''}"
+        style="width:100%;padding:10px 12px;border-radius:6px;border:1.3px solid #bcd6ef;height:42px;box-sizing:border-box;">
+      <input type="text" class="sec-m" placeholder="Marks each (e.g., 1)"
+        value="${prefill.m || ''}"
+        style="width:100%;padding:10px 12px;border-radius:6px;border:1.3px solid #bcd6ef;height:42px;box-sizing:border-box;">
+    </div>
+  `;
+
+  wrap.appendChild(row);
+
+  const mode = row.querySelector('.sec-mode');
+  const anyWrap = row.querySelector('.sec-anywrap');
+  const allWrap = row.querySelector('.sec-allwrap');
+  const removeBtn = row.querySelector('.sec-remove');
+
+  const syncMode = () => {
+    const v = (mode.value || 'all');
+    if (v === 'any') {
+      anyWrap.style.display = 'grid';
+      allWrap.querySelector('.sec-q').placeholder = 'Total Questions (e.g., 3)';
+    } else {
+      anyWrap.style.display = 'none';
+      allWrap.querySelector('.sec-q').placeholder = 'No. of Questions (e.g., 6)';
+    }
+  };
+
+  mode.addEventListener('change', syncMode);
+  removeBtn.addEventListener('click', () => row.remove());
+
+  if (prefill.mode) mode.value = prefill.mode;
+  syncMode();
+}
+
 function getSectionConfig() {
-  const readNum = (id) => {
-    const v = (document.getElementById(id)?.value || '').trim();
-    const n = Number(v);
+  const rows = Array.from(document.querySelectorAll('#sectionsContainer .sec-row'));
+  const cfg = {};
+
+  const num = (v) => {
+    const n = Number(String(v || '').trim());
     return Number.isFinite(n) ? n : 0;
   };
 
-  const cfg = {
-    A: { q: readNum('secA_q'), m: readNum('secA_m') },
-    B: { q: readNum('secB_q'), m: readNum('secB_m') },
-    C: { q: readNum('secC_q'), m: readNum('secC_m') },
-    D: { q: readNum('secD_q'), m: readNum('secD_m') },
-  };
+  rows.forEach(row => {
+    const key = String(row.querySelector('.sec-key')?.value || '').trim().toUpperCase();
+    if (!key) return;
+
+    const title = String(row.querySelector('.sec-title')?.value || '').trim();
+    const mode  = String(row.querySelector('.sec-mode')?.value || 'all');
+
+    const q = num(row.querySelector('.sec-q')?.value);
+    const m = num(row.querySelector('.sec-m')?.value);
+
+    const any = num(row.querySelector('.sec-any')?.value);
+    const total = num(row.querySelector('.sec-total')?.value);
+
+    cfg[key] = { title, mode, q, m, any, total };
+  });
+
   return cfg;
 }
 
@@ -337,7 +416,7 @@ async function detectSectionAnchors(srcBytes) {
       if (!str) continue;
 
       // Match: "Section A", "SECTION A", "Section-A", "SectionA" (loose)
-      const m = str.match(/section\s*[-:]?\s*([A-D])\b/i);
+      const m = str.match(/section\s*[-:]?\s*([A-Z])\b/i);
       if (!m) continue;
 
       const letter = (m[1] || '').toUpperCase();
@@ -402,11 +481,31 @@ outPage.drawRectangle({
   });
 
   // 3) Texts
-  const leftText = `Section ${letter}: Answer all the questions`;
-  const q = cfg?.[letter]?.q || 0;
-  const m = cfg?.[letter]?.m || 0;
-  const total = (q > 0 && m > 0) ? (q * m) : 0;
-  const rightText = (q > 0 && m > 0) ? `${q} × ${m} = ${total} Marks` : '';
+   const sc = cfg?.[letter] || {};
+  const title = (sc.title || '').trim();
+  const mode = (sc.mode || 'all');
+
+  const q = sc.q || 0;
+  const m = sc.m || 0;
+
+  const any = sc.any || 0;
+  const totalQ = sc.total || 0;
+
+  let leftText = `Section ${letter}: Answer all the questions`;
+  if (title) leftText = `Section ${letter}: ${title}`;
+
+  let rightText = '';
+
+  if (mode === 'any' && any > 0 && totalQ > 0 && m > 0) {
+    // Example: Answer any 2 out of 3 questions
+    if (!title) leftText = `Section ${letter}: Answer any ${any} out of ${totalQ} questions`;
+    const totMarks = any * m;
+    rightText = `${any} × ${m} = ${totMarks} Marks`;
+  } else if (q > 0 && m > 0) {
+    if (!title) leftText = `Section ${letter}: Answer all the questions`;
+    const totMarks = q * m;
+    rightText = `${q} × ${m} = ${totMarks} Marks`;
+  }
 
    const fontSize = 11;
 
@@ -695,6 +794,14 @@ document.getElementById('processBtn').onclick = () => process('download');
   plus.addEventListener('click',  () => bump(+1));
 })();
 
+// Dynamic Sections UI init
+(function () {
+  const btn = document.getElementById('addSectionBtn');
+  if (btn) btn.addEventListener('click', () => addSectionRow({}));
+
+  // Default first row
+  addSectionRow({ key: 'A' });
+})();
 flatpickr("#date", {
   dateFormat: "d-m-Y",
   allowInput: false,      // disables typing, popup only
@@ -729,6 +836,7 @@ document.getElementById('pdfFile').addEventListener('change', async () => {
 </div>
 </body>
 </html>
+
 
 
 
