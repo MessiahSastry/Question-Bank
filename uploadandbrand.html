@@ -175,10 +175,33 @@
           <input type="text" id="time">
         </div>
         <div class="form-group">
-          <label>Max Marks:</label>
-          <input type="text" id="maxMarks">
-        </div>
-        <button class="submit-btn" id="processBtn">Add Header & Download</button>
+  <label>Max Marks:</label>
+  <input type="text" id="maxMarks">
+</div>
+
+<!-- Section Inputs (manual) -->
+<div class="form-group" style="margin-top:8px;">
+  <label>Sections (for black ribbon):</label>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+    <input type="text" id="secA_q" placeholder="Section A: No. of Qs (e.g., 6)">
+    <input type="text" id="secA_m" placeholder="A: Marks each (e.g., 1)">
+
+    <input type="text" id="secB_q" placeholder="Section B: No. of Qs">
+    <input type="text" id="secB_m" placeholder="B: Marks each">
+
+    <input type="text" id="secC_q" placeholder="Section C: No. of Qs">
+    <input type="text" id="secC_m" placeholder="C: Marks each">
+
+    <input type="text" id="secD_q" placeholder="Section D: No. of Qs">
+    <input type="text" id="secD_m" placeholder="D: Marks each">
+  </div>
+
+  <small style="color:#54656f;display:block;margin-top:6px;">
+    (PDF will detect only “Section A/B/C/D” positions. You enter Q-count & marks.)
+  </small>
+</div>
+<button class="submit-btn" id="processBtn">Add Header & Download</button>
 <a id="downloadLink">Download Branded PDF</a>
 
 <!-- Single control: SCALE only the FIRST PAGE content (keeps top just under header) -->
@@ -278,6 +301,139 @@ function formatDuration(minutes) {
   return `${m} min`;
 }
 
+function getSectionConfig() {
+  const readNum = (id) => {
+    const v = (document.getElementById(id)?.value || '').trim();
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+  };
+
+  const cfg = {
+    A: { q: readNum('secA_q'), m: readNum('secA_m') },
+    B: { q: readNum('secB_q'), m: readNum('secB_m') },
+    C: { q: readNum('secC_q'), m: readNum('secC_m') },
+    D: { q: readNum('secD_q'), m: readNum('secD_m') },
+  };
+  return cfg;
+}
+
+// Detect “Section A/B/C/D” anchor positions (only detection, no marks parsing)
+async function detectSectionAnchors(srcBytes) {
+  const anchors = []; // {pageIndex, letter, x, y}
+  const pdf = await pdfjsLib.getDocument({ data: srcBytes }).promise;
+
+  for (let p = 1; p <= pdf.numPages; p++) {
+    const page = await pdf.getPage(p);
+    const tc = await page.getTextContent();
+
+    for (const item of (tc.items || [])) {
+      const str = (item.str || '').trim();
+      if (!str) continue;
+
+      // Match: "Section A", "SECTION A", "Section-A", "SectionA" (loose)
+      const m = str.match(/section\s*[-:]?\s*([A-D])\b/i);
+      if (!m) continue;
+
+      const letter = (m[1] || '').toUpperCase();
+      const t = item.transform || [];
+      const x = t[4] || 0;
+      const y = t[5] || 0;
+
+      // keep first occurrence per section per page
+      const exists = anchors.some(a => a.pageIndex === (p - 1) && a.letter === letter);
+      if (!exists) anchors.push({ pageIndex: (p - 1), letter, x, y });
+    }
+  }
+  return anchors;
+}
+
+// Draw a black capsule ribbon (no image) + texts; also masks original line
+function drawSectionRibbon(outPage, pageW, pageH, yAnchor, letter, cfg, fontBold) {
+  const marginX = 55;
+  const barW = pageW - (marginX * 2);
+  const barH = 26;
+
+  // place bar around the detected baseline
+  const barY = Math.max(0, yAnchor - 10); // adjust if needed (8–14)
+
+  // 1) Mask old line area
+  outPage.drawRectangle({
+    x: marginX,
+    y: barY - 2,
+    width: barW,
+    height: barH + 6,
+    color: PDFLib.rgb(1, 1, 1)
+  });
+
+  // 2) Capsule (rectangle + two circles)
+  const r = barH / 2;
+
+  // center rectangle
+  outPage.drawRectangle({
+    x: marginX + r,
+    y: barY,
+    width: barW - (2 * r),
+    height: barH,
+    color: PDFLib.rgb(0, 0, 0)
+  });
+
+  // left circle
+  outPage.drawEllipse({
+    x: marginX + r,
+    y: barY + r,
+    xScale: r,
+    yScale: r,
+    color: PDFLib.rgb(0, 0, 0)
+  });
+
+  // right circle
+  outPage.drawEllipse({
+    x: marginX + barW - r,
+    y: barY + r,
+    xScale: r,
+    yScale: r,
+    color: PDFLib.rgb(0, 0, 0)
+  });
+
+  // 3) Texts
+  const leftText = `Section ${letter}: Answer all the questions`;
+  const q = cfg?.[letter]?.q || 0;
+  const m = cfg?.[letter]?.m || 0;
+  const total = (q > 0 && m > 0) ? (q * m) : 0;
+  const rightText = (q > 0 && m > 0) ? `${q} × ${m} = ${total} Marks` : '';
+
+  const fontSize = 12;
+
+  // left
+  outPage.drawText(leftText, {
+    x: marginX + 14,
+    y: barY + 7,
+    size: fontSize,
+    font: fontBold,
+    color: PDFLib.rgb(1, 1, 1)
+  });
+
+  // right aligned
+  if (rightText) {
+    const rw = fontBold.widthOfTextAtSize(rightText, fontSize);
+    outPage.drawText(rightText, {
+      x: marginX + barW - 14 - rw,
+      y: barY + 7,
+      size: fontSize,
+      font: fontBold,
+      color: PDFLib.rgb(1, 1, 1)
+    });
+  }
+}
+
+// Apply ribbons to one page based on detected anchors
+function applySectionRibbonsToPage(outPage, pageIndex, pageW, pageH, anchors, cfg, fontBold) {
+  const list = (anchors || []).filter(a => a.pageIndex === pageIndex);
+  for (const a of list) {
+    drawSectionRibbon(outPage, pageW, pageH, a.y, a.letter, cfg, fontBold);
+  }
+}
+
 async function process(mode = 'download') {
   const showSpinner = () => document.getElementById('spinner-overlay').style.display = "flex";
   const hideSpinner = () => document.getElementById('spinner-overlay').style.display = "none";
@@ -297,8 +453,13 @@ async function process(mode = 'download') {
     const maxMarks = (document.getElementById('maxMarks').value || '').trim();
 
     const srcBytes = await pdfFile.arrayBuffer();
-    const srcDoc = await PDFLib.PDFDocument.load(srcBytes);
-    const outDoc = await PDFLib.PDFDocument.create();
+
+// Detect Section anchors (PDF.js) + read manual inputs
+const sectionAnchors = await detectSectionAnchors(srcBytes);
+const sectionCfg = getSectionConfig();
+
+const srcDoc = await PDFLib.PDFDocument.load(srcBytes);
+const outDoc = await PDFLib.PDFDocument.create();
 
     // Fonts & assets for the output doc
     const fontBold = await outDoc.embedFont(PDFLib.StandardFonts.TimesRomanBold);
@@ -399,11 +560,17 @@ if ((maxMarks || '').trim()) {
     color: PDFLib.rgb(0.15, 0.24, 0.35)
   });
 }
+
+// Apply Section ribbons (page 1 too)
+applySectionRibbonsToPage(outPage, i, width, height, sectionAnchors, sectionCfg, fontBold);
       } else {
-        // OTHER PAGES: untouched (copy as-is)
-        const [copied] = await outDoc.copyPages(srcDoc, [i]);
-        outDoc.addPage(copied);
-      }
+  // OTHER PAGES: copy, then overlay section ribbons if needed
+  const [copied] = await outDoc.copyPages(srcDoc, [i]);
+  outDoc.addPage(copied);
+
+  const outPage = outDoc.getPage(outDoc.getPageCount() - 1);
+  applySectionRibbonsToPage(outPage, i, width, height, sectionAnchors, sectionCfg, fontBold);
+}
     }
 
     const newPdfBytes = await outDoc.save();
@@ -553,6 +720,7 @@ document.getElementById('pdfFile').addEventListener('change', async () => {
 </div>
 </body>
 </html>
+
 
 
 
