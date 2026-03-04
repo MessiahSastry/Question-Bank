@@ -35,25 +35,10 @@ window.textbooks = {
       "What Can a Dollar and Eleven Cents Do?"
     ],
     "English 2": [],
-    "Math 1": [
+    "Math": [
       "Knowing Our Numbers",
       "Whole Numbers",
-      "Basic Geometrical Ideas"
-        ],
-    "Math 1 IIT": [
-      "Tables, Squares and Cubes",
-      "Knowing Our Numbers",
-      "Roman Numerals",
-      "Integers",
-      "Fractions and Decimals",
-      "Rational Numbers",
-      "Factorization",
-      "Linear Equations in One Variable",
-      "Ratio and Proportion",
-      "Square Roots and Cube Roots",
-      "Simple Intrest, Time - Distance, Time - Work"
-    ],
-    "Math 2": [
+      "Basic Geometrical Ideas",
       "Playing with Numbers",
       "Understanding Elementary Shapes",
       "Integers",
@@ -65,9 +50,20 @@ window.textbooks = {
       "Ratio and Proportion",
       "Symmetry",
       "Practical Geometry"
-    ],
-    "Math 2 IIT": [
-    "Whole Numbers",
+        ],
+    "Math IIT": [
+      "Tables, Squares and Cubes",
+      "Knowing Our Numbers",
+      "Roman Numerals",
+      "Integers",
+      "Fractions and Decimals",
+      "Rational Numbers",
+      "Factorization",
+      "Linear Equations in One Variable",
+      "Ratio and Proportion",
+      "Square Roots and Cube Roots",
+      "Simple Intrest, Time - Distance, Time - Work",
+      "Whole Numbers",
     "Playing With Numbers",
     "LCM and HCF",
     "Inroduction to Algebra",
@@ -193,15 +189,24 @@ window.textbooks = {
       "A Tiger in the House"
     ],
     "English 2": [],
-    "Math 1": [
+    "Math": [
       "Integers",
       "Fractions and Decimals",
       "Data Handling",
       "Simple Equations",
       "Lines and Angles",
-      "The Triangle and its Properties"
+      "The Triangle and its Properties",
+       "Congruence of Triangles",
+      "Comparing Quantities",
+      "Rational Numbers",
+      "Practical Geometry",
+      "Perimeter and Area",
+      "Algebraic Expressions",
+      "Exponents and Powers",
+      "Symmetry",
+      "Visualizing Solid Shapes"
     ],
-    "Math 1 IIT": [
+    "Math IIT": [
       "Number System",
       "Integers",
       "Fractions and Decimals",
@@ -214,21 +219,8 @@ window.textbooks = {
       "Triangles",
       "Ratio and Proportions",
       "Formula and Their Uses",
-      "Data Handling"
-    ],
-    "Math 2": [
-      "Congruence of Triangles",
-      "Comparing Quantities",
-      "Rational Numbers",
-      "Practical Geometry",
-      "Perimeter and Area",
-      "Algebraic Expressions",
-      "Exponents and Powers",
-      "Symmetry",
-      "Visualizing Solid Shapes"
-    ],
-    "Math 2 IIT": [
-      "Congruency of Triangles",
+      "Data Handling",
+       "Congruency of Triangles",
       "Algebraic Expressions",
       "Algebraic Expressions LCM & HCF",
       "Factorisation",
@@ -239,7 +231,6 @@ window.textbooks = {
       "Mensuration",
       "Commercial Mathematics"
     ],
-    "Math IIT": [],
     "Physics": [
       "Heat",
       "Motion and Time",
@@ -353,26 +344,11 @@ window.textbooks = {
       "A Hero"
     ],
     "English 2": [],
-    "Math 1": [
+    "Math": [
       "Rational Numbers",
       "Linear Equations in One Variable",
       "Practical Geometry",
-      "Squares and Square Roots"
-    ],
-    "Math 1 IIT": [
-      "Number Theory - Basics",
-      "Number Theory - LCM, HCF & Applications",
-      "Progressions",
-      "Linear Equations One & Two Variable",
-      "Plane Geometry - Lines & Angles",
-      "Plane Geometry - Triangles",
-      "Quadratic Equations",
-      "Exponents & Powers; Square Roots & Cube Roots",
-      "Arithmetic-Direct & Inverse Proportion",
-      "Arithmetic-Profit and Loss",
-      "Algebraic Expressions - Basics"
-    ],
-    "Math 2": [
+      "Squares and Square Roots",
       "Understanding Quadrilaterals",
       "Data Handling",
       "Cubes and Cube Roots",
@@ -385,7 +361,18 @@ window.textbooks = {
       "Factorization",
       "Introduction to Graphs"
     ],
-    "Math 2 IIT": [
+    "Math IIT": [
+      "Number Theory - Basics",
+      "Number Theory - LCM, HCF & Applications",
+      "Progressions",
+      "Linear Equations One & Two Variable",
+      "Plane Geometry - Lines & Angles",
+      "Plane Geometry - Triangles",
+      "Quadratic Equations",
+      "Exponents & Powers; Square Roots & Cube Roots",
+      "Arithmetic-Direct & Inverse Proportion",
+      "Arithmetic-Profit and Loss",
+      "Algebraic Expressions - Basics",
       "Algebraic Expressions - Multiplications & Divisions",
       "Area of Plane Figures",
       "Polynomial - Factor, Remainder, Theorems",
@@ -504,27 +491,12 @@ window.textbooks = {
       "Weathering the Storm in Ersama"
     ],
     "English 2": [],
-    "Math 1": [
+    "Math": [
       "Number Systems",
       "Polynomials",
       "Coordinate Geometry",
-       "Triangles"
-    ],
-    "Math 1 IIT": [
-      "Theory of Numbers - Basics",
-      "Theory of Numbers - Congruence of Integers",
-      "Surds",
-      "Theory of Equations",
-      "Geometry - Triangles",
-      "Geometry - Similar Triangles",
-      "Geometry - Circles",
-      "Matrices",
-      "Determinants",
-      "Complex Numbers",
-      "Trigonometry - Ratios and Identities"
-    ],
-    "Math 2": [
-      "Linear Equations in Two Variables",
+       "Triangles",
+       "Linear Equations in Two Variables",
       "Introduction to Euclid’s Geometry",
       "Lines and Angles",
       "Quadrilaterals",
@@ -536,8 +508,19 @@ window.textbooks = {
       "Statistics",
       "Probability"
     ],
-    "Math 2 IIT": [
-      "Trigonometry - Multiples and Submultiples",
+    "Math IIT": [
+      "Theory of Numbers - Basics",
+      "Theory of Numbers - Congruence of Integers",
+      "Surds",
+      "Theory of Equations",
+      "Geometry - Triangles",
+      "Geometry - Similar Triangles",
+      "Geometry - Circles",
+      "Matrices",
+      "Determinants",
+      "Complex Numbers",
+      "Trigonometry - Ratios and Identities",
+       "Trigonometry - Multiples and Submultiples",
       "Properties of Triangles - Sine, Cosine, Projection Rules",
       "Properties of Triangles - Napier, Half Angle, Mollweide Rules",
       "Coordinate Geometry - The Straight Lines",
@@ -618,7 +601,6 @@ window.textbooks = {
       "Population"
     ]
   },
-
   "10th Class": {
     "Telugu": [
       "మన ఊరు – మనం",
@@ -655,16 +637,14 @@ window.textbooks = {
       "The Proposal"
     ],
     "English 2": [],
-    "Math 1": [
+    "Math": [
       "Real Numbers",
       "Polynomials",
       "Pair of Linear Equations in Two Variables",
       "Quadratic Equations",
       "Arithmetic Progressions",
       "Triangles",
-      "Coordinate Geometry"
-    ],
-    "Math 2": [
+      "Coordinate Geometry",
       "Introduction to Trigonometry",
       "Applications of Trigonometry",
       "Circles",
@@ -729,6 +709,7 @@ window.textbooks = {
     ]
   }
 };
+
 
 
 
