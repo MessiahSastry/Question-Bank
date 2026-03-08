@@ -83,36 +83,51 @@ window.textbooks = {
       "Magnets",
       "Motion and Measurement"
     ],
-    "Physics IIT & NEET": [
-      "Units and Measurements",
-      "Kinematics",
-      "Kinematics (Motion, Distance & Displacement)",
-      "Newton's Laws of Motion",
-      "Work-Energy and Power",
-      "Heat",
-      "Light",
-      "Electrostatics",
-      "Magnetism"
-    ],
+   "Physics IIT & NEET": [
+  "Units and Measurements: Assimilation 1 (Importance of Measurements, Physical Quantity and its Types, Unit)",
+  "Units and Measurements: Assimilation 2 (Multiples and Sub-multiples)",
+  "Units and Measurements: Assimilation 3 (Measurement of Length, Measurement of Area, Volume and Density)",
+  "Kinematics: Assimilation 1 (Rest, Motion, Different Types of Motion, Distance and Displacement)",
+  "Kinematics: Assimilation 2 (Speed, Velocity, Acceleration)",
+  "Newton’s Laws of Motion: Assimilation 1 (Force, Effects of Force, Balanced and Unbalanced Forces, Newton’s First Law of Motion)",
+  "Newton’s Laws of Motion: Assimilation 2 (Momentum, Newton’s Second Law, Newton’s Third Law and its Applications)",
+  "Work, Energy and Power: Assimilation 1 (Work Done by a Force, Types of Work Done)",
+  "Work, Energy and Power: Assimilation 2 (Energy, Kinds of Energy, Power)",
+  "Heat: Assimilation 1 (Thermal Equilibrium, Heat and Temperature, Scales of Temperature)",
+  "Light: Assimilation 1 (Light, Propagation of Light, Terms Related to Light, Reflection of Light, Laws of Reflection)",
+  "Electronics: Assimilation 1 (Types of Images, Electric Charge, Process of Electrification, Conductors and Insulators)",
+  "Electronics: Assimilation 2 (Electric Cell, Resistance, Series and Parallel Combination, Elements Used in Electrical Circuits)",
+  "Magnetism: Assimilation 1 (Magnets, Types of Magnets, Magnetic Materials, Properties of Magnets)",
+  "Magnetism: Assimilation 2 (Terms Used in Magnetism, Methods of Magnetization)"
+],
     "Chemistry": [
       "Materials and Their Properties",
       "Separation of Substances",
       "Air Around Us"
     ],
-    "Chemistry IIT & NEET": [
-      "Nature of Chemistry",
-      "Language of Chemistry(symbol of elements & Valency)",
-      "Language of Chemistry(Types of Ions & Chemical Formula)",
-      "Basic Concept Of Chemistry",
-      "Atomic Structure",
-      "Chemical Bonding",
-      "Acids, Bases and Salts",
-      "Allotropy of Carbon",
-      "Transformation of Substances",
-      "Water",
-      "Air",
-      "Apparatus in Chemical Laboratory"
-    ],
+  "Chemistry IIT & NEET": [
+  "Nature of Chemistry: Assimilation 1 (Universe, Radiation, Matter)",
+  "Nature of Chemistry: Assimilation 2 (Pure Substance, Characteristics of Pure Substance, Types of Pure Substance, Elements, Types of Elements, Compound, Mixtures)",
+  "Nature of Chemistry: Assimilation 3 (Thrashing, Winnowing, Handpicking, Sieving, Sedimentation, Filtration, Distillation, Sublimation, Centrifugation)",
+  "Language of Chemistry: Assimilation 1 (Symbols of Elements, Guidelines to Write the Symbols)",
+  "Language of Chemistry: Assimilation 2 (Valency, Variable Valency)",
+  "Language of Chemistry: Assimilation 3 (Ions, Types of Ions, Classification of Ions, Electrovalent Positive Radicals, Electrovalent Negative Radicals)",
+  "Language of Chemistry: Assimilation 4 (Chemical Formula, Basic Rules for Writing Formula, Importance of Chemical Formula, Writing the Formula of Ionic Compounds)",
+  "Basic Concepts of Chemistry: Assimilation 1 (Atom, Dalton’s Atomic Theory, Contradictions of Dalton’s Atomic Theory, Subatomic Particles, Representation of Element)",
+  "Basic Concepts of Chemistry: Assimilation 2 (Isotopes, Characteristics of Isotopes, Types of Isotopes, Isobars, Isotones, Isodiaphers, Isoelectronic Species)",
+  "Basic Concepts of Chemistry: Assimilation 3 (Law of Conservation of Mass, Law of Constant Proportions, Law of Multiple Proportions)",
+  "Basic Concepts of Chemistry: Assimilation 4 (Chemical Reaction, Chemical Equation, Unbalanced Chemical Equation, Balanced Chemical Equation, Types of Chemical Reactions, Combination Reactions, Decomposition Reactions, Displacement Reactions, Double Displacement Reactions)",
+  "Atomic Structure: Assimilation 1 (Introduction, Dalton’s Atomic Theory, Contradictions of Dalton’s Atomic Theory, Discovery of Subatomic Particles, Discovery of Electron – Properties, Discovery of Anode Rays – Properties, Discovery of Neutron)",
+  "Chemical Bonding: Assimilation 1 (Definition of Chemical Bond, Explanation of the Formation of Chemical Bond)",
+  "Acids, Bases and Salts: Assimilation 1 (Introduction, Definition of Acid, Preparation Methods of Acids, Physical and Chemical Properties of Acids, Definition of a Base, Preparation Methods of Bases, Physical and Chemical Properties of Bases, Acidity and Basicity)",
+  "Allotropy of Carbon: Assimilation 1 (Introduction, Diamond, Graphite, Fullerenes, Graphene)",
+  "Transformation of Substances: Assimilation 1 (Classification of Changes, Slow and Fast Changes, Reversible and Irreversible Changes, Desirable and Undesirable Changes, Periodic and Non-Periodic Changes, Physical and Chemical Changes)",
+  "Transformation of Substances: Assimilation 2 (Characteristics of Physical Changes, Characteristics of Chemical Changes, Differences between Physical Change and Chemical Change, Examples of Physical and Chemical Changes)",
+  "Water: Assimilation 1 (Introduction, Importance of Water, Role of Water, Physical Properties of Water, Sources of Water, Availability of Water for Human Consumption)",
+  "Air: Assimilation 1 (Introduction, Composition of Air, Properties of Air, Characteristics of Air, Simple Experiments to Show the Properties of Air, Experiments to Show the Presence of Oxygen, Water Vapour, etc.)",
+  "Air: Assimilation 2 (Fire Wood Oven, Kumpati, Kerosene Stove, To Show Oxygen is Necessary For Combustion, Uses of Different Constituents of Air, Significance of Nitrogen in Atmosphere, Symbiotic Bacteria, Oxygen – Significance in Atmosphere, Carbon Dioxide – Significance in Atmosphere, Green House Effect, Water Vapour – Significance in Atmosphere, Noble Gases – Significance)",
+  "Apparatus in Chemical Laboratory: Assimilation 1 (Chemical Laboratory Apparatus)"
+],
     "Biology": [
       "Components of Food",
       "Getting to Know Plants",
@@ -238,17 +253,32 @@ window.textbooks = {
       "Winds, Storms and Cyclones",
       "Light"
     ],
-    "Physics IIT & NEET": [
-      "Units and Measurements (Assi- 1 & 2)\n(Physical quantity & Multiples and Submultiples)",
-      "Units and Measurements (Assi- 3, 4 & 5)\n(Mass, Length, Time, Area & Volume)",
-      "Units and Measurements (Assi- 6 & 7)\n(Density & Dimensional Formula)",
-      "Kinematics (Assi- 1, 2 & 3)\n(Rest and Motion & Distance and Displacement & Speed and Velocity)",
-      "Kinematics (Assi- 4, & 5)\n(Acceleration & Equation of Motion)",
-      "Newton's Laws of Motion",
-      "Work-Energy and Power",
-      "Fluid Pressure",
-      "Heat",
-      "Electricity"
+   "Physics IIT & NEET": [
+  "Units and Measurements: Assimilation 1 (Physical Quantity, Fundamental Physical Quantity, Derived Quantity, Unit, System of Units, Guidelines for Writing Units)",
+  "Units and Measurements: Assimilation 2 (Multiple and Sub Multiples)",
+  "Units and Measurements: Assimilation 3 (Mass, Length and Time, Its Units and Measurement)",
+  "Units and Measurements: Assimilation 4 (Area, Measurement of Area)",
+  "Units and Measurements: Assimilation 5 (Volume, Measurement of Volume)",
+  "Units and Measurements: Assimilation 6 (Density, Relative Density or Specific Gravity)",
+  "Units and Measurements: Assimilation 7 (Dimensional Formula, Dimensional Formula of Some Physical Quantities)",
+  "Kinematics: Assimilation 1 (Rest, Motion, Different Kinds of Motion)",
+  "Kinematics: Assimilation 2 (Distance and Displacement)",
+  "Kinematics: Assimilation 3 (Speed, Types of Speed, Velocity, Types of Velocity)",
+  "Kinematics: Assimilation 4 (Acceleration, Types of Acceleration)",
+  "Kinematics: Assimilation 5 (Equation of Motion and Its Derivation)",
+  "Newton’s Laws of Motion: Assimilation 1 (Force, Types of Forces, Effects of Force, Newton’s Law of Motion, Inertia, Types of Inertia)",
+  "Newton’s Laws of Motion: Assimilation 2 (Momentum, Newton’s Second Law of Motion)",
+  "Newton’s Laws of Motion: Assimilation 3 (Newton’s Third Law of Motion and Its Examples, Law of Conservation of Momentum, Applications of Conservation of Momentum)",
+  "Newton’s Laws of Motion: Assimilation 4 (Forces on a Rigid Body, Moment of Force, Principle of Moments, Couple, Daily Life Applications)",
+  "Work, Energy and Power: Assimilation 1 (Work Done by a Force, Calculation of Work Done)",
+  "Work, Energy and Power: Assimilation 2 (Energy, Types of Energy, Law of Conservation of Energy, Energy Transformation)",
+  "Work, Energy and Power: Assimilation 3 (Power, Practical Units of Power)",
+  "Fluid Pressure: Assimilation 1 (Thrust, Pressure, Application of Pressure, Pressure in Fluids, Law of Liquid Pressure, Atmospheric Pressure, Pascal’s Law and Its Applications)",
+  "Heat: Assimilation 1 (Thermal Equilibrium, Heat and Temperature, Measurement of Temperature, Scales of Temperature)",
+  "Heat: Assimilation 2 (Transmission of Heat and Different Methods, Change of State, Latent Heat, Specific Heat)",
+  "Electricity: Assimilation 1 (Electric Charge and Current, Resistance, Series and Parallel Combination of Resistances)",
+  "Electricity: Assimilation 2 (Conductors and Insulators, Series and Parallel Combination of Bulbs, Electrical Energy and Power and Its Measurement, Heating Effect of Electric Current and Its Applications)"
+],
     ],
     "Chemistry": [
       "Acids, Bases and Salts",
@@ -256,17 +286,24 @@ window.textbooks = {
       "Water: A Precious Resource",
       "Soil"
     ],
-    "Chemistry IIT & NEET": [
-      "States of Matter",
-      "Basic Concepts of Chemistry (Atomic Mass, Molecular Mass & Mole Concept)",
-      "Basic Concepts of Chemistry (Types of Reactions & Laws of Chemical Combination)",
-      "Language of Chemistry",
-      "Atomic Structure",
-      "Classification of Elements",
-      "Chemical Bonding",
-      "Solutions",
-      "The Chemistry of Laboratory"
-    ],
+   "Chemistry IIT & NEET": [
+  "States of Matter: Assimilation 1 (Matter, Properties of Matter, Classification of Matter, Comparative Study of Solids, Liquids and Gases, Plasma, Bose–Einstein Condensate)",
+  "States of Matter: Assimilation 2 (Pure Substances, Elements, Types of Elements, Physical Properties of Metals and Non-Metals, Metalloids, Radioactive Elements, Compounds)",
+  "States of Matter: Assimilation 3 (Measurable Properties of Gases, Measurement of Atmospheric Pressure, Boyle’s Law, Charles–Gay Lussac Law, Charles’ Law, Avogadro’s Law)",
+  "Basic Concepts of Chemistry: Assimilation 1 (Atomic Mass, Atomic Weight, Gram Atomic Mass, Molecular Mass, Molecular Weight, Gram Molecular Mass, Mole Concept, Molar Mass, Gram Molar Volume, Loschmidt Number, Avogadro Number, Vapour Density)",
+  "Basic Concepts of Chemistry: Assimilation 2 (Types of Chemical Reactions, Combination Reaction, Decomposition Reaction, Displacement Reaction, Double Displacement Reaction, Some Other Chemical Reactions)",
+  "Basic Concepts of Chemistry: Assimilation 3 (Laws of Chemical Combinations, Law of Conservation of Mass, Law of Constant Proportions, Law of Multiple Proportions)",
+  "Language of Chemistry: Assimilation 1 (Valency, Valency of Elements, Valency of Metals, Valency of Non-Metals, Variable Valency, Chemical Formulae of Compounds, Criss-Cross Method)",
+  "Language of Chemistry: Assimilation 2 (Oxidation Number, Determination of Oxidation Number)",
+  "Language of Chemistry: Assimilation 3 (Reaction, Equation, Unbalanced Chemical Equation, Hit and Trial Method, Limitations of a Balanced Chemical Equation)",
+  "Atomic Structure: Assimilation 1 (Introduction, Dalton’s Atomic Theory and Limitations, Discovery of Electron – Cathode Rays, Properties of Cathode Rays, Discovery of Proton – Anode Rays, Properties of Anode Rays, Discovery of Neutron)",
+  "Atomic Structure: Assimilation 2 (Thomson Atomic Model, Rutherford’s Scattering Experiment, Postulates of Rutherford’s Atomic Model, Defects of Rutherford Atomic Model, Bohr’s Atomic Model Postulates, Distribution of Electrons in Different Orbits)",
+  "Classification of Elements: Assimilation 1 (Introduction, Necessity for Classification of Elements, Greek Classification, Lavoisier’s Classification, Dalton’s Classification, Dobereiner’s Classification, Newlands’ Law of Octaves, Lothar Meyer Classification, Mendeleev’s Classification)",
+  "Chemical Bonding: Assimilation 1 (Introduction, Definition of Chemical Bonding, Cause of Chemical Combination, Lewis Symbols of Elements, Valency, Electronic Theory of Valency, Covalent Bond, Ionic Bond)",
+  "Solutions: Assimilation 1 (Introduction, Types of Solutions, Based on Physical State of Solvent and Solute, Based on Amount of Solute, Based on Nature of Solvent, Based on Amount of Solute Dissolved, Based on Particle Size)",
+  "The Chemistry of Laboratory: Assimilation 1 (Description of Chemicals Used in Laboratory)",
+  "The Chemistry of Laboratory: Assimilation 2 (Activities in Laboratory)"
+],
     "Biology": [
       "Nutrition in Plants",
       "Nutrition in Animals",
@@ -709,6 +746,7 @@ window.textbooks = {
     ]
   }
 };
+
 
 
 
