@@ -279,7 +279,6 @@ window.textbooks = {
   "Electricity: Assimilation 1 (Electric Charge and Current, Resistance, Series and Parallel Combination of Resistances)",
   "Electricity: Assimilation 2 (Conductors and Insulators, Series and Parallel Combination of Bulbs, Electrical Energy and Power and Its Measurement, Heating Effect of Electric Current and Its Applications)"
 ],
-    ],
     "Chemistry": [
       "Acids, Bases and Salts",
       "Physical and Chemical Changes",
@@ -746,29 +745,3 @@ window.textbooks = {
     ]
   }
 };
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
