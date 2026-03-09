@@ -428,16 +428,27 @@ window.textbooks = {
       "Light",
       "Stars and the Solar System"
     ],
-    "Physics IIT & NEET": [
-      "Units and Dimensions",
-      "Motion in One Dimension",
-      "Basics Mathematics",
-      "Vectors",
-      "Kinematics - 2D",
-      "Newton's Laws of Motion",
-      "Work-Energy and Power",
-      "Circular Motion"
-    ],
+   "Physics IIT & NEET": [
+  "Units and Dimensions: Assimilation 1 (Physical Quantities, Standards and Units, Definitions of Fundamental Units, Multiplication Factors of Units)",
+  "Units and Dimensions: Assimilation 2 (Dimensions and Dimensional Formulae, Dimensional Analysis and Its Applications, Limitations of Dimensional Analysis)",
+  "Motion in One Dimension: Assimilation 1 (Frame of Reference, Speed and Velocity, Equations of Motion)",
+  "Motion in One Dimension: Assimilation 2 (Motion under Gravity, Graphs of Motion)",
+  "Basics Mathematics: Assimilation 1 (System of Measurement of an Angle, Trigonometric Functions, Rules of Triangle and Formulae)",
+  "Basics Mathematics: Assimilation 2 (Differentiation, Rules for Derivative, Double Derivative and Its Applications)",
+  "Basics Mathematics: Assimilation 3 (Integration - Formulae, Rules for Integration, Graphical Representation of Definite Integration)",
+  "Vectors: Assimilation 1 (Vectors and Their Representation, Types of Vectors, Vector Addition, Subtraction, Multiplication and Division)",
+  "Vectors: Assimilation 2 (Resolution of a Vector, Laws of Vector Addition and Special Cases)",
+  "Vectors: Assimilation 3 (Multiplication of Vectors, Scalar Product - Properties, Vector Product - Properties, Applications of Vector and Scalar Product)",
+  "Kinematics - 2D: Assimilation 1 (Introduction to Projectile Motion, Oblique Projection, Motion Parameters of Projectile)",
+  "Kinematics - 2D: Assimilation 2 (Horizontal Projection from the Top of a Tower, Motion Parameters of a Horizontal Projectile)",
+  "Newton’s Laws of Motion: Assimilation 1 (Newton’s First Law of Motion, Newton’s Second Law of Motion, Newton’s Third Law of Motion, Equilibrium of Concurrent Forces)",
+  "Newton’s Laws of Motion: Assimilation 2 (Free Body Diagram, Connected Bodies, Impulse, Law of Conservation of Linear Momentum)",
+  "Newton’s Laws of Motion: Assimilation 3 (Inertial Frame of Reference, Non-Inertial Frame of Reference, Pseudo Force)",
+  "Work, Energy and Power: Assimilation 1 (Different Types of Work, Conservative and Non-Conservative Forces, Work and Frame of Reference)",
+  "Work, Energy and Power: Assimilation 2 (Energy, Work-Energy Theorem, Law of Conservation of Energy, Power)",
+  "Circular Motion: Assimilation 1 (Introduction to Circular Motion, Angular Quantities and Their Relation with Linear Quantities, Kinematics of Circular Motion)",
+  "Circular Motion: Assimilation 2 (Dynamics of Circular Motion, Vehicle on Level Circular Road and Banking of Road, Vertical Circular Motion)"
+],
     "Chemistry": [
       "Synthetic Fibres and Plastics",
       "Chemical Effects of Electric Current",
@@ -446,16 +457,39 @@ window.textbooks = {
       "Combustion and Flame"
     ],
     "Chemistry IIT & NEET": [
-      "Basic Principles of Chemistry",
-      "Atomic Structure",
-      "Classification of Elements",
-      "Chemical Bonding",
-      "Stoichiometry-I",
-      "Gaseous State-I",
-      "General Organic Chemistry-I",
-      "Hydrogen & Its Compounds",
-      "I A Group Elements"
-    ],
+  "Basic Principles of Chemistry: Assimilation 1 (Scope of Chemistry, Atom, Molecule, Isoelectronic Species, Atomic Mass and Molecular Mass, Chemical Formulae of Compounds)",
+  "Basic Principles of Chemistry: Assimilation 2 (Laws of Chemical Combination, Accuracy and Precision)",
+  "Atomic Structure: Assimilation 1 (The Postulates of Dalton’s Theory, Subatomic Particles - Electron, Proton, Neutron)",
+  "Atomic Structure: Assimilation 2 (Thomson Model, Rutherford’s Experiment, Bohr’s Atomic Model, Calculation of Radius of an Orbit, Energy of nth Orbit, Velocity of Electron)",
+  "Atomic Structure: Assimilation 3 (Hydrogen Spectrum, Limitations of Bohr’s Atomic Model, Sommerfeld’s Atomic Model)",
+  "Atomic Structure: Assimilation 4 (Electromagnetic Radiation, Characteristics of Electromagnetic Waves, Black Body Radiation, Planck’s Quantum Theory)",
+  "Atomic Structure: Assimilation 5 (Orbit, Orbitals, Shapes of Orbitals, Quantum Numbers)",
+  "Atomic Structure: Assimilation 6 (Bohr-Bury Scheme, Aufbau Principle, Hund’s Rule, Isoelectronic Species, Pauli’s Exclusion Principle)",
+  "Classification of Elements: Assimilation 1 (Need for Classification of Elements, Mendeleev’s Periodic Table, Modern Periodic Law)",
+  "Classification of Elements: Assimilation 2 (Classification of Elements, s, p, d, f Block Elements, Classification of Elements Based on Properties)",
+  "Classification of Elements: Assimilation 3 (Periodicity, Shielding Effect, Metallic Radius, van der Waals Radius, Covalent Radius, Atomic Radius)",
+  "Classification of Elements: Assimilation 4 (Ionisation Enthalpy, Electron Gain Enthalpy)",
+  "Classification of Elements: Assimilation 5 (Electronegativity, Mulliken’s Scale, Pauling’s Scale, Allred and Rochow Scale)",
+  "Chemical Bonding: Assimilation 1 (Introduction, Why Atoms Participate in Chemical Bonding, Kossel-Lewis Approach to Chemical Bonding, Lewis Symbols, Octet Rule, Limitation of Octet Rule, Lewis Structure of Elements, Lewis Representation of Simple Molecules, Formal Charge, Valency)",
+  "Chemical Bonding: Assimilation 2 (Chemical Bond, Types of Bonds, Ionic Bond, Electrovalency, Favourable Conditions for the Formation of Ionic Bond, Properties of Ionic Compounds, Lattice Enthalpy, Determination of Lattice Energy with Born-Haber Cycle)",
+  "Chemical Bonding: Assimilation 3 (Covalent Bond, Conditions for the Formation of Covalent Bond, Covalency, Homoatomic or Non-Polar Covalent Bond, Heteroatomic or Polar Covalent Bond, Characteristics of Covalent Bond, Partial Covalent Character in Ionic Bond / Fajan’s Rules, Coordinate Covalent Bond)",
+  "Chemical Bonding: Assimilation 4 (Valence Bond Theory, Sigma Bond and Pi Bond, Hybridization, Determination of Hybridization State, Dipole Moment, Application of Dipole Moment, Resonance Structure)",
+  "Chemical Bonding: Assimilation 5 (VSEPR Theory, Bond Parameters)",
+  "Stoichiometry - I: Assimilation 1 (Introduction, Mole Concept, Gram Atomic Mass, Gram Molecular Mass, Gram Molecular Volume, Gram Formula Mass)",
+  "Stoichiometry - I: Assimilation 2 (Methods of Expressing Concentration of Solution, ppm, ppb, Molarity, Molality)",
+  "Stoichiometry - I: Assimilation 3 (Normality, Equivalent Weight, Formality, Mole Fraction, Percentage Yield, Empirical and Molecular Formulae)",
+  "Gaseous State - I: Assimilation 1 (Introduction, Measurable Properties of Gases, Gas Laws - Boyle’s Law, Charles’ Law, Gay-Lussac’s Law, Avogadro’s Law)",
+  "Gaseous State - I: Assimilation 2 (Ideal Gas, Real Gas, Ideal Gas Equation - Derivation, Application of Equation of State, Numerical Values of R)",
+  "Gaseous State - I: Assimilation 3 (Dalton’s Law of Partial Pressures, Aqueous Tension, Partial Pressure in Terms of Mole Fraction)",
+  "Gaseous State - I: Assimilation 4 (Graham’s Law of Diffusion, Comparison of Rates of Diffusion, Importance)",
+  "Gaseous State - I: Assimilation 5 (Kinetic Molecular Theory of Gases, Postulates, Derivation of Gas Laws from Kinetic Equation)",
+  "General Organic Chemistry - I: Assimilation 1 (Introduction, Versatile Nature of Carbon, Classification of Organic Compounds, Classification of Carbons and Hydrogens of Organic Compounds, Bonding in Carbon Compounds, sp Hybridization, Representation of Structure of Organic Compounds, Bond Parameters, Homologous Series)",
+  "General Organic Chemistry - I: Assimilation 2 (Trivial System, IUPAC Rules, General Rules for Naming Organic Compounds, Rules for IUPAC Nomenclature of Branched Chain Saturated Hydrocarbons, Rules for Naming Compounds Containing Double and Triple Bonds, Rules for Naming Organic Compounds Containing a Functional Group, Rules for Naming Compounds Having Functional Groups, Multiple Bonds and Side Chains / Substituents, Rules for Naming Organic Compounds Containing Two or More Functional Groups, Writing Structural Formula from the Name of the Compounds)",
+  "Hydrogen & Its Compounds: Assimilation 1 (Position of Hydrogen in Periodic Table, Occurrence, Preparation of Dihydrogen, Properties of Hydrogen and Uses, Special Forms of Hydrogen)",
+  "Hydrogen & Its Compounds: Assimilation 2 (Structure of Water, Structure of Ice, Properties of Water, Hardness of Water)",
+  "IA Group Elements: Assimilation 1 (Introduction, Position in Periodic Table, Occurrence and Abundance, Electronic Configuration, Physical Properties, Chemical Properties)",
+  "IA Group Elements: Assimilation 2 (Anomalous Behaviour of Lithium, Diagonal Relationship with Magnesium, Ores of Alkali Metals, Extraction of Sodium, Down’s Process, Properties and Uses of Sodium, Sodium Chloride, Properties, Uses)"
+],
     "Biology": [
       "Crop Production and Management",
       "Microorganisms: Friend and Foe",
@@ -745,3 +779,4 @@ window.textbooks = {
     ]
   }
 };
+
