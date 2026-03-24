@@ -2378,8 +2378,8 @@ function showExamSettingsPopup() {
   const byKey = new Map();
 
   // precedence: section > class > group
-  const rank = (ex) => {
-  const o = (ex && ex.__origin) || '';
+ const rank = (ex) => {
+  const o = (ex && (ex.origin || ex.__origin)) || '';
   const s = (ex && ex.__scope) || '';
   if (o === 'section-overridden' || o === 'section-only' || (o === 'overridden' && s === 'section')) return 4;
   if (o === 'class-overridden'   || o === 'class-only'   || (o === 'overridden' && (s === 'class' || !s))) return 3;
@@ -2430,20 +2430,24 @@ function showExamSettingsPopup() {
           ${exams.length === 0 
   ? '<div style="color:#888;font-style:italic;">No exams found.</div>' 
   : exams.map((exam, idx) => {
-      const badge =
-  (exam.__origin === 'section-only' || exam.__origin === 'section-overridden' ||
-   (exam.__origin === 'overridden' && exam.__scope === 'section'))
+     const examOrigin = exam.origin || exam.__origin || '';
+const examScope  = exam.__scope || '';
+
+const badge =
+  (examOrigin === 'section-only' || examOrigin === 'section-overridden' ||
+   (examOrigin === 'overridden' && examScope === 'section'))
     ? '<span style="margin-left:8px;font-size:.8em;padding:2px 8px;border-radius:999px;background:#fff7e6;color:#a26100;border:1px solid #ffd79a;">Section override</span>'
-  : (exam.__origin === 'class-only' || exam.__origin === 'class-overridden' ||
-     (exam.__origin === 'overridden' && (exam.__scope === 'class' || !exam.__scope)))
+  : (examOrigin === 'class-only' || examOrigin === 'class-overridden' ||
+     (examOrigin === 'overridden' && (examScope === 'class' || !examScope)))
     ? '<span style="margin-left:8px;font-size:.8em;padding:2px 8px;border-radius:999px;background:#eaf8ea;color:#207a2b;border:1px solid #9fddb1;">Class override</span>'
     : '<span style="margin-left:8px;font-size:.8em;padding:2px 8px;border-radius:999px;background:#e8f3ff;color:#0f3d6b;border:1px solid #c7d7ea;">Inherited</span>';
 
      return `
       <div style="border-bottom:1px solid #f1f1f1;margin-bottom:7px;padding-bottom:7px;">
         <strong>${exam.name}</strong>${badge}
-        ${isAdmin ? `<button type="button" class="popup-action-btn"
-                              data-edit="${exam.id}"      
+       ${isAdmin ? `<button type="button" class="popup-action-btn"
+                              data-edit="${exam.id}"
+                              data-scope="${exam.__scope || ((exam.origin || exam.__origin) === 'section-only' || (exam.origin || exam.__origin) === 'section-overridden' ? 'section' : ((exam.origin || exam.__origin) === 'class-only' || (exam.origin || exam.__origin) === 'class-overridden' ? 'class' : 'group'))}"
                               style="margin-left:10px;padding:2px 8px;font-size:0.9em;">Edit</button>` : ''}
         <div style="margin-top:6px;margin-left:8px;font-size:0.99em;">
         ${Array.isArray(exam.subjects) && exam.subjects.length > 0
@@ -2776,10 +2780,11 @@ db.collection('years').doc(academicYear)
      const ref = matchedGroupId ? coll.doc(matchedGroupId) : coll.doc();
     const origin = matchedGroupId ? 'class-overridden' : 'class-only';
 
-  return ref.set({
+return ref.set({
   name, nameKey, subjects, subtopics,
   grading: { mode: 'custom', scale: gradingScale },
   origin,
+  __origin: origin,
   __scope: 'class'
 }, { merge: true }).then(() => ref);
     } else {
@@ -2795,6 +2800,7 @@ return ref.set({
   name, nameKey, subjects, subtopics,
   grading: { mode: 'custom', scale: gradingScale },
   origin,
+  __origin: origin,
   __scope: 'section'
 }, { merge: true }).then(() => ref);
 
@@ -3133,12 +3139,11 @@ if (subIntDD && subIntSel && subIntList){
       // Attach Edit button handlers
       setTimeout(() => {
         popupContent.querySelectorAll('[data-edit]').forEach(btn => {
-         btn.onclick = function() {
+        btn.onclick = function() {
   const examId = btn.getAttribute('data-edit');
-// use the live toggle value instead of stale data-scope on the button
-const scopeNow = window.__sp_overrideScope || (window.__sp_useGroupExams === false ? 'class' : 'group');
-closePopup();
-showEditExamPopup(examId, scopeNow);
+  const scopeNow = btn.getAttribute('data-scope') || window.__sp_overrideScope || (window.__sp_useGroupExams === false ? 'class' : 'group');
+  closePopup();
+  showEditExamPopup(examId, scopeNow);
 };
         });
       }, 200);
@@ -3632,9 +3637,9 @@ if (subtopics.length > 0) {
                   }
                 }
               } else if (_scope === 'class') {
-                await classOverrideRef.set({ ...payload, origin: 'class-overridden', __scope: 'class' }, { merge: true });
+                await classOverrideRef.set({ ...payload, origin: 'class-overridden', __origin: 'class-overridden', __scope: 'class' }, { merge: true });
               } else {
-                await sectionOverrideRef.set({ ...payload, origin: 'section-overridden', __scope: 'section' }, { merge: true });
+                await sectionOverrideRef.set({ ...payload, origin: 'section-overridden', __origin: 'section-overridden', __scope: 'section' }, { merge: true });
               }
             } catch (err) {
               alert('Error saving changes: ' + (err?.message || err));
