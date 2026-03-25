@@ -305,32 +305,39 @@ async function fetchEffectiveExams(year, classId, className, sectionId) {
   }
 
   if (clsSnap && !clsSnap.empty) {
-    clsSnap.forEach(doc => {
-      const o = doc.data() || {};
+  clsSnap.forEach(doc => {
+    const o = doc.data() || {};
 
-      // hide inherited exam
-      if (o.hidden === true) {
-        map.delete(doc.id);
-        return;
-      }
+    // hide inherited exam
+    if (o.hidden === true) {
+      map.delete(doc.id);
+      return;
+    }
 
-      // class-only (new id) OR add/override existing
-      if (!map.has(doc.id) || o.origin === 'class-only') {
-        map.set(doc.id, { id: doc.id, ...o, __origin: 'class-only' });
-      } else {
-        const base = map.get(doc.id);
-        map.set(doc.id, {
-          ...base,
-          name:      (o.name ?? base.name),
-          subjects:  (Array.isArray(o.subjects)  && o.subjects.length  ? o.subjects  : base.subjects),
-          subtopics: (Array.isArray(o.subtopics) && o.subtopics.length ? o.subtopics : base.subtopics),
-          grading:   (o.grading || base.grading),
-          includeInTotal: (o.includeInTotal ?? base.includeInTotal),
-          __origin:  'overridden-class'
-        });
-      }
-    });
-  }
+    // class-only (new id) OR add/override existing
+    if (!map.has(doc.id) || o.origin === 'class-only') {
+      map.set(doc.id, {
+        id: doc.id,
+        ...o,
+        subjects:  Array.isArray(o.subjects)  ? o.subjects  : [],
+        subtopics: Array.isArray(o.subtopics) ? o.subtopics : [],
+        __origin: 'class-only'
+      });
+    } else {
+      const base = map.get(doc.id);
+      map.set(doc.id, {
+        ...base,
+        ...o,
+        name:      ('name' in o ? o.name : base.name),
+        subjects:  Array.isArray(o.subjects)  ? o.subjects  : [],
+        subtopics: Array.isArray(o.subtopics) ? o.subtopics : [],
+        grading:   ('grading' in o ? o.grading : base.grading),
+        includeInTotal: ('includeInTotal' in o ? o.includeInTotal : base.includeInTotal),
+        __origin:  'overridden-class'
+      });
+    }
+  });
+}
 
   // --- 3) SECTION OVERRIDES / SECTION-ONLY (highest priority; support BOTH names) ---
   // Prefer: years/{year}/classes/{classId}/sections/{sectionId}/examOverrides/*
@@ -351,34 +358,40 @@ async function fetchEffectiveExams(year, classId, className, sectionId) {
       } catch (_) {}
     }
 
-    if (secSnap && !secSnap.empty) {
-      secSnap.forEach(doc => {
-        const o = doc.data() || {};
+   if (secSnap && !secSnap.empty) {
+  secSnap.forEach(doc => {
+    const o = doc.data() || {};
 
-        // hide inherited exam at section scope
-        if (o.hidden === true) {
-          map.delete(doc.id);
-          return;
-        }
+    // hide inherited exam at section scope
+    if (o.hidden === true) {
+      map.delete(doc.id);
+      return;
+    }
 
-        // section-only (new id) OR override whatever exists
-        if (!map.has(doc.id) || o.origin === 'section-only') {
-          map.set(doc.id, { id: doc.id, ...o, __origin: 'section-only' });
-        } else {
-          const base = map.get(doc.id);
-          map.set(doc.id, {
-            ...base,
-            name:      (o.name ?? base.name),
-            subjects:  (Array.isArray(o.subjects)  && o.subjects.length  ? o.subjects  : base.subjects),
-            subtopics: (Array.isArray(o.subtopics) && o.subtopics.length ? o.subtopics : base.subtopics),
-            grading:   (o.grading || base.grading),
-            includeInTotal: (o.includeInTotal ?? base.includeInTotal),
-            __origin:  'overridden-section'
-          });
-        }
+    // section-only (new id) OR override whatever exists
+    if (!map.has(doc.id) || o.origin === 'section-only') {
+      map.set(doc.id, {
+        id: doc.id,
+        ...o,
+        subjects:  Array.isArray(o.subjects)  ? o.subjects  : [],
+        subtopics: Array.isArray(o.subtopics) ? o.subtopics : [],
+        __origin: 'section-only'
+      });
+    } else {
+      const base = map.get(doc.id);
+      map.set(doc.id, {
+        ...base,
+        ...o,
+        name:      ('name' in o ? o.name : base.name),
+        subjects:  Array.isArray(o.subjects)  ? o.subjects  : [],
+        subtopics: Array.isArray(o.subtopics) ? o.subtopics : [],
+        grading:   ('grading' in o ? o.grading : base.grading),
+        includeInTotal: ('includeInTotal' in o ? o.includeInTotal : base.includeInTotal),
+        __origin:  'overridden-section'
       });
     }
-  }
+  });
+}
 
   // --- 4) Return stable, name-sorted list ---
   const list = Array.from(map.values());
@@ -1169,13 +1182,24 @@ function getScaleForExamId(examId) {
 
 // Resolve scale for the currently selected exam
 function getActiveScale() {
-  // If a global default is loaded, prefer it for ALL displays (legend, etc.)
+  const exId = (examSel?.value || '').trim();
+  const ex = (Array.isArray(exams) ? exams.find(e => e.id === exId) : null);
+  const s  = ex?.grading?.scale;
+  const mode = ex?.grading?.mode;
+
+  // First priority: selected effective exam grading (group/class/section merged result)
+  if (mode === 'custom' && Array.isArray(s) && s.length) {
+    const norm = _normalizeScale(s);
+    if (norm.length) return norm;
+  }
+
+  // Second priority: school default
   if (Array.isArray(__gradingDefaultScale) && __gradingDefaultScale.length) {
     return __gradingDefaultScale;
   }
-  // Otherwise fall back to the currently selected exam’s scale (or legacy)
-  const exId = (examSel?.value || '').trim();
-  return getScaleForExamId(exId);
+
+  // Final fallback: legacy
+  return _normalizeScale(LEGACY_GRADING_SCALE);
 }
 
 
