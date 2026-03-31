@@ -1,0 +1,883 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>UKG Graduation Certificates - St. Patrick's School</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <!-- Firebase -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js"></script>
+
+  <!-- PDF Lib -->
+  <script src="https://unpkg.com/pdf-lib/dist/pdf-lib.min.js"></script>
+
+  <!-- Choices.js -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/choices.js/public/assets/styles/choices.min.css" />
+  <script src="https://cdn.jsdelivr.net/npm/choices.js/public/assets/scripts/choices.min.js"></script>
+
+  <style>
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Arial, sans-serif;
+      background: #f4f8fc;
+      color: #0f3d6b;
+    }
+
+    .container {
+      max-width: 950px;
+      margin: 20px auto;
+      background: #fff;
+      padding: 20px;
+      border-radius: 16px;
+      box-shadow: 0 4px 18px rgba(0,0,0,0.10);
+    }
+
+    h1 {
+      margin: 0 0 6px 0;
+      text-align: center;
+      color: #0f3d6b;
+      font-size: 28px;
+    }
+
+    .subtext {
+      text-align: center;
+      margin-bottom: 18px;
+      color: #45698d;
+      font-size: 14px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .section {
+      margin-bottom: 8px;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 6px;
+      font-weight: 600;
+      color: #0f3d6b;
+    }
+
+    select, input[type="date"] {
+      width: 100%;
+      padding: 11px 12px;
+      border: 1px solid #c8d8ea;
+      border-radius: 8px;
+      font-size: 14px;
+      background: #fff;
+    }
+
+    .actions {
+      display: flex;
+      gap: 12px;
+      margin-top: 18px;
+      flex-wrap: wrap;
+    }
+
+    button {
+      flex: 1;
+      min-width: 180px;
+      padding: 12px 14px;
+      border: none;
+      border-radius: 8px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: transform .15s ease, opacity .15s ease;
+    }
+
+    button:hover {
+      transform: translateY(-1px);
+    }
+
+    button:disabled {
+      opacity: 0.65;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .btn-main {
+      background: #0f3d6b;
+      color: #fff;
+    }
+
+    .btn-ghost {
+      background: #e9f2fb;
+      color: #0f3d6b;
+    }
+
+    .preview-wrap {
+      margin-top: 18px;
+      overflow: auto;
+      border: 1px solid #d7e2ef;
+      border-radius: 12px;
+      padding: 10px;
+      background: #fbfdff;
+    }
+
+    canvas {
+      width: 100%;
+      max-width: 100%;
+      border: 1px solid #cdd9e6;
+      border-radius: 10px;
+      background: #fff;
+      display: block;
+    }
+
+    .hint {
+      margin-top: 12px;
+      font-size: 13px;
+      color: #5f7892;
+      line-height: 1.5;
+    }
+
+    .choices__inner {
+      border-radius: 8px !important;
+      border: 1px solid #c8d8ea !important;
+      min-height: 46px !important;
+      padding-top: 6px !important;
+    }
+
+    @media (max-width: 700px) {
+      .grid {
+        grid-template-columns: 1fr;
+      }
+
+      .container {
+        margin: 10px;
+        padding: 14px;
+      }
+
+      h1 {
+        font-size: 22px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>UKG Graduation Certificate Generator</h1>
+    <div class="subtext">St. Patrick's School - Generate graduation certificates for all students in the selected section</div>
+
+    <div class="grid">
+      <div class="section">
+        <label for="yearSel">Academic Year</label>
+        <select id="yearSel"></select>
+      </div>
+
+      <div class="section">
+        <label for="classSel">Class</label>
+        <select id="classSel"></select>
+      </div>
+
+      <div class="section">
+        <label for="sectionSel">Section</label>
+        <select id="sectionSel"></select>
+      </div>
+
+      <div class="section">
+        <label for="certificateDate">Certificate Date</label>
+        <input type="date" id="certificateDate" />
+      </div>
+    </div>
+
+    <div class="actions">
+      <button class="btn-main" id="previewBtn">Preview First Certificate</button>
+      <button class="btn-ghost" id="downloadOneBtn">Download One PDF</button>
+      <button class="btn-ghost" id="downloadManyBtn">Download Separate PDFs</button>
+    </div>
+
+    <div class="preview-wrap">
+      <canvas id="previewCanvas" width="2480" height="1754"></canvas>
+    </div>
+
+    <div class="hint">
+      Replace the background image URL in <b>BG_IMAGE_URL</b> with your graduation certificate PNG.
+      You can also adjust photo and text positions in the <b>CERT</b> object if needed.
+    </div>
+  </div>
+
+  <script>
+    // ---------- FIREBASE INIT ----------
+    const firebaseConfig = {
+      apiKey: "AIzaSyAszVhWXUUOYLQ7VimKmPKf1yEu_CI9RCE",
+      authDomain: "stpatricks-questionbank.firebaseapp.com",
+      projectId: "stpatricks-questionbank",
+      storageBucket: "stpatricks-questionbank.appspot.com",
+      messagingSenderId: "917615322861",
+      appId: "1:917615322861:web:c6c890aa2184dd395b8ee4"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+    const auth = firebase.auth();
+    const storage = firebase.storage();
+
+    // ---------- CUSTOM ALERT ----------
+    (function setupCampusConnectAlert() {
+      const dlgId = "dlgAppAlert";
+      if (document.getElementById(dlgId)) return;
+
+      const wrapper = document.createElement("div");
+      wrapper.innerHTML = `
+        <dialog id="dlgAppAlert" style="border:none;border-radius:16px;padding:0;max-width:420px;width:92vw;">
+          <div style="background:#0f3d6b;color:#fff;padding:10px 14px;border-radius:16px 16px 0 0;font-weight:600;font-size:15px;">
+            CampusConnect
+          </div>
+          <div style="padding:14px 16px 10px 16px;font-size:14px;line-height:1.5;">
+            <p id="appAlertText" style="margin:0 0 12px 0;"></p>
+            <div style="text-align:right;">
+              <button id="btnAppAlertOk"
+                style="background:#0f3d6b;color:#fff;border:none;border-radius:999px;padding:6px 16px;font-size:13px;font-weight:600;cursor:pointer;">
+                OK
+              </button>
+            </div>
+          </div>
+        </dialog>
+      `;
+
+      const dialog = wrapper.firstElementChild;
+      document.body.appendChild(dialog);
+
+      const textEl = dialog.querySelector("#appAlertText");
+      const okBtn = dialog.querySelector("#btnAppAlertOk");
+
+      window.alert = function(message) {
+        textEl.textContent = message;
+        dialog.showModal();
+      };
+
+      okBtn.onclick = () => dialog.close();
+    })();
+
+    // ---------- CONFIG ----------
+    const BG_IMAGE_URL = "https://raw.githubusercontent.com/MessiahSastry/Question-Bank/main/ukg-graduation-certificate.png";
+
+    const CERT = {
+      width: 2480,
+      height: 1754,
+
+      // Photo box
+      photoX: 165,
+      photoY: 520,
+      photoW: 470,
+      photoH: 560,
+
+      // Text area
+      centerX: 1450,
+      titleY: 575,
+      nameY: 760,
+      bodyStartY: 900,
+      classY: 1185,
+      dateY: 1185,
+
+      classX: 540,
+      dateX: 1975,
+
+      // Signature area
+      directorX: 660,
+      teacherX: 1785,
+      signY: 1505,
+
+      // Maximum width for centered text
+      bodyMaxWidth: 1250
+    };
+
+    // ---------- UI ----------
+    const yearEl = document.getElementById("yearSel");
+    const classEl = document.getElementById("classSel");
+    const sectionEl = document.getElementById("sectionSel");
+    const dateEl = document.getElementById("certificateDate");
+
+    const yearChoice = new Choices("#yearSel", { searchEnabled: false, itemSelectText: "" });
+    const classChoice = new Choices("#classSel", { searchEnabled: false, itemSelectText: "" });
+    const sectionChoice = new Choices("#sectionSel", { searchEnabled: false, itemSelectText: "" });
+
+    const previewBtn = document.getElementById("previewBtn");
+    const downloadOneBtn = document.getElementById("downloadOneBtn");
+    const downloadManyBtn = document.getElementById("downloadManyBtn");
+
+    const canvas = document.getElementById("previewCanvas");
+    const ctx = canvas.getContext("2d");
+
+    let years = [];
+    let classes = [];
+    let sections = [];
+    let students = [];
+    let bgImage = null;
+
+    // ---------- DEFAULT DATE ----------
+    (function setToday() {
+      const d = new Date();
+      const yyyy = d.getFullYear();
+      const mm = String(d.getMonth() + 1).padStart(2, "0");
+      const dd = String(d.getDate()).padStart(2, "0");
+      dateEl.value = `${yyyy}-${mm}-${dd}`;
+    })();
+
+    // ---------- HELPERS ----------
+    function setLoading(isLoading) {
+      previewBtn.disabled = isLoading;
+      downloadOneBtn.disabled = isLoading;
+      downloadManyBtn.disabled = isLoading;
+    }
+
+    function getSelectedYear() {
+      return yearChoice.getValue(true);
+    }
+
+    function getSelectedClass() {
+      return classChoice.getValue(true);
+    }
+
+    function getSelectedSection() {
+      return sectionChoice.getValue(true);
+    }
+
+    function getDisplayDate() {
+      if (!dateEl.value) return "";
+      const dt = new Date(dateEl.value + "T00:00:00");
+      return dt.toLocaleDateString("en-GB");
+    }
+
+    function safeFileName(name = "") {
+      return String(name).replace(/[\\/:*?"<>|]/g, "").trim() || "Student";
+    }
+
+    function fitText(text, maxWidth, startFontSize, family, weight = "") {
+      let size = startFontSize;
+      while (size > 24) {
+        ctx.font = `${weight} ${size}px ${family}`;
+        if (ctx.measureText(text).width <= maxWidth) return `${weight} ${size}px ${family}`.trim();
+        size -= 2;
+      }
+      return `${weight} 24px ${family}`.trim();
+    }
+
+    function drawWrappedCenteredText(text, x, startY, maxWidth, lineHeight, font, color = "#17395b") {
+      ctx.save();
+      ctx.font = font;
+      ctx.fillStyle = color;
+      ctx.textAlign = "center";
+
+      const words = String(text).split(" ");
+      let line = "";
+      let y = startY;
+
+      for (let i = 0; i < words.length; i++) {
+        const testLine = line + words[i] + " ";
+        const testWidth = ctx.measureText(testLine).width;
+
+        if (testWidth > maxWidth && i > 0) {
+          ctx.fillText(line.trim(), x, y);
+          line = words[i] + " ";
+          y += lineHeight;
+        } else {
+          line = testLine;
+        }
+      }
+
+      if (line.trim()) {
+        ctx.fillText(line.trim(), x, y);
+      }
+
+      ctx.restore();
+      return y;
+    }
+
+    function drawPhotoPlaceholder(x, y, w, h) {
+      ctx.save();
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(x, y, w, h);
+      ctx.strokeStyle = "#1f4f85";
+      ctx.lineWidth = 8;
+      ctx.strokeRect(x, y, w, h);
+
+      ctx.fillStyle = "#577899";
+      ctx.textAlign = "center";
+      ctx.font = "bold 30px Segoe UI";
+      ctx.fillText("STUDENT PHOTO", x + w / 2, y + h / 2);
+
+      ctx.restore();
+    }
+
+    function loadImage(url) {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        img.onload = () => resolve(img);
+        img.onerror = reject;
+        img.src = url + (url.includes("?") ? "&" : "?") + "cb=" + Date.now();
+      });
+    }
+
+    async function resolvePhotoUrlFromAny(stu) {
+      const directUrl =
+        stu.photoUrl ||
+        stu.photoURL ||
+        stu.studentPhotoUrl ||
+        "";
+
+      if (directUrl && /^https?:\/\//i.test(directUrl)) {
+        return directUrl;
+      }
+
+      const path =
+        stu.photoPath ||
+        stu.studentPhotoPath ||
+        "";
+
+      if (!path) return "";
+
+      try {
+        const cleanPath = path.replace(/^gs:\/\/[^/]+\//i, "");
+        const ref = storage.ref(cleanPath);
+        const url = await ref.getDownloadURL();
+        return url;
+      } catch (err) {
+        console.error("Photo URL resolve failed:", err);
+        return "";
+      }
+    }
+
+    function validateSelection() {
+      if (!getSelectedYear()) {
+        alert("Please select Academic Year.");
+        return false;
+      }
+      if (!getSelectedClass()) {
+        alert("Please select Class.");
+        return false;
+      }
+      if (!getSelectedSection()) {
+        alert("Please select Section.");
+        return false;
+      }
+      return true;
+    }
+
+    // ---------- BACKGROUND ----------
+    async function loadBackground() {
+      try {
+        bgImage = await loadImage(BG_IMAGE_URL);
+      } catch (e) {
+        console.error("Background image failed to load:", e);
+        alert("Background image not loaded. Please check BG_IMAGE_URL.");
+      }
+    }
+
+    // ---------- DATA LOAD ----------
+    async function loadYears() {
+      const snap = await db.collection("years").orderBy("name", "desc").get();
+      years = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+      yearChoice.setChoices(
+        years.map(y => ({ value: y.id, label: y.id })),
+        "value",
+        "label",
+        true
+      );
+
+      if (years.length) {
+        yearChoice.setChoiceByValue(years[0].id);
+      }
+
+      await loadClasses();
+    }
+
+    async function loadClasses() {
+      const year = getSelectedYear();
+      if (!year) return;
+
+      const snap = await db
+        .collection("years")
+        .doc(year)
+        .collection("classes")
+        .orderBy("name")
+        .get();
+
+      classes = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+      classChoice.setChoices(
+        classes.map(c => ({ value: c.id, label: c.name || c.id })),
+        "value",
+        "label",
+        true
+      );
+
+      if (classes.length) {
+        const ukgClass = classes.find(c =>
+          /(^|\s)ukg(\s|$)/i.test(c.name || "") ||
+          /(^|\s)ukg(\s|$)/i.test(c.id || "")
+        );
+
+        classChoice.setChoiceByValue((ukgClass || classes[0]).id);
+      }
+
+      await loadSections();
+    }
+
+    async function loadSections() {
+      const year = getSelectedYear();
+      const classId = getSelectedClass();
+      if (!year || !classId) return;
+
+      const snap = await db
+        .collection("years")
+        .doc(year)
+        .collection("classes")
+        .doc(classId)
+        .collection("sections")
+        .orderBy("name")
+        .get();
+
+      sections = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+      sectionChoice.setChoices(
+        sections.map(s => ({ value: s.id, label: s.name || s.id })),
+        "value",
+        "label",
+        true
+      );
+
+      if (sections.length) {
+        sectionChoice.setChoiceByValue(sections[0].id);
+      }
+
+      await loadStudents();
+    }
+
+    async function loadStudents() {
+      const year = getSelectedYear();
+      const classId = getSelectedClass();
+      const sectionId = getSelectedSection();
+
+      students = [];
+
+      if (!year || !classId || !sectionId) return;
+
+      const snap = await db
+        .collection("years")
+        .doc(year)
+        .collection("classes")
+        .doc(classId)
+        .collection("sections")
+        .doc(sectionId)
+        .collection("students")
+        .orderBy("roll")
+        .get();
+
+      snap.forEach(doc => {
+        const d = doc.data();
+        if (!d.isDeleted) {
+          students.push({
+            id: doc.id,
+            ...d
+          });
+        }
+      });
+    }
+
+    async function fetchStudentData(stu) {
+      const classId = getSelectedClass();
+      const sectionId = getSelectedSection();
+
+      return {
+        id: stu.id,
+        name: stu.name || stu.studentName || "",
+        father: stu.father || stu.fatherName || "",
+        className: classes.find(c => c.id === classId)?.name || "",
+        sectionName: sections.find(s => s.id === sectionId)?.name || "",
+        photoUrl: stu.photoUrl || stu.photoURL || stu.studentPhotoUrl || "",
+        photoPath: stu.photoPath || stu.studentPhotoPath || ""
+      };
+    }
+
+    async function getAllStudentCertificates() {
+      const arr = [];
+      for (const stu of students) {
+        const item = await fetchStudentData(stu);
+        arr.push(item);
+      }
+      return arr;
+    }
+
+    // ---------- DRAW CERTIFICATE ----------
+    async function drawCertificate(stu) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      if (bgImage) {
+        ctx.drawImage(bgImage, 0, 0, canvas.width, canvas.height);
+      }
+
+      // Photo
+      drawPhotoPlaceholder(CERT.photoX, CERT.photoY, CERT.photoW, CERT.photoH);
+
+      try {
+        const photoUrl = await resolvePhotoUrlFromAny(stu);
+        if (photoUrl) {
+          const img = await loadImage(photoUrl);
+
+          ctx.save();
+
+          const boxRatio = CERT.photoW / CERT.photoH;
+          const imgRatio = img.width / img.height;
+
+          let drawW, drawH, drawX, drawY;
+
+          if (imgRatio > boxRatio) {
+            drawH = CERT.photoH;
+            drawW = img.width * (drawH / img.height);
+            drawX = CERT.photoX - (drawW - CERT.photoW) / 2;
+            drawY = CERT.photoY;
+          } else {
+            drawW = CERT.photoW;
+            drawH = img.height * (drawW / img.width);
+            drawX = CERT.photoX;
+            drawY = CERT.photoY - (drawH - CERT.photoH) / 2;
+          }
+
+          ctx.beginPath();
+          ctx.rect(CERT.photoX, CERT.photoY, CERT.photoW, CERT.photoH);
+          ctx.clip();
+          ctx.drawImage(img, drawX, drawY, drawW, drawH);
+          ctx.restore();
+
+          ctx.save();
+          ctx.strokeStyle = "#1f4f85";
+          ctx.lineWidth = 8;
+          ctx.strokeRect(CERT.photoX, CERT.photoY, CERT.photoW, CERT.photoH);
+          ctx.restore();
+        }
+      } catch (e) {
+        console.error("Student photo draw failed:", stu?.name, e);
+      }
+
+      // Main text
+      ctx.textAlign = "center";
+      ctx.fillStyle = "#163c63";
+
+      ctx.font = "600 44px Segoe UI";
+      ctx.fillText("This certificate is proudly presented to", CERT.centerX, CERT.titleY);
+
+      const nameFont = fitText(stu.name || "", 1050, 88, '"Segoe Script", "Times New Roman", cursive', "bold");
+      ctx.font = nameFont;
+      ctx.fillStyle = "#0f3d6b";
+      ctx.fillText(stu.name || "", CERT.centerX, CERT.nameY);
+
+      ctx.fillStyle = "#234e78";
+      drawWrappedCenteredText(
+        "for successfully completing UKG and stepping forward to the next stage of learning.",
+        CERT.centerX,
+        CERT.bodyStartY,
+        CERT.bodyMaxWidth,
+        56,
+        "500 38px Segoe UI"
+      );
+
+      drawWrappedCenteredText(
+        "Your joyful participation, sincere effort, and eagerness to learn",
+        CERT.centerX,
+        CERT.bodyStartY + 95,
+        CERT.bodyMaxWidth,
+        54,
+        "500 36px Segoe UI"
+      );
+
+      drawWrappedCenteredText(
+        "have made this milestone a proud and memorable achievement.",
+        CERT.centerX,
+        CERT.bodyStartY + 150,
+        CERT.bodyMaxWidth,
+        54,
+        "500 36px Segoe UI"
+      );
+
+      // Class / Section
+      ctx.font = "600 34px Segoe UI";
+      ctx.fillStyle = "#17395b";
+      ctx.textAlign = "center";
+      ctx.fillText(`${stu.className || "UKG"} / ${stu.sectionName || ""}`, CERT.classX, CERT.classY);
+
+      // Date
+      ctx.fillText(getDisplayDate(), CERT.dateX, CERT.dateY);
+
+      // Signatures
+      ctx.font = "italic 34px Segoe UI";
+      ctx.fillStyle = "#17395b";
+      ctx.fillText("Director", CERT.directorX, CERT.signY);
+      ctx.fillText("Class Teacher", CERT.teacherX, CERT.signY);
+    }
+
+    async function renderPreview(stu) {
+      await drawCertificate(stu || {});
+    }
+
+    // ---------- PDF ----------
+    async function canvasToPdfPage(pdfDoc) {
+      const imageData = canvas.toDataURL("image/jpeg", 0.95);
+      const jpgImage = await pdfDoc.embedJpg(imageData);
+
+      const page = pdfDoc.addPage([842, 595]);
+      const imgW = jpgImage.width;
+      const imgH = jpgImage.height;
+      const scale = Math.min(842 / imgW, 595 / imgH);
+
+      page.drawImage(jpgImage, {
+        x: (842 - imgW * scale) / 2,
+        y: (595 - imgH * scale) / 2,
+        width: imgW * scale,
+        height: imgH * scale
+      });
+    }
+
+    async function downloadOnePDF() {
+      if (!validateSelection()) return;
+      setLoading(true);
+
+      try {
+        await loadStudents();
+
+        const allStudents = await getAllStudentCertificates();
+        if (!allStudents.length) {
+          alert("No students found in the selected section.");
+          return;
+        }
+
+        const { PDFDocument } = PDFLib;
+        const pdfDoc = await PDFDocument.create();
+
+        for (const stu of allStudents) {
+          await drawCertificate(stu);
+          await canvasToPdfPage(pdfDoc);
+        }
+
+        const bytes = await pdfDoc.save();
+        const blob = new Blob([bytes], { type: "application/pdf" });
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = "UKG_Graduation_Certificates.pdf";
+        a.click();
+      } catch (err) {
+        console.error(err);
+        alert("Failed to generate combined PDF.");
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    async function downloadManyPDFs() {
+      if (!validateSelection()) return;
+      setLoading(true);
+
+      try {
+        await loadStudents();
+
+        const allStudents = await getAllStudentCertificates();
+        if (!allStudents.length) {
+          alert("No students found in the selected section.");
+          return;
+        }
+
+        const { PDFDocument } = PDFLib;
+
+        for (const stu of allStudents) {
+          const pdfDoc = await PDFDocument.create();
+          await drawCertificate(stu);
+          await canvasToPdfPage(pdfDoc);
+
+          const bytes = await pdfDoc.save();
+          const blob = new Blob([bytes], { type: "application/pdf" });
+          const a = document.createElement("a");
+          a.href = URL.createObjectURL(blob);
+          a.download = `UKG_Graduation_${safeFileName(stu.name)}.pdf`;
+          a.click();
+
+          await new Promise(res => setTimeout(res, 120));
+        }
+      } catch (err) {
+        console.error(err);
+        alert("Failed to generate separate PDFs.");
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    // ---------- EVENTS ----------
+    yearEl.addEventListener("change", async () => {
+      await loadClasses();
+    });
+
+    classEl.addEventListener("change", async () => {
+      await loadSections();
+    });
+
+    sectionEl.addEventListener("change", async () => {
+      await loadStudents();
+    });
+
+    previewBtn.onclick = async () => {
+      if (!validateSelection()) return;
+      setLoading(true);
+
+      try {
+        await loadStudents();
+
+        const allStudents = await getAllStudentCertificates();
+        if (!allStudents.length) {
+          alert("No students found in the selected section.");
+          return;
+        }
+
+        const withPhoto = allStudents.find(s => s.photoUrl || s.photoPath);
+        await renderPreview(withPhoto || allStudents[0]);
+      } catch (err) {
+        console.error(err);
+        alert("Preview failed.");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    downloadOneBtn.onclick = downloadOnePDF;
+    downloadManyBtn.onclick = downloadManyPDFs;
+
+    // ---------- INIT ----------
+    auth.onAuthStateChanged(async (user) => {
+      if (!user) {
+        alert("Please login first.");
+        return;
+      }
+
+      try {
+        setLoading(true);
+        await loadBackground();
+        await loadYears();
+
+        if (students.length) {
+          const previewStudent = await fetchStudentData(students[0]);
+          await renderPreview(previewStudent);
+        } else {
+          await renderPreview({});
+        }
+      } catch (err) {
+        console.error(err);
+        alert("Initialization failed.");
+      } finally {
+        setLoading(false);
+      }
+    });
+  </script>
+</body>
+</html>
