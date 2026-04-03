@@ -852,7 +852,7 @@
               <textarea id="json-input" placeholder="Paste final JSON here"></textarea>
 
              <div class="button-row">
-  <button type="button" id="load-json-btn">Load JSON & Find Images</button>
+  <button type="button" id="load-json-btn">Load JSON</button>
   <button type="button" id="clear-json-btn" class="danger-btn">Clear JSON</button>
 </div>
 
@@ -902,9 +902,9 @@
                 <div id="slides-preview-list"></div>
               </div>
 
-              <div id="empty-preview-note" class="small-note">
-                After pasting JSON, the page will automatically search images for each non-summary slide and preselect the first result. You can change any image before generating the PPT.
-              </div>
+             <div id="empty-preview-note" class="small-note">
+  After pasting JSON, load the slides. Then paste an image URL or upload an image manually for each non-summary slide before generating the PPT.
+</div>
             </div>
 
             <div class="step-card footer-generate">
@@ -1374,91 +1374,69 @@ Continue like this for all slides.`;
     }
 
     async function loadJsonAndFindImages() {
-      const meta = buildRequestMeta();
-      const metaError = validateMeta(meta);
-      if (metaError) {
-        toast(metaError);
-        return;
-      }
+  const meta = buildRequestMeta();
+  const metaError = validateMeta(meta);
+  if (metaError) {
+    toast(metaError);
+    return;
+  }
 
-      const raw = document.getElementById("json-input")?.value || "";
-      if (!raw.trim()) {
-        toast("Please paste ChatGPT JSON first.");
-        return;
-      }
+  const raw = document.getElementById("json-input")?.value || "";
+  if (!raw.trim()) {
+    toast("Please paste ChatGPT JSON first.");
+    return;
+  }
 
-      const validationBox = document.getElementById("json-validation-box");
-      validationBox.innerHTML = "";
+  const validationBox = document.getElementById("json-validation-box");
+  validationBox.innerHTML = "";
 
-      let parsed;
-      try {
-        parsed = JSON.parse(stripCodeFence(raw));
-      } catch (e) {
-        validationBox.innerHTML = `
-          <div class="thumb-empty">
-            Could not parse JSON. Make sure ChatGPT returned only pure JSON.
-          </div>
-        `;
-        updateStatus("Invalid JSON. Please paste clean JSON only.", "bad");
-        toast("Invalid JSON.");
-        return;
-      }
+  let parsed;
+  try {
+    parsed = JSON.parse(stripCodeFence(raw));
+  } catch (e) {
+    validationBox.innerHTML = `
+      <div class="thumb-empty">
+        Could not parse JSON. Make sure ChatGPT returned only pure JSON.
+      </div>
+    `;
+    updateStatus("Invalid JSON. Please paste clean JSON only.", "bad");
+    toast("Invalid JSON.");
+    return;
+  }
 
-      const rawSlides = Array.isArray(parsed?.slides) ? parsed.slides : [];
-      const normalizedSlides = rawSlides.map((slide, index) => normalizeSlide(slide, index, rawSlides.length, meta));
-      const errors = validateParsedSlides(normalizedSlides, meta);
+  const rawSlides = Array.isArray(parsed?.slides) ? parsed.slides : [];
+  const normalizedSlides = rawSlides.map((slide, index) => normalizeSlide(slide, index, rawSlides.length, meta));
+  const errors = validateParsedSlides(normalizedSlides, meta);
 
-      if (errors.length) {
-        validationBox.innerHTML = `
-          <div class="thumb-empty" style="background:#fff5f5;border-color:#efcaca;color:#9f1d1d;">
-            JSON has issues. Please regenerate or correct it.
-            <ul class="json-error-list">
-              ${errors.map(err => `<li>${escapeHtml(err)}</li>`).join("")}
-            </ul>
-          </div>
-        `;
-        updateStatus("JSON loaded with errors.", "bad");
-        appState.slides = normalizedSlides;
-        renderSlidesPreview();
-        toast("JSON has errors.");
-        return;
-      }
+  if (errors.length) {
+    validationBox.innerHTML = `
+      <div class="thumb-empty" style="background:#fff5f5;border-color:#efcaca;color:#9f1d1d;">
+        JSON has issues. Please regenerate or correct it.
+        <ul class="json-error-list">
+          ${errors.map(err => `<li>${escapeHtml(err)}</li>`).join("")}
+        </ul>
+      </div>
+    `;
+    updateStatus("JSON loaded with errors.", "bad");
+    appState.slides = normalizedSlides;
+    renderSlidesPreview();
+    toast("JSON has errors.");
+    return;
+  }
 
-      validationBox.innerHTML = `
-        <div class="thumb-empty" style="background:#f3fff7;border-color:#cfeacc;color:#17633c;">
-          JSON looks valid. Now finding images automatically...
-        </div>
-      `;
+  validationBox.innerHTML = `
+    <div class="thumb-empty" style="background:#f3fff7;border-color:#cfeacc;color:#17633c;">
+      JSON looks valid. Now add image URL or upload image manually for each non-summary slide.
+    </div>
+  `;
 
-      appState.slides = normalizedSlides;
-      renderSlidesPreview();
-      await autoFindImagesForAllSlides();
-    }
-
+  appState.slides = normalizedSlides;
+  renderSlidesPreview();
+  updateStatus("JSON loaded. Now add images manually.", "good");
+}
     async function autoFindImagesForAllSlides() {
-      if (!appState.slides.length) return;
-
-      appState.isLoadingImages = true;
-      updateStatus("Finding images for slides...", "warn");
-      renderSlidesPreview();
-
-      for (let i = 0; i < appState.slides.length; i++) {
-        if (slideNeedsImage(appState.slides[i])) {
-          await searchImagesForSlide(i, false);
-        }
-      }
-
-      appState.isLoadingImages = false;
-      renderSlidesPreview();
-
-      const missing = getSlidesMissingImages();
-      if (missing.length) {
-        updateStatus(`Images found, but some slides still need selection: ${missing.join(", ")}`, "warn");
-      } else {
-        updateStatus("Slides and images are ready.", "good");
-      }
-    }
-
+  return;
+}
     function slideNeedsImage(slide) {
       return slide && slide.type !== "summary";
     }
@@ -1587,111 +1565,82 @@ Continue like this for all slides.`;
       list.innerHTML = appState.slides.map((slide, index) => renderSlideCard(slide, index)).join("");
     }
 
-    function renderSlideCard(slide, index) {
-      const bulletsHtml = slide.bullets.length
-        ? `<ul>${slide.bullets.map(item => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
-        : `<div class="empty-text">No bullet points in this slide.</div>`;
+   function renderSlideCard(slide, index) {
+  const bulletsHtml = slide.bullets.length
+    ? `<ul>${slide.bullets.map(item => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
+    : `<div class="empty-text">No bullet points in this slide.</div>`;
 
-      const hasImage = !!slide.selectedImageUrl;
-      const selectedPreviewHtml = hasImage
-        ? `<img class="selected-image-preview" src="${escapeAttribute(slide.selectedImageUrl)}" alt="${escapeAttribute(slide.title || `Slide ${index + 1}`)}">`
-        : `<div class="selected-image-placeholder">No image selected yet for this slide.<br>Edit the search query and click Search Again.</div>`;
+  const hasImage = !!slide.selectedImageUrl;
+  const selectedPreviewHtml = hasImage
+    ? `<img class="selected-image-preview" src="${escapeAttribute(slide.selectedImageUrl)}" alt="${escapeAttribute(slide.title || `Slide ${index + 1}`)}">`
+    : `<div class="selected-image-placeholder">No image selected yet for this slide.<br>Paste image URL or upload image.</div>`;
 
-      const thumbsHtml = renderThumbGrid(slide, index);
-      const statusLine = slide.imageSearchError
-        ? `<div class="small-note" style="color:#9f1d1d;">${escapeHtml(slide.imageSearchError)}</div>`
-        : (slide.imageSearchStatus ? `<div class="small-note">${escapeHtml(slide.imageSearchStatus)}</div>` : "");
-
-      return `
-        <div class="slide-card" data-slide-index="${index}">
-          <div class="slide-head">
-            <div class="slide-left">
-              <div class="slide-badge">Slide ${index + 1} • ${escapeHtml(slide.type)}</div>
-              <h3 class="slide-title">${escapeHtml(slide.title || `Slide ${index + 1}`)}</h3>
-              ${slide.subtitle ? `<p class="slide-subtitle">${escapeHtml(slide.subtitle)}</p>` : ""}
-            </div>
-          </div>
-
-          <div class="slide-body">
-            <div class="slide-points">
-              ${bulletsHtml}
-            </div>
-
-            <div class="image-panel">
-              <div class="image-label-row">
-                <strong>${slideNeedsImage(slide) ? "Image for this slide" : "No image needed"}</strong>
-                ${slideNeedsImage(slide) ? `<span class="meta-tag">${hasImage ? "Selected" : "Select image"}</span>` : ""}
-              </div>
-
-              ${slideNeedsImage(slide) ? `
-                <input
-                  type="text"
-                  class="image-query-input"
-                  data-action="query-input"
-                  data-slide-index="${index}"
-                  value="${escapeAttribute(slide.imageQuery || "")}"
-                  placeholder="Image search query"
-                >
-
-                               <div class="image-action-row">
-                  <button type="button" class="secondary-btn" data-action="search-images" data-slide-index="${index}">
-                    Search Again
-                  </button>
-                  <button type="button" class="ghost-btn" data-action="clear-image" data-slide-index="${index}">
-                    Clear
-                  </button>
-                </div>
-
-                <input
-                  type="text"
-                  class="manual-image-input"
-                  data-action="manual-url-input"
-                  data-slide-index="${index}"
-                  value="${escapeAttribute(slide.manualImageUrl || "")}"
-                  placeholder="Paste direct image URL from web"
-                >
-
-                <div class="manual-image-row">
-                  <button type="button" class="secondary-btn" data-action="use-manual-url" data-slide-index="${index}">
-                    Use URL
-                  </button>
-
-                  <button type="button" class="upload-btn" data-action="trigger-upload" data-slide-index="${index}">
-                    Upload Image
-                  </button>
-                </div>
-
-                <input
-                  type="file"
-                  accept="image/*"
-                  class="upload-image-input"
-                  id="upload-image-${index}"
-                  data-action="upload-image"
-                  data-slide-index="${index}"
-                >
-
-                <div class="manual-image-note">
-                  Mobile: save image from Google, then use Upload Image. Desktop: you can paste direct image URL.
-                </div>
-
-                <div class="selected-image-box">
-                  <div class="selected-image-title">
-                    Selected image ${slide.selectedImageSource ? `• ${escapeHtml(slide.selectedImageSource)}` : ""}
-                  </div>
-                  ${selectedPreviewHtml}
-                </div>
-
-                ${statusLine}
-                ${thumbsHtml}
-              ` : `
-                <div class="selected-image-placeholder">Summary slide does not need image selection.</div>
-              `}
-            </div>
-          </div>
+  return `
+    <div class="slide-card" data-slide-index="${index}">
+      <div class="slide-head">
+        <div class="slide-left">
+          <div class="slide-badge">Slide ${index + 1} • ${escapeHtml(slide.type)}</div>
+          <h3 class="slide-title">${escapeHtml(slide.title || `Slide ${index + 1}`)}</h3>
+          ${slide.subtitle ? `<p class="slide-subtitle">${escapeHtml(slide.subtitle)}</p>` : ""}
         </div>
-      `;
-    }
+      </div>
 
+      <div class="slide-body">
+        <div class="slide-points">
+          ${bulletsHtml}
+        </div>
+
+        <div class="image-panel">
+          <div class="image-label-row">
+            <strong>${slideNeedsImage(slide) ? "Image for this slide" : "No image needed"}</strong>
+            ${slideNeedsImage(slide) ? `<span class="meta-tag">${hasImage ? "Selected" : "Select image"}</span>` : ""}
+          </div>
+
+          ${slideNeedsImage(slide) ? `
+            <input
+              type="text"
+              class="manual-image-input"
+              data-action="manual-url-input"
+              data-slide-index="${index}"
+              value="${escapeAttribute(slide.manualImageUrl || "")}"
+              placeholder="Paste direct image URL from web"
+            >
+
+            <div class="manual-image-row">
+              <button type="button" class="secondary-btn" data-action="use-manual-url" data-slide-index="${index}">
+                Use URL
+              </button>
+
+              <button type="button" class="upload-btn" data-action="trigger-upload" data-slide-index="${index}">
+                Upload Image
+              </button>
+            </div>
+
+            <input
+              type="file"
+              accept="image/*"
+              class="upload-image-input"
+              id="upload-image-${index}"
+              data-action="upload-image"
+              data-slide-index="${index}"
+            >
+
+            <div class="manual-image-note">
+              Paste direct image URL or upload image manually for this slide.
+            </div>
+
+            <div class="selected-image-box">
+              <div class="selected-image-title">Selected image</div>
+              ${selectedPreviewHtml}
+            </div>
+          ` : `
+            <div class="selected-image-placeholder">Summary slide does not need image selection.</div>
+          `}
+        </div>
+      </div>
+    </div>
+  `;
+}
     function renderThumbGrid(slide, index) {
       if (!slideNeedsImage(slide)) return "";
 
@@ -1718,78 +1667,50 @@ Continue like this for all slides.`;
     }
 
        function handlePreviewInputs(event) {
-      const action = event.target?.dataset?.action;
-      const slideIndex = Number(event.target?.dataset?.slideIndex);
+  const action = event.target?.dataset?.action;
+  const slideIndex = Number(event.target?.dataset?.slideIndex);
 
-      if (!Number.isFinite(slideIndex) || !appState.slides[slideIndex]) return;
+  if (!Number.isFinite(slideIndex) || !appState.slides[slideIndex]) return;
 
-      if (action === "query-input") {
-        appState.slides[slideIndex].imageQuery = event.target.value;
-      }
+  if (action === "manual-url-input") {
+    appState.slides[slideIndex].manualImageUrl = event.target.value;
+  }
 
-      if (action === "manual-url-input") {
-        appState.slides[slideIndex].manualImageUrl = event.target.value;
-      }
-
-      if (action === "upload-image") {
-        handleImageUpload(event.target, slideIndex);
-      }
-    }
+  if (action === "upload-image") {
+    handleImageUpload(event.target, slideIndex);
+  }
+}
 
     async function handlePreviewClicks(event) {
-      const target = event.target.closest("[data-action]");
-      if (!target) return;
+  const target = event.target.closest("[data-action]");
+  if (!target) return;
 
-      const action = target.dataset.action;
-      const slideIndex = Number(target.dataset.slideIndex);
+  const action = target.dataset.action;
+  const slideIndex = Number(target.dataset.slideIndex);
 
-      if (!Number.isFinite(slideIndex) || !appState.slides[slideIndex]) return;
+  if (!Number.isFinite(slideIndex) || !appState.slides[slideIndex]) return;
 
-      if (action === "search-images") {
-        await searchImagesForSlide(slideIndex, true);
-        return;
-      }
+  if (action === "use-manual-url") {
+    const manualUrl = String(appState.slides[slideIndex].manualImageUrl || "").trim();
 
-           if (action === "clear-image") {
-        appState.slides[slideIndex].selectedImageUrl = "";
-        appState.slides[slideIndex].selectedImageSource = "";
-        renderSlidesPreview();
-        toast(`Image cleared for slide ${slideIndex + 1}.`);
-        return;
-      }
-
-      if (action === "use-manual-url") {
-        const manualUrl = String(appState.slides[slideIndex].manualImageUrl || "").trim();
-
-        if (!manualUrl) {
-          toast(`Paste image URL for slide ${slideIndex + 1}.`);
-          return;
-        }
-
-        appState.slides[slideIndex].selectedImageUrl = manualUrl;
-        appState.slides[slideIndex].selectedImageSource = "Manual URL";
-        renderSlidesPreview();
-        toast(`Manual image URL used for slide ${slideIndex + 1}.`);
-        return;
-      }
-
-      if (action === "trigger-upload") {
-        const fileInput = document.getElementById(`upload-image-${slideIndex}`);
-        if (fileInput) fileInput.click();
-        return;
-      }
-
-      if (action === "select-image") {
-        const imageIndex = Number(target.dataset.imageIndex);
-        const image = appState.slides[slideIndex].imageResults[imageIndex];
-        if (!image) return;
-
-        appState.slides[slideIndex].selectedImageUrl = image.url;
-        appState.slides[slideIndex].selectedImageSource = image.source;
-        renderSlidesPreview();
-        toast(`Image selected for slide ${slideIndex + 1}.`);
-      }
+    if (!manualUrl) {
+      toast(`Paste image URL for slide ${slideIndex + 1}.`);
+      return;
     }
+
+    appState.slides[slideIndex].selectedImageUrl = manualUrl;
+    appState.slides[slideIndex].selectedImageSource = "Manual URL";
+    renderSlidesPreview();
+    toast(`Manual image URL used for slide ${slideIndex + 1}.`);
+    return;
+  }
+
+  if (action === "trigger-upload") {
+    const fileInput = document.getElementById(`upload-image-${slideIndex}`);
+    if (fileInput) fileInput.click();
+    return;
+  }
+}
 
         async function handleImageUpload(input, slideIndex) {
       const file = input?.files?.[0];
