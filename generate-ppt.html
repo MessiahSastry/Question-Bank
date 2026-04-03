@@ -537,12 +537,43 @@
       background:#fff;
     }
 
-    .image-action-row{
-      display:grid;
-      grid-template-columns:1fr auto;
-      gap:10px;
-      margin-bottom:10px;
-    }
+   .image-action-row{
+  display:grid;
+  grid-template-columns:1fr auto;
+  gap:10px;
+  margin-bottom:10px;
+}
+
+.manual-image-input{
+  width:100%;
+  margin:10px 0 10px;
+  background:#fff;
+}
+
+.upload-image-input{
+  display:none;
+}
+
+.upload-btn{
+  background:#edf5fd;
+  color:var(--primary);
+  border:1.2px solid #c7dbef;
+  box-shadow:none;
+}
+
+.manual-image-row{
+  display:grid;
+  grid-template-columns:1fr auto;
+  gap:10px;
+  margin-bottom:10px;
+}
+
+.manual-image-note{
+  font-size:12px;
+  color:var(--muted);
+  margin:6px 0 10px;
+  line-height:1.5;
+}
 
     .selected-image-box{
       border:1px solid #cce1f4;
@@ -941,14 +972,13 @@
 
   <script>
     const APP_CONFIG = {
-      APPS_SCRIPT_URL: "https://script.google.com/macros/s/AKfycbxISmtOZ86w7GOKo9FZhtMuf6gNBCFRF6FmpRO_SnKNj48jj_v_xCekBuntDwd_WT1_Lw/exec",
+      APPS_SCRIPT_URL: "https://script.google.com/macros/s/AKfycbyRH1bL3GWkW5lF22eWZCiEDUvY1oKzS_z3b_-F88TmN7g0Iko-5gSqnbS6092sKhmCCQ/exec",
       CHATGPT_URL: "https://chatgpt.com/",
       SCHOOL_NAME: "St. Patrick's School",
       SCHOOL_SUBTITLE: "IIT & NEET FOUNDATION",
       PRIMARY: "#0f3d6b",
       SECONDARY: "#1762a7",
-      WIKIMEDIA_API: "https://commons.wikimedia.org/w/api.php",
-
+      
       classes: [
         "3rd Class", "4th Class", "5th Class", "6th Class",
         "7th Class", "8th Class", "9th Class", "10th Class",
@@ -1357,8 +1387,9 @@ Use this exact JSON shape:
         subtitle: String(slide?.subtitle || "").trim(),
         bullets,
         imageQuery: String(slide?.imageQuery || "").trim(),
-        imageUrl: String(slide?.imageUrl || "").trim(),
+              imageUrl: String(slide?.imageUrl || "").trim(),
         imageSource: String(slide?.imageSource || "").trim(),
+        manualImageUrl: "",
         selectedImageUrl: String(slide?.imageUrl || "").trim(),
         selectedImageSource: String(slide?.imageSource || "").trim(),
         imageResults: [],
@@ -1535,7 +1566,7 @@ Use this exact JSON shape:
       renderSlidesPreview();
 
       try {
-        const results = await fetchWikimediaImages(query);
+       const results = await fetchPexelsImagesFromAppsScript(query);
         slide.imageResults = results;
         slide.imageSearchStatus = results.length ? "Images found." : "No images found.";
         slide.imageSearchError = results.length ? "" : "No image results found for this query.";
@@ -1566,51 +1597,35 @@ Use this exact JSON shape:
       }
     }
 
-    async function fetchWikimediaImages(query) {
-      const enhancedQuery = enhanceImageQuery(query);
-      const url = new URL(APP_CONFIG.WIKIMEDIA_API);
+    async function fetchPexelsImagesFromAppsScript(query) {
+  const enhancedQuery = enhanceImageQuery(query);
 
-      url.searchParams.set("action", "query");
-      url.searchParams.set("generator", "search");
-      url.searchParams.set("gsrnamespace", "6");
-      url.searchParams.set("gsrsearch", enhancedQuery);
-      url.searchParams.set("gsrlimit", "9");
-      url.searchParams.set("prop", "imageinfo");
-      url.searchParams.set("iiprop", "url|mime|size");
-      url.searchParams.set("iiurlwidth", "800");
-      url.searchParams.set("format", "json");
-      url.searchParams.set("origin", "*");
+  const res = await fetch(APP_CONFIG.APPS_SCRIPT_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "text/plain;charset=utf-8"
+    },
+    body: JSON.stringify({
+      action: "searchImages",
+      query: enhancedQuery
+    })
+  });
 
-      const res = await fetch(url.toString(), { method: "GET" });
-      if (!res.ok) {
-        throw new Error("Image search request failed.");
-      }
+  const rawText = await res.text();
+  let data = {};
 
-      const data = await res.json();
-      const pages = Object.values(data?.query?.pages || {});
+  try {
+    data = JSON.parse(rawText);
+  } catch (e) {
+    throw new Error("Invalid image search response.");
+  }
 
-      let items = pages.map(page => {
-        const info = Array.isArray(page.imageinfo) ? page.imageinfo[0] : null;
-        return {
-          title: String(page.title || "").replace(/^File:/i, "").replace(/_/g, " "),
-          thumb: info?.thumburl || info?.url || "",
-          url: info?.url || "",
-          mime: info?.mime || "",
-          width: Number(info?.width || 0),
-          height: Number(info?.height || 0),
-          source: "Wikimedia Commons"
-        };
-      }).filter(item => item.thumb && item.url && /^image\//.test(item.mime));
+  if (!data.success) {
+    throw new Error(data.message || "Image search failed.");
+  }
 
-      const strictItems = items.filter(item =>
-        !/svg/i.test(item.mime) &&
-        item.width >= 250 &&
-        item.height >= 180
-      );
-
-      items = strictItems.length ? strictItems : items;
-      return items.slice(0, 6);
-    }
+  return Array.isArray(data.results) ? data.results : [];
+}
 
     function enhanceImageQuery(query) {
       const cleaned = String(query || "").trim();
@@ -1700,13 +1715,45 @@ Use this exact JSON shape:
                   placeholder="Image search query"
                 >
 
-                <div class="image-action-row">
+                               <div class="image-action-row">
                   <button type="button" class="secondary-btn" data-action="search-images" data-slide-index="${index}">
                     Search Again
                   </button>
                   <button type="button" class="ghost-btn" data-action="clear-image" data-slide-index="${index}">
                     Clear
                   </button>
+                </div>
+
+                <input
+                  type="text"
+                  class="manual-image-input"
+                  data-action="manual-url-input"
+                  data-slide-index="${index}"
+                  value="${escapeAttribute(slide.manualImageUrl || "")}"
+                  placeholder="Paste direct image URL from web"
+                >
+
+                <div class="manual-image-row">
+                  <button type="button" class="secondary-btn" data-action="use-manual-url" data-slide-index="${index}">
+                    Use URL
+                  </button>
+
+                  <button type="button" class="upload-btn" data-action="trigger-upload" data-slide-index="${index}">
+                    Upload Image
+                  </button>
+                </div>
+
+                <input
+                  type="file"
+                  accept="image/*"
+                  class="upload-image-input"
+                  id="upload-image-${index}"
+                  data-action="upload-image"
+                  data-slide-index="${index}"
+                >
+
+                <div class="manual-image-note">
+                  Mobile: save image from Google, then use Upload Image. Desktop: you can paste direct image URL.
                 </div>
 
                 <div class="selected-image-box">
@@ -1752,7 +1799,7 @@ Use this exact JSON shape:
       `;
     }
 
-    function handlePreviewInputs(event) {
+       function handlePreviewInputs(event) {
       const action = event.target?.dataset?.action;
       const slideIndex = Number(event.target?.dataset?.slideIndex);
 
@@ -1760,6 +1807,14 @@ Use this exact JSON shape:
 
       if (action === "query-input") {
         appState.slides[slideIndex].imageQuery = event.target.value;
+      }
+
+      if (action === "manual-url-input") {
+        appState.slides[slideIndex].manualImageUrl = event.target.value;
+      }
+
+      if (action === "upload-image") {
+        handleImageUpload(event.target, slideIndex);
       }
     }
 
@@ -1777,11 +1832,32 @@ Use this exact JSON shape:
         return;
       }
 
-      if (action === "clear-image") {
+           if (action === "clear-image") {
         appState.slides[slideIndex].selectedImageUrl = "";
         appState.slides[slideIndex].selectedImageSource = "";
         renderSlidesPreview();
         toast(`Image cleared for slide ${slideIndex + 1}.`);
+        return;
+      }
+
+      if (action === "use-manual-url") {
+        const manualUrl = String(appState.slides[slideIndex].manualImageUrl || "").trim();
+
+        if (!manualUrl) {
+          toast(`Paste image URL for slide ${slideIndex + 1}.`);
+          return;
+        }
+
+        appState.slides[slideIndex].selectedImageUrl = manualUrl;
+        appState.slides[slideIndex].selectedImageSource = "Manual URL";
+        renderSlidesPreview();
+        toast(`Manual image URL used for slide ${slideIndex + 1}.`);
+        return;
+      }
+
+      if (action === "trigger-upload") {
+        const fileInput = document.getElementById(`upload-image-${slideIndex}`);
+        if (fileInput) fileInput.click();
         return;
       }
 
@@ -1795,6 +1871,32 @@ Use this exact JSON shape:
         renderSlidesPreview();
         toast(`Image selected for slide ${slideIndex + 1}.`);
       }
+    }
+
+        async function handleImageUpload(input, slideIndex) {
+      const file = input?.files?.[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+
+      reader.onload = function(e) {
+        const result = e.target?.result || "";
+        if (!result) {
+          toast(`Could not read image for slide ${slideIndex + 1}.`);
+          return;
+        }
+
+        appState.slides[slideIndex].selectedImageUrl = String(result);
+        appState.slides[slideIndex].selectedImageSource = "Uploaded Image";
+        renderSlidesPreview();
+        toast(`Uploaded image selected for slide ${slideIndex + 1}.`);
+      };
+
+      reader.onerror = function() {
+        toast(`Could not read image for slide ${slideIndex + 1}.`);
+      };
+
+      reader.readAsDataURL(file);
     }
 
     function getSlidesMissingImages() {
