@@ -768,9 +768,8 @@
     <main>
       <div id="ppt-container" class="review-container">
         <div class="setup-form-container">
-          <h2>Generate AI PPT</h2>
+          <h2>Generate PPT</h2>
           <p class="subtext">
-            New flow: form builds prompt, teacher opens ChatGPT, teacher pastes strict JSON, this page finds images automatically, then Apps Script creates only the final Google Slides.
           </p>
 
           <form id="ppt-form" novalidate>
@@ -852,25 +851,21 @@
             </div>
 
             <div class="step-card">
-              <div class="step-title"><span class="step-no">2</span>Copy prompt and open ChatGPT</div>
-              <label>Prompt Preview</label>
-              <textarea id="prompt-preview" readonly></textarea>
+  <div class="step-title"><span class="step-no">2</span>Generate script prompt</div>
+  <label>Script Prompt Preview</label>
+  <textarea id="prompt-preview" readonly></textarea>
 
-              <div class="button-row">
-                <button type="button" id="copy-open-chatgpt-btn">Copy Prompt / Open ChatGPT</button>
-                <button type="button" id="copy-prompt-btn" class="secondary-btn">Copy Prompt Only</button>
-              </div>
-
-              <div class="small-note">
-                ChatGPT must return <strong>only valid JSON</strong>, not markdown, not explanation, not code block.
-              </div>
-            </div>
+  <div class="button-row" style="grid-template-columns:1fr;">
+    <button type="button" id="copy-open-chatgpt-btn">Generate Script</button>
+  </div>
+</div>
 
             <div class="step-card">
-              <div class="step-title"><span class="step-no">3</span>Paste ChatGPT JSON and find images</div>
+              <div class="step-title"><span class="step-no">3</span>Paste final JSON after script approval</div>
 
-              <label>Paste ChatGPT Slide JSON Here</label>
-              <textarea id="json-input" placeholder='Paste strict JSON here, for example:
+              <label>Paste Final JSON Here</label>
+              <textarea id="json-input" placeholder='
+Paste final JSON here, for example:
 {
   "slides": [
     {
@@ -1068,8 +1063,7 @@
 
     function bindEvents() {
       document.getElementById("copy-open-chatgpt-btn")?.addEventListener("click", copyPromptAndOpenChatGPT);
-      document.getElementById("copy-prompt-btn")?.addEventListener("click", copyPromptOnly);
-      document.getElementById("load-json-btn")?.addEventListener("click", loadJsonAndFindImages);
+           document.getElementById("load-json-btn")?.addEventListener("click", loadJsonAndFindImages);
       document.getElementById("copy-sample-json-btn")?.addEventListener("click", copySampleJson);
       document.getElementById("clear-json-btn")?.addEventListener("click", clearJsonInput);
       document.getElementById("generate-ppt-btn")?.addEventListener("click", generatePPT);
@@ -1204,21 +1198,21 @@
     }
 
     function buildPrompt(meta) {
-      const subheadingText = meta.subheadings.length
-        ? meta.subheadings.map((item, idx) => `${idx + 1}. ${item}`).join("\n")
-        : "Not provided. Create a logical teaching flow.";
+  const subheadingText = meta.subheadings.length
+    ? meta.subheadings.map((item, idx) => `${idx + 1}. ${item}`).join("\n")
+    : "Not provided. Create a logical teaching flow.";
 
-      const noteText = meta.teacherNotes || "No extra notes.";
+  const noteText = meta.teacherNotes || "No extra notes.";
 
-      return `Create a school presentation plan in STRICT JSON ONLY.
+  return `Create a school presentation script slide by slide.
 
 IMPORTANT:
-- Return ONLY valid JSON.
-- Do NOT use markdown.
-- Do NOT wrap in \`\`\`json.
-- Do NOT explain anything.
-- Do NOT add any text before or after JSON.
+- Do NOT return JSON now.
+- Do NOT return code.
+- Do NOT use markdown tables.
+- First give the presentation in normal readable slide-by-slide format.
 - Output EXACTLY ${meta.slideCount} slides.
+- After I review it, I will separately ask: Now give it in JSON.
 
 Presentation details:
 - School: ${meta.schoolName}
@@ -1237,16 +1231,16 @@ Teacher notes:
 ${noteText}
 
 Allowed slide types:
-1. "title"
-2. "image_text"
-3. "bullets"
-4. "summary"
+1. title
+2. image_text
+3. bullets
+4. summary
 
 Rules:
-- Slide 1 must be type "title".
-- Last slide must be type "summary".
-- Middle slides should mostly be "image_text". Use "bullets" only when appropriate.
-- Every non-summary slide must include a short, practical "imageQuery".
+- Slide 1 must be title.
+- Last slide must be summary.
+- Middle slides should mostly be image_text. Use bullets only when appropriate.
+- Every non-summary slide must include an image idea line.
 - Do NOT include image URLs.
 - Keep bullet points short and classroom friendly.
 - Use simple teaching language suitable for ${meta.className}.
@@ -1256,65 +1250,64 @@ Rules:
 - Subtitle on first slide should include class, subject, and board.
 - Summary slide should have 3 to 5 short recap bullets.
 
-Use this exact JSON shape:
-{
-  "slides": [
-    {
-      "type": "title",
-      "title": "Main title",
-      "subtitle": "Class • Subject • Board",
-      "imageQuery": "search phrase for educational image"
-    },
-    {
-      "type": "image_text",
-      "title": "Slide title",
-      "bullets": ["Point 1", "Point 2", "Point 3"],
-      "imageQuery": "search phrase for educational image"
-    },
-    {
-      "type": "summary",
-      "title": "Let Us Recall",
-      "bullets": ["Point 1", "Point 2", "Point 3"]
-    }
-  ]
-}`;
-    }
+Return in this exact readable format:
 
+Slide 1
+Type: title
+Title: ...
+Subtitle: ...
+Image idea: ...
+
+Slide 2
+Type: image_text
+Title: ...
+Bullets:
+- ...
+- ...
+- ...
+Image idea: ...
+
+Slide 3
+Type: image_text
+Title: ...
+Bullets:
+- ...
+- ...
+- ...
+Image idea: ...
+
+Continue like this for all slides.`;
+}
     function updatePromptPreview() {
       const promptBox = document.getElementById("prompt-preview");
       const meta = buildRequestMeta();
       const error = validateMeta(meta);
 
       if (error) {
-        promptBox.value = `Complete the required fields to build the prompt.\n\nMissing: ${error}`;
+        promptBox.value = `Complete the required fields to build the script prompt.\n\nMissing: ${error}`;
         return;
       }
 
       promptBox.value = buildPrompt(meta);
     }
 
-    async function copyPromptAndOpenChatGPT() {
-      const meta = buildRequestMeta();
-      const error = validateMeta(meta);
-      if (error) {
-        toast(error);
-        return;
-      }
+   async function copyPromptAndOpenChatGPT() {
+  const meta = buildRequestMeta();
+  const error = validateMeta(meta);
+  if (error) {
+    toast(error);
+    return;
+  }
 
-      const prompt = buildPrompt(meta);
-      const chatWindow = window.open(APP_CONFIG.CHATGPT_URL, "_blank", "noopener,noreferrer");
+  const prompt = buildPrompt(meta);
 
-      try {
-        await navigator.clipboard.writeText(prompt);
-        toast("Prompt copied and ChatGPT opened.");
-      } catch (e) {
-        toast("ChatGPT opened. Prompt copy failed.");
-      }
-
-      if (!chatWindow) {
-        toast("Popup blocked. Please allow popups for this site.");
-      }
-    }
+  try {
+    await navigator.clipboard.writeText(prompt);
+    toast("Script prompt copied. Paste it into ChatGPT.");
+  } catch (e) {
+    toast("Could not copy script prompt.");
+  }
+}
 
     async function copyPromptOnly() {
       const meta = buildRequestMeta();
