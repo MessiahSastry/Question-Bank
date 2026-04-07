@@ -300,7 +300,6 @@ function getClassGroupName(className) {
   // Fetch subject list from Firestore for the selected exam
   let classObj = classes.find(c => c.id === classId);
   let className = classObj ? classObj.name : '';
-  let classGroup = getClassGroupName(className);
 
     // Use the effective exams already loaded (respects class-only/overrides/hides)
   const ex = Array.isArray(exams) ? exams.find(e => e.id === examId) : null;
@@ -504,31 +503,37 @@ const auth = firebase.auth();
   let years = [], classes = [], sections = [], exams = [];
 
   // EFFECTIVE EXAMS (group + class overrides)
-async function fetchEffectiveExams(classId, className, year) {
+async function fetchEffectiveExams(classId, className, year, sectionId) {
   const classGroup = getClassGroupName(className);
+  const map = new Map();
 
-  // 1) Load group exams (baseline)
+  // 1) Group exams
   const groupSnap = await db.collection('years').doc(year)
     .collection('exams').doc('classGroups')
     .collection(classGroup).get();
-  const map = new Map(); // id -> exam
-  groupSnap.forEach(d => map.set(d.id, { id: d.id, ...d.data(), __origin: 'group' }));
 
-  // 2) Load class overrides
-  const overSnap = await db.collection('years').doc(year)
+  groupSnap.forEach(d => {
+    map.set(d.id, { id: d.id, ...d.data(), __origin: 'group' });
+  });
+
+  // 2) Class overrides
+  const classSnap = await db.collection('years').doc(year)
     .collection('classes').doc(classId)
     .collection('examOverrides').get();
 
-  overSnap.forEach(doc => {
+  classSnap.forEach(doc => {
     const o = doc.data() || {};
+
     if (o.origin === 'class-only') {
       map.set(doc.id, { id: doc.id, ...o, __origin: 'class-only' });
       return;
     }
+
     if (o.hidden === true) {
       map.delete(doc.id);
       return;
     }
+
     if (map.has(doc.id)) {
       const base = map.get(doc.id);
       map.set(doc.id, {
@@ -537,19 +542,53 @@ async function fetchEffectiveExams(classId, className, year) {
         subjects:  (Array.isArray(o.subjects) && o.subjects.length ? o.subjects : base.subjects),
         subtopics: (Array.isArray(o.subtopics) && o.subtopics.length ? o.subtopics : base.subtopics),
         grading:   (o.grading || base.grading),
-        __origin:  'overridden'
+        __origin:  'class-overridden'
       });
     } else {
       map.set(doc.id, { id: doc.id, ...o, __origin: 'class-only' });
     }
   });
 
-  // 3) Sorted list
+  // 3) Section overrides
+  if (sectionId) {
+    const sectionSnap = await db.collection('years').doc(year)
+      .collection('classes').doc(classId)
+      .collection('sections').doc(sectionId)
+      .collection('examOverrides').get();
+
+    sectionSnap.forEach(doc => {
+      const o = doc.data() || {};
+
+      if (o.origin === 'section-only') {
+        map.set(doc.id, { id: doc.id, ...o, __origin: 'section-only' });
+        return;
+      }
+
+      if (o.hidden === true) {
+        map.delete(doc.id);
+        return;
+      }
+
+      if (map.has(doc.id)) {
+        const base = map.get(doc.id);
+        map.set(doc.id, {
+          ...base,
+          name:      (o.name ?? base.name),
+          subjects:  (Array.isArray(o.subjects) && o.subjects.length ? o.subjects : base.subjects),
+          subtopics: (Array.isArray(o.subtopics) && o.subtopics.length ? o.subtopics : base.subtopics),
+          grading:   (o.grading || base.grading),
+          __origin:  'section-overridden'
+        });
+      } else {
+        map.set(doc.id, { id: doc.id, ...o, __origin: 'section-only' });
+      }
+    });
+  }
+
   const list = Array.from(map.values());
   list.sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
   return list;
 }
-
 // LOADERS (like memo.html)
   async function loadYears() {
     let snap = await db.collection('years').orderBy('name', 'desc').get();
@@ -582,11 +621,11 @@ async function fetchEffectiveExams(classId, className, year) {
   async function loadExams() {
   const year = yearSel.value;
   const classId = classSel.value;
+  const sectionId = sectionSel.value;
   const classObj = classes.find(c => c.id === classId);
   const className = classObj ? classObj.name : '';
 
-  // Use EFFECTIVE exams (group + class overrides)
-  exams = await fetchEffectiveExams(classId, className, year);
+  exams = await fetchEffectiveExams(classId, className, year, sectionId);
 
   examChoices.clearStore();
   if (!Array.isArray(exams) || exams.length === 0) {
