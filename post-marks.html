@@ -249,69 +249,107 @@
 
   // ---- Effective exams helper (base + per-class overrides, same as memos) ----
   async function fetchEffectiveExams(classId, className) {
-    const year = yearSel.value;
-    if (!year || !classId || !className) return [];
+  const year = yearSel.value;
+  const sectionId = sectionSel.value;
+  if (!year || !classId || !className) return [];
 
-    const group = getClassGroupName(className);
+  const group = getClassGroupName(className);
+  const map = new Map();
 
-    const baseRoot = db.collection('years').doc(year)
-      .collection('exams').doc('classGroups');
+  // 1) Group exams
+  try {
+    const groupSnap = await db.collection('years').doc(year)
+      .collection('exams').doc('classGroups')
+      .collection(group).get();
 
-    const examsMap = new Map();
-
-    // 1) base exams for that class-group
-    try {
-      const baseSnap = await baseRoot.collection(group).orderBy('name').get();
-      baseSnap.forEach(doc => {
-        examsMap.set(doc.id, { id: doc.id, ...(doc.data() || {}) });
-      });
-    } catch (e) {
-      console.warn('fetchEffectiveExams: base exams load failed', e);
-    }
-
-    // 2) optional per-class overrides (years/{year}/exams/overrides/{group}/...)
-    try {
-      const overridesRoot = db.collection('years').doc(year)
-        .collection('exams').doc('overrides');
-
-      const ovSnap = await overridesRoot
-        .collection(group)
-        .where('classId', '==', classId)
-        .get();
-
-      if (!ovSnap.empty) {
-        ovSnap.forEach(doc => {
-          const data   = doc.data() || {};
-          const examId = data.examId || doc.id;
-          const base   = examsMap.get(examId) || { id: examId };
-
-          const merged = {
-            ...base,
-            ...data,
-            // if override has its own subjects array, prefer that; else keep base subjects
-            subjects: Array.isArray(data.subjects) && data.subjects.length
-              ? data.subjects
-              : (base.subjects || [])
-          };
-
-          examsMap.set(examId, merged);
-        });
-      }
-    } catch (e) {
-      console.warn('fetchEffectiveExams: overrides load failed (ok if overrides not used)', e);
-    }
-
-    const list = Array.from(examsMap.values());
-    list.sort((a, b) => {
-      const ao = a.order ?? 9999;
-      const bo = b.order ?? 9999;
-      if (ao !== bo) return ao - bo;
-      return String(a.name || '').localeCompare(String(b.name || ''));
+    groupSnap.forEach(doc => {
+      map.set(doc.id, { id: doc.id, ...doc.data(), __origin: 'group' });
     });
-
-    return list;
+  } catch (e) {
+    console.warn('fetchEffectiveExams: group load failed', e);
   }
 
+  // 2) Class overrides
+  try {
+    const classSnap = await db.collection('years').doc(year)
+      .collection('classes').doc(classId)
+      .collection('examOverrides').get();
+
+    classSnap.forEach(doc => {
+      const o = doc.data() || {};
+
+      if (o.origin === 'class-only') {
+        map.set(doc.id, { id: doc.id, ...o, __origin: 'class-only' });
+        return;
+      }
+
+      if (o.hidden === true) {
+        map.delete(doc.id);
+        return;
+      }
+
+      if (map.has(doc.id)) {
+        const base = map.get(doc.id);
+        map.set(doc.id, {
+          ...base,
+          name:      (o.name ?? base.name),
+          subjects:  (Array.isArray(o.subjects) && o.subjects.length ? o.subjects : base.subjects),
+          subtopics: (Array.isArray(o.subtopics) && o.subtopics.length ? o.subtopics : base.subtopics),
+          grading:   (o.grading || base.grading),
+          __origin:  'class-overridden'
+        });
+      } else {
+        map.set(doc.id, { id: doc.id, ...o, __origin: 'class-only' });
+      }
+    });
+  } catch (e) {
+    console.warn('fetchEffectiveExams: class overrides load failed', e);
+  }
+
+  // 3) Section overrides
+  if (sectionId) {
+    try {
+      const sectionSnap = await db.collection('years').doc(year)
+        .collection('classes').doc(classId)
+        .collection('sections').doc(sectionId)
+        .collection('examOverrides').get();
+
+      sectionSnap.forEach(doc => {
+        const o = doc.data() || {};
+
+        if (o.origin === 'section-only') {
+          map.set(doc.id, { id: doc.id, ...o, __origin: 'section-only' });
+          return;
+        }
+
+        if (o.hidden === true) {
+          map.delete(doc.id);
+          return;
+        }
+
+        if (map.has(doc.id)) {
+          const base = map.get(doc.id);
+          map.set(doc.id, {
+            ...base,
+            name:      (o.name ?? base.name),
+            subjects:  (Array.isArray(o.subjects) && o.subjects.length ? o.subjects : base.subjects),
+            subtopics: (Array.isArray(o.subtopics) && o.subtopics.length ? o.subtopics : base.subtopics),
+            grading:   (o.grading || base.grading),
+            __origin:  'section-overridden'
+          });
+        } else {
+          map.set(doc.id, { id: doc.id, ...o, __origin: 'section-only' });
+        }
+      });
+    } catch (e) {
+      console.warn('fetchEffectiveExams: section overrides load failed', e);
+    }
+  }
+
+  const list = Array.from(map.values());
+  list.sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+  return list;
+}
   // ============== GLOBAL STATE ====================
   let YEARS = [];
   let CLASSES = [];
@@ -353,26 +391,48 @@
     await setChoices(sectionChoices, opts, 'value', 'label', SECTIONS[0]?.id || '');
   }
 
-  async function loadExams() {
-    const year = yearSel.value;
-    const classId = classSel.value;
-    if (!year || !classId) { await setChoices(examChoices, []); return; }
+ async function loadExams() {
+  const year = yearSel.value;
+  const classId = classSel.value;
 
-    const classObj = CLASSES.find(c => c.id === classId);
-    const className = classObj?.name || '';
-    const group = getClassGroupName(className); // e.g., "class-6-9" or "nursery-lkg-ukg"
+  if (!year || !classId) {
+    EXAMS = [];
+    await setChoices(examChoices, []);
+    return;
+  }
 
-    const snap = await db.collection('years').doc(year)
-      .collection('exams').doc('classGroups')
-      .collection(group).orderBy('name').get();
+  const classObj = CLASSES.find(c => c.id === classId);
+  const className = classObj?.name || '';
 
-    EXAMS = snap.docs.map(d => ({ id: d.id, ...(d.data()||{}) })) || [];
-    const opts = EXAMS.length ? EXAMS.map(e => ({ value: e.id, label: e.name })) : [{ value: '', label: 'No exams' }];
-    await setChoices(examChoices, opts, 'value', 'label', EXAMS[0]?.id || '');
-  if (EXAMS.length) {
-    await loadStudentsAndMarks();   // Part 3 wrapper will auto-rank + render
+  // keep currently selected exam if still available
+  const prevExamId = examSel.value || localStorage.getItem('sp_postMarks_selectedExamId') || '';
+
+  EXAMS = await fetchEffectiveExams(classId, className);
+
+  const opts = EXAMS.length
+    ? EXAMS.map(e => ({ value: e.id, label: e.name }))
+    : [{ value: '', label: 'No exams' }];
+
+  let selectedExamId = '';
+  if (prevExamId && EXAMS.some(e => e.id === prevExamId)) {
+    selectedExamId = prevExamId;
+  } else if (EXAMS.length) {
+    selectedExamId = EXAMS[0].id;
+  }
+
+  await setChoices(examChoices, opts, 'value', 'label', selectedExamId);
+
+  if (selectedExamId) {
+    localStorage.setItem('sp_postMarks_selectedExamId', selectedExamId);
   } else {
-    ROWS = []; SUBJECTS = [];
+    localStorage.removeItem('sp_postMarks_selectedExamId');
+  }
+
+  if (EXAMS.length) {
+    await loadStudentsAndMarks();
+  } else {
+    ROWS = [];
+    SUBJECTS = [];
     theadEl.innerHTML = '';
     tbodyEl.innerHTML = '';
   }
@@ -613,9 +673,10 @@ function makeAttendanceFromSummary(summary, studentId){
 classSel.addEventListener('change', async () => {
   showSpinner();
   try {
+    localStorage.removeItem('sp_postMarks_selectedExamId');
     await loadSections();
     await loadExams();
-    await loadStudentsAndMarks();   // <-- add this
+    await loadStudentsAndMarks();
   } finally { hideSpinner(); }
 });
 
@@ -623,17 +684,16 @@ sectionSel.addEventListener('change', async () => {
   showSpinner();
   try {
     await loadExams();
-    await loadStudentsAndMarks();   // <-- add this
   } finally { hideSpinner(); }
 });
 
   examSel.addEventListener('change', async () => {
-    showSpinner();
-    try {
-      await loadStudentsAndMarks();
-      // rendering + ranking is in Part 3
-    } finally { hideSpinner(); }
-  });
+  showSpinner();
+  try {
+    localStorage.setItem('sp_postMarks_selectedExamId', examSel.value || '');
+    await loadStudentsAndMarks();
+  } finally { hideSpinner(); }
+});
 
   refreshBtn.addEventListener('click', async () => {
     showSpinner();
@@ -680,27 +740,25 @@ sectionSel.addEventListener('change', async () => {
 
   // Use the same effective-exam logic as memos to build SUBJECTS
   async function syncEffectiveSubjectsForCurrentExam() {
-    if (!classSel || !examSel) return;
+  if (!classSel || !examSel) return;
 
-    const classId = classSel.value;
-    if (!classId) return;
+  const classId = classSel.value;
+  if (!classId) return;
 
-    const className = (CLASSES.find(c => c.id === classId)?.name) || '';
-    if (!className) return;
+  const className = (CLASSES.find(c => c.id === classId)?.name) || '';
+  if (!className) return;
 
-    // fetch exams with class / subject overrides applied (same helper as memos)
-    const examsEff = await fetchEffectiveExams(classId, className);
-    EXAMS = examsEff || [];
+  EXAMS = await fetchEffectiveExams(classId, className);
 
-    const examId = examSel.value;
-    if (!examId) {
-      SUBJECTS = [];
-      return;
-    }
-
-    const exam = EXAMS.find(e => e.id === examId) || null;
-    SUBJECTS = exam ? (exam.subjects || []) : [];
+  const currentExamId = examSel.value;
+  if (!currentExamId) {
+    SUBJECTS = [];
+    return;
   }
+
+  const currentExam = EXAMS.find(e => e.id === currentExamId);
+  SUBJECTS = currentExam ? (currentExam.subjects || []) : [];
+}
 
      function computeRanks() {
     if (!ROWS || !ROWS.length) return;
