@@ -266,6 +266,70 @@
 .photo-actions .mini.upload { background:#2ba84a; color:#fff; }
 .photo-actions .mini.remove { background:#eee; color:#444; }
 
+/* WhatsApp-style photo viewer */
+.student-photo-trigger{
+  border:none;
+  background:none;
+  padding:0;
+  margin:0 10px 0 0;
+  cursor:pointer;
+  border-radius:50%;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+}
+.student-photo-trigger:focus{ outline:none; }
+
+#photo-viewer-bg{
+  display:none;
+  position:fixed;
+  inset:0;
+  background:rgba(0,0,0,0.88);
+  z-index:3000;
+  align-items:center;
+  justify-content:center;
+  flex-direction:column;
+  padding:18px;
+  box-sizing:border-box;
+}
+#photo-viewer-bg.show{ display:flex; }
+
+#photo-viewer-close{
+  position:absolute;
+  top:18px;
+  right:18px;
+  width:42px;
+  height:42px;
+  border:none;
+  border-radius:50%;
+  background:rgba(255,255,255,0.14);
+  color:#fff;
+  font-size:1.45em;
+  cursor:pointer;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+}
+
+#photo-viewer-name{
+  color:#fff;
+  font-size:1.08em;
+  font-weight:600;
+  margin-bottom:14px;
+  text-align:center;
+}
+
+#photo-viewer-img{
+  max-width:min(92vw,520px);
+  max-height:78vh;
+  width:auto;
+  height:auto;
+  border-radius:14px;
+  box-shadow:0 10px 35px rgba(0,0,0,0.45);
+  object-fit:contain;
+  background:#111;
+}
+
   </style>
 </head>
 <body>
@@ -461,8 +525,10 @@ function processImageFile(file, target=512, quality=0.85) {
 
       students.filter(stu => !stu.isDeleted).forEach(stu => {
         const initials = getInitials(stu.name);
-        const avatar = stu.photoUrl
-          ? `<img class="avatar-img" src="${stu.photoUrl}" alt="${initials}">`
+                const avatar = stu.photoUrl
+          ? `<button type="button" class="student-photo-trigger" data-photo-url="${stu.photoUrl}" data-student-name="${stu.name.replace(/"/g, '&quot;')}" title="View photo">
+               <img class="avatar-img" src="${stu.photoUrl}" alt="${initials}">
+             </button>`
           : `<span class="avatar-initials">${initials}</span>`;
 
         html += `
@@ -482,7 +548,25 @@ function processImageFile(file, target=512, quality=0.85) {
       });
 
       html += "</div>";
-      mainArea.innerHTML = html;
+           mainArea.innerHTML = html;
+
+      // photo click -> WhatsApp-style viewer
+      document.querySelectorAll('.student-photo-trigger').forEach(btn => {
+        ['click', 'mousedown', 'mouseup', 'touchstart', 'touchend'].forEach(evt => {
+          btn.addEventListener(evt, function(e) {
+            e.stopPropagation();
+          });
+        });
+
+        btn.addEventListener('click', function(e) {
+          e.preventDefault();
+          e.stopPropagation();
+          showStudentPhotoPopup(
+            this.dataset.photoUrl || '',
+            this.dataset.studentName || ''
+          );
+        });
+      });
 
       // long-press to open actions
       document.querySelectorAll('.student-row').forEach(row => {
@@ -524,10 +608,32 @@ row.addEventListener('contextmenu', (e) => {
         btn.onclick = function(e) { e.preventDefault(); closePopup(); };
       });
     }
-    function closePopup() {
+        function closePopup() {
       popupBg.classList.remove("show");
       popupContent.innerHTML = '';
       popupBg.onclick = null;
+    }
+
+    function showStudentPhotoPopup(photoUrl, studentName = '') {
+      if (!photoUrl) return;
+      const bg = document.getElementById('photo-viewer-bg');
+      const img = document.getElementById('photo-viewer-img');
+      const nameEl = document.getElementById('photo-viewer-name');
+      if (!bg || !img || !nameEl) return;
+
+      img.src = photoUrl;
+      img.alt = studentName || 'Student Photo';
+      nameEl.textContent = studentName || '';
+      bg.classList.add('show');
+    }
+
+    function closeStudentPhotoPopup() {
+      const bg = document.getElementById('photo-viewer-bg');
+      const img = document.getElementById('photo-viewer-img');
+      const nameEl = document.getElementById('photo-viewer-name');
+      if (bg) bg.classList.remove('show');
+      if (img) img.src = '';
+      if (nameEl) nameEl.textContent = '';
     }
     // ===== Download Status Helpers =====
 function showDownloadStatus(text="Preparing download...") {
@@ -5460,6 +5566,13 @@ function closeAbsenteesModal() {
   document.getElementById('absenteesIframe').src = '';
 }
   </script>
+    <!-- Student Photo Viewer -->
+<div id="photo-viewer-bg">
+  <button id="photo-viewer-close" type="button">&times;</button>
+  <div id="photo-viewer-name"></div>
+  <img id="photo-viewer-img" src="" alt="Student Photo">
+</div>
+
   <!-- Absentees Report Modal -->
 <div id="absenteesModalBg" style="display:none;position:fixed;left:0;top:0;right:0;bottom:0;background:#0007;z-index:2003;align-items:center;justify-content:center;">
   <div id="absenteesModalContent" style="background:#fff;border-radius:16px;box-shadow:0 8px 30px #0f3d6b22;padding:0;min-width:320px;max-width:97vw;width:780px;display:flex;flex-direction:column;gap:0;align-items:stretch;">
@@ -5471,10 +5584,18 @@ function closeAbsenteesModal() {
   </div>
 </div>
    <script>
-  document.getElementById('closeAbsenteesModal').onclick = closeAbsenteesModal;
+    document.getElementById('closeAbsenteesModal').onclick = closeAbsenteesModal;
   document.getElementById('absenteesModalBg').onclick = function(e) {
     if (e.target === this) closeAbsenteesModal();
   };
+
+  document.getElementById('photo-viewer-close').onclick = closeStudentPhotoPopup;
+  document.getElementById('photo-viewer-bg').onclick = function(e) {
+    if (e.target === this) closeStudentPhotoPopup();
+  };
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') closeStudentPhotoPopup();
+  });
 
     // ---- Upload marks Ecell ----
         function showBulkMarksUploadPopup() {
