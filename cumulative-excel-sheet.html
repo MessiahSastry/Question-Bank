@@ -1,0 +1,1317 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Cumulative Excel Sheet | St. Patrick's School</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+  <script src="https://unpkg.com/xlsx-populate/browser/xlsx-populate.min.js"></script>
+
+  <style>
+    :root{
+      --primary:#0f3d6b;
+      --secondary:#1762a7;
+      --bg:#f4f8fc;
+    }
+    *{box-sizing:border-box}
+    html,body{
+      margin:0;
+      padding:0;
+      font-family:'Segoe UI',Arial,sans-serif;
+      background:var(--bg);
+      min-height:100vh;
+    }
+    .fixed-header{
+      background:#0f3d6b;
+      color:#fff;
+      text-align:center;
+      padding:18px 10px 10px;
+      border-bottom-left-radius:14px;
+      border-bottom-right-radius:14px;
+      box-shadow:0 3px 14px rgba(15,61,107,.25);
+    }
+    .school-title{
+      font-size:1.55em;
+      font-weight:800;
+      margin:0;
+    }
+    .subtitle{
+      font-size:1em;
+      color:#c9e4ff;
+      font-weight:600;
+      margin-top:2px;
+    }
+    .year{
+      font-size:1.08em;
+      color:#fdc600;
+      font-weight:800;
+      margin-top:5px;
+    }
+    .container{
+      max-width:520px;
+      margin:22px auto;
+      background:#fff;
+      padding:22px 18px 28px;
+      border-radius:16px;
+      box-shadow:0 4px 18px rgba(0,27,68,.12);
+    }
+    h2{
+      color:#0f3d6b;
+      text-align:center;
+      margin:0 0 18px;
+      font-size:1.22em;
+    }
+    .form-row{
+      margin-bottom:17px;
+    }
+    .form-label{
+      font-weight:700;
+      color:#185496;
+      margin-bottom:7px;
+      text-align:left;
+    }
+    .custom-dropdown{
+      border:1.5px solid #1467b7;
+      border-radius:8px;
+      background:#f7fafd;
+      width:100%;
+      position:relative;
+    }
+    .dropdown-selected{
+      padding:11px 12px;
+      cursor:pointer;
+      user-select:none;
+      border-radius:8px;
+      background:#f7fafd;
+      text-align:left;
+      font:700 14px 'Segoe UI',Arial,sans-serif;
+      color:#12416c;
+    }
+    .dropdown-selected.disabled{
+      color:#aaa!important;
+      background:#f1f1f1!important;
+      pointer-events:none;
+    }
+    .dropdown-list{
+      position:absolute;
+      top:100%;
+      left:0;
+      right:0;
+      background:#fff;
+      border:1.5px solid #1467b7;
+      border-top:none;
+      border-radius:0 0 8px 8px;
+      box-shadow:0 8px 24px #1467b720;
+      z-index:50;
+      max-height:230px;
+      overflow-y:auto;
+      display:none;
+      text-align:left;
+    }
+    .dropdown-option{
+      padding:10px 12px;
+      cursor:pointer;
+      color:#1762a7;
+      background:#fff;
+      font:700 14px 'Segoe UI',Arial,sans-serif;
+    }
+    .dropdown-option:hover{
+      background:#e3f2fd;
+    }
+    .download-btn{
+      width:100%;
+      background:linear-gradient(90deg,#1762a7,#0f3d6b);
+      color:#fff;
+      font-size:1.08em;
+      font-weight:800;
+      border:none;
+      border-radius:9px;
+      padding:13px 0;
+      cursor:pointer;
+      margin-top:14px;
+      box-shadow:0 2px 10px #0f3d6b1f;
+    }
+    .download-btn:disabled{
+      background:#b8c7da;
+      cursor:not-allowed;
+    }
+    .status{
+      min-height:28px;
+      margin-top:16px;
+      color:#e26c17;
+      font-size:1.02em;
+      text-align:center;
+      font-weight:700;
+    }
+    .status.loading{
+      color:#185496;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      gap:8px;
+    }
+    .dot{
+      width:9px;
+      height:9px;
+      border-radius:50%;
+      background:#1762a7;
+      animation:bounce .8s infinite alternate;
+    }
+    .dot:nth-child(2){animation-delay:.15s}
+    .dot:nth-child(3){animation-delay:.3s}
+    @keyframes bounce{
+      to{transform:translateY(-6px);opacity:.7}
+    }
+    .note{
+      margin-top:14px;
+      font-size:.92em;
+      color:#516273;
+      line-height:1.45;
+      background:#f7fbff;
+      border:1px solid #d8e8f8;
+      border-radius:10px;
+      padding:10px;
+    }
+    @media(max-width:560px){
+      .container{margin:14px 8px;padding:18px 12px 24px}
+      .school-title{font-size:1.25em}
+    }
+  </style>
+</head>
+<body>
+
+  <div class="fixed-header">
+    <div class="school-title">St. Patrick's School</div>
+    <div class="subtitle">IIT & NEET FOUNDATION</div>
+    <div class="year" id="headerYear"></div>
+  </div>
+
+  <div class="container">
+    <h2>SA2 Cumulative Excel Sheet</h2>
+
+    <div class="form-row">
+      <div class="form-label">Select Class</div>
+      <div class="custom-dropdown" id="classDropdown">
+        <div class="dropdown-selected" id="classSelected" data-value="">--Select--</div>
+        <div class="dropdown-list" id="classList"></div>
+      </div>
+    </div>
+
+    <div class="form-row">
+      <div class="form-label">Select Section</div>
+      <div class="custom-dropdown" id="sectionDropdown">
+        <div class="dropdown-selected disabled" id="sectionSelected" data-value="">Select class first</div>
+        <div class="dropdown-list" id="sectionList"></div>
+      </div>
+    </div>
+
+    <div class="form-row">
+      <div class="form-label">Select Exam</div>
+      <div class="custom-dropdown" id="examDropdown">
+        <div class="dropdown-selected disabled" id="examSelected" data-value="">Select section first</div>
+        <div class="dropdown-list" id="examList"></div>
+      </div>
+    </div>
+
+    <button class="download-btn" id="downloadBtn" disabled>
+      Download Cumulative Excel Sheet
+    </button>
+
+    <div class="note">
+      This file is designed for <b>Summative Assessment 2</b>. It takes <b>Internal = C.M. 20</b> and <b>MCQ + Written Test = SA-2 80</b>. If one SA2 part is missing, the available part is converted to 80 marks.
+    </div>
+
+    <div class="status" id="status"></div>
+  </div>
+
+<script>
+/* ================= Firebase ================= */
+const firebaseConfig = {
+  apiKey: "AIzaSyAszVhWXUUOYLQ7VimKmPKf1yEu_CI9RCE",
+  authDomain: "stpatricks-questionbank.firebaseapp.com",
+  projectId: "stpatricks-questionbank",
+  storageBucket: "stpatricks-questionbank.appspot.com",
+  messagingSenderId: "917615322861",
+  appId: "1:917615322861:web:c6c890aa2184dd395b8ee4"
+};
+
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+const auth = firebase.auth();
+
+/* ================= DOM ================= */
+const headerYear = document.getElementById("headerYear");
+
+const classSelected = document.getElementById("classSelected");
+const classList = document.getElementById("classList");
+
+const sectionSelected = document.getElementById("sectionSelected");
+const sectionList = document.getElementById("sectionList");
+
+const examSelected = document.getElementById("examSelected");
+const examList = document.getElementById("examList");
+
+const downloadBtn = document.getElementById("downloadBtn");
+const statusDiv = document.getElementById("status");
+
+/* ================= State ================= */
+let academicYear = localStorage.getItem("sp_selectedYear") || "";
+let classId = "";
+let className = "";
+let sectionId = "";
+let sectionName = "";
+let exams = [];
+let examMap = {};
+let selectedExamId = "";
+let selectedExamObj = null;
+let students = [];
+
+const marksCache = new Map();
+const examCache = new Map();
+
+/* ================= Small Helpers ================= */
+function setStatus(text, loading=false){
+  if (loading){
+    statusDiv.classList.add("loading");
+    statusDiv.innerHTML = `<span>${text}</span><span class="dot"></span><span class="dot"></span><span class="dot"></span>`;
+  } else {
+    statusDiv.classList.remove("loading");
+    statusDiv.textContent = text || "";
+  }
+}
+
+function escapeHtml(s){
+  return String(s ?? "")
+    .replaceAll("&","&amp;")
+    .replaceAll("<","&lt;")
+    .replaceAll(">","&gt;")
+    .replaceAll('"',"&quot;")
+    .replaceAll("'","&#039;");
+}
+
+function nkey(s){
+  return String(s || "")
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g,"")
+    .trim();
+}
+
+function asNum(v){
+  if (v === null || v === undefined || v === "") return null;
+  if (String(v).toUpperCase() === "AB") return null;
+  return Number.isFinite(+v) ? +v : null;
+}
+
+function avg(arr){
+  const vals = (arr || []).filter(v => typeof v === "number" && !isNaN(v));
+  if (!vals.length) return null;
+  return vals.reduce((a,b)=>a+b,0) / vals.length;
+}
+
+function round1(v){
+  if (v === null || v === undefined || isNaN(v)) return "";
+  const x = Math.round(v * 10) / 10;
+  return Number.isInteger(x) ? x : x;
+}
+
+function classNumber(name){
+  const m = String(name || "").match(/\d+/);
+  return m ? parseInt(m[0],10) : null;
+}
+
+function getFinalGrade(markOrPercent){
+  const p = Number(markOrPercent);
+  if (!Number.isFinite(p)) return "";
+  if (p >= 91) return "A1";
+  if (p >= 81) return "A2";
+  if (p >= 71) return "B1";
+  if (p >= 61) return "B2";
+  if (p >= 51) return "C1";
+  if (p >= 41) return "C2";
+  if (p >= 35) return "D1";
+  return "D2";
+}
+
+function colLetter(n){
+  let s = "";
+  while (n > 0){
+    const m = (n - 1) % 26;
+    s = String.fromCharCode(65 + m) + s;
+    n = Math.floor((n - 1) / 26);
+  }
+  return s;
+}
+function addr(r,c){ return `${colLetter(c)}${r}`; }
+
+function downloadBlob(blob, filename){
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  URL.revokeObjectURL(a.href);
+  a.remove();
+}
+
+/* ================= Year / Class / Section Loading ================= */
+async function ensureYear(){
+  if (academicYear){
+    headerYear.textContent = academicYear;
+    return academicYear;
+  }
+
+  const saved = localStorage.getItem("sp_selectedYear");
+  if (saved){
+    academicYear = saved;
+    headerYear.textContent = academicYear;
+    return academicYear;
+  }
+
+  const snap = await db.collection("years").orderBy("name","desc").limit(1).get();
+  if (snap.empty) throw new Error("No academic year found in Firestore.");
+
+  academicYear = snap.docs[0].id;
+  localStorage.setItem("sp_selectedYear", academicYear);
+  headerYear.textContent = academicYear;
+  return academicYear;
+}
+
+async function loadClasses(){
+  const year = await ensureYear();
+  classSelected.textContent = "Loading...";
+  classList.innerHTML = "";
+
+  let snap;
+  try {
+    snap = await db.collection("years").doc(year)
+      .collection("classes").orderBy("order","asc").get();
+  } catch(e){
+    snap = await db.collection("years").doc(year)
+      .collection("classes").orderBy("name","asc").get();
+  }
+
+  const arr = [];
+  snap.forEach(doc => {
+    const d = doc.data() || {};
+    arr.push({ id: doc.id, name: d.name || d.title || doc.id });
+  });
+
+  classList.innerHTML = arr.map(c =>
+    `<div class="dropdown-option" data-id="${escapeHtml(c.id)}" data-name="${escapeHtml(c.name)}">${escapeHtml(c.name)}</div>`
+  ).join("");
+
+  classSelected.textContent = "--Select--";
+}
+
+async function loadSections(){
+  sectionSelected.classList.add("disabled");
+  sectionSelected.textContent = "Loading...";
+  sectionSelected.dataset.value = "";
+  sectionList.innerHTML = "";
+
+  const year = await ensureYear();
+
+  let snap;
+  try {
+    snap = await db.collection("years").doc(year)
+      .collection("classes").doc(classId)
+      .collection("sections").orderBy("name","asc").get();
+  } catch(e){
+    snap = await db.collection("years").doc(year)
+      .collection("classes").doc(classId)
+      .collection("sections").get();
+  }
+
+  const arr = [];
+  snap.forEach(doc => {
+    const d = doc.data() || {};
+    arr.push({ id: doc.id, name: d.name || doc.id });
+  });
+
+  sectionList.innerHTML = arr.map(s =>
+    `<div class="dropdown-option" data-id="${escapeHtml(s.id)}" data-name="${escapeHtml(s.name)}">${escapeHtml(s.name)}</div>`
+  ).join("");
+
+  sectionSelected.textContent = "--Select--";
+  sectionSelected.classList.remove("disabled");
+}
+
+/* ================= Exam Loading ================= */
+function getClassGroupCandidates(name){
+  const n = classNumber(name);
+  const out = [];
+
+  if (/nursery/i.test(name) || /^lkg$/i.test(name) || /^ukg$/i.test(name)){
+    out.push("nursery-lkg-ukg");
+  } else if (n === 1 || n === 2){
+    out.push("class-1-2","1-2");
+  } else if (n >= 3 && n <= 5){
+    out.push("class-3-5","3-5");
+  } else if (n >= 6 && n <= 9){
+    out.push("class-6-9","6-9");
+  } else if (n === 10){
+    out.push("class-10","10");
+  }
+
+  out.push("default");
+  return Array.from(new Set(out));
+}
+
+async function fetchEffectiveExams(){
+  const year = await ensureYear();
+  const yearRef = db.collection("years").doc(year);
+  const map = new Map();
+
+  for (const g of getClassGroupCandidates(className)){
+    try {
+      const snap = await yearRef.collection("exams").doc("classGroups").collection(g).get();
+      snap.forEach(d => map.set(d.id, { id:d.id, ...(d.data() || {}), __origin:"group" }));
+      if (!snap.empty) break;
+    } catch(e){}
+
+    try {
+      const snap = await yearRef.collection("classGroups").doc(g).collection("exams").get();
+      snap.forEach(d => map.set(d.id, { id:d.id, ...(d.data() || {}), __origin:"group-alt" }));
+      if (!snap.empty) break;
+    } catch(e){}
+  }
+
+  try {
+    const snap = await yearRef.collection("classes").doc(classId).collection("examOverrides").get();
+    snap.forEach(d => {
+      const o = d.data() || {};
+      if (o.hidden === true) map.delete(d.id);
+      else map.set(d.id, { ...(map.get(d.id)||{}), id:d.id, ...o, __origin:"class" });
+    });
+  } catch(e){}
+
+  try {
+    const snap = await yearRef.collection("classes").doc(classId)
+      .collection("sections").doc(sectionId)
+      .collection("examOverrides").get();
+
+    snap.forEach(d => {
+      const o = d.data() || {};
+      if (o.hidden === true) map.delete(d.id);
+      else map.set(d.id, { ...(map.get(d.id)||{}), id:d.id, ...o, __origin:"section" });
+    });
+  } catch(e){}
+
+  const list = Array.from(map.values());
+  list.sort((a,b)=>String(a.name || "").localeCompare(String(b.name || "")));
+  return list;
+}
+
+async function loadExams(){
+  examSelected.classList.add("disabled");
+  examSelected.textContent = "Loading...";
+  examSelected.dataset.value = "";
+  examList.innerHTML = "";
+  selectedExamId = "";
+  selectedExamObj = null;
+  downloadBtn.disabled = true;
+
+  exams = await fetchEffectiveExams();
+  examMap = {};
+  exams.forEach(e => {
+    examMap[e.id] = e;
+    examCache.set(e.id, e);
+  });
+
+  const sa2 = exams.filter(e => {
+    const name = String(e.name || e.title || "").toLowerCase();
+    return name.includes("summative assessment 2") || name === "sa2" || name.includes("sa-2");
+  });
+
+  const finalList = sa2.length ? sa2 : exams;
+
+  if (!finalList.length){
+    examSelected.textContent = "No exams found";
+    examList.innerHTML = "";
+    return;
+  }
+
+  examList.innerHTML = finalList.map(e =>
+    `<div class="dropdown-option" data-id="${escapeHtml(e.id)}">${escapeHtml(e.name || e.title || e.id)}</div>`
+  ).join("");
+
+  examSelected.textContent = finalList[0].name || finalList[0].title || finalList[0].id;
+  examSelected.dataset.value = finalList[0].id;
+  examSelected.classList.remove("disabled");
+
+  selectedExamId = finalList[0].id;
+  selectedExamObj = examMap[selectedExamId] || finalList[0];
+  downloadBtn.disabled = false;
+}
+
+/* ================= Dropdown Events ================= */
+classSelected.onclick = (e) => {
+  classList.style.display = classList.style.display === "block" ? "none" : "block";
+  sectionList.style.display = "none";
+  examList.style.display = "none";
+  e.stopPropagation();
+};
+
+classList.onclick = async (e) => {
+  const opt = e.target.closest(".dropdown-option");
+  if (!opt) return;
+
+  classId = opt.dataset.id;
+  className = opt.dataset.name;
+
+  classSelected.textContent = className;
+  classSelected.dataset.value = classId;
+  classList.style.display = "none";
+
+  localStorage.setItem("sp_selectedClassId", classId);
+  localStorage.setItem("sp_selectedClassName", className);
+
+  sectionId = "";
+  sectionName = "";
+  sectionSelected.textContent = "Loading...";
+  examSelected.textContent = "Select section first";
+  examSelected.classList.add("disabled");
+  downloadBtn.disabled = true;
+
+  await loadSections();
+};
+
+sectionSelected.onclick = (e) => {
+  if (sectionSelected.classList.contains("disabled")) return;
+  sectionList.style.display = sectionList.style.display === "block" ? "none" : "block";
+  classList.style.display = "none";
+  examList.style.display = "none";
+  e.stopPropagation();
+};
+
+sectionList.onclick = async (e) => {
+  const opt = e.target.closest(".dropdown-option");
+  if (!opt) return;
+
+  sectionId = opt.dataset.id;
+  sectionName = opt.dataset.name;
+
+  sectionSelected.textContent = sectionName;
+  sectionSelected.dataset.value = sectionId;
+  sectionList.style.display = "none";
+
+  localStorage.setItem("sp_selectedSectionId", sectionId);
+  localStorage.setItem("sp_selectedSectionName", sectionName);
+
+  await loadExams();
+};
+
+examSelected.onclick = (e) => {
+  if (examSelected.classList.contains("disabled")) return;
+  examList.style.display = examList.style.display === "block" ? "none" : "block";
+  classList.style.display = "none";
+  sectionList.style.display = "none";
+  e.stopPropagation();
+};
+
+examList.onclick = (e) => {
+  const opt = e.target.closest(".dropdown-option");
+  if (!opt) return;
+
+  selectedExamId = opt.dataset.id;
+  selectedExamObj = examMap[selectedExamId];
+
+  examSelected.textContent = opt.textContent;
+  examSelected.dataset.value = selectedExamId;
+  examList.style.display = "none";
+  downloadBtn.disabled = !selectedExamId;
+};
+
+document.addEventListener("click", () => {
+  classList.style.display = "none";
+  sectionList.style.display = "none";
+  examList.style.display = "none";
+});
+
+/* ================= Subject Groups ================= */
+function getSubjectGroups(){
+  const n = classNumber(className);
+
+  if (n >= 8 && n <= 9){
+    return [
+      { label:"TELUGU", aliases:[["Telugu"],["Composite Telugu"]] },
+      { label:"HINDI", aliases:[["Hindi"]] },
+      { label:"ENGLISH", aliases:[["English"],["English 1","English 2"]] },
+      { label:"MATHS", aliases:[["Math"],["Mathematics"],["Math 1","Math 2"]] },
+      { label:"PHYSICS", aliases:[["Physical Science"],["Physics","Chemistry"]] },
+      { label:"BIOLOGY", aliases:[["Biology"],["Biological Science"]] },
+      { label:"SOCIAL STUDIES", aliases:[["Social"],["Social Studies"]] }
+    ];
+  }
+
+  return [
+    { label:"TELUGU", aliases:[["Telugu"],["Composite Telugu"]] },
+    { label:"HINDI", aliases:[["Hindi"]] },
+    { label:"ENGLISH", aliases:[["English"],["English 1","English 2"]] },
+    { label:"MATHS", aliases:[["Math"],["Mathematics"],["Math 1","Math 2"]] },
+    { label:"GEN.SCIENCE", aliases:[["General Science"],["Science"],["Physical Science","Biology"],["Physics","Chemistry","Biology"]] },
+    { label:"SOCIAL STUDIES", aliases:[["Social"],["Social Studies"]] }
+  ];
+}
+
+/* ================= Exam Component Detection ================= */
+function findComponentDefinitions(examObj){
+  const defaults = {
+    internal:{ name:"Internal", max:20, computed:false, sources:[] },
+    mcq:{ name:"MCQ", max:40 },
+    written:{ name:"Written Test", max:40 }
+  };
+
+  const arrays = [];
+  ["subtopics","components","parts","assessmentParts","subjects"].forEach(k => {
+    if (Array.isArray(examObj?.[k])) arrays.push(examObj[k]);
+  });
+
+  for (const arr of arrays){
+    for (const item of arr){
+      const nm = String(item?.name || item?.label || "").trim();
+      const k = nkey(nm);
+
+      if (k.includes("internal") || k === "cm" || k === "cummulative" || k === "cumulative"){
+        defaults.internal = {
+          name:nm || "Internal",
+          max:Number(item?.max) || 20,
+          computed:item?.computed === true,
+          sources:Array.isArray(item?.sources) ? item.sources : []
+        };
+      }
+
+      if (k.includes("mcq")){
+        defaults.mcq = {
+          name:nm || "MCQ",
+          max:Number(item?.max) || 40
+        };
+      }
+
+      if (k.includes("written") || k.includes("descriptive") || k.includes("sa2")){
+        defaults.written = {
+          name:nm || "Written Test",
+          max:Number(item?.max) || 40
+        };
+      }
+    }
+  }
+
+  return defaults;
+}
+
+/* ================= Marks Reading ================= */
+async function readMarks(stuId, examId){
+  const key = `${academicYear}|${classId}|${sectionId}|${stuId}|${examId}`;
+  if (marksCache.has(key)) return marksCache.get(key);
+
+  const snap = await db.collection("years").doc(academicYear)
+    .collection("classes").doc(classId)
+    .collection("sections").doc(sectionId)
+    .collection("students").doc(stuId)
+    .collection("marks").doc(examId).get();
+
+  const data = snap.exists ? (snap.data() || {}) : {};
+  marksCache.set(key, data);
+  return data;
+}
+
+async function getExamById(examId){
+  if (examCache.has(examId)) return examCache.get(examId);
+  if (examMap[examId]) return examMap[examId];
+
+  const yearRef = db.collection("years").doc(academicYear);
+
+  for (const g of getClassGroupCandidates(className)){
+    try {
+      const d = await yearRef.collection("exams").doc("classGroups").collection(g).doc(examId).get();
+      if (d.exists){
+        const obj = { id:d.id, ...(d.data() || {}) };
+        examCache.set(examId, obj);
+        return obj;
+      }
+    } catch(e){}
+
+    try {
+      const d = await yearRef.collection("classGroups").doc(g).collection("exams").doc(examId).get();
+      if (d.exists){
+        const obj = { id:d.id, ...(d.data() || {}) };
+        examCache.set(examId, obj);
+        return obj;
+      }
+    } catch(e){}
+  }
+
+  return null;
+}
+
+function findObjKey(obj, wanted){
+  if (!obj || typeof obj !== "object") return null;
+  const wantedKeys = Array.isArray(wanted) ? wanted.map(nkey) : [nkey(wanted)];
+  return Object.keys(obj).find(k => wantedKeys.includes(nkey(k))) || null;
+}
+
+function getComponentValue(marks, subjectName, componentNames){
+  const compKeys = componentNames.map(nkey);
+  const subjectKey = nkey(subjectName);
+
+  const subsRoot = marks && typeof marks.__subs === "object" ? marks.__subs : null;
+
+  if (subsRoot){
+    const sKey = Object.keys(subsRoot).find(k => nkey(k) === subjectKey);
+    if (sKey && subsRoot[sKey] && typeof subsRoot[sKey] === "object"){
+      const subObj = subsRoot[sKey];
+      const cKey = Object.keys(subObj).find(k => compKeys.includes(nkey(k)));
+      if (cKey !== undefined) return asNum(subObj[cKey]);
+    }
+  }
+
+  const rootKey = marks ? Object.keys(marks).find(k => !k.startsWith("__") && nkey(k) === subjectKey) : null;
+  if (rootKey){
+    const val = marks[rootKey];
+
+    if (val && typeof val === "object" && !Array.isArray(val)){
+      const cKey = Object.keys(val).find(k => compKeys.includes(nkey(k)));
+      if (cKey !== undefined) return asNum(val[cKey]);
+    }
+
+    if (typeof val === "number" || Number.isFinite(+val)){
+      if (compKeys.includes("total")) return asNum(val);
+    }
+  }
+
+  if (marks){
+    for (const [k,v] of Object.entries(marks)){
+      const nk = nkey(k);
+      if (nk.includes(subjectKey) && compKeys.some(c => nk.includes(c))){
+        return asNum(v);
+      }
+    }
+  }
+
+  return null;
+}
+
+function getSubjectMaxFromExam(examObj, subjectName){
+  const arr = Array.isArray(examObj?.subjects) ? examObj.subjects : [];
+  const hit = arr.find(s => nkey(s?.name || s?.label) === nkey(subjectName));
+  if (!hit) return null;
+
+  if (Number.isFinite(+hit.max)) return +hit.max;
+  if (Number.isFinite(+hit.subjectMax)) return +hit.subjectMax;
+
+  if (Array.isArray(hit.subtopics)){
+    const sum = hit.subtopics.reduce((a,t)=>a + (Number.isFinite(+t.max) ? +t.max : 0), 0);
+    if (sum > 0) return sum;
+  }
+
+  return null;
+}
+
+function computeSubjectPercentFromAnyExam(marks, examObj, subjectName){
+  const rootKey = marks ? Object.keys(marks).find(k => !k.startsWith("__") && nkey(k) === nkey(subjectName)) : null;
+  const subsRoot = marks && typeof marks.__subs === "object" ? marks.__subs : null;
+
+  let total = 0;
+  let saw = false;
+
+  if (subsRoot){
+    const sKey = Object.keys(subsRoot).find(k => nkey(k) === nkey(subjectName));
+    if (sKey && subsRoot[sKey] && typeof subsRoot[sKey] === "object"){
+      Object.values(subsRoot[sKey]).forEach(v => {
+        const x = asNum(v);
+        if (x !== null){ total += x; saw = true; }
+      });
+    }
+  }
+
+  if (!saw && rootKey){
+    const val = marks[rootKey];
+
+    if (val && typeof val === "object" && !Array.isArray(val)){
+      Object.values(val).forEach(v => {
+        const x = asNum(v);
+        if (x !== null){ total += x; saw = true; }
+      });
+    } else {
+      const x = asNum(val);
+      if (x !== null){ total = x; saw = true; }
+    }
+  }
+
+  if (!saw) return null;
+
+  let max = getSubjectMaxFromExam(examObj, subjectName);
+  if (!max || max <= 0) max = 100;
+
+  return (total / max) * 100;
+}
+
+async function computeInternalFromSources(stu, subjectName, internalDef){
+  if (!internalDef || internalDef.computed !== true || !Array.isArray(internalDef.sources) || !internalDef.sources.length){
+    return null;
+  }
+
+  const percents = [];
+
+  for (const srcExamId of internalDef.sources){
+    const srcMarks = await readMarks(stu.id, srcExamId);
+    const srcExamObj = await getExamById(srcExamId);
+    const pct = computeSubjectPercentFromAnyExam(srcMarks, srcExamObj, subjectName);
+    if (typeof pct === "number" && !isNaN(pct)) percents.push(pct);
+  }
+
+  const p = avg(percents);
+  if (p === null) return null;
+
+  return (p / 100) * 20;
+}
+
+async function computeSourceSubject(stu, marks, sourceName, compDefs){
+  const internalNames = [compDefs.internal.name, "Internal", "C.M.", "CM", "Cumulative Marks"];
+  const mcqNames = [compDefs.mcq.name, "MCQ", "Objective"];
+  const writtenNames = [compDefs.written.name, "Written Test", "Written", "Descriptive"];
+
+  let cmRaw = getComponentValue(marks, sourceName, internalNames);
+  const mcqRaw = getComponentValue(marks, sourceName, mcqNames);
+  const writtenRaw = getComponentValue(marks, sourceName, writtenNames);
+
+  if (cmRaw === null){
+    cmRaw = await computeInternalFromSources(stu, sourceName, compDefs.internal);
+  }
+
+  const cmMax = Number(compDefs.internal.max) || 20;
+  const mcqMax = Number(compDefs.mcq.max) || 40;
+  const writtenMax = Number(compDefs.written.max) || 40;
+
+  const cm20 = cmRaw === null ? null : (cmRaw / cmMax) * 20;
+
+  let saSum = 0;
+  let saMaxAvailable = 0;
+
+  if (mcqRaw !== null){
+    saSum += mcqRaw;
+    saMaxAvailable += mcqMax;
+  }
+
+  if (writtenRaw !== null){
+    saSum += writtenRaw;
+    saMaxAvailable += writtenMax;
+  }
+
+  const sa80 = saMaxAvailable > 0 ? (saSum / saMaxAvailable) * 80 : null;
+
+  if (cm20 === null && sa80 === null) return null;
+
+  return {
+    cm20,
+    sa80,
+    total100: (cm20 || 0) + (sa80 || 0)
+  };
+}
+
+async function computeGroupMarks(stu, marks, group, compDefs){
+  for (const alternative of group.aliases){
+    const list = [];
+
+    for (const subjectName of alternative){
+      const result = await computeSourceSubject(stu, marks, subjectName, compDefs);
+      if (result) list.push(result);
+    }
+
+    if (list.length){
+      const cm = avg(list.map(x => x.cm20));
+      const sa = avg(list.map(x => x.sa80));
+      const total = (cm || 0) + (sa || 0);
+
+      return {
+        cm,
+        sa,
+        total,
+        grade:getFinalGrade(total)
+      };
+    }
+  }
+
+  return {
+    cm:null,
+    sa:null,
+    total:null,
+    grade:""
+  };
+}
+
+/* ================= Attendance ================= */
+async function computeAttendance(stuId){
+  const snap = await db.collection("years").doc(academicYear)
+    .collection("classes").doc(classId)
+    .collection("sections").doc(sectionId)
+    .collection("attendance").get();
+
+  let work = 0;
+  let present = 0;
+
+  snap.forEach(doc => {
+    const id = doc.id || "";
+    const mm = id.split("-")[1];
+
+    if (!["06","07","08","09","10","11","12","01","02","03","04"].includes(mm)) return;
+
+    work += 1;
+
+    const data = doc.data() || {};
+    const st = data[stuId];
+
+    if (st){
+      if (st.M !== "absent") present += 0.5;
+      if (st.A !== "absent") present += 0.5;
+    }
+  });
+
+  const pct = work > 0 ? Math.round((present / work) * 100) : "";
+
+  return { work, present, pct };
+}
+
+/* ================= Student Data ================= */
+async function loadStudents(){
+  const snap = await db.collection("years").doc(academicYear)
+    .collection("classes").doc(classId)
+    .collection("sections").doc(sectionId)
+    .collection("students").orderBy("roll").get();
+
+  const arr = [];
+  snap.forEach(doc => {
+    const d = doc.data() || {};
+    if (!d.isDeleted) arr.push({ id:doc.id, ...d });
+  });
+
+  arr.sort((a,b)=>(Number(a.roll)||0)-(Number(b.roll)||0));
+  students = arr;
+  return students;
+}
+
+function getStudentField(stu, names){
+  for (const n of names){
+    if (stu[n] !== undefined && stu[n] !== null && stu[n] !== "") return stu[n];
+  }
+  return "";
+}
+
+async function buildStudentRows(){
+  const groups = getSubjectGroups();
+  const compDefs = findComponentDefinitions(selectedExamObj);
+  const rows = [];
+
+  for (let i = 0; i < students.length; i++){
+    const stu = students[i];
+    const marks = await readMarks(stu.id, selectedExamId);
+    const attendance = await computeAttendance(stu.id);
+
+    const subjectResults = [];
+    let totalMarks = 0;
+    let failInAnySubject = false;
+
+    for (const group of groups){
+      const r = await computeGroupMarks(stu, marks, group, compDefs);
+      subjectResults.push(r);
+
+      if (typeof r.total === "number" && !isNaN(r.total)){
+        totalMarks += r.total;
+        if (r.total < 35) failInAnySubject = true;
+      } else {
+        failInAnySubject = true;
+      }
+    }
+
+    const maxTotal = groups.length * 100;
+    const totalPercent = maxTotal > 0 ? (totalMarks / maxTotal) * 100 : 0;
+    const totalGrade = getFinalGrade(totalPercent);
+    const result = failInAnySubject || totalPercent < 35 ? "FAIL" : "PASS";
+
+    rows.push({
+      sl:i+1,
+      adm:getStudentField(stu, ["admNo","admnNo","admissionNo","adminNo","admission"]),
+      name:stu.name || "",
+      pen:getStudentField(stu, ["pen","studentPEN","studentPen","PEN"]),
+      gender:getStudentField(stu, ["gender","sex"]),
+      caste:getStudentField(stu, ["caste","category"]),
+      section:sectionName,
+      subjectResults,
+      totalMarks,
+      totalGrade,
+      work:attendance.work,
+      present:attendance.present,
+      attendancePct:attendance.pct,
+      result
+    });
+  }
+
+  return rows;
+}
+
+/* ================= Excel Generation ================= */
+async function generateExcel(){
+  if (!selectedExamId || !selectedExamObj){
+    alert("Please select Summative Assessment 2.");
+    return;
+  }
+
+  setStatus("Preparing cumulative Excel sheet...", true);
+  downloadBtn.disabled = true;
+
+  try {
+    await loadStudents();
+
+    if (!students.length){
+      setStatus("No students found in this section.");
+      downloadBtn.disabled = false;
+      return;
+    }
+
+    const groups = getSubjectGroups();
+    const maxTotal = groups.length * 100;
+    const dataRows = await buildStudentRows();
+
+    const workbook = await XlsxPopulate.fromBlankAsync();
+    const sheet = workbook.sheet(0).name("SA2 Cumulative");
+
+    const fixedCols = 7;
+    const subjectStart = 8;
+    const subjectCols = groups.length * 4;
+    const afterSubjects = subjectStart + subjectCols;
+
+    const totalMarksCol = afterSubjects;
+    const totalGradeCol = afterSubjects + 1;
+    const workingCol = afterSubjects + 2;
+    const attDaysCol = afterSubjects + 3;
+    const attPctCol = afterSubjects + 4;
+    const remarksCol = afterSubjects + 5;
+    const totalCols = remarksCol;
+
+    const headerRows = 3;
+    const firstDataRow = 4;
+    const lastRow = firstDataRow + dataRows.length - 1;
+
+    function mergeSet(r1,c1,r2,c2,value){
+      const rg = sheet.range(`${addr(r1,c1)}:${addr(r2,c2)}`);
+      rg.merged(true);
+      rg.value(value);
+      return rg;
+    }
+
+    mergeSet(1,1,3,1,"SL.\nNO.");
+    mergeSet(1,2,3,2,"Admn\nNo.");
+    mergeSet(1,3,1,4,"__________________ (MEDIUM)");
+    mergeSet(2,3,3,3,"CHILD NAME");
+    mergeSet(2,4,3,4,"Student PEN");
+    mergeSet(1,5,3,5,"GENDER");
+    mergeSet(1,6,3,6,"CASTE");
+    mergeSet(1,7,3,7,"SECTION");
+
+    mergeSet(1,subjectStart,1,subjectStart + subjectCols - 1,"ACADEMIC GRADING DETAILS");
+
+    let c = subjectStart;
+    groups.forEach(g => {
+      mergeSet(2,c,2,c+3,g.label);
+      sheet.cell(3,c).value("C.M.\n20-M");
+      sheet.cell(3,c+1).value("SA-2\n80-M");
+      sheet.cell(3,c+2).value("TOT\n100");
+      sheet.cell(3,c+3).value("Grade");
+      c += 4;
+    });
+
+    mergeSet(1,totalMarksCol,3,totalMarksCol,`Total Marks ${maxTotal}`);
+    mergeSet(1,totalGradeCol,3,totalGradeCol,"Total Grade");
+    mergeSet(1,workingCol,3,workingCol,"WORKING DAYS");
+    mergeSet(1,attDaysCol,3,attDaysCol,"Attendance\nDays");
+    mergeSet(1,attPctCol,3,attPctCol,"Attendance\n%");
+    mergeSet(1,remarksCol,3,remarksCol,"RESULT\nREMARKS");
+
+    for (let i = 0; i < dataRows.length; i++){
+      const r = firstDataRow + i;
+      const row = dataRows[i];
+
+      sheet.cell(r,1).value(row.sl);
+      sheet.cell(r,2).value(row.adm);
+      sheet.cell(r,3).value(row.name);
+      sheet.cell(r,4).value(row.pen);
+      sheet.cell(r,5).value(row.gender);
+      sheet.cell(r,6).value(row.caste);
+      sheet.cell(r,7).value(row.section);
+
+      let sc = subjectStart;
+
+      row.subjectResults.forEach(s => {
+        sheet.cell(r,sc).value(round1(s.cm));
+        sheet.cell(r,sc+1).value(round1(s.sa));
+        sheet.cell(r,sc+2).value(round1(s.total));
+        sheet.cell(r,sc+3).value(s.grade || "");
+        sc += 4;
+      });
+
+      sheet.cell(r,totalMarksCol).value(round1(row.totalMarks));
+      sheet.cell(r,totalGradeCol).value(row.totalGrade);
+      sheet.cell(r,workingCol).value(row.work);
+      sheet.cell(r,attDaysCol).value(round1(row.present));
+      sheet.cell(r,attPctCol).value(row.attendancePct === "" ? "" : `${row.attendancePct}%`);
+      sheet.cell(r,remarksCol).value(row.result);
+    }
+
+    const fullRange = sheet.range(`${addr(1,1)}:${addr(lastRow,totalCols)}`);
+    fullRange.style({
+      border:true,
+      fontFamily:"Arial",
+      fontSize:9,
+      verticalAlignment:"center",
+      horizontalAlignment:"center",
+      wrapText:true
+    });
+
+    const headerRange = sheet.range(`${addr(1,1)}:${addr(3,totalCols)}`);
+    headerRange.style({
+      bold:true,
+      fill:"FFD9D9D9",
+      fontColor:"FF000000",
+      verticalAlignment:"center",
+      horizontalAlignment:"center",
+      wrapText:true
+    });
+
+    sheet.range(`${addr(1,subjectStart)}:${addr(1,subjectStart + subjectCols - 1)}`).style({
+      fontSize:14,
+      bold:true
+    });
+
+    sheet.range(`${addr(firstDataRow,3)}:${addr(lastRow,3)}`).style({
+      horizontalAlignment:"left"
+    });
+
+    sheet.range(`${addr(firstDataRow,remarksCol)}:${addr(lastRow,remarksCol)}`).style({
+      bold:true
+    });
+
+    for (let r = 1; r <= 3; r++){
+      sheet.row(r).height(r === 1 ? 24 : 22);
+    }
+
+    for (let r = firstDataRow; r <= lastRow; r++){
+      sheet.row(r).height(23);
+    }
+
+    sheet.column(1).width(5);
+    sheet.column(2).width(9);
+    sheet.column(3).width(26);
+    sheet.column(4).width(17);
+    sheet.column(5).width(5);
+    sheet.column(6).width(8);
+    sheet.column(7).width(6);
+
+    for (let cc = subjectStart; cc < subjectStart + subjectCols; cc++){
+      sheet.column(cc).width(6.2);
+    }
+
+    sheet.column(totalMarksCol).width(7);
+    sheet.column(totalGradeCol).width(7);
+    sheet.column(workingCol).width(7);
+    sheet.column(attDaysCol).width(7);
+    sheet.column(attPctCol).width(7);
+    sheet.column(remarksCol).width(13);
+
+    const verticalCols = [5,6,7,totalMarksCol,totalGradeCol,workingCol];
+    verticalCols.forEach(cc => {
+      try {
+        sheet.range(`${addr(1,cc)}:${addr(3,cc)}`).style("textRotation", 90);
+      } catch(e){}
+    });
+
+    try {
+      sheet.freezePanes(4, 3);
+    } catch(e){}
+
+    try {
+      if (typeof sheet.pageMargins === "function"){
+        sheet.pageMargins({
+          left:0.25,
+          right:0.25,
+          top:0.35,
+          bottom:0.35,
+          header:0.1,
+          footer:0.1
+        });
+      }
+    } catch(e){}
+
+    try {
+      if (typeof sheet.pageSetup === "function"){
+        sheet.pageSetup({
+          paperSize:8,
+          orientation:"landscape",
+          fitToWidth:1,
+          fitToHeight:0
+        });
+      }
+    } catch(e){}
+
+    const fileName = `SA2_Cumulative_${className}_${sectionName}_${academicYear}.xlsx`
+      .replace(/[\\/:*?"<>|]+/g,"_");
+
+    const blob = await workbook.outputAsync();
+    downloadBlob(blob, fileName);
+
+    setStatus("Cumulative Excel sheet downloaded!");
+  } catch(err){
+    console.error(err);
+    setStatus("Error: " + err.message);
+  } finally {
+    downloadBtn.disabled = false;
+  }
+}
+
+downloadBtn.onclick = generateExcel;
+
+/* ================= Init ================= */
+auth.onAuthStateChanged(async user => {
+  if (!user){
+    setStatus("Please login first.");
+    downloadBtn.disabled = true;
+    return;
+  }
+
+  try {
+    await ensureYear();
+    await loadClasses();
+
+    const savedClassId = localStorage.getItem("sp_selectedClassId") || "";
+    const savedClassName = localStorage.getItem("sp_selectedClassName") || "";
+    const savedSectionId = localStorage.getItem("sp_selectedSectionId") || "";
+    const savedSectionName = localStorage.getItem("sp_selectedSectionName") || "";
+
+    if (savedClassId && savedClassName){
+      classId = savedClassId;
+      className = savedClassName;
+      classSelected.textContent = className;
+      classSelected.dataset.value = classId;
+      await loadSections();
+
+      if (savedSectionId && savedSectionName){
+        sectionId = savedSectionId;
+        sectionName = savedSectionName;
+        sectionSelected.textContent = sectionName;
+        sectionSelected.dataset.value = sectionId;
+        await loadExams();
+      }
+    }
+  } catch(err){
+    console.error(err);
+    setStatus("Error: " + err.message);
+  }
+});
+</script>
+
+</body>
+</html>
