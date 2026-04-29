@@ -2159,9 +2159,10 @@ function showStudentActionPopup(studentId) {
       </div>
 
       <div style="display:flex;flex-direction:column;gap:10px;">
-        <button type="button" class="popup-action-btn" id="actEdit">Edit Student</button>
-        <button type="button" class="popup-action-btn" id="actDelete" style="background:#d43f3a;">Delete Student</button>
-      </div>
+  <button type="button" class="popup-action-btn" id="actEdit">Edit Student</button>
+  <button type="button" class="popup-action-btn" id="actTransfer" style="background:#1762a7;">Transfer Student</button>
+  <button type="button" class="popup-action-btn" id="actDelete" style="background:#d43f3a;">Delete Student</button>
+</div>
 
       <div class="popup-btn-row" style="margin-top:10px;">
         <button type="button" class="popup-cancel-btn">Close</button>
@@ -2170,15 +2171,21 @@ function showStudentActionPopup(studentId) {
 
     // Wire actions
     setTimeout(() => {
-      const editBtn = popupContent.querySelector('#actEdit');
-      const delBtn  = popupContent.querySelector('#actDelete');
+     const editBtn = popupContent.querySelector('#actEdit');
+const transferBtn = popupContent.querySelector('#actTransfer');
+const delBtn  = popupContent.querySelector('#actDelete');
 
-      if (editBtn) editBtn.onclick = () => {
-        closePopup();
-        showEditStudentPopup(studentId);
-      };
+if (editBtn) editBtn.onclick = () => {
+  closePopup();
+  showEditStudentPopup(studentId);
+};
 
-      if (delBtn) delBtn.onclick = async () => {
+if (transferBtn) transferBtn.onclick = () => {
+  closePopup();
+  showTransferStudentPopup(studentId);
+};
+
+if (delBtn) delBtn.onclick = async () => {
         if (!confirm("Delete this student? You can restore later from Settings → Show Deleted Students.")) return;
         try {
           await ref.update({ isDeleted: true });
@@ -2192,7 +2199,223 @@ function showStudentActionPopup(studentId) {
     }, 50);
   })();
 }
-    // ======================= SETTINGS POPUP =====================
+    // ======================= TRANSFER STUDENT =====================
+function showTransferStudentPopup(studentId) {
+  db.collection('years').doc(academicYear)
+    .collection('classes').doc(currentClassId)
+    .collection('sections')
+    .orderBy('name')
+    .get()
+    .then(secSnap => {
+      let sections = [];
+
+      secSnap.forEach(doc => {
+        if (doc.id !== currentSectionId) {
+          sections.push({ id: doc.id, ...doc.data() });
+        }
+      });
+
+      if (sections.length === 0) {
+        showPopup(`
+          <div class="popup-title">Transfer Student</div>
+          <div style="color:#888;margin:12px 0;">No other sections found in this class.</div>
+          <div class="popup-btn-row">
+            <button class="popup-cancel-btn">Close</button>
+          </div>
+        `);
+        return;
+      }
+
+      showPopup(`
+        <form id="transferStudentForm">
+          <div class="popup-title">Transfer Student</div>
+
+          <label>Select Target Section</label>
+          <div class="custom-dropdown" id="transferSectionDropdown">
+            <div class="dropdown-selected" id="transferSectionSelected" data-value="">--Select Section--</div>
+            <div class="dropdown-list" id="transferSectionList" style="display:none;">
+              ${
+                sections.map(sec => `
+                  <div class="dropdown-option" data-id="${sec.id}" data-name="${sec.name}">
+                    ${sec.name}
+                  </div>
+                `).join('')
+              }
+            </div>
+          </div>
+
+          <div style="font-size:0.92em;color:#666;margin-top:4px;line-height:1.5;">
+            Student details, photo details, marks, and attendance will be transferred to the selected section.
+          </div>
+
+          <div class="popup-btn-row">
+            <button type="button" class="popup-cancel-btn">Cancel</button>
+            <button type="submit" class="popup-action-btn">Transfer</button>
+          </div>
+        </form>
+      `, 'transferStudentForm', function(e) {
+        e.preventDefault();
+
+        const selected = document.getElementById('transferSectionSelected');
+        const targetSectionId = selected.dataset.value;
+        const targetSectionName = selected.textContent.trim();
+
+        if (!targetSectionId) {
+          alert("Please select a target section.");
+          return;
+        }
+
+        if (!confirm(`Transfer this student to ${targetSectionName}?`)) return;
+
+        transferStudentToSection(studentId, targetSectionId, targetSectionName);
+      });
+
+      const selected = document.getElementById('transferSectionSelected');
+      const list = document.getElementById('transferSectionList');
+      const dropdown = document.getElementById('transferSectionDropdown');
+
+      selected.onclick = function() {
+        list.style.display = list.style.display === 'block' ? 'none' : 'block';
+      };
+
+      list.querySelectorAll('.dropdown-option').forEach(opt => {
+        opt.onclick = function() {
+          selected.textContent = this.dataset.name;
+          selected.dataset.value = this.dataset.id;
+          list.style.display = 'none';
+        };
+      });
+
+      document.addEventListener('click', function handler(e) {
+        if (!dropdown.contains(e.target)) {
+          list.style.display = 'none';
+          document.removeEventListener('click', handler);
+        }
+      });
+    });
+}
+
+async function transferStudentToSection(studentId, targetSectionId, targetSectionName) {
+  try {
+    if (!studentId || !targetSectionId) {
+      alert("Invalid student or target section.");
+      return;
+    }
+
+    if (targetSectionId === currentSectionId) {
+      alert("Student is already in this section.");
+      return;
+    }
+
+    const sourceSectionRef = db.collection('years').doc(academicYear)
+      .collection('classes').doc(currentClassId)
+      .collection('sections').doc(currentSectionId);
+
+    const targetSectionRef = db.collection('years').doc(academicYear)
+      .collection('classes').doc(currentClassId)
+      .collection('sections').doc(targetSectionId);
+
+    const sourceStudentRef = sourceSectionRef
+      .collection('students').doc(studentId);
+
+    const targetStudentRef = targetSectionRef
+      .collection('students').doc(studentId);
+
+    const sourceSnap = await sourceStudentRef.get();
+
+    if (!sourceSnap.exists) {
+      alert("Student not found.");
+      return;
+    }
+
+    const targetSnap = await targetStudentRef.get();
+
+    if (targetSnap.exists && !targetSnap.data().isDeleted) {
+      alert("This student already exists in the target section.");
+      return;
+    }
+
+    const studentData = sourceSnap.data() || {};
+    const copiedStudentData = { ...studentData };
+
+    delete copiedStudentData.isDeleted;
+
+    copiedStudentData.transferredFrom = currentSectionName || '';
+    copiedStudentData.transferredFromSectionId = currentSectionId || '';
+    copiedStudentData.transferredAt = firebase.firestore.FieldValue.serverTimestamp();
+
+    // 1. Copy student main details
+    await targetStudentRef.set(copiedStudentData, { merge: true });
+
+    let batch = db.batch();
+    let writeCount = 0;
+
+    async function commitBatchIfNeeded(force = false) {
+      if (writeCount >= 450 || (force && writeCount > 0)) {
+        await batch.commit();
+        batch = db.batch();
+        writeCount = 0;
+      }
+    }
+
+    // 2. Copy marks subcollection
+    const marksSnap = await sourceStudentRef.collection('marks').get();
+
+    for (const markDoc of marksSnap.docs) {
+      const targetMarkRef = targetStudentRef.collection('marks').doc(markDoc.id);
+      batch.set(targetMarkRef, markDoc.data(), { merge: true });
+      writeCount++;
+      await commitBatchIfNeeded();
+    }
+
+    // 3. Move attendance from old section to new section
+    const attendanceSnap = await sourceSectionRef.collection('attendance').get();
+
+    for (const attDoc of attendanceSnap.docs) {
+      const attData = attDoc.data() || {};
+
+      if (Object.prototype.hasOwnProperty.call(attData, studentId)) {
+        const targetAttRef = targetSectionRef.collection('attendance').doc(attDoc.id);
+        const sourceAttRef = sourceSectionRef.collection('attendance').doc(attDoc.id);
+
+        batch.set(targetAttRef, {
+          [studentId]: attData[studentId]
+        }, { merge: true });
+
+        writeCount++;
+
+        batch.update(sourceAttRef, {
+          [studentId]: firebase.firestore.FieldValue.delete()
+        });
+
+        writeCount++;
+
+        await commitBatchIfNeeded();
+      }
+    }
+
+    await commitBatchIfNeeded(true);
+
+    // 4. Hide old student from old section
+    await sourceStudentRef.set({
+      isDeleted: true,
+      transferredTo: targetSectionName || '',
+      transferredToSectionId: targetSectionId,
+      transferredAt: firebase.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+
+    alert("Student transferred successfully with all data!");
+
+    closePopup();
+    renderStudentList();
+
+  } catch (err) {
+    console.error("Transfer failed:", err);
+    alert("Transfer failed: " + (err && err.message ? err.message : err));
+  }
+}
+
+// ======================= SETTINGS POPUP =====================
     function showSettingsPopup() {
   showPopup(`
     <div class="popup-title">Section Tools</div>
