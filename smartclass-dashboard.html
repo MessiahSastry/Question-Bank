@@ -494,7 +494,7 @@
       gap: 10px;
     }
 
-    .popup-actions button {
+        .popup-actions button {
       flex: 1;
       border: none;
       border-radius: 10px;
@@ -503,11 +503,140 @@
       cursor: pointer;
     }
 
+       .app-dialog-box {
+      padding: 0;
+      overflow: hidden;
+      border-radius: 24px;
+      max-width: 420px;
+      background: #ffffff;
+      box-shadow: 0 22px 55px rgba(15, 61, 107, 0.32);
+      animation: dialogPop 0.22s ease-out;
+    }
+
+    @keyframes dialogPop {
+      from {
+        transform: scale(0.92) translateY(12px);
+        opacity: 0;
+      }
+      to {
+        transform: scale(1) translateY(0);
+        opacity: 1;
+      }
+    }
+
+    .app-dialog-header {
+      background: linear-gradient(135deg, #1762a7, #0f3d6b);
+      color: #fff;
+      padding: 18px 20px;
+      text-align: center;
+      position: relative;
+    }
+
+    .app-dialog-header::before {
+      content: "\f19d";
+      font-family: "Font Awesome 6 Free";
+      font-weight: 900;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 46px;
+      height: 46px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.18);
+      color: #ffffff;
+      font-size: 1.25em;
+      margin-bottom: 8px;
+    }
+
+    .app-dialog-header h2 {
+      margin: 0;
+      font-size: 1.18em;
+      font-weight: 900;
+      letter-spacing: 0.2px;
+    }
+
+    .app-dialog-body {
+      padding: 22px 20px 20px;
+      background: linear-gradient(180deg, #ffffff, #f8fbff);
+    }
+
+    .app-dialog-message {
+      margin: 0 0 18px;
+      color: #24384d;
+      line-height: 1.65;
+      white-space: pre-line;
+      font-size: 0.98em;
+      font-weight: 600;
+    }
+
+    .app-dialog-input {
+      width: 100%;
+      border: 1px solid #cbd8e6;
+      border-radius: 14px;
+      padding: 13px 14px;
+      font-size: 0.96em;
+      margin-bottom: 16px;
+      outline: none;
+      display: none;
+      background: #fff;
+      color: #17324d;
+      font-weight: 600;
+    }
+
+    .app-dialog-input:focus {
+      border-color: #1762a7;
+      box-shadow: 0 0 0 4px rgba(23, 98, 167, 0.13);
+    }
+
+    .app-dialog-body .popup-actions {
+      gap: 12px;
+    }
+
+    .app-dialog-body .popup-actions button {
+      border-radius: 14px;
+      padding: 13px 12px;
+      font-size: 0.98em;
+      transition: transform 0.15s, box-shadow 0.15s, background 0.15s;
+    }
+
+    .app-dialog-body .popup-actions button:hover {
+      transform: translateY(-1px);
+    }
+
+    .app-dialog-body .save-btn {
+      background: linear-gradient(135deg, #1762a7, #0f3d6b);
+      color: #fff;
+      box-shadow: 0 8px 18px rgba(23, 98, 167, 0.25);
+    }
+
+    .app-dialog-body .cancel-btn {
+      background: #eaf1fa;
+      color: #0f3d6b;
+    }
+
+    @media (max-width: 520px) {
+      .app-dialog-box {
+        max-width: 92vw;
+        border-radius: 22px;
+      }
+
+      .app-dialog-header {
+        padding: 16px 18px;
+      }
+
+      .app-dialog-body {
+        padding: 20px 18px 18px;
+      }
+
+      .app-dialog-message {
+        font-size: 0.95em;
+      }
+    }
+
     .save-btn {
       background: #1762a7;
       color: #fff;
     }
-
     .cancel-btn {
       background: #e9eef5;
       color: #17324d;
@@ -751,6 +880,24 @@
     </div>
   </div>
 
+    <div class="popup-overlay" id="app-dialog-overlay">
+    <div class="popup-box app-dialog-box">
+      <div class="app-dialog-header">
+        <h2 id="app-dialog-title">St. Patrick's Says</h2>
+      </div>
+
+      <div class="app-dialog-body">
+        <p class="app-dialog-message" id="app-dialog-message"></p>
+        <input type="text" id="app-dialog-input" class="app-dialog-input" />
+
+        <div class="popup-actions">
+          <button class="cancel-btn" id="app-dialog-cancel-btn">Cancel</button>
+          <button class="save-btn" id="app-dialog-ok-btn">OK</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div class="toast" id="toast"></div>
 
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
@@ -815,7 +962,14 @@
     const campusPopup = document.getElementById("campus-popup");
     const firstCampusSelect = document.getElementById("first-campus-select");
     const saveCampusBtn = document.getElementById("save-campus-btn");
-    const toast = document.getElementById("toast");
+        const toast = document.getElementById("toast");
+
+    const appDialogOverlay = document.getElementById("app-dialog-overlay");
+    const appDialogTitle = document.getElementById("app-dialog-title");
+    const appDialogMessage = document.getElementById("app-dialog-message");
+    const appDialogInput = document.getElementById("app-dialog-input");
+    const appDialogCancelBtn = document.getElementById("app-dialog-cancel-btn");
+    const appDialogOkBtn = document.getElementById("app-dialog-ok-btn");
 
     let currentUser = null;
     let isAdmin = false;
@@ -986,6 +1140,113 @@
         refreshCustomDropdown(customSelect.dataset.target);
       });
     }
+
+       let appDialogResolver = null;
+
+    function openAppDialog({
+      title = "St. Patrick's Says",
+      message = "",
+      mode = "alert",
+      okText = "OK",
+      cancelText = "Cancel",
+      inputValue = "",
+      inputPlaceholder = ""
+    }) {
+      return new Promise(resolve => {
+        appDialogResolver = resolve;
+
+        appDialogTitle.textContent = title;
+        appDialogMessage.textContent = message;
+        appDialogOkBtn.textContent = okText;
+        appDialogCancelBtn.textContent = cancelText;
+
+        if (mode === "alert") {
+          appDialogCancelBtn.style.display = "none";
+          appDialogInput.style.display = "none";
+          appDialogInput.value = "";
+        } else if (mode === "confirm") {
+          appDialogCancelBtn.style.display = "inline-block";
+          appDialogInput.style.display = "none";
+          appDialogInput.value = "";
+        } else if (mode === "prompt") {
+          appDialogCancelBtn.style.display = "inline-block";
+          appDialogInput.style.display = "block";
+          appDialogInput.value = inputValue || "";
+          appDialogInput.placeholder = inputPlaceholder || "";
+          setTimeout(() => appDialogInput.focus(), 50);
+        }
+
+        appDialogOverlay.style.display = "flex";
+      });
+    }
+
+    function closeAppDialog(result) {
+      appDialogOverlay.style.display = "none";
+
+      if (appDialogResolver) {
+        appDialogResolver(result);
+        appDialogResolver = null;
+      }
+    }
+
+    function showAppAlert(message, title = "St. Patrick's Says") {
+      return openAppDialog({
+        title,
+        message,
+        mode: "alert",
+        okText: "OK"
+      });
+    }
+
+    function showAppConfirm(message, title = "St. Patrick's Says") {
+      return openAppDialog({
+        title,
+        message,
+        mode: "confirm",
+        okText: "OK",
+        cancelText: "Cancel"
+      });
+    }
+
+    function showAppPrompt(message, defaultValue = "", placeholder = "", title = "St. Patrick's Says") {
+      return openAppDialog({
+        title,
+        message,
+        mode: "prompt",
+        okText: "Save",
+        cancelText: "Cancel",
+        inputValue: defaultValue,
+        inputPlaceholder: placeholder
+      });
+    }
+
+    appDialogOkBtn.onclick = () => {
+      if (appDialogInput.style.display === "block") {
+        closeAppDialog(appDialogInput.value.trim());
+      } else {
+        closeAppDialog(true);
+      }
+    };
+
+    appDialogCancelBtn.onclick = () => {
+      if (appDialogInput.style.display === "block") {
+        closeAppDialog(null);
+      } else {
+        closeAppDialog(false);
+      }
+    };
+
+    appDialogOverlay.onclick = (e) => {
+      if (e.target === appDialogOverlay) {
+        if (appDialogInput.style.display === "block") {
+          closeAppDialog(null);
+        } else if (appDialogCancelBtn.style.display === "none") {
+          closeAppDialog(true);
+        } else {
+          closeAppDialog(false);
+        }
+      }
+    };
 
     function getMonday(date) {
       const d = new Date(date);
@@ -1162,8 +1423,8 @@
       const subject = subjectSelect.value;
       const topic = topicInput.value.trim();
 
-      if (!className || !section || !subject) {
-        alert("Please select Class, Section and Subject before booking.");
+            if (!className || !section || !subject) {
+        await showAppAlert("Please select Class, Section and Subject before booking.");
         return;
       }
 
@@ -1179,7 +1440,8 @@
         `Class: ${className} - ${section}\n` +
         `Subject: ${subject}`;
 
-      if (!confirm(confirmText)) return;
+           const approved = await showAppConfirm(confirmText);
+      if (!approved) return;
 
       const docId = makeDocId(dayKey, periodId);
       const ref = db.collection("smartClassBookings").doc(docId);
@@ -1218,7 +1480,7 @@
         showToast("Smart Class slot booked successfully.");
       } catch (error) {
         console.error(error);
-        alert(error.message || "Booking failed. Please try again.");
+                await showAppAlert(error.message || "Booking failed. Please try again.");
       }
     }
 
@@ -1227,7 +1489,11 @@
       const period = periods.find(p => p.id === periodId);
       const date = addDays(currentWeekStart, day.offset);
 
-      const reason = prompt(`Reason for blocking ${day.label} ${period.label}?`, "Admin Block");
+            const reason = await showAppPrompt(
+        `Reason for blocking ${day.label} ${period.label}?`,
+        "Admin Block",
+        "Enter block reason"
+      );
 
       if (!reason) return;
 
@@ -1265,18 +1531,18 @@
         showToast("Slot blocked by admin.");
       } catch (error) {
         console.error(error);
-        alert(error.message || "Block failed.");
+         await showAppAlert(error.message || "Block failed.");
       }
     }
 
     async function handleExistingSlot(existing) {
       if (existing.status === "blocked") {
         if (!isAdmin) {
-          alert("This slot is blocked by admin.");
+          await showAppAlert("This slot is blocked by admin.");
           return;
         }
 
-        const ok = confirm("Do you want to unblock this slot?");
+                const ok = await showAppConfirm("Do you want to unblock this slot?");
         if (!ok) return;
 
         await deleteSlot(existing.id, "Slot unblocked.");
@@ -1286,7 +1552,7 @@
       const isOwner = existing.teacherUid === currentUser.uid;
 
       if (!isAdmin && !isOwner) {
-        alert(
+                await showAppAlert(
           `This slot is already booked.\n\n` +
           `Teacher: ${existing.teacherName || ""}\n` +
           `Class: ${existing.className || ""} - ${existing.section || ""}\n` +
@@ -1295,7 +1561,7 @@
         return;
       }
 
-      const ok = confirm(
+           const ok = await showAppConfirm(
         `Cancel this booking?\n\n` +
         `Teacher: ${existing.teacherName || ""}\n` +
         `Class: ${existing.className || ""} - ${existing.section || ""}\n` +
@@ -1313,7 +1579,7 @@
         showToast(message);
       } catch (error) {
         console.error(error);
-        alert("Unable to update slot. Check Firestore rules.");
+        await showAppAlert("Unable to update slot. Check Firestore rules.");
       }
     }
 
