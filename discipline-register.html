@@ -305,11 +305,69 @@
       color: #a4261d;
     }
 
-    .issue-option.sign input:checked + .issue-chip {
+        .issue-option.sign input:checked + .issue-chip {
       border-color: var(--sign);
       background: #f5edff;
       color: #6832a1;
     }
+
+    .student-extra-row {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      min-height: 40px;
+      margin-top: 9px;
+    }
+
+    .late-minutes-wrap {
+      display: none;
+      align-items: center;
+      gap: 7px;
+      color: #9a4f00;
+      font-size: 0.86rem;
+      font-weight: 700;
+    }
+
+    .late-minutes-wrap.show {
+      display: flex;
+    }
+
+    .late-minutes-input {
+      width: 76px;
+      padding: 7px 8px;
+      border: 1.3px solid var(--late);
+      border-radius: 8px;
+      background: #fffaf0;
+      color: #7a4100;
+      text-align: center;
+      font-weight: 700;
+    }
+
+    .wa-student-btn {
+      display: none;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      margin-left: auto;
+      border: none;
+      border-radius: 8px;
+      padding: 8px 12px;
+      background: #25d366;
+      color: #fff;
+      font-size: 0.86rem;
+      font-weight: 750;
+      cursor: pointer;
+    }
+
+    .wa-student-btn.show {
+      display: inline-flex;
+    }
+
+    .wa-student-btn:active {
+      background: #1ea952;
+    }
+
+    .message-card {
 
     .message-card {
       padding: 22px 14px;
@@ -638,9 +696,15 @@
 
       const html = students.map(student => {
         const entry = savedData[student.id] || {};
-        const isLate = entry.late === true;
+               const isLate = entry.late === true;
         const noUniform = entry.noUniform === true;
         const noSign = entry.noSign === true;
+
+        const lateMinutes =
+          isLate && Number(entry.lateMinutes) > 0
+            ? Number(entry.lateMinutes)
+            : "";
+
         const hasEntry = isLate || noUniform || noSign;
         const safeName = escapeHtml(student.name || "");
         const safePhoto = escapeHtml(student.photoUrl || "");
@@ -682,7 +746,7 @@
                 <span class="issue-chip">No Uniform</span>
               </label>
 
-              <label class="issue-option sign">
+                           <label class="issue-option sign">
                 <input
                   type="checkbox"
                   class="discipline-check"
@@ -693,16 +757,63 @@
                 <span class="issue-chip">No Sign</span>
               </label>
             </div>
+
+            <div class="student-extra-row">
+              <label
+                class="late-minutes-wrap ${isLate ? "show" : ""}"
+                data-minutes-wrap="${student.id}"
+              >
+                Late by
+
+                <input
+                  type="number"
+                  class="late-minutes-input"
+                  data-student-id="${student.id}"
+                  min="1"
+                  max="180"
+                  step="1"
+                  inputmode="numeric"
+                  value="${escapeHtml(lateMinutes)}"
+                  ${isLate ? "" : "disabled"}
+                >
+
+                minutes
+              </label>
+
+              <button
+                type="button"
+                class="wa-student-btn ${hasEntry ? "show" : ""}"
+                data-student-id="${student.id}"
+              >
+                WhatsApp
+              </button>
+            </div>
           </article>
         `;
       }).join("");
 
       studentList.innerHTML = html;
 
-      document.querySelectorAll(".discipline-check").forEach(input => {
+           document.querySelectorAll(".discipline-check").forEach(input => {
         input.addEventListener("change", function () {
           updateStudentCardState(this.dataset.studentId);
           updateCounts();
+        });
+      });
+
+      document.querySelectorAll(".late-minutes-input").forEach(input => {
+        input.addEventListener("input", function () {
+          this.value = this.value.replace(/[^\d]/g, "");
+
+          if (Number(this.value) > 180) {
+            this.value = "180";
+          }
+        });
+      });
+
+      document.querySelectorAll(".wa-student-btn").forEach(button => {
+        button.addEventListener("click", function () {
+          openStudentWhatsApp(this.dataset.studentId);
         });
       });
 
@@ -716,11 +827,39 @@
 
       if (!card) return;
 
+      const lateCheckbox = card.querySelector(
+        '.discipline-check[data-field="late"]'
+      );
+
+      const minutesWrap = card.querySelector(
+        `[data-minutes-wrap="${studentId}"]`
+      );
+
+      const minutesInput = card.querySelector(
+        `.late-minutes-input[data-student-id="${studentId}"]`
+      );
+
+      const whatsappButton = card.querySelector(
+        `.wa-student-btn[data-student-id="${studentId}"]`
+      );
+
       const selected = card.querySelectorAll(
         ".discipline-check:checked"
       ).length > 0;
 
+      const isLate = lateCheckbox?.checked === true;
+
       card.classList.toggle("has-entry", selected);
+      minutesWrap?.classList.toggle("show", isLate);
+      whatsappButton?.classList.toggle("show", selected);
+
+      if (minutesInput) {
+        minutesInput.disabled = !isLate;
+
+        if (!isLate) {
+          minutesInput.value = "";
+        }
+      }
     }
 
     function updateCounts() {
@@ -737,15 +876,15 @@
       ).length;
     }
 
-    function collectRegisterData() {
+       function collectRegisterData() {
       const registerData = {};
 
-      students.forEach(student => {
+      for (const student of students) {
         const card = document.querySelector(
           `.student-card[data-student-id="${student.id}"]`
         );
 
-        if (!card) return;
+        if (!card) continue;
 
         const late = card.querySelector(
           '.discipline-check[data-field="late"]'
@@ -759,16 +898,245 @@
           '.discipline-check[data-field="noSign"]'
         )?.checked === true;
 
+        const minutesInput = card.querySelector(
+          `.late-minutes-input[data-student-id="${student.id}"]`
+        );
+
+        const lateMinutes = late
+          ? parseInt(minutesInput?.value || "", 10)
+          : 0;
+
+        if (late && (!Number.isFinite(lateMinutes) || lateMinutes < 1)) {
+          showToast(
+            `Enter late minutes for ${student.name || "the student"}.`,
+            "error"
+          );
+
+          minutesInput?.focus();
+          return null;
+        }
+
         if (late || noUniform || noSign) {
           registerData[student.id] = {
             late,
+            lateMinutes: late ? lateMinutes : null,
             noUniform,
             noSign
           };
         }
-      });
+      }
 
       return registerData;
+    }
+
+       function formatRegisterDate(dateString) {
+      if (!dateString) return "";
+
+      const parts = dateString.split("-");
+
+      if (parts.length !== 3) {
+        return dateString;
+      }
+
+      return `${parts[2]}-${parts[1]}-${parts[0]}`;
+    }
+
+    function normalizeWhatsAppNumber(phoneNumber) {
+      let digits = String(phoneNumber || "").replace(/\D/g, "");
+
+      if (digits.length === 10) {
+        digits = `91${digits}`;
+      } else if (digits.length === 11 && digits.startsWith("0")) {
+        digits = `91${digits.substring(1)}`;
+      }
+
+      return digits;
+    }
+
+    function getStudentDisciplineEntry(studentId) {
+      const card = document.querySelector(
+        `.student-card[data-student-id="${studentId}"]`
+      );
+
+      if (!card) return null;
+
+      const late = card.querySelector(
+        '.discipline-check[data-field="late"]'
+      )?.checked === true;
+
+      const noUniform = card.querySelector(
+        '.discipline-check[data-field="noUniform"]'
+      )?.checked === true;
+
+      const noSign = card.querySelector(
+        '.discipline-check[data-field="noSign"]'
+      )?.checked === true;
+
+      const minutesInput = card.querySelector(
+        `.late-minutes-input[data-student-id="${studentId}"]`
+      );
+
+      const lateMinutes = late
+        ? parseInt(minutesInput?.value || "", 10)
+        : 0;
+
+      return {
+        late,
+        lateMinutes,
+        noUniform,
+        noSign
+      };
+    }
+
+    function buildDisciplineWhatsAppMessage(student, entry) {
+      const studentName = student.name || "Student";
+
+      const classSection = [
+        currentClassName,
+        currentSectionName
+      ].filter(Boolean).join(" – ");
+
+      const selectedDate = formatRegisterDate(
+        registerDate.value || loadedDate
+      );
+
+      const issueCount = [
+        entry.late,
+        entry.noUniform,
+        entry.noSign
+      ].filter(Boolean).length;
+
+      if (
+        issueCount === 1 &&
+        entry.late
+      ) {
+        return `Dear Parent,
+
+This is to inform you that your child, ${studentName} of ${classSection}, arrived at school ${entry.lateMinutes} minutes late on ${selectedDate}.
+
+Kindly ensure that your child reaches school on time in the future.
+
+ప్రియమైన తల్లిదండ్రులకు,
+
+ ${studentName}, ${classSection}, ${selectedDate} తేదీన పాఠశాలకు ${entry.lateMinutes} నిమిషాలు ఆలస్యంగా వచ్చారని తెలియజేస్తున్నాము.
+
+దయచేసి ఇకపై సమయానికి పాఠశాలకు వచ్చేలా చూసుకోండి.
+
+St. Patrick's School`;
+      }
+
+      const englishIssues = [];
+      const teluguIssues = [];
+
+      if (entry.late) {
+        englishIssues.push(
+          `• Arrived ${entry.lateMinutes} minutes late`
+        );
+
+        teluguIssues.push(
+          `• పాఠశాలకు ${entry.lateMinutes} నిమిషాలు ఆలస్యంగా వచ్చారు`
+        );
+      }
+
+      if (entry.noUniform) {
+        englishIssues.push(
+          "• Came without the prescribed uniform"
+        );
+
+        teluguIssues.push(
+          "• నిర్ణీత యూనిఫాం ధరించలేదు"
+        );
+      }
+
+      if (entry.noSign) {
+        englishIssues.push(
+          "• Parent's signature was not found"
+        );
+
+        teluguIssues.push(
+          "• తల్లిదండ్రుల సంతకం లేదు"
+        );
+      }
+
+      return `Dear Parent,
+
+This is to inform you that your child, ${studentName} of ${classSection}, was noted for the following on ${selectedDate}:
+
+Issues Observed:
+${englishIssues.join("\n")}
+
+Kindly take note and ensure that these issues are not repeated.
+
+ప్రియమైన తల్లిదండ్రులకు,
+
+${studentName}, ${classSection}, ${selectedDate} తేదీన క్రింది విషయాలకు సంబంధించి నమోదు చేయబడ్డారు:
+
+గమనించిన అంశాలు:
+${teluguIssues.join("\n")}
+
+దయచేసి ఈ విషయాలను గమనించి, భవిష్యత్తులో పునరావృతం కాకుండా చూసుకోగలరు.
+
+St. Patrick's School`;
+    }
+
+    function openStudentWhatsApp(studentId) {
+      const student = students.find(item => item.id === studentId);
+
+      if (!student) {
+        showToast("Student details were not found.", "error");
+        return;
+      }
+
+      const entry = getStudentDisciplineEntry(studentId);
+
+      if (
+        !entry ||
+        (!entry.late && !entry.noUniform && !entry.noSign)
+      ) {
+        showToast(
+          "Select at least one discipline issue.",
+          "error"
+        );
+        return;
+      }
+
+      if (
+        entry.late &&
+        (!Number.isFinite(entry.lateMinutes) || entry.lateMinutes < 1)
+      ) {
+        showToast(
+          `Enter late minutes for ${student.name || "the student"}.`,
+          "error"
+        );
+
+        document.querySelector(
+          `.late-minutes-input[data-student-id="${studentId}"]`
+        )?.focus();
+
+        return;
+      }
+
+      const phoneNumber = normalizeWhatsAppNumber(
+        student.parentPhone || student.phone || ""
+      );
+
+      if (phoneNumber.length < 12) {
+        showToast(
+          `Parent phone number is not available for ${student.name || "this student"}.`,
+          "error"
+        );
+        return;
+      }
+
+      const message = buildDisciplineWhatsAppMessage(
+        student,
+        entry
+      );
+
+      const whatsappUrl =
+        `https://wa.me/${phoneNumber}?text=${encodeURIComponent(message)}`;
+
+      window.open(whatsappUrl, "_blank", "noopener,noreferrer");
     }
 
     async function saveRegister() {
@@ -781,8 +1149,12 @@
       saveBtn.disabled = true;
       saveBtn.textContent = "Saving...";
 
-      try {
+           try {
         const registerData = collectRegisterData();
+
+        if (!registerData) {
+          return;
+        }
 
         registerData.__meta = {
           date: loadedDate,
