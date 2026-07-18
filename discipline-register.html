@@ -616,11 +616,15 @@
         .collection("students");
     }
 
-    function disciplineDocument(date) {
+       function disciplineCollection() {
       return db.collection("years").doc(academicYear)
         .collection("classes").doc(currentClassId)
         .collection("sections").doc(currentSectionId)
-        .collection("disciplineRegister").doc(date);
+        .collection("disciplineRegister");
+    }
+
+    function disciplineDocument(date) {
+      return disciplineCollection().doc(date);
     }
 
     auth.onAuthStateChanged(async function (user) {
@@ -988,7 +992,71 @@
       };
     }
 
-    function buildDisciplineWhatsAppMessage(student, entry) {
+        async function getStudentDisciplineCounts(studentId, currentEntry) {
+      const counts = {
+        late: 0,
+        noUniform: 0,
+        noSign: 0
+      };
+
+      const currentDate = loadedDate || registerDate.value;
+      const snapshot = await disciplineCollection().get();
+
+      snapshot.forEach(doc => {
+        /*
+          Do not count the currently opened date here.
+          The present screen selection will be added below.
+          This prevents the current date from being counted twice
+          when the register has already been saved.
+        */
+        if (doc.id === currentDate) {
+          return;
+        }
+
+        const documentData = doc.data() || {};
+        const savedEntry = documentData[studentId] || {};
+
+        if (savedEntry.late === true) {
+          counts.late += 1;
+        }
+
+        if (savedEntry.noUniform === true) {
+          counts.noUniform += 1;
+        }
+
+        if (savedEntry.noSign === true) {
+          counts.noSign += 1;
+        }
+      });
+
+      /*
+        Include the currently selected issues on the screen,
+        whether or not the current date has already been saved.
+      */
+      if (currentEntry.late === true) {
+        counts.late += 1;
+      }
+
+      if (currentEntry.noUniform === true) {
+        counts.noUniform += 1;
+      }
+
+      if (currentEntry.noSign === true) {
+        counts.noSign += 1;
+      }
+
+      return counts;
+    }
+
+    function getEnglishTimesText(count) {
+      return `${count} ${count === 1 ? "time" : "times"}`;
+    }
+
+    function getTeluguTimesText(count) {
+      return `${count} ${count === 1 ? "సారి" : "సార్లు"}`;
+    }
+
+    function buildDisciplineWhatsAppMessage(student, entry, counts) {
       const studentName = student.name || "Student";
 
       const classSection = [
@@ -997,7 +1065,7 @@
       ].filter(Boolean).join(" – ");
 
       const selectedDate = formatRegisterDate(
-        registerDate.value || loadedDate
+        loadedDate || registerDate.value
       );
 
       const issueCount = [
@@ -1014,11 +1082,15 @@
 
 This is to inform you that your child, ${studentName} of ${classSection}, arrived at school ${entry.lateMinutes} minutes late on ${selectedDate}.
 
+So far during this academic year, your child has arrived late ${getEnglishTimesText(counts.late)}.
+
 Kindly ensure that your child reaches school on time in the future.
 
 ప్రియమైన తల్లిదండ్రులకు,
 
- ${studentName}, ${classSection}, ${selectedDate} తేదీన పాఠశాలకు ${entry.lateMinutes} నిమిషాలు ఆలస్యంగా వచ్చారని తెలియజేస్తున్నాము.
+${studentName}, ${classSection}, ${selectedDate} తేదీన పాఠశాలకు ${entry.lateMinutes} నిమిషాలు ఆలస్యంగా వచ్చారని తెలియజేస్తున్నాము.
+
+ఈ విద్యా సంవత్సరంలో ఇప్పటివరకు ${getTeluguTimesText(counts.late)} ఆలస్యంగా వచ్చారు.
 
 దయచేసి ఇకపై సమయానికి పాఠశాలకు వచ్చేలా చూసుకోండి.
 
@@ -1030,31 +1102,31 @@ St. Patrick's School`;
 
       if (entry.late) {
         englishIssues.push(
-          `• Arrived ${entry.lateMinutes} minutes late`
+          `• Arrived ${entry.lateMinutes} minutes late. So far during this academic year, your child has arrived late ${getEnglishTimesText(counts.late)}.`
         );
 
         teluguIssues.push(
-          `• పాఠశాలకు ${entry.lateMinutes} నిమిషాలు ఆలస్యంగా వచ్చారు`
+          `• పాఠశాలకు ${entry.lateMinutes} నిమిషాలు ఆలస్యంగా వచ్చారు. ఈ విద్యా సంవత్సరంలో ఇప్పటివరకు ${getTeluguTimesText(counts.late)} ఆలస్యంగా వచ్చారు.`
         );
       }
 
       if (entry.noUniform) {
         englishIssues.push(
-          "• Came without the prescribed uniform"
+          `• Came without the complete prescribed uniform. So far during this academic year, your child has come without the complete uniform ${getEnglishTimesText(counts.noUniform)}.`
         );
 
         teluguIssues.push(
-          "• నిర్ణీత యూనిఫాం ధరించలేదు"
+          `• పూర్తి యూనిఫాం ధరించలేదు. ఈ విద్యా సంవత్సరంలో ఇప్పటివరకు పూర్తి యూనిఫాం లేకుండా ${getTeluguTimesText(counts.noUniform)} పాఠశాలకు వచ్చారు.`
         );
       }
 
       if (entry.noSign) {
         englishIssues.push(
-          "• Parent's signature was not found"
+          `• The required parent's signature was not found. So far during this academic year, the parent's signature has been missing ${getEnglishTimesText(counts.noSign)}.`
         );
 
         teluguIssues.push(
-          "• తల్లిదండ్రుల సంతకం లేదు"
+          `• తల్లిదండ్రుల సంతకం లేదు. ఈ విద్యా సంవత్సరంలో ఇప్పటివరకు తల్లిదండ్రుల సంతకం ${getTeluguTimesText(counts.noSign)} లేకపోయింది.`
         );
       }
 
@@ -1078,8 +1150,7 @@ ${teluguIssues.join("\n")}
 
 St. Patrick's School`;
     }
-
-    function openStudentWhatsApp(studentId) {
+       async function openStudentWhatsApp(studentId) {
       const student = students.find(item => item.id === studentId);
 
       if (!student) {
@@ -1128,17 +1199,71 @@ St. Patrick's School`;
         return;
       }
 
-      const message = buildDisciplineWhatsAppMessage(
-        student,
-        entry
+      const whatsappButton = document.querySelector(
+        `.wa-student-btn[data-student-id="${studentId}"]`
       );
 
-      const whatsappUrl =
-        `https://wa.me/${phoneNumber}?text=${encodeURIComponent(message)}`;
+      const originalButtonText =
+        whatsappButton?.textContent || "WhatsApp";
 
-      window.open(whatsappUrl, "_blank", "noopener,noreferrer");
+      /*
+        Open the tab immediately so the browser does not block it
+        while Firebase is calculating the previous counts.
+      */
+      const whatsappWindow = window.open(
+        "about:blank",
+        "_blank"
+      );
+
+      if (!whatsappWindow) {
+        showToast(
+          "Please allow pop-ups to open WhatsApp.",
+          "error"
+        );
+        return;
+      }
+
+      if (whatsappButton) {
+        whatsappButton.disabled = true;
+        whatsappButton.textContent = "Preparing...";
+      }
+
+      try {
+        const counts = await getStudentDisciplineCounts(
+          studentId,
+          entry
+        );
+
+        const message = buildDisciplineWhatsAppMessage(
+          student,
+          entry,
+          counts
+        );
+
+        const whatsappUrl =
+          `https://wa.me/${phoneNumber}?text=${encodeURIComponent(message)}`;
+
+        whatsappWindow.opener = null;
+        whatsappWindow.location.href = whatsappUrl;
+      } catch (error) {
+        console.error(
+          "Unable to calculate discipline counts:",
+          error
+        );
+
+        whatsappWindow.close();
+
+        showToast(
+          "Unable to prepare the WhatsApp message.",
+          "error"
+        );
+      } finally {
+        if (whatsappButton) {
+          whatsappButton.disabled = false;
+          whatsappButton.textContent = originalButtonText;
+        }
+      }
     }
-
     async function saveRegister() {
       if (!loadedDate || loadedDate !== registerDate.value) {
         showToast("Load the selected date before saving.", "error");
