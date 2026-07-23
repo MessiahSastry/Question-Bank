@@ -602,9 +602,10 @@
     const signCount = document.getElementById("signCount");
     const toast = document.getElementById("toast");
 
-    let students = [];
-    let loadedDate = "";
-    let toastTimer = null;
+   let students = [];
+let disciplineHistory = [];
+let loadedDate = "";
+let toastTimer = null;
 
     academicYearText.textContent = academicYear;
     classSectionText.textContent = [currentClassName, currentSectionName]
@@ -707,10 +708,24 @@
       setBusy(true, "Loading Discipline Register...");
 
       try {
-        const [studentSnapshot, registerSnapshot] = await Promise.all([
-          studentsCollection().orderBy("roll").get(),
-          disciplineDocument(date).get()
-        ]);
+       const [
+  studentSnapshot,
+  registerSnapshot,
+  disciplineSnapshot
+] = await Promise.all([
+  studentsCollection().orderBy("roll").get(),
+  disciplineDocument(date).get(),
+  disciplineCollection().get()
+]);
+
+disciplineHistory = [];
+
+disciplineSnapshot.forEach(doc => {
+  disciplineHistory.push({
+    id: doc.id,
+    data: doc.data() || {}
+  });
+});
 
         students = [];
         studentSnapshot.forEach(doc => {
@@ -1042,7 +1057,7 @@
       };
     }
 
-        async function getStudentDisciplineCounts(studentId, currentEntry) {
+       function getStudentDisciplineCounts(studentId, currentEntry) {
   const counts = {
     late: 0,
     noUniform: 0,
@@ -1050,21 +1065,13 @@
   };
 
   const currentDate = loadedDate || registerDate.value;
-  const snapshot = await disciplineCollection().get();
 
-  snapshot.forEach(doc => {
-    /*
-      Do not count the currently opened date here.
-
-      The present screen selection is added separately below.
-      This prevents the current date from being counted twice
-      when the register has already been saved.
-    */
-    if (doc.id === currentDate) {
-      return;
+  for (const registerDocument of disciplineHistory) {
+    if (registerDocument.id === currentDate) {
+      continue;
     }
 
-    const documentData = doc.data() || {};
+    const documentData = registerDocument.data || {};
     const savedEntry = documentData[studentId] || {};
 
     if (savedEntry.late === true) {
@@ -1078,12 +1085,8 @@
     if (savedEntry.noSign === true) {
       counts.noSign += 1;
     }
-  });
+  }
 
-  /*
-    Include the currently selected issues shown on the screen,
-    whether or not the current date was previously saved.
-  */
   if (currentEntry.late === true) {
     counts.late += 1;
   }
@@ -1211,20 +1214,9 @@ St. Patrick's School`;
   Desktop:
   Uses WhatsApp Web.
 */
-function getWhatsAppLaunchUrl(phoneNumber, message) {
+function launchWhatsApp(phoneNumber, message) {
   const encodedMessage = encodeURIComponent(message);
   const userAgent = navigator.userAgent || "";
-
-  const mobileWebUrl =
-    `https://api.whatsapp.com/send?phone=${phoneNumber}` +
-    `&text=${encodedMessage}&app_absent=0`;
-
-  const universalUrl =
-    `https://wa.me/${phoneNumber}?text=${encodedMessage}`;
-
-  const desktopUrl =
-    `https://web.whatsapp.com/send?phone=${phoneNumber}` +
-    `&text=${encodedMessage}`;
 
   const isAndroid = /Android/i.test(userAgent);
 
@@ -1235,31 +1227,38 @@ function getWhatsAppLaunchUrl(phoneNumber, message) {
       navigator.maxTouchPoints > 1
     );
 
-  if (isAndroid) {
-    const encodedFallbackUrl = encodeURIComponent(mobileWebUrl);
+  if (isAndroid || isIOS) {
+    const whatsappAppUrl =
+      `whatsapp://send?phone=${phoneNumber}` +
+      `&text=${encodedMessage}`;
 
-    return (
-      `intent://send?phone=${phoneNumber}` +
-      `&text=${encodedMessage}` +
-      `#Intent;` +
-      `scheme=whatsapp;` +
-      `S.browser_fallback_url=${encodedFallbackUrl};` +
-      `end`
-    );
+    window.location.href = whatsappAppUrl;
+    return true;
   }
 
-  if (isIOS) {
-    return universalUrl;
-  }
+  const whatsappWebUrl =
+    `https://web.whatsapp.com/send?phone=${phoneNumber}` +
+    `&text=${encodedMessage}`;
 
-  return desktopUrl;
+  const whatsappWindow = window.open(
+    whatsappWebUrl,
+    "_blank",
+    "noopener,noreferrer"
+  );
+
+  return Boolean(whatsappWindow);
 }
 
-async function openStudentWhatsApp(studentId) {
-  const student = students.find(item => item.id === studentId);
+function openStudentWhatsApp(studentId) {
+  const student = students.find(
+    item => item.id === studentId
+  );
 
   if (!student) {
-    showToast("Student details were not found.", "error");
+    showToast(
+      "Student details were not found.",
+      "error"
+    );
     return;
   }
 
@@ -1296,14 +1295,12 @@ async function openStudentWhatsApp(studentId) {
   }
 
   const phoneNumber = normalizeWhatsAppNumber(
-    student.parentPhone || student.phone || ""
+    student.parentPhone ||
+    student.phone ||
+    ""
   );
 
-  /*
-    International WhatsApp numbers normally contain
-    between 8 and 15 digits, without the plus symbol.
-  */
-  if (!/^\d{8,15}$/.test(phoneNumber)) {
+  if (!/^\d{10,15}$/.test(phoneNumber)) {
     showToast(
       `A valid parent phone number is not available for ${student.name || "this student"}.`,
       "error"
@@ -1311,127 +1308,27 @@ async function openStudentWhatsApp(studentId) {
     return;
   }
 
-  const whatsappButton = document.querySelector(
-    `.wa-student-btn[data-student-id="${studentId}"]`
+  const counts = getStudentDisciplineCounts(
+    studentId,
+    entry
   );
 
-  const originalButtonText =
-    whatsappButton?.textContent || "WhatsApp";
-
-  /*
-    Open a new tab immediately during the user's click.
-    This prevents mobile browsers from blocking it after
-    the Firebase request finishes.
-  */
-  const whatsappWindow = window.open(
-    "about:blank",
-    "_blank"
+  const message = buildDisciplineWhatsAppMessage(
+    student,
+    entry,
+    counts
   );
 
-  if (!whatsappWindow) {
+  const opened = launchWhatsApp(
+    phoneNumber,
+    message
+  );
+
+  if (!opened) {
     showToast(
-      "Please allow pop-ups to open WhatsApp.",
+      "Unable to open WhatsApp.",
       "error"
     );
-    return;
-  }
-
-  /*
-    Display a temporary message while Firebase calculates
-    the student's previous discipline counts.
-  */
-  try {
-    whatsappWindow.document.title = "Opening WhatsApp";
-
-    whatsappWindow.document.body.innerHTML = `
-      <div style="
-        min-height:100vh;
-        display:flex;
-        align-items:center;
-        justify-content:center;
-        padding:20px;
-        font-family:Arial,sans-serif;
-        text-align:center;
-        color:#333;
-        background:#f7f7f7;
-      ">
-        <div>
-          <div style="
-            margin-bottom:12px;
-            font-size:20px;
-            font-weight:700;
-            color:#128c7e;
-          ">
-            Preparing WhatsApp message...
-          </div>
-
-          <div style="
-            font-size:15px;
-            color:#666;
-          ">
-            Please wait.
-          </div>
-        </div>
-      </div>
-    `;
-  } catch (error) {
-    console.warn(
-      "Unable to display WhatsApp loading page:",
-      error
-    );
-  }
-
-  if (whatsappButton) {
-    whatsappButton.disabled = true;
-    whatsappButton.textContent = "Preparing...";
-  }
-
-  try {
-    const counts = await getStudentDisciplineCounts(
-      studentId,
-      entry
-    );
-
-    const message = buildDisciplineWhatsAppMessage(
-      student,
-      entry,
-      counts
-    );
-
-    const whatsappUrl = getWhatsAppLaunchUrl(
-      phoneNumber,
-      message
-    );
-
-    /*
-      Do not use visibilitychange or a timeout here.
-
-      Those methods can incorrectly redirect the tab to the
-      WhatsApp website even when the installed app is opening.
-    */
-    whatsappWindow.location.href = whatsappUrl;
-  } catch (error) {
-    console.error(
-      "Unable to prepare the WhatsApp message:",
-      error
-    );
-
-    if (
-      whatsappWindow &&
-      !whatsappWindow.closed
-    ) {
-      whatsappWindow.close();
-    }
-
-    showToast(
-      "Unable to prepare the WhatsApp message.",
-      "error"
-    );
-  } finally {
-    if (whatsappButton) {
-      whatsappButton.disabled = false;
-      whatsappButton.textContent = originalButtonText;
-    }
   }
 }
     async function saveRegister() {
@@ -1460,7 +1357,28 @@ async function openStudentWhatsApp(studentId) {
         };
 
         await disciplineDocument(loadedDate).set(registerData);
-        showToast("Discipline Register saved successfully.");
+
+const existingHistoryIndex = disciplineHistory.findIndex(
+  item => item.id === loadedDate
+);
+
+const cachedRegisterData = {
+  ...registerData
+};
+
+if (existingHistoryIndex >= 0) {
+  disciplineHistory[existingHistoryIndex] = {
+    id: loadedDate,
+    data: cachedRegisterData
+  };
+} else {
+  disciplineHistory.push({
+    id: loadedDate,
+    data: cachedRegisterData
+  });
+}
+
+showToast("Discipline Register saved successfully.");
       } catch (error) {
         console.error("Discipline Register save failed:", error);
         showToast("Unable to save the register.", "error");
