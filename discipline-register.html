@@ -1043,96 +1043,95 @@
     }
 
         async function getStudentDisciplineCounts(studentId, currentEntry) {
-      const counts = {
-        late: 0,
-        noUniform: 0,
-        noSign: 0
-      };
+  const counts = {
+    late: 0,
+    noUniform: 0,
+    noSign: 0
+  };
 
-      const currentDate = loadedDate || registerDate.value;
-      const snapshot = await disciplineCollection().get();
+  const currentDate = loadedDate || registerDate.value;
+  const snapshot = await disciplineCollection().get();
 
-      snapshot.forEach(doc => {
-        /*
-          Do not count the currently opened date here.
-          The present screen selection will be added below.
-          This prevents the current date from being counted twice
-          when the register has already been saved.
-        */
-        if (doc.id === currentDate) {
-          return;
-        }
+  snapshot.forEach(doc => {
+    /*
+      Do not count the currently opened date here.
 
-        const documentData = doc.data() || {};
-        const savedEntry = documentData[studentId] || {};
-
-        if (savedEntry.late === true) {
-          counts.late += 1;
-        }
-
-        if (savedEntry.noUniform === true) {
-          counts.noUniform += 1;
-        }
-
-        if (savedEntry.noSign === true) {
-          counts.noSign += 1;
-        }
-      });
-
-      /*
-        Include the currently selected issues on the screen,
-        whether or not the current date has already been saved.
-      */
-      if (currentEntry.late === true) {
-        counts.late += 1;
-      }
-
-      if (currentEntry.noUniform === true) {
-        counts.noUniform += 1;
-      }
-
-      if (currentEntry.noSign === true) {
-        counts.noSign += 1;
-      }
-
-      return counts;
+      The present screen selection is added separately below.
+      This prevents the current date from being counted twice
+      when the register has already been saved.
+    */
+    if (doc.id === currentDate) {
+      return;
     }
 
-    function getEnglishTimesText(count) {
-      return `${count} ${count === 1 ? "time" : "times"}`;
+    const documentData = doc.data() || {};
+    const savedEntry = documentData[studentId] || {};
+
+    if (savedEntry.late === true) {
+      counts.late += 1;
     }
 
-    function getTeluguTimesText(count) {
-      return `${count} ${count === 1 ? "సారి" : "సార్లు"}`;
+    if (savedEntry.noUniform === true) {
+      counts.noUniform += 1;
     }
 
-    function buildDisciplineWhatsAppMessage(student, entry, counts) {
-      const studentName = student.name || "Student";
+    if (savedEntry.noSign === true) {
+      counts.noSign += 1;
+    }
+  });
 
-      const classSection = [
-        currentClassName,
-        currentSectionName
-      ].filter(Boolean).join(" – ");
+  /*
+    Include the currently selected issues shown on the screen,
+    whether or not the current date was previously saved.
+  */
+  if (currentEntry.late === true) {
+    counts.late += 1;
+  }
 
-      const selectedDate = formatRegisterDate(
-        loadedDate || registerDate.value
-      );
+  if (currentEntry.noUniform === true) {
+    counts.noUniform += 1;
+  }
 
-      const issueCount = [
-        entry.late,
-        entry.noUniform,
-        entry.noSign
-      ].filter(Boolean).length;
+  if (currentEntry.noSign === true) {
+    counts.noSign += 1;
+  }
 
-      if (
-        issueCount === 1 &&
-        entry.late
-      ) {
-        return `Dear Parent,
+  return counts;
+}
+
+function getEnglishTimesText(count) {
+  return `${count} ${count === 1 ? "time" : "times"}`;
+}
+
+function getTeluguTimesText(count) {
+  return `${count} ${count === 1 ? "సారి" : "సార్లు"}`;
+}
+
+function buildDisciplineWhatsAppMessage(student, entry, counts) {
+  const studentName = student.name || "Student";
+
+  const classSection = [
+    currentClassName,
+    currentSectionName
+  ].filter(Boolean).join(" – ");
+
+  const selectedDate = formatRegisterDate(
+    loadedDate || registerDate.value
+  );
+
+  const issueCount = [
+    entry.late,
+    entry.noUniform,
+    entry.noSign
+  ].filter(Boolean).length;
+
+  /*
+    Message when only the Late option is selected.
+  */
+  if (issueCount === 1 && entry.late) {
+    return `Dear Parent,
 
 This is to inform you that your child, ${studentName} of ${classSection}, arrived at school ${entry.lateMinutes} minutes late on ${selectedDate}.
-
-So far during this academic year, your child has arrived late ${getEnglishTimesText(counts.late)}.
 
 Kindly ensure that your child reaches school on time in the future.
 
@@ -1140,47 +1139,45 @@ Kindly ensure that your child reaches school on time in the future.
 
 ${studentName}, ${classSection}, ${selectedDate} తేదీన పాఠశాలకు ${entry.lateMinutes} నిమిషాలు ఆలస్యంగా వచ్చారని తెలియజేస్తున్నాము.
 
-ఈ విద్యా సంవత్సరంలో ఇప్పటివరకు ${getTeluguTimesText(counts.late)} ఆలస్యంగా వచ్చారు.
-
-దయచేసి ఇకపై సమయానికి పాఠశాలకు వచ్చేలా చూసుకోండి.
+దయచేసి ఇకపై సమయానికి పాఠశాలకు వచ్చేలా చుడండి.
 
 St. Patrick's School`;
-      }
+  }
 
-      const englishIssues = [];
-      const teluguIssues = [];
+  const englishIssues = [];
+  const teluguIssues = [];
 
-      if (entry.late) {
-        englishIssues.push(
-          `• Arrived ${entry.lateMinutes} minutes late. So far during this academic year, your child has arrived late ${getEnglishTimesText(counts.late)}.`
-        );
+  if (entry.late) {
+    englishIssues.push(
+      `• Arrived ${entry.lateMinutes} minutes late.`
+    );
 
-        teluguIssues.push(
-          `• పాఠశాలకు ${entry.lateMinutes} నిమిషాలు ఆలస్యంగా వచ్చారు. ఈ విద్యా సంవత్సరంలో ఇప్పటివరకు ${getTeluguTimesText(counts.late)} ఆలస్యంగా వచ్చారు.`
-        );
-      }
+    teluguIssues.push(
+      `• పాఠశాలకు ${entry.lateMinutes} నిమిషాలు ఆలస్యంగా వచ్చారు.`
+    );
+  }
 
-      if (entry.noUniform) {
-        englishIssues.push(
-          `• Came without the complete prescribed uniform. So far during this academic year, your child has come without the complete uniform ${getEnglishTimesText(counts.noUniform)}.`
-        );
+  if (entry.noUniform) {
+    englishIssues.push(
+      "• Came without the complete uniform."
+    );
 
-        teluguIssues.push(
-          `• పూర్తి యూనిఫాం ధరించలేదు. ఈ విద్యా సంవత్సరంలో ఇప్పటివరకు పూర్తి యూనిఫాం లేకుండా ${getTeluguTimesText(counts.noUniform)} పాఠశాలకు వచ్చారు.`
-        );
-      }
+    teluguIssues.push(
+      "• పూర్తి యూనిఫాం ధరించలేదు."
+    );
+  }
 
-      if (entry.noSign) {
-        englishIssues.push(
-          `• The required parent's signature was not found. So far during this academic year, the parent's signature has been missing ${getEnglishTimesText(counts.noSign)}.`
-        );
+  if (entry.noSign) {
+    englishIssues.push(
+      `• The required parent's signature was not found in the diary.`
+    );
 
-        teluguIssues.push(
-          `• తల్లిదండ్రుల సంతకం లేదు. ఈ విద్యా సంవత్సరంలో ఇప్పటివరకు తల్లిదండ్రుల సంతకం ${getTeluguTimesText(counts.noSign)} లేకపోయింది.`
-        );
-      }
+    teluguIssues.push(
+      `• డైరీలో తల్లిదండ్రుల సంతకం లేదు.`
+    );
+  }
 
-      return `Dear Parent,
+  return `Dear Parent,
 
 This is to inform you that your child, ${studentName} of ${classSection}, was noted for the following on ${selectedDate}:
 
@@ -1191,7 +1188,7 @@ Kindly take note and ensure that these issues are not repeated.
 
 ప్రియమైన తల్లిదండ్రులకు,
 
-${studentName}, ${classSection}, ${selectedDate} తేదీన క్రింది విషయాలకు సంబంధించి నమోదు చేయబడ్డారు:
+${studentName}, ${classSection}, ${selectedDate} తేదీన క్రింది విషయాలు నమోదు చేయబడ్డాయి:
 
 గమనించిన అంశాలు:
 ${teluguIssues.join("\n")}
@@ -1199,121 +1196,244 @@ ${teluguIssues.join("\n")}
 దయచేసి ఈ విషయాలను గమనించి, భవిష్యత్తులో పునరావృతం కాకుండా చూసుకోగలరు.
 
 St. Patrick's School`;
+}
+
+/*
+  Creates the most suitable WhatsApp link for the device.
+
+  Android:
+  Uses the Android intent link to open the installed WhatsApp app.
+  If WhatsApp is unavailable, it opens the official WhatsApp webpage.
+
+  iPhone/iPad:
+  Uses the WhatsApp universal link.
+
+  Desktop:
+  Uses WhatsApp Web.
+*/
+function getWhatsAppLaunchUrl(phoneNumber, message) {
+  const encodedMessage = encodeURIComponent(message);
+  const userAgent = navigator.userAgent || "";
+
+  const mobileWebUrl =
+    `https://api.whatsapp.com/send?phone=${phoneNumber}` +
+    `&text=${encodedMessage}&app_absent=0`;
+
+  const universalUrl =
+    `https://wa.me/${phoneNumber}?text=${encodedMessage}`;
+
+  const desktopUrl =
+    `https://web.whatsapp.com/send?phone=${phoneNumber}` +
+    `&text=${encodedMessage}`;
+
+  const isAndroid = /Android/i.test(userAgent);
+
+  const isIOS =
+    /iPhone|iPad|iPod/i.test(userAgent) ||
+    (
+      navigator.platform === "MacIntel" &&
+      navigator.maxTouchPoints > 1
+    );
+
+  if (isAndroid) {
+    const encodedFallbackUrl = encodeURIComponent(mobileWebUrl);
+
+    return (
+      `intent://send?phone=${phoneNumber}` +
+      `&text=${encodedMessage}` +
+      `#Intent;` +
+      `scheme=whatsapp;` +
+      `S.browser_fallback_url=${encodedFallbackUrl};` +
+      `end`
+    );
+  }
+
+  if (isIOS) {
+    return universalUrl;
+  }
+
+  return desktopUrl;
+}
+
+async function openStudentWhatsApp(studentId) {
+  const student = students.find(item => item.id === studentId);
+
+  if (!student) {
+    showToast("Student details were not found.", "error");
+    return;
+  }
+
+  const entry = getStudentDisciplineEntry(studentId);
+
+  if (
+    !entry ||
+    (!entry.late && !entry.noUniform && !entry.noSign)
+  ) {
+    showToast(
+      "Select at least one discipline issue.",
+      "error"
+    );
+    return;
+  }
+
+  if (
+    entry.late &&
+    (
+      !Number.isFinite(entry.lateMinutes) ||
+      entry.lateMinutes < 1
+    )
+  ) {
+    showToast(
+      `Enter late minutes for ${student.name || "the student"}.`,
+      "error"
+    );
+
+    document.querySelector(
+      `.late-minutes-input[data-student-id="${studentId}"]`
+    )?.focus();
+
+    return;
+  }
+
+  const phoneNumber = normalizeWhatsAppNumber(
+    student.parentPhone || student.phone || ""
+  );
+
+  /*
+    International WhatsApp numbers normally contain
+    between 8 and 15 digits, without the plus symbol.
+  */
+  if (!/^\d{8,15}$/.test(phoneNumber)) {
+    showToast(
+      `A valid parent phone number is not available for ${student.name || "this student"}.`,
+      "error"
+    );
+    return;
+  }
+
+  const whatsappButton = document.querySelector(
+    `.wa-student-btn[data-student-id="${studentId}"]`
+  );
+
+  const originalButtonText =
+    whatsappButton?.textContent || "WhatsApp";
+
+  /*
+    Open a new tab immediately during the user's click.
+    This prevents mobile browsers from blocking it after
+    the Firebase request finishes.
+  */
+  const whatsappWindow = window.open(
+    "about:blank",
+    "_blank"
+  );
+
+  if (!whatsappWindow) {
+    showToast(
+      "Please allow pop-ups to open WhatsApp.",
+      "error"
+    );
+    return;
+  }
+
+  /*
+    Display a temporary message while Firebase calculates
+    the student's previous discipline counts.
+  */
+  try {
+    whatsappWindow.document.title = "Opening WhatsApp";
+
+    whatsappWindow.document.body.innerHTML = `
+      <div style="
+        min-height:100vh;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        padding:20px;
+        font-family:Arial,sans-serif;
+        text-align:center;
+        color:#333;
+        background:#f7f7f7;
+      ">
+        <div>
+          <div style="
+            margin-bottom:12px;
+            font-size:20px;
+            font-weight:700;
+            color:#128c7e;
+          ">
+            Preparing WhatsApp message...
+          </div>
+
+          <div style="
+            font-size:15px;
+            color:#666;
+          ">
+            Please wait.
+          </div>
+        </div>
+      </div>
+    `;
+  } catch (error) {
+    console.warn(
+      "Unable to display WhatsApp loading page:",
+      error
+    );
+  }
+
+  if (whatsappButton) {
+    whatsappButton.disabled = true;
+    whatsappButton.textContent = "Preparing...";
+  }
+
+  try {
+    const counts = await getStudentDisciplineCounts(
+      studentId,
+      entry
+    );
+
+    const message = buildDisciplineWhatsAppMessage(
+      student,
+      entry,
+      counts
+    );
+
+    const whatsappUrl = getWhatsAppLaunchUrl(
+      phoneNumber,
+      message
+    );
+
+    /*
+      Do not use visibilitychange or a timeout here.
+
+      Those methods can incorrectly redirect the tab to the
+      WhatsApp website even when the installed app is opening.
+    */
+    whatsappWindow.location.href = whatsappUrl;
+  } catch (error) {
+    console.error(
+      "Unable to prepare the WhatsApp message:",
+      error
+    );
+
+    if (
+      whatsappWindow &&
+      !whatsappWindow.closed
+    ) {
+      whatsappWindow.close();
     }
-       async function openStudentWhatsApp(studentId) {
-      const student = students.find(item => item.id === studentId);
 
-      if (!student) {
-        showToast("Student details were not found.", "error");
-        return;
-      }
-
-      const entry = getStudentDisciplineEntry(studentId);
-
-      if (
-        !entry ||
-        (!entry.late && !entry.noUniform && !entry.noSign)
-      ) {
-        showToast(
-          "Select at least one discipline issue.",
-          "error"
-        );
-        return;
-      }
-
-      if (
-        entry.late &&
-        (!Number.isFinite(entry.lateMinutes) || entry.lateMinutes < 1)
-      ) {
-        showToast(
-          `Enter late minutes for ${student.name || "the student"}.`,
-          "error"
-        );
-
-        document.querySelector(
-          `.late-minutes-input[data-student-id="${studentId}"]`
-        )?.focus();
-
-        return;
-      }
-
-      const phoneNumber = normalizeWhatsAppNumber(
-        student.parentPhone || student.phone || ""
-      );
-
-      if (phoneNumber.length < 12) {
-        showToast(
-          `Parent phone number is not available for ${student.name || "this student"}.`,
-          "error"
-        );
-        return;
-      }
-
-      const whatsappButton = document.querySelector(
-        `.wa-student-btn[data-student-id="${studentId}"]`
-      );
-
-      const originalButtonText =
-        whatsappButton?.textContent || "WhatsApp";
-
-      /*
-        Open the tab immediately so the browser does not block it
-        while Firebase is calculating the previous counts.
-      */
-      const whatsappWindow = window.open(
-        "about:blank",
-        "_blank"
-      );
-
-      if (!whatsappWindow) {
-        showToast(
-          "Please allow pop-ups to open WhatsApp.",
-          "error"
-        );
-        return;
-      }
-
-      if (whatsappButton) {
-        whatsappButton.disabled = true;
-        whatsappButton.textContent = "Preparing...";
-      }
-
-      try {
-        const counts = await getStudentDisciplineCounts(
-          studentId,
-          entry
-        );
-
-        const message = buildDisciplineWhatsAppMessage(
-          student,
-          entry,
-          counts
-        );
-
-        const whatsappUrl =
-          `https://wa.me/${phoneNumber}?text=${encodeURIComponent(message)}`;
-
-        whatsappWindow.opener = null;
-        whatsappWindow.location.href = whatsappUrl;
-      } catch (error) {
-        console.error(
-          "Unable to calculate discipline counts:",
-          error
-        );
-
-        whatsappWindow.close();
-
-        showToast(
-          "Unable to prepare the WhatsApp message.",
-          "error"
-        );
-      } finally {
-        if (whatsappButton) {
-          whatsappButton.disabled = false;
-          whatsappButton.textContent = originalButtonText;
-        }
-      }
+    showToast(
+      "Unable to prepare the WhatsApp message.",
+      "error"
+    );
+  } finally {
+    if (whatsappButton) {
+      whatsappButton.disabled = false;
+      whatsappButton.textContent = originalButtonText;
     }
+  }
+}
     async function saveRegister() {
       if (!loadedDate || loadedDate !== registerDate.value) {
         showToast("Load the selected date before saving.", "error");
