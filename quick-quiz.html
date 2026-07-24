@@ -1291,13 +1291,29 @@ SUBMIT BUTTON IMPLEMENTATION:
 let submissionInProgress = false;
 let quizSubmitted = false;
 
-• Attach the event listener exactly in this pattern:
+• The question screen is rendered dynamically. Therefore, do not search for
+  the Submit Quiz button only once when the page loads.
 
-const submitQuizButton = document.getElementById('submit-quiz-btn');
+• Attach one delegated click listener to the document so that the Submit Quiz
+  button works even when it is created later:
 
-if (submitQuizButton) {
-  submitQuizButton.addEventListener('click', handleFinalQuizSubmission);
-}
+document.addEventListener('click', function(event) {
+  const submitQuizButton =
+    event.target.closest('#submit-quiz-btn');
+
+  if (!submitQuizButton) {
+    return;
+  }
+
+  event.preventDefault();
+  event.stopPropagation();
+
+  handleFinalQuizSubmission(event);
+});
+
+• Do not attach any additional click listener directly to submit-quiz-btn.
+• Do not use inline onclick.
+• Do not attach the listener inside the question-rendering function.
 
 • Create the final submission handler as an asynchronous function:
 
@@ -1311,22 +1327,48 @@ async function handleFinalQuizSubmission(event) {
     return;
   }
 
-  const confirmed = window.confirm(
-    'Are you sure you want to submit the quiz?'
-  );
-
-  if (!confirmed) {
-    return;
-  }
-
-  submissionInProgress = true;
-
   const submitButton =
     document.getElementById('submit-quiz-btn');
 
   const submissionMessage =
     document.getElementById('submission-message');
 
+  if (!submitButton) {
+    console.error('Submit Quiz button was not found.');
+    return;
+  }
+
+  // Do not use window.confirm because modal dialogs may be blocked
+  // inside the Gemini Canvas preview.
+  if (submitButton.dataset.confirmSubmission !== 'yes') {
+    submitButton.dataset.confirmSubmission = 'yes';
+    submitButton.textContent = 'Tap Again to Confirm';
+
+    if (submissionMessage) {
+      submissionMessage.textContent =
+        'Tap the button again to confirm final submission.';
+    }
+
+    setTimeout(function() {
+      if (
+        !submissionInProgress &&
+        !quizSubmitted &&
+        submitButton.dataset.confirmSubmission === 'yes'
+      ) {
+        delete submitButton.dataset.confirmSubmission;
+        submitButton.textContent = 'Submit Quiz';
+
+        if (submissionMessage) {
+          submissionMessage.textContent = '';
+        }
+      }
+    }, 6000);
+
+    return;
+  }
+
+  delete submitButton.dataset.confirmSubmission;
+  submissionInProgress = true;
   if (submitButton) {
     submitButton.disabled = true;
     submitButton.textContent = 'Submitting...';
@@ -1350,13 +1392,13 @@ async function handleFinalQuizSubmission(event) {
 
     const calculatedScore = calculateQuizScore();
 
-    const resultData = {
-      quizId: FIXED_QUIZ_ID,
-      quizTitle: FIXED_QUIZ_TITLE,
-      className: FIXED_CLASS_NAME,
-      board: FIXED_BOARD_NAME,
-      subject: FIXED_SUBJECT_NAME,
-      chapter: FIXED_CHAPTER_NAME,
+       const resultData = {
+      quizId: "${quizId}",
+      quizTitle: "${subj} - ${chap}",
+      className: "${cls}",
+      board: "${board}",
+      subject: "${subj}",
+      chapter: "${chap}",
       studentName: String(studentDetails.name || '').trim(),
       studentClass: String(studentDetails.className || '').trim(),
       section: String(studentDetails.section || '').trim(),
@@ -1410,9 +1452,13 @@ async function handleFinalQuizSubmission(event) {
   }
 }
 
-• Replace the FIXED_QUIZ_ID, FIXED_QUIZ_TITLE, FIXED_CLASS_NAME,
-  FIXED_BOARD_NAME, FIXED_SUBJECT_NAME and FIXED_CHAPTER_NAME placeholders
-  with the actual values supplied in this prompt.
+• The resultData code already contains the exact quiz ID, title, class,
+  board, subject and chapter values.
+
+• Do not create FIXED_QUIZ_ID, FIXED_QUIZ_TITLE, FIXED_CLASS_NAME,
+  FIXED_BOARD_NAME, FIXED_SUBJECT_NAME or FIXED_CHAPTER_NAME variables.
+
+• Do not leave any undefined placeholder inside the generated JavaScript.
 
 • Ensure quizStartedAtMilliseconds is assigned using Date.now()
   when the student clicks Start Quiz.
@@ -1524,8 +1570,8 @@ Before completing the application, test the full JavaScript flow internally:
 4. Options can be selected.
 5. Previous and Next work.
 6. Submit Quiz responds when clicked.
-7. The confirmation dialog appears.
-8. The button changes to "Submitting...".
+7. On the first click, the button changes to "Tap Again to Confirm".
+8. On the second click, the button changes to "Submitting...".
 9. Score and time are calculated.
 10. Firestore submission is attempted.
 11. The final result screen appears whether Firestore succeeds or fails.
