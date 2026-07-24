@@ -1162,11 +1162,23 @@ const firebaseConfig = {
   appId: "1:917615322861:web:c6c890aa2184dd395b8ee4"
 };
 
-if (!firebase.apps.length) {
-  firebase.initializeApp(firebaseConfig);
-}
+let db = null;
+let firebaseConnectionError = null;
 
-const db = firebase.firestore();
+try {
+  if (typeof firebase === 'undefined') {
+    throw new Error('Firebase SDK did not load.');
+  }
+
+  if (!firebase.apps.length) {
+    firebase.initializeApp(firebaseConfig);
+  }
+
+  db = firebase.firestore();
+} catch (error) {
+  console.error('Firebase initialization failed:', error);
+  firebaseConnectionError = error;
+}
 
 RESULT-SAVING FUNCTION:
 • Create a separate asynchronous JavaScript function named submitQuizResult(resultData).
@@ -1200,35 +1212,42 @@ function makeSafeResultId(resultData) {
   ].map(safePart).join('__');
 }
 
-• Implement submitQuizResult(resultData) using this logic:
+• Implement submitQuizResult(resultData) using this exact fail-safe logic:
 
 async function submitQuizResult(resultData) {
   const resultDocId = makeSafeResultId(resultData);
 
   try {
+    if (!db) {
+      throw firebaseConnectionError || new Error('Firebase is unavailable.');
+    }
+
     await db
       .collection('geminiQuizResults')
       .doc(resultDocId)
       .set(resultData);
 
     localStorage.removeItem(
-      'pendingQuizResult_' + resultData.quizId + '_' + resultData.rollNumber
+      'pendingQuizResult_' +
+      resultData.quizId +
+      '_' +
+      resultData.rollNumber
     );
 
     return {
       success: true,
+      duplicate: false,
       message: 'Result submitted successfully.'
     };
 
   } catch (error) {
     console.error('Quiz result submission failed:', error);
 
+    const errorCode = String(error?.code || '');
+
     if (
-      error &&
-      (
-        error.code === 'permission-denied' ||
-        error.code === 'firestore/permission-denied'
-      )
+      errorCode === 'permission-denied' ||
+      errorCode === 'firestore/permission-denied'
     ) {
       return {
         success: false,
@@ -1243,7 +1262,11 @@ async function submitQuizResult(resultData) {
       '_' +
       resultData.rollNumber;
 
-    localStorage.setItem(localKey, JSON.stringify(resultData));
+    try {
+      localStorage.setItem(localKey, JSON.stringify(resultData));
+    } catch (storageError) {
+      console.error('Local result backup failed:', storageError);
+    }
 
     return {
       success: false,
@@ -1254,9 +1277,160 @@ async function submitQuizResult(resultData) {
   }
 }
 
-• Call submitQuizResult(resultData) only once after final submission.
-• Disable the Submit Quiz button immediately before calling this function.
-• Do not create a second Firestore result document for the same quiz, class, section and roll number.
+SUBMIT BUTTON IMPLEMENTATION:
+• The final Submit Quiz button must be written exactly as:
+
+<button type="button" id="submit-quiz-btn">Submit Quiz</button>
+
+• Do not use type="submit".
+• Do not place the Submit Quiz button inside a form submission flow.
+• Do not use inline onclick attributes.
+• Attach the click event only after the HTML has loaded.
+• Create these global state variables:
+
+let submissionInProgress = false;
+let quizSubmitted = false;
+
+• Attach the event listener exactly in this pattern:
+
+const submitQuizButton = document.getElementById('submit-quiz-btn');
+
+if (submitQuizButton) {
+  submitQuizButton.addEventListener('click', handleFinalQuizSubmission);
+}
+
+• Create the final submission handler as an asynchronous function:
+
+async function handleFinalQuizSubmission(event) {
+  if (event) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  if (submissionInProgress || quizSubmitted) {
+    return;
+  }
+
+  const confirmed = window.confirm(
+    'Are you sure you want to submit the quiz?'
+  );
+
+  if (!confirmed) {
+    return;
+  }
+
+  submissionInProgress = true;
+
+  const submitButton =
+    document.getElementById('submit-quiz-btn');
+
+  const submissionMessage =
+    document.getElementById('submission-message');
+
+  if (submitButton) {
+    submitButton.disabled = true;
+    submitButton.textContent = 'Submitting...';
+  }
+
+  if (submissionMessage) {
+    submissionMessage.textContent =
+      'Calculating and saving your result...';
+  }
+
+  try {
+    const submittedAtMilliseconds = Date.now();
+    const elapsedSeconds = Math.max(
+      0,
+      Math.floor(
+        (submittedAtMilliseconds - quizStartedAtMilliseconds) / 1000
+      )
+    );
+
+    stopQuizTimer();
+
+    const calculatedScore = calculateQuizScore();
+
+    const resultData = {
+      quizId: FIXED_QUIZ_ID,
+      quizTitle: FIXED_QUIZ_TITLE,
+      className: FIXED_CLASS_NAME,
+      board: FIXED_BOARD_NAME,
+      subject: FIXED_SUBJECT_NAME,
+      chapter: FIXED_CHAPTER_NAME,
+      studentName: String(studentDetails.name || '').trim(),
+      studentClass: String(studentDetails.className || '').trim(),
+      section: String(studentDetails.section || '').trim(),
+      rollNumber: String(studentDetails.rollNumber || '').trim(),
+      score: Math.trunc(calculatedScore),
+      totalMarks: Math.trunc(questions.length),
+      percentage: Number(
+        (
+          (calculatedScore / questions.length) *
+          100
+        ).toFixed(2)
+      ),
+      startedAt: new Date(
+        quizStartedAtMilliseconds
+      ).toISOString(),
+      submittedAt: new Date(
+        submittedAtMilliseconds
+      ).toISOString(),
+      timeTakenSeconds: Math.trunc(elapsedSeconds),
+      timeTakenFormatted: formatElapsedTime(elapsedSeconds),
+      studentAnswers: collectStudentAnswers(),
+      attemptStatus: 'completed'
+    };
+
+    const saveResponse =
+      await submitQuizResult(resultData);
+
+    quizSubmitted = true;
+
+    showFinalResultScreen(
+      resultData,
+      saveResponse.message,
+      saveResponse.success,
+      saveResponse.duplicate
+    );
+
+  } catch (error) {
+    console.error('Final quiz submission failed:', error);
+
+    if (submissionMessage) {
+      submissionMessage.textContent =
+        'Unable to submit. Please try again.';
+    }
+
+    submissionInProgress = false;
+
+    if (submitButton) {
+      submitButton.disabled = false;
+      submitButton.textContent = 'Submit Quiz';
+    }
+  }
+}
+
+• Replace the FIXED_QUIZ_ID, FIXED_QUIZ_TITLE, FIXED_CLASS_NAME,
+  FIXED_BOARD_NAME, FIXED_SUBJECT_NAME and FIXED_CHAPTER_NAME placeholders
+  with the actual values supplied in this prompt.
+
+• Ensure quizStartedAtMilliseconds is assigned using Date.now()
+  when the student clicks Start Quiz.
+
+• Ensure calculateQuizScore(), stopQuizTimer(),
+  formatElapsedTime(), collectStudentAnswers() and
+  showFinalResultScreen() are real working functions.
+
+• Add this message element immediately below the Submit Quiz button:
+
+<div id="submission-message" role="status" aria-live="polite"></div>
+
+• Call submitQuizResult(resultData) only once.
+• Never reload the page when the Submit Quiz button is clicked.
+• Never allow a JavaScript error or Firebase error to prevent the
+  final result screen from being displayed.
+• Do not create a second Firestore result document for the same quiz,
+  class, section and roll number.
 • Do not use add() with an automatically generated document ID.
 • Use doc(resultDocId).set(resultData) exactly as described.
 • Do not add any extra fields that are not present in the required result object.
@@ -1342,6 +1516,21 @@ After final submission, calculate the score, percentage, start time, submission 
 Do not create this as a normal Gemini conversation, written question paper, worksheet, answer key or plain question list.
 
 Generate the complete HTML, CSS and JavaScript Canvas application and ensure that all buttons, navigation, scoring, timer, validation, Firebase initialization and Firestore result submission work correctly.
+
+Before completing the application, test the full JavaScript flow internally:
+1. Student details form opens.
+2. Start Quiz works.
+3. Timer starts.
+4. Options can be selected.
+5. Previous and Next work.
+6. Submit Quiz responds when clicked.
+7. The confirmation dialog appears.
+8. The button changes to "Submitting...".
+9. Score and time are calculated.
+10. Firestore submission is attempted.
+11. The final result screen appears whether Firestore succeeds or fails.
+
+Do not output the application until the Submit Quiz button has a valid asynchronous click event and contains no undefined function or variable references.
 
 Do not use YOUR_RESULTS_API_URL_HERE or any external result API. Save the completed result directly into the Firebase Firestore collection named geminiQuizResults.
 `.trim();
