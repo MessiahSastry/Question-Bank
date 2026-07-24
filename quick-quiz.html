@@ -868,7 +868,10 @@
       const subj = params.subject || '';
       const chap = params.chapter || '';
       const total = params.total || 0;
-      const rawType = params.questionType || 'MCQ (Single)';
+            const rawType = params.questionType || 'MCQ (Single)';
+
+      const quizId =
+        `QQ-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
 
       let qtype = rawType;
       if (qtype === 'Assertion and Reason') qtype = 'Assertion and Reason (MCQ Single)';
@@ -1133,26 +1136,141 @@ RESULT DATA:
   - studentAnswers
   - attemptStatus
 • Set attemptStatus to "completed" only after final submission.
+• Set quizId exactly to "${quizId}".
+• Do not generate or change the quiz ID inside the Canvas application.
 • Set quizTitle to "${subj} - ${chap}".
 • Set className to "${cls}".
 • Set board to "${board}".
 • Set subject to "${subj}".
 • Set chapter to "${chap}".
 
+FIREBASE CONNECTION:
+• Connect this Canvas application directly to Firebase Firestore.
+• Include these Firebase Compatibility SDK scripts in the HTML before the main quiz JavaScript:
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"><\/script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"><\/script>
+
+• Initialize Firebase using exactly this configuration:
+
+const firebaseConfig = {
+  apiKey: "AIzaSyAszVhWXUUOYLQ7VimKmPKf1yEu_CI9RCE",
+  authDomain: "stpatricks-questionbank.firebaseapp.com",
+  projectId: "stpatricks-questionbank",
+  storageBucket: "stpatricks-questionbank.firebasestorage.app",
+  messagingSenderId: "917615322861",
+  appId: "1:917615322861:web:c6c890aa2184dd395b8ee4"
+};
+
+if (!firebase.apps.length) {
+  firebase.initializeApp(firebaseConfig);
+}
+
+const db = firebase.firestore();
+
 RESULT-SAVING FUNCTION:
 • Create a separate asynchronous JavaScript function named submitQuizResult(resultData).
-• Keep the result-saving code clearly separated from the quiz display and scoring code.
-• The function must be ready to send resultData to an external API using an HTTP POST request.
-• Use this temporary placeholder as the API endpoint:
-  YOUR_RESULTS_API_URL_HERE
-• Send the request with:
-  - method: POST
-  - header Content-Type: application/json
-  - body: JSON.stringify(resultData)
-• Do not show "Result submitted successfully" unless the server returns a successful response.
-• If the API request fails, keep the result safely in localStorage using a key containing the quiz ID and roll number.
-• Display a clear message informing the student that the result could not yet be sent.
-• Do not erase the locally saved result after a failed request.
+• Keep this function separate from the quiz display, timer and scoring functions.
+• Save each completed result inside this Firestore collection:
+
+geminiQuizResults
+
+• Use a fixed document ID so the same student cannot submit the same quiz more than once.
+• Create the document ID using:
+  - quizId
+  - studentClass
+  - section
+  - rollNumber
+
+• Use this helper:
+
+function makeSafeResultId(resultData) {
+  const safePart = (value) => String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60);
+
+  return [
+    resultData.quizId,
+    resultData.studentClass,
+    resultData.section,
+    resultData.rollNumber
+  ].map(safePart).join('__');
+}
+
+• Implement submitQuizResult(resultData) using this logic:
+
+async function submitQuizResult(resultData) {
+  const resultDocId = makeSafeResultId(resultData);
+
+  try {
+    await db
+      .collection('geminiQuizResults')
+      .doc(resultDocId)
+      .set(resultData);
+
+    localStorage.removeItem(
+      'pendingQuizResult_' + resultData.quizId + '_' + resultData.rollNumber
+    );
+
+    return {
+      success: true,
+      message: 'Result submitted successfully.'
+    };
+
+  } catch (error) {
+    console.error('Quiz result submission failed:', error);
+
+    if (
+      error &&
+      (
+        error.code === 'permission-denied' ||
+        error.code === 'firestore/permission-denied'
+      )
+    ) {
+      return {
+        success: false,
+        duplicate: true,
+        message: 'This roll number has already submitted this quiz.'
+      };
+    }
+
+    const localKey =
+      'pendingQuizResult_' +
+      resultData.quizId +
+      '_' +
+      resultData.rollNumber;
+
+    localStorage.setItem(localKey, JSON.stringify(resultData));
+
+    return {
+      success: false,
+      duplicate: false,
+      message:
+        'Could not connect to the result server. Your result has been saved safely on this device.'
+    };
+  }
+}
+
+• Call submitQuizResult(resultData) only once after final submission.
+• Disable the Submit Quiz button immediately before calling this function.
+• Do not create a second Firestore result document for the same quiz, class, section and roll number.
+• Do not use add() with an automatically generated document ID.
+• Use doc(resultDocId).set(resultData) exactly as described.
+• Do not add any extra fields that are not present in the required result object.
+• Do not add undefined values to the Firestore document.
+• Ensure score and totalMarks are integers.
+• Ensure timeTakenSeconds is an integer.
+• Ensure rollNumber is stored as a string.
+• Ensure startedAt and submittedAt are stored as ISO date-time strings.
+• Ensure studentAnswers is an array or object.
+• Show "Result submitted successfully" only when the Firestore write succeeds.
+• If duplicate is true, show:
+  "This roll number has already submitted this quiz."
+• If the network write fails, display the returned failure message.
+• Do not show the normal success message after a failed or duplicate submission.
 
 RESULT SCREEN:
 • After final submission, hide the questions and timer.
@@ -1223,7 +1341,9 @@ After final submission, calculate the score, percentage, start time, submission 
 
 Do not create this as a normal Gemini conversation, written question paper, worksheet, answer key or plain question list.
 
-Generate the complete HTML, CSS and JavaScript Canvas application and ensure that all buttons, navigation, scoring, timer, validation and result preparation work correctly.
+Generate the complete HTML, CSS and JavaScript Canvas application and ensure that all buttons, navigation, scoring, timer, validation, Firebase initialization and Firestore result submission work correctly.
+
+Do not use YOUR_RESULTS_API_URL_HERE or any external result API. Save the completed result directly into the Firebase Firestore collection named geminiQuizResults.
 `.trim();
     }
 
