@@ -585,10 +585,12 @@
             </div>
           </div>
 
-                    <button type="button" id="generate-quiz-btn">Generate Quiz</button>
+                   <button type="button" id="generate-quiz-btn">Generate Quiz</button>
 
-          <div class="helper-note">
-            </div>
+<button type="button" id="view-quiz-results-btn">View Results</button>
+
+<div class="helper-note">
+</div>
         </form>
       `;
 
@@ -621,7 +623,11 @@
         if (el) el.addEventListener('input', syncTotal);
       });
 
-            document.getElementById('generate-quiz-btn').addEventListener('click', function () {
+           document.getElementById('view-quiz-results-btn').addEventListener('click', function () {
+  window.location.href = 'view-quiz-results.html';
+});
+
+document.getElementById('generate-quiz-btn').addEventListener('click', function () {
         const l1 = parseInt(document.getElementById('lvl1')?.value || '0', 10) || 0;
         const l2 = parseInt(document.getElementById('lvl2')?.value || '0', 10) || 0;
         const l3 = parseInt(document.getElementById('lvl3')?.value || '0', 10) || 0;
@@ -635,7 +641,8 @@
         const otherSubject = (document.getElementById('subject-other-input')?.value || '').trim();
         const finalSubject = (rawSubject === 'Other') ? (otherSubject || 'Other') : rawSubject;
 
-        const params = {
+               const params = {
+          academicYear: localStorage.getItem('sp_selectedYear') || '',
           class: document.getElementById('class-value')?.value || '',
           board: finalBoard,
           subject: finalSubject,
@@ -647,8 +654,15 @@
           total
         };
 
-        if (!params.class || !params.board || !params.subject || !params.chapter || !params.questionType) {
-          toast('Please fill all fields.');
+                if (
+          !params.academicYear ||
+          !params.class ||
+          !params.board ||
+          !params.subject ||
+          !params.chapter ||
+          !params.questionType
+        ) {
+          toast('Please select academic year and fill all fields.');
           return;
         }
 
@@ -863,6 +877,7 @@
     }
 
        function buildGeminiQuizPrompt(params) {
+           const academicYear = params.academicYear || '';
       const cls = params.class || '';
       const board = params.board || '';
       const subj = params.subject || '';
@@ -906,7 +921,8 @@
                         ? `Create an AP State Board (SCERT) style interactive quiz with ${total} questions. Distribution: L1:${params.l1}, L2:${params.l2}, L3:${params.l3}`
                         : `Create an interactive quiz with ${total} questions. Distribution: L1:${params.l1}, L2:${params.l2}, L3:${params.l3}`;
 
-      const header = `
+           const header = `
+Academic Year: ${academicYear}
 Class: ${cls}
 Board: ${board}
 Subject: ${subj}
@@ -1042,20 +1058,416 @@ INTERACTIVE QUIZ RULES:
 • Do NOT create a written question paper, worksheet, answer key, or plain question list.
 • The quiz must work as a student-facing interactive application.
 
-STUDENT DETAILS SCREEN:
-• Before showing any quiz question, display a student-details form.
-• The form must contain these compulsory fields:
-  - Student Name
-  - Class
-  - Section
-  - Roll Number
-• Class and Section may be dropdown fields.
-• Roll Number must be a text field so that numbers and letters are accepted.
-• Do not allow the student to start the quiz until all fields are completed.
-• Display a clear button named "Start Quiz".
-• Do not show any quiz question before the student clicks "Start Quiz".
-• Trim spaces from all entered values before accepting them.
+PHONE OTP AND STUDENT IDENTIFICATION SCREEN:
+• Do not ask the student to type Name, Class, Section or Roll Number.
+• Before showing any quiz question, display only:
+  - Registered Parent Mobile Number
+  - Send OTP button
+  - OTP field
+  - Verify OTP button
+  - an invisible reCAPTCHA container
+• Accept exactly 10 digits for the parent mobile number.
+• Add +91 before sending the number to Firebase Authentication.
+• The mobile number must be verified through Firebase Phone Authentication.
+• Do not show or enable Start Quiz before OTP verification succeeds.
 
+REQUIRED HTML ELEMENTS:
+• Create these elements with exactly these IDs:
+
+<input type="tel" id="parent-phone-input" maxlength="10"
+       inputmode="numeric" placeholder="Registered Parent Mobile Number">
+
+<button type="button" id="send-otp-btn">Send OTP</button>
+
+<div id="recaptcha-container"></div>
+
+<div id="otp-area" hidden>
+  <input type="text" id="otp-input" maxlength="6"
+         inputmode="numeric" placeholder="Enter 6-digit OTP">
+  <button type="button" id="verify-otp-btn">Verify OTP</button>
+</div>
+
+<div id="student-match-area"></div>
+
+<button type="button" id="start-quiz-btn" disabled>
+  Start Quiz
+</button>
+
+<div id="identity-message" role="status" aria-live="polite"></div>
+
+REQUIRED GLOBAL STATE:
+• Create these global variables:
+
+let otpConfirmationResult = null;
+let verifiedPhoneDigits = '';
+let matchedStudents = [];
+let selectedStudent = null;
+let recaptchaVerifier = null;
+
+SEND OTP:
+• Validate the phone input using exactly 10 digits.
+• Create the verifier only once:
+
+function getRecaptchaVerifier() {
+  if (!recaptchaVerifier) {
+    recaptchaVerifier =
+      new firebase.auth.RecaptchaVerifier(
+        'recaptcha-container',
+        {
+          size: 'invisible'
+        }
+      );
+  }
+
+  return recaptchaVerifier;
+}
+
+• Send OTP using:
+
+async function sendParentPhoneOtp() {
+  const phoneInput =
+    document.getElementById('parent-phone-input');
+
+  const message =
+    document.getElementById('identity-message');
+
+  const sendButton =
+    document.getElementById('send-otp-btn');
+
+  const phoneDigits =
+    String(phoneInput?.value || '').replace(/\D/g, '');
+
+  if (!/^\d{10}$/.test(phoneDigits)) {
+    message.textContent =
+      'Enter the registered 10-digit parent mobile number.';
+    return;
+  }
+
+  sendButton.disabled = true;
+  sendButton.textContent = 'Sending OTP...';
+  message.textContent = '';
+
+  try {
+    const verifier = getRecaptchaVerifier();
+
+    otpConfirmationResult =
+      await auth.signInWithPhoneNumber(
+        '+91' + phoneDigits,
+        verifier
+      );
+
+    verifiedPhoneDigits = phoneDigits;
+
+    document.getElementById('otp-area').hidden = false;
+
+    message.textContent =
+      'OTP sent successfully. Enter the OTP to continue.';
+
+  } catch (error) {
+    console.error('OTP sending failed:', error);
+
+    message.textContent =
+      error?.message || 'Unable to send OTP. Please try again.';
+
+    if (recaptchaVerifier) {
+      try {
+        recaptchaVerifier.clear();
+      } catch (clearError) {
+        console.error(clearError);
+      }
+
+      recaptchaVerifier = null;
+    }
+
+  } finally {
+    sendButton.disabled = false;
+    sendButton.textContent = 'Send OTP';
+  }
+}
+
+VERIFY OTP:
+• Verify the OTP using:
+
+async function verifyParentPhoneOtp() {
+  const otpInput =
+    document.getElementById('otp-input');
+
+  const verifyButton =
+    document.getElementById('verify-otp-btn');
+
+  const message =
+    document.getElementById('identity-message');
+
+  const otp =
+    String(otpInput?.value || '').replace(/\D/g, '');
+
+  if (!otpConfirmationResult) {
+    message.textContent = 'Send OTP first.';
+    return;
+  }
+
+  if (!/^\d{6}$/.test(otp)) {
+    message.textContent = 'Enter the 6-digit OTP.';
+    return;
+  }
+
+  verifyButton.disabled = true;
+  verifyButton.textContent = 'Verifying...';
+
+  try {
+    const credentialResult =
+      await otpConfirmationResult.confirm(otp);
+
+    const authenticatedPhone =
+      String(
+        credentialResult?.user?.phoneNumber || ''
+      );
+
+    if (
+      !authenticatedPhone.endsWith(verifiedPhoneDigits)
+    ) {
+      throw new Error(
+        'Verified phone number does not match.'
+      );
+    }
+
+    message.textContent =
+      'Phone verified. Finding student details...';
+
+    matchedStudents =
+      await findStudentsByRegisteredPhone(
+        verifiedPhoneDigits
+      );
+
+    renderMatchedStudents(matchedStudents);
+
+  } catch (error) {
+    console.error('OTP verification failed:', error);
+
+    message.textContent =
+      error?.message || 'Invalid OTP. Please try again.';
+
+  } finally {
+    verifyButton.disabled = false;
+    verifyButton.textContent = 'Verify OTP';
+  }
+}
+
+STUDENT LOOKUP:
+• Search only the academic year "${academicYear}".
+• Search the collection group named "students".
+• Match the student's parentPhone field with the verified 10-digit number.
+• Use this function:
+
+async function findStudentsByRegisteredPhone(phoneDigits) {
+  const snapshot =
+    await db
+      .collectionGroup('students')
+      .where('parentPhone', '==', phoneDigits)
+      .get();
+
+  const students = [];
+
+  for (const studentDoc of snapshot.docs) {
+    const pathParts =
+      studentDoc.ref.path.split('/');
+
+    if (
+      pathParts.length < 8 ||
+      pathParts[0] !== 'years' ||
+      pathParts[1] !== "${academicYear}" ||
+      pathParts[2] !== 'classes' ||
+      pathParts[4] !== 'sections' ||
+      pathParts[6] !== 'students'
+    ) {
+      continue;
+    }
+
+    const studentYear = pathParts[1];
+    const studentClassId = pathParts[3];
+    const studentSectionId = pathParts[5];
+    const studentId = pathParts[7];
+
+    const studentData = studentDoc.data() || {};
+
+    if (studentData.isDeleted === true) {
+      continue;
+    }
+
+    const classReference =
+      db.collection('years')
+        .doc(studentYear)
+        .collection('classes')
+        .doc(studentClassId);
+
+    const sectionReference =
+      classReference
+        .collection('sections')
+        .doc(studentSectionId);
+
+    const [classDocument, sectionDocument] =
+      await Promise.all([
+        classReference.get(),
+        sectionReference.get()
+      ]);
+
+    if (
+      !classDocument.exists ||
+      !sectionDocument.exists
+    ) {
+      continue;
+    }
+
+    students.push({
+      studentYear,
+      studentClassId,
+      studentSectionId,
+      studentId,
+      studentName: String(studentData.name || '').trim(),
+      studentClass: String(
+        classDocument.data()?.name || ''
+      ).trim(),
+      section: String(
+        sectionDocument.data()?.name || ''
+      ).trim(),
+      rollNumber: Number(studentData.roll),
+      parentPhone: String(
+        studentData.parentPhone || ''
+      ).replace(/\D/g, '')
+    });
+  }
+
+  return students;
+}
+
+MATCHED STUDENT DISPLAY:
+• If no matching students are found, display:
+  "No student is registered with this parent mobile number."
+• Keep Start Quiz disabled.
+
+• If exactly one matching student is found:
+  - assign that record to selectedStudent
+  - display Name, Class, Section and Roll Number as read-only
+  - enable Start Quiz
+
+• If more than one matching student is found:
+  - display "Select Student"
+  - show one selectable card or radio option for each matching student
+  - each option must show:
+    Student Name — Class — Section — Roll Number
+  - allow selection only from matchedStudents
+  - assign the selected record to selectedStudent
+  - enable Start Quiz only after one student is selected
+
+• Use this function pattern:
+
+function renderMatchedStudents(students) {
+  const area =
+    document.getElementById('student-match-area');
+
+  const startButton =
+    document.getElementById('start-quiz-btn');
+
+  const message =
+    document.getElementById('identity-message');
+
+  selectedStudent = null;
+  startButton.disabled = true;
+  area.innerHTML = '';
+
+  if (!students.length) {
+    message.textContent =
+      'No student is registered with this parent mobile number.';
+    return;
+  }
+
+  if (students.length === 1) {
+    selectedStudent = students[0];
+
+    area.innerHTML =
+      buildStudentIdentityCard(selectedStudent);
+
+    startButton.disabled = false;
+
+    message.textContent =
+      'Student details verified successfully.';
+
+    return;
+  }
+
+  message.textContent =
+    'More than one student uses this parent number. Select the student.';
+
+  const heading = document.createElement('h3');
+  heading.textContent = 'Select Student';
+  area.appendChild(heading);
+
+  students.forEach(function(student, index) {
+    const label = document.createElement('label');
+    label.className = 'student-choice';
+
+    const radio = document.createElement('input');
+    radio.type = 'radio';
+    radio.name = 'matched-student';
+    radio.value = String(index);
+
+    const text = document.createElement('span');
+    text.textContent =
+      student.studentName +
+      ' — ' +
+      student.studentClass +
+      ' — Section ' +
+      student.section +
+      ' — Roll No. ' +
+      student.rollNumber;
+
+    radio.addEventListener('change', function() {
+      selectedStudent = students[index];
+      startButton.disabled = false;
+    });
+
+    label.appendChild(radio);
+    label.appendChild(text);
+    area.appendChild(label);
+  });
+}
+
+function buildStudentIdentityCard(student) {
+  return [
+    '<div class="verified-student-card">',
+    '<div><strong>Name:</strong> ' +
+      escapeHtml(student.studentName) + '</div>',
+    '<div><strong>Class:</strong> ' +
+      escapeHtml(student.studentClass) + '</div>',
+    '<div><strong>Section:</strong> ' +
+      escapeHtml(student.section) + '</div>',
+    '<div><strong>Roll Number:</strong> ' +
+      escapeHtml(String(student.rollNumber)) + '</div>',
+    '</div>'
+  ].join('');
+}
+
+function escapeHtml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+START QUIZ:
+• Start Quiz must work only when:
+  - Firebase Authentication has a current user
+  - the current user has a verified phone number
+  - selectedStudent is not null
+  - selectedStudent.parentPhone equals verifiedPhoneDigits
+• When Start Quiz is clicked:
+  - disable all identity controls
+  - save quizStartedAtMilliseconds using Date.now()
+  - start the timer
+  - show the first question
+• Do not allow Name, Class, Section, Roll Number or Phone Number to be edited after the quiz begins.
 QUIZ START AND TIMER:
 • When the student clicks "Start Quiz":
   - validate all student details
@@ -1122,10 +1534,16 @@ RESULT DATA:
   - board
   - subject
   - chapter
+  - studentYear
+  - studentClassId
+  - studentSectionId
+  - studentId
   - studentName
   - studentClass
   - section
   - rollNumber
+  - verifiedPhone
+  - firebaseUid
   - score
   - totalMarks
   - percentage
@@ -1143,12 +1561,22 @@ RESULT DATA:
 • Set board to "${board}".
 • Set subject to "${subj}".
 • Set chapter to "${chap}".
-
+• Set studentYear from selectedStudent.studentYear.
+• Set studentClassId from selectedStudent.studentClassId.
+• Set studentSectionId from selectedStudent.studentSectionId.
+• Set studentId from selectedStudent.studentId.
+• Set studentName from selectedStudent.studentName.
+• Set studentClass from selectedStudent.studentClass.
+• Set section from selectedStudent.section.
+• Set rollNumber as an integer from selectedStudent.rollNumber.
+• Set verifiedPhone to the verified 10-digit parent phone number.
+• Set firebaseUid to auth.currentUser.uid.
 FIREBASE CONNECTION:
 • Connect this Canvas application directly to Firebase Firestore.
 • Include these Firebase Compatibility SDK scripts in the HTML before the main quiz JavaScript:
 
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"><\/script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"><\/script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"><\/script>
 
 • Initialize Firebase using exactly this configuration:
@@ -1163,6 +1591,7 @@ const firebaseConfig = {
 };
 
 let db = null;
+let auth = null;
 let firebaseConnectionError = null;
 
 try {
@@ -1174,7 +1603,10 @@ try {
     firebase.initializeApp(firebaseConfig);
   }
 
-  db = firebase.firestore();
+   db = firebase.firestore();
+  auth = firebase.auth();
+
+  auth.useDeviceLanguage();
 } catch (error) {
   console.error('Firebase initialization failed:', error);
   firebaseConnectionError = error;
@@ -1202,13 +1634,11 @@ function makeSafeResultId(resultData) {
     .toLowerCase()
     .replace(/[^a-z0-9_-]+/g, '-')
     .replace(/^-+|-+$/g, '')
-    .slice(0, 60);
+    .slice(0, 80);
 
   return [
     resultData.quizId,
-    resultData.studentClass,
-    resultData.section,
-    resultData.rollNumber
+    resultData.studentId
   ].map(safePart).join('__');
 }
 
@@ -1392,17 +1822,56 @@ async function handleFinalQuizSubmission(event) {
 
     const calculatedScore = calculateQuizScore();
 
-       const resultData = {
+          if (
+      !auth ||
+      !auth.currentUser ||
+      !auth.currentUser.uid ||
+      !selectedStudent ||
+      selectedStudent.parentPhone !== verifiedPhoneDigits
+    ) {
+      throw new Error(
+        'Verified student identity is unavailable.'
+      );
+    }
+
+    const resultData = {
       quizId: "${quizId}",
       quizTitle: "${subj} - ${chap}",
       className: "${cls}",
       board: "${board}",
       subject: "${subj}",
       chapter: "${chap}",
-      studentName: String(studentDetails.name || '').trim(),
-      studentClass: String(studentDetails.className || '').trim(),
-      section: String(studentDetails.section || '').trim(),
-      rollNumber: String(studentDetails.rollNumber || '').trim(),
+
+      studentYear:
+        String(selectedStudent.studentYear || ''),
+
+      studentClassId:
+        String(selectedStudent.studentClassId || ''),
+
+      studentSectionId:
+        String(selectedStudent.studentSectionId || ''),
+
+      studentId:
+        String(selectedStudent.studentId || ''),
+
+      studentName:
+        String(selectedStudent.studentName || '').trim(),
+
+      studentClass:
+        String(selectedStudent.studentClass || '').trim(),
+
+      section:
+        String(selectedStudent.section || '').trim(),
+
+      rollNumber:
+        Math.trunc(Number(selectedStudent.rollNumber)),
+
+      verifiedPhone:
+        String(verifiedPhoneDigits || ''),
+
+      firebaseUid:
+        String(auth.currentUser.uid),
+
       score: Math.trunc(calculatedScore),
       totalMarks: Math.trunc(questions.length),
       percentage: Number(
@@ -1483,7 +1952,10 @@ async function handleFinalQuizSubmission(event) {
 • Do not add undefined values to the Firestore document.
 • Ensure score and totalMarks are integers.
 • Ensure timeTakenSeconds is an integer.
-• Ensure rollNumber is stored as a string.
+• Ensure rollNumber is stored as an integer.
+• Ensure verifiedPhone contains exactly 10 digits.
+• Ensure firebaseUid equals auth.currentUser.uid.
+• Ensure studentId is the Firestore student document ID.
 • Ensure startedAt and submittedAt are stored as ISO date-time strings.
 • Ensure studentAnswers is an array or object.
 • Show "Result submitted successfully" only when the Firestore write succeeds.
@@ -1555,7 +2027,17 @@ ${typeRules}
 Final instruction:
 Create this as a fully functional Gemini Canvas interactive web application.
 
-The application must first collect Student Name, Class, Section and Roll Number. The quiz must begin only after the student clicks "Start Quiz". Start the timer at that exact moment.
+The application must first verify the registered parent mobile number using Firebase Phone Authentication OTP.
+
+After successful OTP verification, search Firestore for all active students whose parentPhone matches the verified 10-digit number in academic year "${academicYear}".
+
+If one student is found, fill the student details automatically.
+
+If multiple students are found using the same parent number, show only those matching students and require the user to select one.
+
+Do not allow the student to manually enter or edit Name, Class, Section or Roll Number.
+
+The quiz must begin only after a verified matching student is selected and the student clicks "Start Quiz". Start the timer at that exact moment.
 
 After final submission, calculate the score, percentage, start time, submission time and total time taken. Build the complete result object and pass it to the submitQuizResult(resultData) function.
 
