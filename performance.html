@@ -66,8 +66,8 @@
     <div style="margin-bottom:18px;">
       <label style="color:#185496;font-weight:600;margin-right:10px;" for="examDropdown">Select Exam:</label>
       <select id="examDropdown" style="font-size:1.07em;padding:7px 16px;border-radius:7px;border:1.2px solid #1467b7;">
-        <option value="all">All Exams (Combined)</option>
-      </select>
+  <option value="">Loading exams...</option>
+</select>
     </div>
     <div id="chartContainer">
       <canvas id="barChart" width="430" height="360"></canvas>
@@ -150,42 +150,41 @@
 
     // === NEW CODE: Fill dropdown ===
     const examDropdown = document.getElementById('examDropdown');
-    examDropdown.innerHTML = `<option value="all">All Exams (Combined)</option>` +
-      exams.map(ex => `<option value="${ex.id}">${ex.name}</option>`).join('');
+examDropdown.innerHTML =
+  exams.map(ex => `<option value="${ex.id}">${ex.name}</option>`).join('');
 
     // --- NEW CODE: Function to render chart ---
     async function renderChart(selectedExamId) {
       statusDiv.textContent = "Loading chart data...";
-      // Pick exams for the chart
-      let relevantExams = (selectedExamId === 'all') ? exams : exams.filter(ex => ex.id === selectedExamId);
-    
-      // Prepare subjectTotals
-      // Prepare subjectTotals
-      let subjectTotals = {};
-      let chartSubjects = []; // Only subjects of selected exam(s)
-      
-      if (selectedExamId === 'all') {
-        // All Exams Combined: use all subjects from all exams (as before)
-        for (let exam of relevantExams) {
-          if (!Array.isArray(exam.subjects)) continue;
-          for (let subj of exam.subjects) {
-            if (!subj || !subj.name) continue;
-            let subjName = subj.name;
-            if (!subjectTotals[subjName]) subjectTotals[subjName] = { total: 0, max: 0, count: 0 };
-            if (!chartSubjects.includes(subjName)) chartSubjects.push(subjName);
-          }
-        }
-      } else {
-        // Single exam: ONLY use that exam's subjects
-        if (relevantExams[0] && Array.isArray(relevantExams[0].subjects)) {
-          for (let subj of relevantExams[0].subjects) {
-            if (!subj || !subj.name) continue;
-            let subjName = subj.name;
-            subjectTotals[subjName] = { total: 0, max: 0, count: 0 };
-            chartSubjects.push(subjName);
-          }
-        }
-      }
+     // Get only the selected exam
+let relevantExams = exams.filter(ex => ex.id === selectedExamId);
+
+if (relevantExams.length === 0) {
+  statusDiv.textContent = "Please select an exam.";
+  return;
+}
+
+// Subjects belonging only to the selected exam
+let subjectTotals = {};
+let chartSubjects = [];
+
+let selectedExam = relevantExams[0];
+
+if (Array.isArray(selectedExam.subjects)) {
+  for (let subj of selectedExam.subjects) {
+    if (!subj || !subj.name) continue;
+
+    let subjName = subj.name;
+
+    subjectTotals[subjName] = {
+      total: 0,
+      max: 0,
+      count: 0
+    };
+
+    chartSubjects.push(subjName);
+  }
+}
       
       // Fill subjectTotals with marks for only chartSubjects
       for (let stu of students) {
@@ -204,14 +203,11 @@
               let subjMax = (subjObj && subjObj.max) ? subjObj.max : 100;
               let val = marksObj[subjName];
               if (typeof val === 'number' && !isNaN(val)) {
-                subjectTotals[subjName].total += val;
-                subjectTotals[subjName].max += subjMax;
-                subjectTotals[subjName].count += 1;
-              } else {
-                subjectTotals[subjName].total += 0;
-                subjectTotals[subjName].max += subjMax;
-                subjectTotals[subjName].count += 1;
-              }
+  // Student has a valid mark, so treat the student as PRESENT
+  subjectTotals[subjName].total += val;
+  subjectTotals[subjName].max += subjMax;
+  subjectTotals[subjName].count += 1;
+}
             }
           }
         }
@@ -302,8 +298,11 @@
       statusDiv.textContent = "";
     }
     
-        // Render initial chart (All Exams)
-        await renderChart('all');
+       // Automatically show the first available exam
+if (exams.length > 0) {
+  examDropdown.value = exams[0].id;
+  await renderChart(exams[0].id);
+}
     
         // Add handler for dropdown change
         examDropdown.onchange = function () {
