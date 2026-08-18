@@ -4697,13 +4697,119 @@ function _computeInternalFromArray(sourceItems, internalMax) {
               `;
               showPopup(html2, 'marksEntryForm', function(ev) {
                ev.preventDefault();
-            // Make sure we can query inside the popup
+                        // Make sure we can query inside the popup
             const popupContent =
               document.getElementById('popupContent') ||
+              document.getElementById('popup-content') ||
               document.querySelector('.popup .popup-content') ||
               document.querySelector('.popup') ||
               document;
-               let batch = db.batch();
+
+            // ===== HARD VALIDATION: DO NOT SAVE WRONG SUBTOPIC MARKS =====
+            if (hasSubs) {
+              const subInputs = popupContent.querySelectorAll('.sub-input');
+
+              for (const input of subInputs) {
+
+                // Computed/Internal marks are read-only, so teacher cannot correct them here
+                if (input.readOnly) continue;
+
+                // Empty is allowed
+                if (input.value === '') continue;
+
+                const enteredMark = parseFloat(input.value);
+
+                const rawName =
+                  (input.dataset?.subname ??
+                   input.getAttribute('data-subname') ??
+                   '').toString();
+
+                const subName = decodeURIComponent(rawName).trim();
+
+                // Find the corresponding subtopic and its maximum marks
+                const subDef = (subtopics || []).find(st => {
+                  const a = String(st?.name || '')
+                    .trim()
+                    .toLowerCase()
+                    .replace(/\s+/g, ' ');
+
+                  const b = String(subName || '')
+                    .trim()
+                    .toLowerCase()
+                    .replace(/\s+/g, ' ');
+
+                  return a === b;
+                });
+
+                const subMax = Number(subDef?.max);
+
+                // Find student name for a clearer warning
+                const studentId = input.getAttribute('data-stu');
+                const student = students.find(s => String(s.id) === String(studentId));
+                const studentName = student?.name || 'Student';
+
+                // Invalid negative mark
+                if (!isNaN(enteredMark) && enteredMark < 0) {
+                  input.style.border = '2px solid #d43f3a';
+                  input.focus();
+
+                  alert(
+                    `Marks entered are wrong.\n\n` +
+                    `${studentName}\n` +
+                    `${subName}: Marks cannot be less than 0.`
+                  );
+
+                  return;
+                }
+
+                // Invalid mark greater than subtopic maximum
+                if (
+                  !isNaN(enteredMark) &&
+                  Number.isFinite(subMax) &&
+                  enteredMark > subMax
+                ) {
+                  input.style.border = '2px solid #d43f3a';
+                  input.focus();
+
+                  alert(
+                    `Marks entered are wrong.\n\n` +
+                    `${studentName}\n` +
+                    `${subName}: Maximum marks are ${subMax}, but ${enteredMark} was entered.`
+                  );
+
+                  return;
+                }
+
+                // Restore normal border when corrected
+                input.style.border = '1px solid #bbb';
+              }
+
+              // Extra safety: total also must not exceed subject maximum
+              for (const stu of students) {
+                const totalEl = popupContent.querySelector(
+                  `.total-input[data-stu="${stu.id}"]`
+                );
+
+                if (
+                  totalEl &&
+                  totalEl.value !== '' &&
+                  parseFloat(totalEl.value) > max
+                ) {
+                  totalEl.style.border = '2px solid #d43f3a';
+
+                  alert(
+                    `Marks entered are wrong.\n\n` +
+                    `${stu.name}\n` +
+                    `Total marks cannot be greater than ${max}.`
+                  );
+
+                  return;
+                }
+              }
+            }
+
+            // Validation passed — only now create the Firestore batch
+            let batch = db.batch();
 
           students.forEach(stu => {
             const markRef = db.collection('years').doc(academicYear)
