@@ -274,59 +274,147 @@ function parseAIBlocks(text, expectedCount) {
   // --- NEW: parse pasted questions (order preserved) ---
 function parsePastedQuestions(rawText) {
   if (!rawText) return [];
-  const text = String(rawText).replace(/\r/g, '').trim();
 
-  // Split into blocks by: blank lines OR numbered/Q-lines
-  const blocks = text.split(/\n{2,}|\n(?=\d+\s*[\.\)]\s)|\n(?=Q\s*\d+[:\.])/i)
-                     .map(b => b.trim())
-                     .filter(Boolean);
+  const text = String(rawText)
+    .replace(/\r/g, '')
+    .trim();
+
+  // Split into question blocks
+  const blocks = text
+    .split(/\n{2,}|\n(?=\d+\s*[\.\)]\s)|\n(?=Q\s*\d+[:\.])/i)
+    .map(b => b.trim())
+    .filter(Boolean);
 
   const items = [];
-  for (const block of blocks) {
-    // Extract MCQ options A/B/C/D and optional Ans:
-    const lines = block.split('\n').map(s => s.trim()).filter(Boolean);
 
-    // Detect options
-    const opts = [];
-    const optRegex = /^[A-D][\)\.\:]?\s+(.+)$/i;
-    lines.forEach(l => {
-      const m = l.match(optRegex);
-      if (m) opts.push(m[1].trim());
+  for (const originalBlock of blocks) {
+
+    let block = originalBlock
+      .replace(/^Q\s*\d+\s*[:\.\)]\s*/i, '')
+      .replace(/^\d+\s*[\.\)]\s*/, '')
+      .trim();
+
+    const lines = block
+      .split('\n')
+      .map(s => s.trim())
+      .filter(Boolean);
+
+    /*
+      Detect ONLY the LAST complete A → B → C → D group.
+
+      This is important for matching questions because an earlier
+      A), B), C) group may belong to the matching column.
+    */
+    const candidates = [];
+
+    const optionLineRegex = /^([A-D])[\)\.\:]\s*(.+)$/i;
+
+    lines.forEach((line, index) => {
+      const m = line.match(optionLineRegex);
+
+      if (m) {
+        candidates.push({
+          letter: m[1].toUpperCase(),
+          text: m[2].trim(),
+          lineIndex: index
+        });
+      }
     });
 
-    // Extract answer letters if present anywhere
+    let optionGroup = null;
+
+    for (let i = 0; i <= candidates.length - 4; i++) {
+
+      const a = candidates[i];
+      const b = candidates[i + 1];
+      const c = candidates[i + 2];
+      const d = candidates[i + 3];
+
+      if (
+        a.letter === 'A' &&
+        b.letter === 'B' &&
+        c.letter === 'C' &&
+        d.letter === 'D'
+      ) {
+        optionGroup = [a, b, c, d];
+      }
+    }
+
+    // Extract answer
     let ans = '';
-    const am = block.match(/Ans?\s*:\s*([A-D](?:\s*,\s*[A-D])*)/i);
+
+    const am = block.match(
+      /Ans?\s*:\s*([A-D](?:\s*,\s*[A-D])*)/i
+    );
+
     if (am) {
       const seen = new Set();
-      ans = am[1]
+
+      const letters = am[1]
         .toUpperCase()
         .split(',')
         .map(s => s.trim())
-        .filter(L => /^[A-D]$/.test(L) && !seen.has(L) && (seen.add(L), true))
-        .join(seen.size > 1 ? ',' : '');
+        .filter(L =>
+          /^[A-D]$/.test(L) &&
+          !seen.has(L) &&
+          (seen.add(L), true)
+        );
+
+      ans = letters.join(letters.length > 1 ? ',' : '');
     }
 
-    // Stem: remove leading "Qx:" or "1)." etc and strip option/answer lines
-    let stem = block
-  .replace(/^Q\s*\d+\s*[:\.\)]\s*/i, '')
-  .replace(/^\d+\s*[\.\)]\s*/, '')
-  .replace(/\n?Ans?\s*:.+$/i, '')
-  .replace(/\n?[A-D][\)\.\:]?\s+.+$/gmi, '')
-  .replace(/\n\s*\(?OR\)?\s*\n/gi, '\n')
-  .replace(/\(\s*OR\s*\)/gi, '')
-  .trim();
+    // Remove answer line only
+    const cleanLines = lines.filter(
+      line => !/^Ans?\s*:/i.test(line)
+    );
 
-    // Keep LaTeX intact in stem
-    if (opts.length === 4) {
-      items.push({ text: stem, options: opts, answer: ans });
+    if (optionGroup) {
+
+      const optionIndexes = new Set(
+        optionGroup.map(o => o.lineIndex)
+      );
+
+      /*
+        Remove ONLY the final actual MCQ A-D option group.
+
+        Earlier A), B), C) lines belonging to a matching
+        question remain untouched.
+      */
+      const stemLines = cleanLines.filter(
+        (_, index) => !optionIndexes.has(index)
+      );
+
+      let stem = stemLines
+        .join('\n')
+        .replace(/\n\s*\(?OR\)?\s*\n/gi, '\n')
+        .replace(/\(\s*OR\s*\)/gi, '')
+        .trim();
+
+      const opts = optionGroup.map(o => o.text);
+
+      items.push({
+        text: stem,
+        options: opts,
+        answer: ans
+      });
+
     } else {
-      items.push({ text: stem });
+
+      // Descriptive / non-MCQ question
+      let stem = cleanLines
+        .join('\n')
+        .replace(/\n\s*\(?OR\)?\s*\n/gi, '\n')
+        .replace(/\(\s*OR\s*\)/gi, '')
+        .trim();
+
+      items.push({
+        text: stem
+      });
     }
   }
+
   return items;
 }
-
 function renderExam() {
 
     const paper = getExamPaper();
