@@ -391,40 +391,94 @@ const config = {
 };
 
 // --- Helpers for MCQ logic (keep as-is) ---
-function extractMCQOptions(q) {
-  // Returns [A,B,C,D] or null
-  if (Array.isArray(q?.options) && q.options.length === 4) return q.options;
+function getMCQOptionGroup(text) {
+  const s = String(text || '').replace(/\r/g, '');
 
-  let s = String(q?.question || q?.text || '');
-  s = s.replace(/\r/g, ''); // normalize
-
-  // Find label positions for A)/B)/C)/D) OR A./B./C./D. (case-insensitive)
   const labelRe = /(^|\s)([ABCD])[\)\.]\s/gi;
   const hits = [];
   let m;
+
   while ((m = labelRe.exec(s)) !== null) {
-    // start index after the label token (e.g., after "A) " or "B. ")
-    hits.push({ letter: m[2].toUpperCase(), i: m.index + m[0].length });
+    hits.push({
+      letter: m[2].toUpperCase(),
+      labelStart: m.index + (m[1] ? m[1].length : 0),
+      contentStart: m.index + m[0].length
+    });
   }
 
-  // Need exactly A,B,C,D in order
-  const need = ['A', 'B', 'C', 'D'];
-  const map = {};
-  for (const h of hits) {
-    if (!(h.letter in map)) map[h.letter] = h.i;
+  // Find every possible A → B → C → D sequence.
+  // Keep the LAST complete sequence because matching questions may contain
+  // an earlier A), B), C) list before the real MCQ answer choices.
+  let best = null;
+
+  for (let i = 0; i < hits.length; i++) {
+    if (hits[i].letter !== 'A') continue;
+
+    let b = -1;
+    let c = -1;
+    let d = -1;
+
+    for (let j = i + 1; j < hits.length; j++) {
+      if (hits[j].letter === 'B') {
+        b = j;
+        break;
+      }
+    }
+
+    if (b === -1) continue;
+
+    for (let j = b + 1; j < hits.length; j++) {
+      if (hits[j].letter === 'C') {
+        c = j;
+        break;
+      }
+    }
+
+    if (c === -1) continue;
+
+    for (let j = c + 1; j < hits.length; j++) {
+      if (hits[j].letter === 'D') {
+        d = j;
+        break;
+      }
+    }
+
+    if (d === -1) continue;
+
+    best = {
+      a: hits[i],
+      b: hits[b],
+      c: hits[c],
+      d: hits[d]
+    };
   }
-  if (!need.every(L => map[L] != null)) return null;
 
-  const endA = map['B'];
-  const endB = map['C'];
-  const endC = map['D'];
-  const ansIdx = (s.match(/\bAns?\s*:/i)?.index) ?? s.length;
-  const endD = ansIdx;
+  return best;
+}
 
-  const A = s.slice(map['A'], endA).trim();
-  const B = s.slice(map['B'], endB).trim();
-  const C = s.slice(map['C'], endC).trim();
-  const D = s.slice(map['D'], endD).trim();
+function extractMCQOptions(q) {
+  // Returns [A,B,C,D] or null
+  if (Array.isArray(q?.options) && q.options.length === 4) {
+    return q.options;
+  }
+
+  let s = String(q?.question || q?.text || '');
+  s = s.replace(/\r/g, '');
+
+  const group = getMCQOptionGroup(s);
+  if (!group) return null;
+
+  const afterD = s.slice(group.d.contentStart);
+  const ansMatch = afterD.match(/\bAns?\s*:/i);
+
+  const endD = ansMatch
+    ? group.d.contentStart + ansMatch.index
+    : s.length;
+
+  const A = s.slice(group.a.contentStart, group.b.labelStart).trim();
+  const B = s.slice(group.b.contentStart, group.c.labelStart).trim();
+  const C = s.slice(group.c.contentStart, group.d.labelStart).trim();
+  const D = s.slice(group.d.contentStart, endD).trim();
 
   return [A, B, C, D];
 }
@@ -577,9 +631,11 @@ function allocateSequentiallyAcrossSections(subjectsData, pool, { shuffleQuestio
     // if inline A) ... D) options exist, cut them off from the stem
     const extracted = extractMCQOptions({ question: rawBlock });
     if (Array.isArray(extracted) && extracted.length === 4) {
-      const aLabelIdx = stem.search(/(^|\s)A[)\.]\s/i);
-      if (aLabelIdx !== -1) stem = stem.slice(0, aLabelIdx).trim();
-    }
+  const optionGroup = getMCQOptionGroup(rawBlock);
+  if (optionGroup) {
+    stem = stem.slice(0, optionGroup.a.labelStart).trim();
+  }
+}
 
     // drop any leading A/a labels only at the very start (keep inner (a),(b) etc.)
     stem = stem.replace(/^\s*(?:\(?[Aa]\)?[.)]|(?:\(A\))|A[.)])\s+/, '');
@@ -637,10 +693,11 @@ const extracted = extractMCQOptions({ question: rawBlock }); // uses your helper
 
 // --- NEW: if options exist, remove the whole A/B/C/D block from the stem ---
 if (Array.isArray(extracted) && extracted.length === 4) {
-  // find the first "A) " or "A. " and cut everything after it
-  const aLabelIdx = stemNoAns.search(/(^|\s)A[)\.]\s/i);
-  if (aLabelIdx !== -1) {
-    stemNoAns = stemNoAns.slice(0, aLabelIdx).trim();
+  // Cut only at the A) belonging to the actual final A-B-C-D option group
+  const optionGroup = getMCQOptionGroup(rawBlock);
+
+  if (optionGroup) {
+    stemNoAns = stemNoAns.slice(0, optionGroup.a.labelStart).trim();
   }
 }
 
