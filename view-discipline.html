@@ -432,12 +432,100 @@
       border: 1px solid #d5bce9;
     }
 
+        .date-records-section {
+      margin-top: 18px;
+    }
+
+    .date-records-title {
+      margin: 0 2px 10px;
+      color: var(--primary);
+      font-size: 1.08rem;
+      font-weight: 750;
+    }
+
+    .date-record-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .date-record-card {
+      width: 100%;
+      padding: 11px 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      border: 1px solid rgba(216, 228, 239, 0.95);
+      border-radius: 11px;
+      background: #ffffff;
+      box-shadow: 0 2px 8px rgba(15, 61, 107, 0.08);
+      cursor: pointer;
+    }
+
+    .date-record-card:hover {
+      border-color: #9ebbd6;
+      box-shadow: 0 3px 12px rgba(15, 61, 107, 0.13);
+    }
+
+    .date-record-date {
+      color: var(--primary);
+      font-weight: 750;
+    }
+
+    .date-record-badges {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+      gap: 5px;
+    }
+
+    .mini-badge {
+      padding: 4px 7px;
+      border-radius: 7px;
+      font-size: 0.72rem;
+      font-weight: 750;
+      white-space: nowrap;
+    }
+
+    .mini-badge.late {
+      background: #fff4df;
+      color: #9a4f00;
+    }
+
+    .mini-badge.uniform {
+      background: #fff0ee;
+      color: #a4261d;
+    }
+
+    .mini-badge.sign {
+      background: #f5edff;
+      color: #6832a1;
+    }
+
+    .mini-badge.clear {
+      background: #eaf7f0;
+      color: var(--success);
+    }
+
+    .excel-btn {
+      background: #18794e;
+      color: #ffffff;
+      box-shadow: 0 4px 12px rgba(24, 121, 78, 0.25);
+    }
+
+    .excel-btn:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+      box-shadow: none;
+    }
+
     .message-card {
       padding: 22px 14px;
       text-align: center;
       color: #71808e;
     }
-
     .message-card.error {
       color: #b42318;
     }
@@ -892,13 +980,26 @@
       <span>Sign</span>
     </div>
 
-    <section class="student-list" id="studentList">
+       <section class="student-list" id="studentList">
       <div class="message-card">Loading discipline history...</div>
+    </section>
+
+    <section class="date-records-section">
+      <h2 class="date-records-title">Date-wise Discipline Records</h2>
+
+      <div class="date-record-list" id="dateRecordList">
+        <div class="message-card">Loading date-wise records...</div>
+      </div>
     </section>
   </main>
 
-  <div class="bottom-actions">
+    <div class="bottom-actions">
     <button type="button" id="backBtn" class="back-btn">← Back</button>
+
+    <button type="button" id="downloadExcelBtn" class="excel-btn">
+      Download Excel
+    </button>
+
     <button type="button" id="refreshBtn" class="refresh-btn">Refresh</button>
   </div>
 
@@ -921,7 +1022,8 @@
 
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+ <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
   <script>
     "use strict";
@@ -959,7 +1061,9 @@
     const yearDropdownMenu = document.getElementById("yearDropdownMenu");
 
     const studentSearch = document.getElementById("studentSearch");
-    const studentList = document.getElementById("studentList");
+        const studentList = document.getElementById("studentList");
+    const dateRecordList = document.getElementById("dateRecordList");
+    const downloadExcelBtn = document.getElementById("downloadExcelBtn");
     const recordDaysCount = document.getElementById("recordDaysCount");
     const lateCount = document.getElementById("lateCount");
     const uniformCount = document.getElementById("uniformCount");
@@ -1252,13 +1356,20 @@
       };
     }
 
-    function setLoading(isLoading) {
+       function setLoading(isLoading) {
       refreshBtn.disabled = isLoading;
-      refreshBtn.textContent = isLoading ? "Loading..." : "Refresh";
+      downloadExcelBtn.disabled = isLoading;
+
+      refreshBtn.textContent = isLoading
+        ? "Loading..."
+        : "Refresh";
 
       if (isLoading) {
         studentList.innerHTML =
           '<div class="message-card">Loading discipline history...</div>';
+
+        dateRecordList.innerHTML =
+          '<div class="message-card">Loading date-wise records...</div>';
       }
     }
 
@@ -1416,9 +1527,10 @@
         return yearMatches && monthMatches;
       });
 
-      buildStudentSummaries();
+            buildStudentSummaries();
       updateSummaryCounts();
       renderStudents(searchValue);
+      renderDateRecords();
     }
 
     function buildStudentSummaries() {
@@ -1577,6 +1689,349 @@
       });
     }
 
+           function getDocumentTotals(documentData = {}) {
+      let late = 0;
+      let noUniform = 0;
+      let noSign = 0;
+
+      students.forEach(function (student) {
+        const entry = documentData[student.id];
+
+        if (!entry || typeof entry !== "object") {
+          return;
+        }
+
+        if (entry.late === true) late += 1;
+        if (entry.noUniform === true) noUniform += 1;
+        if (entry.noSign === true) noSign += 1;
+      });
+
+      return {
+        late,
+        noUniform,
+        noSign
+      };
+    }
+
+    function renderDateRecords() {
+      if (!filteredDocuments.length) {
+        dateRecordList.innerHTML = `
+          <div class="message-card">
+            No discipline records found for the selected period.
+          </div>
+        `;
+        return;
+      }
+
+      const sortedDocuments = [...filteredDocuments].sort(function (a, b) {
+        return b.id.localeCompare(a.id);
+      });
+
+      dateRecordList.innerHTML = sortedDocuments.map(function (item) {
+        const totals = getDocumentTotals(item.data);
+
+        const badges =
+          totals.late || totals.noUniform || totals.noSign
+            ? `
+              <span class="mini-badge late">Late: ${totals.late}</span>
+              <span class="mini-badge uniform">Uniform: ${totals.noUniform}</span>
+              <span class="mini-badge sign">Sign: ${totals.noSign}</span>
+            `
+            : '<span class="mini-badge clear">No Issues</span>';
+
+        return `
+          <button
+            type="button"
+            class="date-record-card"
+            data-date="${escapeHtml(item.id)}"
+          >
+            <span class="date-record-date">
+              ${escapeHtml(formatDate(item.id))}
+            </span>
+
+            <span class="date-record-badges">
+              ${badges}
+            </span>
+          </button>
+        `;
+      }).join("");
+
+      dateRecordList
+        .querySelectorAll(".date-record-card")
+        .forEach(function (button) {
+          button.addEventListener("click", function () {
+            openDateDetails(this.dataset.date);
+          });
+        });
+    }
+
+    function openDateDetails(date) {
+      const registerDocument = filteredDocuments.find(function (item) {
+        return item.id === date;
+      });
+
+      if (!registerDocument) {
+        showToast("Discipline record was not found.", "error");
+        return;
+      }
+
+      const documentData = registerDocument.data || {};
+      const totals = getDocumentTotals(documentData);
+
+      const affectedStudents = students.filter(function (student) {
+        const entry = documentData[student.id];
+
+        return entry && (
+          entry.late === true ||
+          entry.noUniform === true ||
+          entry.noSign === true
+        );
+      });
+
+      detailTitle.textContent =
+        `Discipline: ${formatDate(date)}`;
+
+      detailSubtitle.textContent = [
+        currentClassName,
+        currentSectionName
+      ].filter(Boolean).join(" – ");
+
+      const studentRows = affectedStudents.length
+        ? affectedStudents.map(function (student) {
+            const entry = documentData[student.id] || {};
+            const issues = [];
+
+            if (entry.late === true) {
+              const minutes = Number(entry.lateMinutes);
+
+              issues.push(
+                minutes > 0
+                  ? `Late (${minutes} minutes)`
+                  : "Late"
+              );
+            }
+
+            if (entry.noUniform === true) {
+              issues.push("No Uniform");
+            }
+
+            if (entry.noSign === true) {
+              issues.push("No Sign");
+            }
+
+            return `
+              <div class="detail-entry">
+                <span class="detail-date">
+                  ${escapeHtml(student.roll || "—")}.
+                  ${escapeHtml(student.name || "Student")}
+                </span>
+
+                <span class="detail-note">
+                  ${escapeHtml(issues.join(", "))}
+                </span>
+              </div>
+            `;
+          }).join("")
+        : `
+          <div class="empty-detail">
+            No discipline issues were recorded on this date.
+          </div>
+        `;
+
+      detailBody.innerHTML = `
+        <div class="detail-summary">
+          <div class="detail-summary-item">
+            Late
+            <strong>${totals.late}</strong>
+          </div>
+
+          <div class="detail-summary-item">
+            No Uniform
+            <strong>${totals.noUniform}</strong>
+          </div>
+
+          <div class="detail-summary-item">
+            No Sign
+            <strong>${totals.noSign}</strong>
+          </div>
+        </div>
+
+        <section class="issue-section">
+          <div class="issue-heading late">
+            Student Discipline Details
+          </div>
+
+          ${studentRows}
+        </section>
+      `;
+
+      detailBackdrop.classList.add("show");
+      document.body.style.overflow = "hidden";
+    }
+
+    function safeFileNamePart(value) {
+      return String(value || "")
+        .trim()
+        .replace(/[\\/:*?"<>|]+/g, "-")
+        .replace(/\s+/g, "_") || "Report";
+    }
+
+    function downloadDisciplineExcel() {
+      if (selectedMonth === "all" || selectedYear === "all") {
+        showToast(
+          "Please select one month and one year before downloading.",
+          "error"
+        );
+        return;
+      }
+
+      if (!filteredDocuments.length) {
+        showToast(
+          "No discipline records are available for the selected month.",
+          "error"
+        );
+        return;
+      }
+
+      if (typeof XLSX === "undefined") {
+        showToast("Excel library could not be loaded.", "error");
+        return;
+      }
+
+      downloadExcelBtn.disabled = true;
+      downloadExcelBtn.textContent = "Preparing...";
+
+      try {
+        const reportRows = [];
+
+        const sortedDocuments = [...filteredDocuments].sort(function (a, b) {
+          return a.id.localeCompare(b.id);
+        });
+
+        sortedDocuments.forEach(function (registerDocument) {
+          const documentData = registerDocument.data || {};
+
+          students.forEach(function (student) {
+            const entry = documentData[student.id];
+
+            if (!entry || typeof entry !== "object") {
+              return;
+            }
+
+            const hasIssue =
+              entry.late === true ||
+              entry.noUniform === true ||
+              entry.noSign === true;
+
+            if (!hasIssue) {
+              return;
+            }
+
+            reportRows.push([
+              formatDate(registerDocument.id),
+              student.roll || "",
+              student.name || "",
+              entry.late === true ? "Yes" : "",
+              entry.late === true && Number(entry.lateMinutes) > 0
+                ? Number(entry.lateMinutes)
+                : "",
+              entry.noUniform === true ? "Yes" : "",
+              entry.noSign === true ? "Yes" : ""
+            ]);
+          });
+        });
+
+        if (!reportRows.length) {
+          showToast(
+            "No discipline issues were recorded for the selected month.",
+            "error"
+          );
+          return;
+        }
+
+        const reportTitle = [
+          currentClassName,
+          currentSectionName,
+          monthNames[selectedMonth],
+          selectedYear,
+          "Discipline Report"
+        ].filter(Boolean).join(" – ");
+
+        const excelData = [
+          [reportTitle],
+          [
+            "Date",
+            "Roll Number",
+            "Student Name",
+            "Late",
+            "Late Minutes",
+            "No Uniform",
+            "No Sign"
+          ],
+          ...reportRows
+        ];
+
+        const worksheet = XLSX.utils.aoa_to_sheet(excelData);
+
+        worksheet["!merges"] = [
+          {
+            s: { r: 0, c: 0 },
+            e: { r: 0, c: 6 }
+          }
+        ];
+
+        worksheet["!cols"] = [
+          { wch: 14 },
+          { wch: 13 },
+          { wch: 28 },
+          { wch: 10 },
+          { wch: 14 },
+          { wch: 14 },
+          { wch: 12 }
+        ];
+
+        worksheet["!autofilter"] = {
+          ref: `A2:G${excelData.length}`
+        };
+
+        const workbook = XLSX.utils.book_new();
+
+        XLSX.utils.book_append_sheet(
+          workbook,
+          worksheet,
+          "Discipline Report"
+        );
+
+        const fileName = [
+          "Discipline",
+          monthNames[selectedMonth],
+          selectedYear,
+          currentClassName,
+          currentSectionName
+        ]
+          .filter(Boolean)
+          .map(safeFileNamePart)
+          .join("_");
+
+        XLSX.writeFile(
+          workbook,
+          `${fileName}.xlsx`
+        );
+
+        showToast("Discipline Excel downloaded.");
+      } catch (error) {
+        console.error("Discipline Excel download failed:", error);
+
+        showToast(
+          "Unable to download the discipline Excel file.",
+          "error"
+        );
+      } finally {
+        downloadExcelBtn.disabled = false;
+        downloadExcelBtn.textContent = "Download Excel";
+      }
+    }
+
        function selectedPeriodText() {
       const monthText =
         monthNames[selectedMonth] || "All Months";
@@ -1702,7 +2157,15 @@
       }
     });
 
-    refreshBtn.addEventListener("click", loadDisciplineHistory);
+        downloadExcelBtn.addEventListener(
+      "click",
+      downloadDisciplineExcel
+    );
+
+    refreshBtn.addEventListener(
+      "click",
+      loadDisciplineHistory
+    );
 
     backBtn.addEventListener("click", function () {
       if (window.history.length > 1) {
