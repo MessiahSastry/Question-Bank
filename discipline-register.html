@@ -15,7 +15,8 @@
       --muted: #687786;
       --late: #d97706;
       --uniform: #b42318;
-      --sign: #7a3db8;
+       --sign: #7a3db8;
+      --homework: #087f8c;
     }
 
     * {
@@ -311,6 +312,97 @@
       color: #6832a1;
     }
 
+        .homework-section {
+      margin-top: 11px;
+      padding-top: 10px;
+      border-top: 1px solid #e5edf4;
+    }
+
+    .homework-title {
+      margin-bottom: 7px;
+      color: var(--primary);
+      font-size: 0.86rem;
+      font-weight: 750;
+    }
+
+    .homework-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 6px;
+    }
+
+        .homework-item {
+      min-width: 0;
+    }
+
+    .homework-option {
+      position: relative;
+      display: block;
+      min-width: 0;
+    }
+
+    .homework-option input {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .homework-chip {
+      min-height: 36px;
+      padding: 6px 3px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      border: 1.3px solid #cfd9e3;
+      border-radius: 8px;
+      background: #f8fafc;
+      color: #526170;
+      font-size: 0.77rem;
+      font-weight: 700;
+      line-height: 1.1;
+      cursor: pointer;
+      user-select: none;
+      transition: 0.15s;
+    }
+
+    .homework-option input:checked + .homework-chip {
+      border-color: var(--homework);
+      background: #eaf9fb;
+      color: #066b76;
+      box-shadow: 0 2px 6px rgba(8, 127, 140, 0.12);
+    }
+
+       .homework-option input:focus-visible + .homework-chip {
+      outline: 3px solid rgba(8, 127, 140, 0.18);
+      outline-offset: 1px;
+    }
+
+    .wa-homework-subject-btn {
+      display: none;
+      width: 100%;
+      margin-top: 5px;
+      padding: 6px 4px;
+      border: none;
+      border-radius: 7px;
+      background: #25d366;
+      color: #ffffff;
+      font-size: 0.72rem;
+      font-weight: 750;
+      text-align: center;
+      cursor: pointer;
+    }
+
+    .wa-homework-subject-btn.show {
+      display: block;
+    }
+
+    .wa-homework-subject-btn:active {
+      background: #1ea952;
+    }
+
     .student-extra-row {
       display: flex;
       align-items: center;
@@ -501,10 +593,18 @@
         gap: 5px;
       }
 
-      .issue-chip {
+           .issue-chip {
         padding-left: 2px;
         padding-right: 2px;
         font-size: 0.76rem;
+      }
+
+      .homework-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .homework-chip {
+        font-size: 0.79rem;
       }
     }
   </style>
@@ -602,10 +702,21 @@
     const signCount = document.getElementById("signCount");
     const toast = document.getElementById("toast");
 
-   let students = [];
+  let students = [];
 let disciplineHistory = [];
 let loadedDate = "";
 let toastTimer = null;
+
+const HOMEWORK_SUBJECTS = [
+  "Telugu",
+  "Hindi",
+  "English",
+  "Math",
+  "Physics",
+  "Chemistry",
+  "Biology",
+  "Social"
+];
 
     academicYearText.textContent = academicYear;
     classSectionText.textContent = [currentClassName, currentSectionName]
@@ -765,16 +876,24 @@ disciplineSnapshot.forEach(doc => {
 
       const html = students.map(student => {
         const entry = savedData[student.id] || {};
-               const isLate = entry.late === true;
+                const isLate = entry.late === true;
         const noUniform = entry.noUniform === true;
         const noSign = entry.noSign === true;
+
+        const homeworkSubjects = Array.isArray(entry.homeworkSubjects)
+          ? entry.homeworkSubjects
+          : [];
 
         const lateMinutes =
           isLate && Number(entry.lateMinutes) > 0
             ? Number(entry.lateMinutes)
             : "";
 
-        const hasEntry = isLate || noUniform || noSign;
+        const hasEntry =
+          isLate ||
+          noUniform ||
+          noSign ||
+          homeworkSubjects.length > 0;
         const safeName = escapeHtml(student.name || "");
         const safePhoto = escapeHtml(student.photoUrl || "");
 
@@ -825,6 +944,45 @@ disciplineSnapshot.forEach(doc => {
                 >
                 <span class="issue-chip">No Sign</span>
               </label>
+                       </div>
+
+            <div class="homework-section">
+              <div class="homework-title">
+                Homework Not Done
+              </div>
+
+              <div class="homework-grid">
+                               ${HOMEWORK_SUBJECTS.map(subject => `
+                  <div class="homework-item">
+
+                    <label class="homework-option">
+                      <input
+                        type="checkbox"
+                        class="homework-check"
+                        data-student-id="${student.id}"
+                        data-subject="${escapeHtml(subject)}"
+                        ${homeworkSubjects.includes(subject) ? "checked" : ""}
+                      >
+
+                      <span class="homework-chip">
+                        ${escapeHtml(subject)}
+                      </span>
+                    </label>
+
+                    <button
+                      type="button"
+                      class="wa-homework-subject-btn ${
+                        homeworkSubjects.includes(subject) ? "show" : ""
+                      }"
+                      data-student-id="${student.id}"
+                      data-subject="${escapeHtml(subject)}"
+                    >
+                      WhatsApp
+                    </button>
+
+                  </div>
+                `).join("")}
+              </div>
             </div>
 
             <div class="student-extra-row">
@@ -849,12 +1007,14 @@ disciplineSnapshot.forEach(doc => {
                 minutes
               </label>
 
-              <button
+                           <button
                 type="button"
-                class="wa-student-btn ${hasEntry ? "show" : ""}"
+                class="wa-student-btn ${
+                  (isLate || noUniform || noSign) ? "show" : ""
+                }"
                 data-student-id="${student.id}"
               >
-                WhatsApp
+                Discipline WhatsApp
               </button>
             </div>
           </article>
@@ -863,7 +1023,9 @@ disciplineSnapshot.forEach(doc => {
 
       studentList.innerHTML = html;
 
-           document.querySelectorAll(".discipline-check").forEach(input => {
+                document.querySelectorAll(
+        ".discipline-check, .homework-check"
+      ).forEach(input => {
         input.addEventListener("change", function () {
           updateStudentCardState(this.dataset.studentId);
           updateCounts();
@@ -880,16 +1042,25 @@ disciplineSnapshot.forEach(doc => {
         });
       });
 
-      document.querySelectorAll(".wa-student-btn").forEach(button => {
+           document.querySelectorAll(".wa-student-btn").forEach(button => {
         button.addEventListener("click", function () {
           openStudentWhatsApp(this.dataset.studentId);
+        });
+      });
+
+      document.querySelectorAll(".wa-homework-subject-btn").forEach(button => {
+        button.addEventListener("click", function () {
+          openHomeworkWhatsApp(
+            this.dataset.studentId,
+            this.dataset.subject
+          );
         });
       });
 
       updateCounts();
     }
 
-    function updateStudentCardState(studentId) {
+       function updateStudentCardState(studentId) {
       const card = document.querySelector(
         `.student-card[data-student-id="${studentId}"]`
       );
@@ -908,19 +1079,62 @@ disciplineSnapshot.forEach(doc => {
         `.late-minutes-input[data-student-id="${studentId}"]`
       );
 
-      const whatsappButton = card.querySelector(
+      const disciplineWhatsappButton = card.querySelector(
         `.wa-student-btn[data-student-id="${studentId}"]`
       );
 
-      const selected = card.querySelectorAll(
-        ".discipline-check:checked"
-      ).length > 0;
+      const disciplineSelected =
+        card.querySelectorAll(
+          ".discipline-check:checked"
+        ).length > 0;
 
-      const isLate = lateCheckbox?.checked === true;
+      const homeworkSelected =
+        card.querySelectorAll(
+          ".homework-check:checked"
+        ).length > 0;
 
-      card.classList.toggle("has-entry", selected);
-      minutesWrap?.classList.toggle("show", isLate);
-      whatsappButton?.classList.toggle("show", selected);
+      const selected =
+        disciplineSelected || homeworkSelected;
+
+      const isLate =
+        lateCheckbox?.checked === true;
+
+      card.classList.toggle(
+        "has-entry",
+        selected
+      );
+
+      minutesWrap?.classList.toggle(
+        "show",
+        isLate
+      );
+
+      disciplineWhatsappButton?.classList.toggle(
+        "show",
+        disciplineSelected
+      );
+
+      /*
+        Each Homework subject has its own
+        independent WhatsApp button.
+      */
+      card.querySelectorAll(
+        ".wa-homework-subject-btn"
+      ).forEach(button => {
+
+        const subject = button.dataset.subject;
+
+        const subjectCheckbox = Array.from(
+          card.querySelectorAll(".homework-check")
+        ).find(input =>
+          input.dataset.subject === subject
+        );
+
+        button.classList.toggle(
+          "show",
+          subjectCheckbox?.checked === true
+        );
+      });
 
       if (minutesInput) {
         minutesInput.disabled = !isLate;
@@ -963,9 +1177,13 @@ disciplineSnapshot.forEach(doc => {
           '.discipline-check[data-field="noUniform"]'
         )?.checked === true;
 
-        const noSign = card.querySelector(
+                const noSign = card.querySelector(
           '.discipline-check[data-field="noSign"]'
         )?.checked === true;
+
+        const homeworkSubjects = Array.from(
+          card.querySelectorAll(".homework-check:checked")
+        ).map(input => input.dataset.subject);
 
         const minutesInput = card.querySelector(
           `.late-minutes-input[data-student-id="${student.id}"]`
@@ -985,12 +1203,18 @@ disciplineSnapshot.forEach(doc => {
           return null;
         }
 
-        if (late || noUniform || noSign) {
+                if (
+          late ||
+          noUniform ||
+          noSign ||
+          homeworkSubjects.length > 0
+        ) {
           registerData[student.id] = {
             late,
             lateMinutes: late ? lateMinutes : null,
             noUniform,
-            noSign
+            noSign,
+            homeworkSubjects
           };
         }
       }
@@ -1041,6 +1265,10 @@ disciplineSnapshot.forEach(doc => {
         '.discipline-check[data-field="noSign"]'
       )?.checked === true;
 
+           const homeworkSubjects = Array.from(
+        card.querySelectorAll(".homework-check:checked")
+      ).map(input => input.dataset.subject);
+
       const minutesInput = card.querySelector(
         `.late-minutes-input[data-student-id="${studentId}"]`
       );
@@ -1053,7 +1281,8 @@ disciplineSnapshot.forEach(doc => {
         late,
         lateMinutes,
         noUniform,
-        noSign
+        noSign,
+        homeworkSubjects
       };
     }
 
@@ -1122,7 +1351,7 @@ function buildDisciplineWhatsAppMessage(student, entry, counts) {
     loadedDate || registerDate.value
   );
 
-  const issueCount = [
+     const issueCount = [
     entry.late,
     entry.noUniform,
     entry.noSign
@@ -1214,6 +1443,109 @@ St. Patrick's School`;
   Desktop:
   Uses WhatsApp Web.
 */
+function buildHomeworkWhatsAppMessage(student, subject) {
+  const studentName =
+    student.name || "Student";
+
+  const classSection = [
+    currentClassName,
+    currentSectionName
+  ].filter(Boolean).join(" – ");
+
+  const selectedDate = formatRegisterDate(
+    loadedDate || registerDate.value
+  );
+
+  return `Dear Parent,
+
+This is to inform you that your child, ${studentName} of ${classSection}, has not completed the ${subject} homework on ${selectedDate}.
+
+Kindly ensure that the ${subject} homework is completed regularly and submitted on time.
+
+ప్రియమైన తల్లిదండ్రులకు,
+
+${studentName}, ${classSection}, ${selectedDate} తేదీన ${subject} హోంవర్క్ పూర్తి చేయలేదు.
+
+దయచేసి ${subject} హోంవర్క్‌ను క్రమం తప్పకుండా పూర్తి చేసి సమయానికి సమర్పించేలా చూడండి.
+
+St. Patrick's School`;
+}
+
+
+function openHomeworkWhatsApp(studentId, subject) {
+  const student = students.find(
+    item => item.id === studentId
+  );
+
+  if (!student) {
+    showToast(
+      "Student details were not found.",
+      "error"
+    );
+    return;
+  }
+
+  const card = document.querySelector(
+    `.student-card[data-student-id="${studentId}"]`
+  );
+
+  if (!card) {
+    showToast(
+      "Student record was not found.",
+      "error"
+    );
+    return;
+  }
+
+  const subjectCheckbox = Array.from(
+    card.querySelectorAll(".homework-check")
+  ).find(input =>
+    input.dataset.subject === subject
+  );
+
+  if (!subjectCheckbox?.checked) {
+    showToast(
+      `Select ${subject} Homework first.`,
+      "error"
+    );
+    return;
+  }
+
+  const phoneNumber = normalizeWhatsAppNumber(
+    student.parentPhone ||
+    student.phone ||
+    ""
+  );
+
+  if (!/^\d{10,15}$/.test(phoneNumber)) {
+    showToast(
+      `A valid parent phone number is not available for ${
+        student.name || "this student"
+      }.`,
+      "error"
+    );
+    return;
+  }
+
+  const message = buildHomeworkWhatsAppMessage(
+    student,
+    subject
+  );
+
+  const opened = launchWhatsApp(
+    phoneNumber,
+    message
+  );
+
+  if (!opened) {
+    showToast(
+      "Unable to open WhatsApp.",
+      "error"
+    );
+  }
+}
+
+
 function launchWhatsApp(phoneNumber, message) {
   const encodedMessage = encodeURIComponent(message);
   const userAgent = navigator.userAgent || "";
@@ -1264,9 +1596,13 @@ function openStudentWhatsApp(studentId) {
 
   const entry = getStudentDisciplineEntry(studentId);
 
-  if (
+     if (
     !entry ||
-    (!entry.late && !entry.noUniform && !entry.noSign)
+    (
+      !entry.late &&
+      !entry.noUniform &&
+      !entry.noSign
+    )
   ) {
     showToast(
       "Select at least one discipline issue.",
