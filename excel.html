@@ -1231,8 +1231,8 @@ tbody td:not(:first-child):not(:nth-child(2)){ font-weight:700; }
       </div>`;
   }
 
-  // Chunk tbody rows into pages of 25
-  const CHUNK = 25;
+  // Chunk tbody rows into pages of 20 for better readability
+  const CHUNK = 20;
   const pages = [];
   for (let i = 0; i < tbodyRows.length; i += CHUNK) {
     pages.push(tbodyRows.slice(i, i + CHUNK));
@@ -1245,42 +1245,59 @@ tbody td:not(:first-child):not(:nth-child(2)){ font-weight:700; }
     const rowsHtml = pages[p].join('');
     const html = buildPageHTML(rowsHtml);
 
- const printable = document.createElement('div');
-// A3 landscape snapshot @ 1920×1358 (fits the PDF page ratio)
+const printable = document.createElement('div');
+
+// Use full A3 landscape width.
+// IMPORTANT: no fixed height, so blank white space is not captured.
 printable.style.width = '1920px';
-printable.style.height = '1500px';
+printable.style.height = 'auto';
 printable.style.background = '#fff';
-printable.style.overflow = 'hidden';
+printable.style.overflow = 'visible';
+printable.style.position = 'absolute';
+printable.style.left = '-9999px';
+printable.style.top = '0';
+
 printable.innerHTML = html;
 document.body.appendChild(printable);
 
 try{
-  const canvas = await html2canvas(printable, {
-    scale: 2,
-    useCORS: true,
-    width: 1920,
-    height: 1500
-  });
+ const canvas = await html2canvas(printable, {
+  scale: 2,
+  useCORS: true,
+  backgroundColor: '#ffffff',
+  width: printable.scrollWidth,
+  height: printable.scrollHeight,
+  windowWidth: printable.scrollWidth,
+  windowHeight: printable.scrollHeight,
+  scrollX: 0,
+  scrollY: 0
+});
       const imgData = canvas.toDataURL('image/jpeg', 0.95);
 
       const pageW = pdf.internal.pageSize.getWidth();
     const pageH = pdf.internal.pageSize.getHeight();
     
-    const marginTop = 0.6;
-const marginBottom = 1.2;  // extra space at bottom
-const marginSide = 0.6;
+   const marginTop = 0.35;
+const marginBottom = 0.35;
+const marginSide = 0.35;
 
-const maxW = pageW - marginSide * 2;
+const maxW = pageW - (marginSide * 2);
 const maxH = pageH - (marginTop + marginBottom);
-    
-    const ratio = canvas.width / canvas.height;
-    // Fit by WIDTH and pin to TOP-LEFT (no vertical centering).
-    let drawW = maxW;
-    let drawH = drawW / ratio;
-    if (drawH > maxH) { drawH = maxH; drawW = maxH * ratio; }
-    
-    const x = (pageW - drawW) / 2;
-    const y = marginTop;
+
+const ratio = canvas.width / canvas.height;
+
+// First use almost the FULL page width.
+let drawW = maxW;
+let drawH = drawW / ratio;
+
+// Only reduce if the real table height exceeds the page.
+if (drawH > maxH) {
+  drawH = maxH;
+  drawW = drawH * ratio;
+}
+
+const x = (pageW - drawW) / 2;
+const y = marginTop;
     
     pdf.addImage(imgData, 'JPEG', x, y, drawW, drawH, undefined, 'FAST');
     if (p < pages.length - 1) pdf.addPage();
