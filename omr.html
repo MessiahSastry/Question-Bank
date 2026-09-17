@@ -316,6 +316,73 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
 .cdrop-item:hover{ background:#f4f8fc; }
 .cdrop.disabled .cdrop-btn{ opacity:.6; pointer-events:none; }
 
+/* MULTI SUBJECT SELECTOR */
+
+.subject-multi{
+  position:relative;
+  width:100%;
+}
+
+.subject-multi-btn{
+  width:100%;
+  min-height:48px;
+  border:1px solid #e5e7eb;
+  border-radius:12px;
+  padding:12px;
+  background:#fff;
+  color:#0f3d6b;
+  font-weight:600;
+  text-align:left;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  box-shadow:0 2px 6px rgba(0,0,0,.04);
+  cursor:pointer;
+}
+
+.subject-multi.disabled{
+  opacity:.6;
+  pointer-events:none;
+}
+
+.subject-multi-list{
+  display:none;
+  margin-top:6px;
+  padding:6px;
+  background:#fff;
+  border:1px solid #e5e7eb;
+  border-radius:12px;
+  box-shadow:0 8px 22px rgba(0,0,0,.10);
+}
+
+.subject-multi.open .subject-multi-list{
+  display:block;
+}
+
+.subject-multi-item{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  padding:11px 10px;
+  cursor:pointer;
+  border-radius:8px;
+}
+
+.subject-multi-item:hover{
+  background:#f4f8fc;
+}
+
+.subject-multi-item input{
+  width:19px;
+  height:19px;
+  accent-color:#0f3d6b;
+}
+
+.subject-multi-item span{
+  font-weight:600;
+  color:#0f3d6b;
+}
+
 /* keep existing styles above */
 </style>
 </head>
@@ -367,11 +434,33 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
     </div>
   </div>
 
-   <!-- Subject (4th, after exam) -->
+   <!-- Subjects: one or more can be selected -->
   <div>
-    <div class="label">Subject</div>
-    <select id="subjectSel" class="select native-select-hidden" disabled></select>
-    <div id="cdrop-subject" class="cdrop" data-select="subjectSel"></div>
+    <div class="label">Subject(s)</div>
+
+    <!-- kept hidden for backward compatibility -->
+    <select id="subjectSel"
+            class="select native-select-hidden"
+            disabled></select>
+
+    <div id="subjectMulti" class="subject-multi disabled">
+
+      <button type="button"
+              id="subjectMultiBtn"
+              class="subject-multi-btn">
+
+        <span id="subjectMultiText">
+          Select Subjects
+        </span>
+
+        <i class="fa fa-chevron-down"></i>
+      </button>
+
+      <div id="subjectMultiList"
+           class="subject-multi-list">
+      </div>
+
+    </div>
   </div>
 
     <!-- Subtopic (5th, only when subject has subtopics) -->
@@ -645,14 +734,29 @@ const auth = firebase.auth();
 })();
 
        // ===== STATE =====
-  let current = {
-  classId:null, className:null,
-  sectionId:null, sectionName:null,
-  subjectName:null,
-  subtopicName:null,
-  examId:null,
-  isSubtopic:false, parentExamId:null
-};
+   let current = {
+    classId:null,
+    className:null,
+
+    sectionId:null,
+    sectionName:null,
+
+    // Single subject compatibility
+    subjectName:null,
+
+    // NEW:
+    // Allows Math only,
+    // Math + Physics,
+    // Math + Physics + Chemistry, etc.
+    selectedSubjects:[],
+
+    subtopicName:null,
+
+    examId:null,
+
+    isSubtopic:false,
+    parentExamId:null
+  };
 let lastScanPending = null;   // holds latest scan until user presses Save
 let tpl = {
       rollDigits:4,
@@ -1336,79 +1440,333 @@ async function loadSubjectsFromExam(examId){
     return;
   }
 
-  examSubjects = subs;
+   examSubjects = subs;
 
   examCommonSubtopics =
     Array.isArray(d.subtopics)
       ? d.subtopics
       : [];
 
-    // -----------------------------------------
-  // SUBJECT DROPDOWN
-  // -----------------------------------------
+  // Hidden native select kept only for old-code compatibility
   subjectSel.innerHTML =
-    (subs.length > 1
-      ? '<option value="__ALL__">All Subjects</option>'
-      : ''
-    ) +
     subs
       .map(s =>
         `<option value="${s.name}">${s.name}</option>`
       )
       .join('');
 
-  subjectSel.disabled = false;
+  subjectSel.disabled = true;
 
-  // -----------------------------------------
-  // MULTI-SUBJECT EXAM
-  // Automatically select All Subjects
-  // -----------------------------------------
-  if (subs.length > 1){
+  // Reset selection
+  current.selectedSubjects = [];
+  current.subjectName = null;
+  current.subtopicName = null;
 
-    subjectSel.value = '__ALL__';
+  const multi =
+    el('subjectMulti');
 
-    refreshCdrop(
-      'subjectSel',
-      'cdrop-subject'
-    );
+  const multiBtn =
+    el('subjectMultiBtn');
 
-    subjectSel.dispatchEvent(
-      new Event(
-        'change',
-        {bubbles:true}
-      )
-    );
+  const multiText =
+    el('subjectMultiText');
 
-  }
+  const multiList =
+    el('subjectMultiList');
 
-  // -----------------------------------------
-  // SINGLE-SUBJECT EXAM
-  // Automatically select that subject
-  // -----------------------------------------
-  else if (subs.length === 1){
-
-    subjectSel.value =
-      subs[0].name;
-
-    refreshCdrop(
-      'subjectSel',
-      'cdrop-subject'
-    );
-
-    subjectSel.dispatchEvent(
-      new Event(
-        'change',
-        {bubbles:true}
-      )
+  if (
+    !multi ||
+    !multiBtn ||
+    !multiText ||
+    !multiList
+  ){
+    throw new Error(
+      'Subject multi-select controls are missing.'
     );
   }
 
-  el('btnKey').disabled = false;
-  el('btnScan').disabled = false;
-  el('btnViewReports').disabled = false;
-  el('btnDownloadExcel').disabled = false;
+  multi.classList.remove('disabled');
+  multi.classList.remove('open');
+
+  multiText.textContent =
+    'Select Subjects';
+
+  multiList.innerHTML = '';
+
+  // No OMR action until at least one subject is selected
+  el('btnKey').disabled = true;
+  el('btnScan').disabled = true;
+  el('btnViewReports').disabled = true;
+  el('btnDownloadExcel').disabled = true;
+
+
+  function updateSubjectSelection(){
+
+    current.selectedSubjects =
+      Array.from(
+        multiList.querySelectorAll(
+          '.subject-check:checked'
+        )
+      ).map(cb => cb.value);
+
+    // Keep old single-subject compatibility
+    current.subjectName =
+      current.selectedSubjects.length === 1
+        ? current.selectedSubjects[0]
+        : null;
+
+    current.subtopicName = null;
+
+
+    // -------------------------------
+    // BUTTON TEXT
+    // -------------------------------
+    if (!current.selectedSubjects.length){
+
+      multiText.textContent =
+        'Select Subjects';
+
+    }
+    else if (current.selectedSubjects.length <= 2){
+
+      multiText.textContent =
+        current.selectedSubjects.join(' + ');
+
+    }
+    else {
+
+      multiText.textContent =
+        `${current.selectedSubjects.length} Subjects Selected`;
+
+    }
+
+
+    const hasSelection =
+      current.selectedSubjects.length > 0;
+
+    el('btnKey').disabled =
+      !hasSelection;
+
+    el('btnScan').disabled =
+      !hasSelection;
+
+    el('btnViewReports').disabled =
+      !hasSelection;
+
+    el('btnDownloadExcel').disabled =
+      !hasSelection;
+
+
+    // =========================================
+    // BUILD ONE OMR SECTION FOR EACH
+    // SELECTED SUBJECT
+    // =========================================
+    if (hasSelection){
+
+      const oldSections =
+        Array.isArray(tpl.sections)
+          ? tpl.sections
+          : [];
+
+      const oldByName =
+        new Map(
+          oldSections.map(sec => [
+            String(sec.name || '').trim(),
+            sec
+          ])
+        );
+
+      tpl.sections =
+        current.selectedSubjects.map(
+          subjectName => {
+
+            const old =
+              oldByName.get(subjectName);
+
+            if (old){
+
+              return {
+                ...old,
+                name: subjectName
+              };
+
+            }
+
+            return {
+              name: subjectName,
+              count: 10,
+              options: 4,
+              mark: 1,
+              negative: 0
+            };
+
+          }
+        );
+
+      // Different subjects = different OMR layout
+      tpl.rois = null;
+
+      el('tplStatus').textContent =
+        'Subjects selected. Check Exam Settings, then generate the OMR.';
+
+    }
+    else {
+
+      tpl.sections = [];
+      tpl.rois = null;
+
+    }
+
+
+    // =========================================
+    // SUBTOPIC ONLY WHEN EXACTLY ONE SUBJECT
+    // IS SELECTED
+    // =========================================
+    const subSel =
+      el('subtopicSel');
+
+    const subRow =
+      el('subtopicRow');
+
+    if (subRow){
+      subRow.style.display = 'none';
+    }
+
+    if (!subSel){
+      return;
+    }
+
+    subSel.innerHTML =
+      '<option value="">Select Subtopic</option>';
+
+    subSel.disabled = true;
+
+    refreshCdrop(
+      'subtopicSel',
+      'cdrop-subtopic'
+    );
+
+    if (
+      current.selectedSubjects.length !== 1
+    ){
+      return;
+    }
+
+    const selectedName =
+      current.selectedSubjects[0];
+
+    const subj =
+      examSubjects.find(
+        s => s && s.name === selectedName
+      );
+
+    if (!subj){
+      return;
+    }
+
+    const mode =
+      subj.subtopicsMode || 'none';
+
+    let stArr = [];
+
+    if (mode === 'common'){
+
+      stArr =
+        Array.isArray(examCommonSubtopics)
+          ? examCommonSubtopics
+          : [];
+
+    }
+    else if (mode === 'custom'){
+
+      stArr =
+        Array.isArray(subj.subtopics)
+          ? subj.subtopics
+          : [];
+
+    }
+
+    if (!stArr.length){
+      return;
+    }
+
+    subSel.innerHTML =
+      '<option value="">Select Subtopic</option>' +
+      stArr
+        .map(st =>
+          `<option value="${st.name}">${st.name}</option>`
+        )
+        .join('');
+
+    subSel.disabled = false;
+
+    refreshCdrop(
+      'subtopicSel',
+      'cdrop-subtopic'
+    );
+
+    if (subRow){
+      subRow.style.display = '';
+    }
+
+  }
+
+
+  // =========================================
+  // BUILD SUBJECT CHECKBOXES
+  // =========================================
+  subs.forEach(s => {
+
+    const label =
+      document.createElement('label');
+
+    label.className =
+      'subject-multi-item';
+
+    const cb =
+      document.createElement('input');
+
+    cb.type =
+      'checkbox';
+
+    cb.className =
+      'subject-check';
+
+    cb.value =
+      s.name;
+
+    const span =
+      document.createElement('span');
+
+    span.textContent =
+      s.name;
+
+    label.appendChild(cb);
+    label.appendChild(span);
+
+    multiList.appendChild(label);
+
+    cb.addEventListener(
+      'change',
+      updateSubjectSelection
+    );
+
+  });
+
+
+  // Open / close subject list
+  multiBtn.onclick = (e) => {
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    multi.classList.toggle(
+      'open'
+    );
+
+  };
+
 }
-
     // Events
 el('classSel').addEventListener('change', async (e)=>{
   current.classId = e.target.value || null;
@@ -1473,67 +1831,8 @@ el('pickStatus').innerHTML =
 
 });
 
-el('subjectSel').addEventListener('change', (e)=>{
-  current.subjectName  = e.target.value || null;
-  current.subtopicName = null;
-
-  const subSel = el('subtopicSel');
-  const subRow = document.getElementById('subtopicRow');
-
-  if (subRow) subRow.style.display = 'none';   // hide by default
-
-  if (!subSel) return;
-
-  // reset subtopic dropdown
-  subSel.innerHTML = '<option value="">Select Subtopic</option>';
-  subSel.disabled  = true;
-  refreshCdrop('subtopicSel','cdrop-subtopic');
-
-    // Combined OMR: all subjects are on the same sheet.
-  // No single-subject subtopic selection is required here.
-  if (current.subjectName === '__ALL__'){
-    if (subRow) subRow.style.display = 'none';
-    return;
-  }
-
-  // no subject picked or no examSubjects -> stay hidden
-  if (!current.subjectName || !Array.isArray(examSubjects)){
-    return;
-  }
-
-  const subj =
-    examSubjects.find(
-      s => s && s.name === current.subjectName
-    );
-
-  if (!subj) return;
-  const mode = subj.subtopicsMode || 'none';
-  let stArr = [];
-
-  // "common" → use exam-level subtopics array
-  if (mode === 'common') {
-    stArr = Array.isArray(examCommonSubtopics) ? examCommonSubtopics : [];
-  }
-  // "custom" → use this subject's own subtopics array
-  else if (mode === 'custom') {
-    stArr = Array.isArray(subj.subtopics) ? subj.subtopics : [];
-  }
-  // "none" → keep stArr empty (no subtopics)
-
-  // no effective subtopics -> keep row hidden
-  if (!Array.isArray(stArr) || !stArr.length){
-    return;
-  }
-
-  // has subtopics -> show row and enable dropdown
-  subSel.innerHTML =
-    '<option value="">Select Subtopic</option>' +
-    stArr.map(st => `<option value="${st.name}">${st.name}</option>`).join('');
-
-  subSel.disabled = false;
-  refreshCdrop('subtopicSel','cdrop-subtopic');
-  if (subRow) subRow.style.display = '';
-});
+// subjectSel is now hidden and kept only for backward compatibility.
+// Actual subject selection is handled by subjectMulti checkboxes.
 
 // track selected subtopic
 el('subtopicSel').addEventListener('change', (e)=>{
@@ -1541,72 +1840,23 @@ el('subtopicSel').addEventListener('change', (e)=>{
 });
 
     // ===== TEMPLATE UI =====
-        el('btnExamSettings').onclick = ()=>{
+      el('btnExamSettings').onclick = ()=>{
 
-      if (!Array.isArray(tpl.sections)){
-        tpl.sections = [];
-      }
-
-      // -----------------------------------------
-      // ALL SUBJECTS → ONE SECTION PER SUBJECT
-      // -----------------------------------------
       if (
-        current.subjectName === '__ALL__' &&
-        Array.isArray(examSubjects) &&
-        examSubjects.length
+        !Array.isArray(current.selectedSubjects) ||
+        !current.selectedSubjects.length
       ){
 
-        const existingNames =
-          new Set(
-            tpl.sections
-              .map(s => String(s.name || '').trim())
-              .filter(Boolean)
-          );
+        alert(
+          'Please select at least one Subject.'
+        );
 
-        examSubjects.forEach(sub => {
-
-          const subjectName =
-            String(sub.name || '').trim();
-
-          if (
-            subjectName &&
-            !existingNames.has(subjectName)
-          ){
-
-            tpl.sections.push({
-              name: subjectName,
-              count: 10,
-              options: 4,
-              mark: 1,
-              negative: 0
-            });
-
-            existingNames.add(subjectName);
-          }
-
-        });
+        return;
       }
 
-      // -----------------------------------------
-      // SINGLE SUBJECT
-      // -----------------------------------------
-      else if (
-        current.subjectName &&
-        current.subjectName !== '__ALL__' &&
-        tpl.sections.length === 0
-      ){
+      // tpl.sections already contains exactly
+      // the subjects checked by the teacher.
 
-        tpl.sections.push({
-          name: current.subjectName,
-          count: 10,
-          options: 4,
-          mark: 1,
-          negative: 0
-        });
-
-      }
-
-      // populate fields from tpl
       el('inpRollDigits').value =
         tpl.rollDigits;
 
@@ -1623,9 +1873,17 @@ el('subtopicSel').addEventListener('change', (e)=>{
         'cdrop-qr'
       );
 
+      // Subjects come from the exam itself.
+      // Do not add arbitrary extra subject sections.
+      const addBtn =
+        el('btnAddSection');
+
+      if (addBtn){
+        addBtn.style.display = 'none';
+      }
+
       el('dlgExam').showModal();
     }
-
     el('btnAddSection').onclick = ()=>{
       tpl.sections.push({name:`Part-${tpl.sections.length+1}`, count:10, options:4, mark:1, negative:0});
       renderSectionRows();
@@ -1650,7 +1908,7 @@ el('subtopicSel').addEventListener('change', (e)=>{
           </div>
           <div class="section-field">
             <div class="label">Subject / Section</div>
-            <input data-k="name" data-i="${idx}" class="select" value="${s.name || ''}">
+            <input data-k="name" data-i="${idx}" class="select" value="${s.name || ''}" readonly>
           </div>
           <div class="section-field">
             <div class="label">No. of Questions</div>
@@ -1716,7 +1974,13 @@ el('subtopicSel').addEventListener('change', (e)=>{
       await docRef.set({
         classId: current.classId,
         sectionId: current.sectionId,
-        examId: current.examId,
+               examId: current.examId,
+
+        selectedSubjects:
+          Array.isArray(current.selectedSubjects)
+            ? current.selectedSubjects.slice()
+            : [],
+
         rollDigits: tpl.rollDigits,
         bubbleSizeMm: tpl.bubbleSizeMm,
         qrEnabled: tpl.qrEnabled,
@@ -2015,9 +2279,19 @@ async function loadImageAsDataURL(src){
 }
 
         // ===== PDF GENERATION (colourful layout + ROIs) =====
-    el('btnGenerate').onclick = async () => {
+       el('btnGenerate').onclick = async () => {
       if (!current.examId) return alert('Pick Class/Section/Exam first');
-      if (!tpl.sections.length) return alert('Add at least one section in Exam Settings');
+
+      if (
+        !Array.isArray(current.selectedSubjects) ||
+        !current.selectedSubjects.length
+      ){
+        return alert('Please select at least one Subject.');
+      }
+
+      if (!tpl.sections.length) {
+        return alert('Open Exam Settings and configure the selected subjects first');
+      }
 
            const { jsPDF } = window.jspdf;
       const doc = new jsPDF({ unit: 'mm', format: 'a4' });
@@ -4463,23 +4737,31 @@ drawAnswerOverlayFromROIs(
     // Stable → lock scanner for this sheet
     isScanBusy = true;
 
-        const out = {
+                const out = {
       examId:       current.examId,
       classId:      current.classId,
       sectionId:    current.sectionId,
 
-      isAllSubjects:
-        current.subjectName === '__ALL__',
+      selectedSubjects:
+        Array.isArray(current.selectedSubjects)
+          ? current.selectedSubjects.slice()
+          : [],
+
+      isMultiSubject:
+        Array.isArray(current.selectedSubjects) &&
+        current.selectedSubjects.length > 1,
 
       subjectName:
-        current.subjectName === '__ALL__'
-          ? 'All Subjects'
-          : (current.subjectName || null),
+        Array.isArray(current.selectedSubjects) &&
+        current.selectedSubjects.length === 1
+          ? current.selectedSubjects[0]
+          : null,
 
       subtopicName:
-        current.subjectName === '__ALL__'
-          ? null
-          : (current.subtopicName || null),
+        Array.isArray(current.selectedSubjects) &&
+        current.selectedSubjects.length === 1
+          ? (current.subtopicName || null)
+          : null,
      roll:         stable.roll,
 
       answers,
@@ -4602,37 +4884,79 @@ frameProcessingBusy = false;
 
 // This function only checks conditions and then starts continuous camera
 async function scanAndSaveOnce() {
+
+  if (
+    !Array.isArray(current.selectedSubjects) ||
+    !current.selectedSubjects.length
+  ){
+    alert(
+      'Please select at least one Subject before scanning OMR.'
+    );
+    return;
+  }
+
   if (!tpl.rois) {
     alert('Generate OMR to compute ROIs first');
     return;
   }
 
-  // If subject has subtopics, make sure one is selected
-  let subjCfg = null;
-  if (current.subjectName && Array.isArray(examSubjects)) {
-    subjCfg = examSubjects.find(s => s && s.name === current.subjectName) || null;
-  }
+  // Subtopic applies only when ONE subject is selected.
+  if (current.selectedSubjects.length === 1){
 
-  let hasSubtopics = false;
-  if (subjCfg) {
-    const mode = subjCfg.subtopicsMode || 'none';
-    let stArr = [];
+    const selectedName =
+      current.selectedSubjects[0];
 
-    if (mode === 'common') {
-      stArr = Array.isArray(examCommonSubtopics) ? examCommonSubtopics : [];
-    } else if (mode === 'custom') {
-      stArr = Array.isArray(subjCfg.subtopics) ? subjCfg.subtopics : [];
+    const subjCfg =
+      examSubjects.find(
+        s => s && s.name === selectedName
+      ) || null;
+
+    let hasSubtopics = false;
+
+    if (subjCfg){
+
+      const mode =
+        subjCfg.subtopicsMode || 'none';
+
+      let stArr = [];
+
+      if (mode === 'common'){
+
+        stArr =
+          Array.isArray(examCommonSubtopics)
+            ? examCommonSubtopics
+            : [];
+
+      }
+      else if (mode === 'custom'){
+
+        stArr =
+          Array.isArray(subjCfg.subtopics)
+            ? subjCfg.subtopics
+            : [];
+
+      }
+
+      hasSubtopics =
+        mode !== 'none' &&
+        Array.isArray(stArr) &&
+        stArr.length > 0;
     }
 
-    hasSubtopics = mode !== 'none' && Array.isArray(stArr) && stArr.length > 0;
+    if (
+      hasSubtopics &&
+      !current.subtopicName
+    ){
+
+      alert(
+        'Please select the Subtopic before scanning OMR.'
+      );
+
+      return;
+    }
   }
 
-  if (hasSubtopics && !current.subtopicName) {
-    alert('Please select the Subtopic before scanning OMR.');
-    return;
-  }
-
-  detectionHistory = []; // reset stability window
+  detectionHistory = [];
   await startCameraAutoScan();
 }
 
@@ -4774,8 +5098,10 @@ async function saveScanToFirestore(out) {
     // =========================================
     // COMBINED OMR — SAVE EVERY SUBJECT
     // =========================================
-    if (out.isAllSubjects){
-
+        if (
+      Array.isArray(out.selectedSubjects) &&
+      out.selectedSubjects.length > 1
+    ){
       const perSection =
         out.score &&
         out.score.perSection &&
