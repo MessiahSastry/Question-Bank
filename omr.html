@@ -897,49 +897,240 @@ async function fetchEffectiveExamsWrapper(
   {forceRefresh=false}={}
 ){
 
-  if (!currentTeacherId || !currentSchoolId){
-    await resolveUserContext();
-  }
+  const group =
+    getClassGroupName(className);
 
-  const snap = await schoolExamsRef().get();
+  const map =
+    new Map();
 
-  return snap.docs
-    .map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    }))
-    .filter(exam => {
 
-      // Only exams created by this teacher
-      if (exam.createdBy !== currentTeacherId){
-        return false;
+  // =========================================
+  // 1. GROUP / DEFAULT EXAMS
+  // =========================================
+  const groupSnap =
+    await db
+      .collection('years')
+      .doc(academicYear)
+      .collection('exams')
+      .doc('classGroups')
+      .collection(group)
+      .get();
+
+  groupSnap.forEach(doc => {
+
+    map.set(
+      doc.id,
+      {
+        id: doc.id,
+        ...doc.data(),
+        __origin: 'group'
       }
-
-      // Selected class
-      if (exam.classId !== classId){
-        return false;
-      }
-
-      // Selected section
-      if (exam.sectionId !== current.sectionId){
-        return false;
-      }
-
-      // Ignore deleted/archived exams
-      if (exam.archived === true){
-        return false;
-      }
-
-      return true;
-
-    })
-    .sort((a,b) =>
-      String(a.name || '').localeCompare(
-        String(b.name || ''),
-        undefined,
-        {numeric:true}
-      )
     );
+
+  });
+
+
+  // =========================================
+  // 2. CLASS OVERRIDES
+  // =========================================
+  const classSnap =
+    await db
+      .collection('years')
+      .doc(academicYear)
+      .collection('classes')
+      .doc(classId)
+      .collection('examOverrides')
+      .get();
+
+  classSnap.forEach(doc => {
+
+    const o =
+      doc.data() || {};
+
+    if (o.origin === 'class-only') {
+
+      map.set(
+        doc.id,
+        {
+          id: doc.id,
+          ...o,
+          __origin: 'class-only'
+        }
+      );
+
+      return;
+    }
+
+    if (o.hidden === true) {
+
+      map.delete(doc.id);
+      return;
+    }
+
+    if (map.has(doc.id)) {
+
+      const base =
+        map.get(doc.id);
+
+      map.set(
+        doc.id,
+        {
+          ...base,
+
+          name:
+            o.name ??
+            base.name,
+
+          subjects:
+            Array.isArray(o.subjects) &&
+            o.subjects.length
+              ? o.subjects
+              : base.subjects,
+
+          subtopics:
+            Array.isArray(o.subtopics) &&
+            o.subtopics.length
+              ? o.subtopics
+              : base.subtopics,
+
+          grading:
+            o.grading ||
+            base.grading,
+
+          __origin:
+            'class-overridden'
+        }
+      );
+
+    }
+    else {
+
+      map.set(
+        doc.id,
+        {
+          id: doc.id,
+          ...o,
+          __origin: 'class-only'
+        }
+      );
+    }
+
+  });
+
+
+  // =========================================
+  // 3. SECTION OVERRIDES
+  // =========================================
+  const sectionSnap =
+    await db
+      .collection('years')
+      .doc(academicYear)
+      .collection('classes')
+      .doc(classId)
+      .collection('sections')
+      .doc(current.sectionId)
+      .collection('examOverrides')
+      .get();
+
+  sectionSnap.forEach(doc => {
+
+    const o =
+      doc.data() || {};
+
+    if (o.origin === 'section-only') {
+
+      map.set(
+        doc.id,
+        {
+          id: doc.id,
+          ...o,
+          __origin: 'section-only'
+        }
+      );
+
+      return;
+    }
+
+    if (o.hidden === true) {
+
+      map.delete(doc.id);
+      return;
+    }
+
+    if (map.has(doc.id)) {
+
+      const base =
+        map.get(doc.id);
+
+      map.set(
+        doc.id,
+        {
+          ...base,
+
+          name:
+            o.name ??
+            base.name,
+
+          subjects:
+            Array.isArray(o.subjects) &&
+            o.subjects.length
+              ? o.subjects
+              : base.subjects,
+
+          subtopics:
+            Array.isArray(o.subtopics) &&
+            o.subtopics.length
+              ? o.subtopics
+              : base.subtopics,
+
+          grading:
+            o.grading ||
+            base.grading,
+
+          __origin:
+            'section-overridden'
+        }
+      );
+
+    }
+    else {
+
+      map.set(
+        doc.id,
+        {
+          id: doc.id,
+          ...o,
+          __origin: 'section-only'
+        }
+      );
+
+    }
+
+  });
+
+
+  // =========================================
+  // RETURN EFFECTIVE EXAMS
+  // =========================================
+  const list =
+    Array.from(
+      map.values()
+    );
+
+  list.sort(
+    (a,b) =>
+      String(a.name || '')
+        .localeCompare(
+          String(b.name || '')
+        )
+  );
+
+  // Keep copy so Subject dropdown can use
+  // the SAME effective exam structure.
+  window.__omrEffectiveExams =
+    list;
+
+  return list;
 }
 // Loaders
 async function loadClasses(){
