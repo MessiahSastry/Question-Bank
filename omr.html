@@ -667,10 +667,10 @@ let examCommonSubtopics = []; // exam-level subtopics shared by "common" subject
 let answerKey = { /* sectionName -> { qIndex: ["A","C"] } */ };
 let btnES; // single global handle for the Exam Settings button
 
-// ===== SCHOOL + TEACHER CONTEXT =====
+// ===== CAMPUSCONNECT / TEACHER CONTEXT =====
 let currentTeacherId = null;
-let currentSchoolId = null;
-let currentSchoolName = null;
+let currentSchoolId = 'stpatricks-school';
+let currentSchoolName = "St. Patrick's School";
 
 async function resolveUserContext(){
 
@@ -692,86 +692,70 @@ async function resolveUserContext(){
 
   currentTeacherId = user.uid;
 
-  // Teacher profile must contain schoolId
-  const userDoc = await db
-    .collection('users')
-    .doc(user.uid)
-    .get();
+  // Current CampusConnect version does not require
+  // a schoolId inside the teacher profile.
+  try {
 
-  if (!userDoc.exists){
-    throw new Error('Teacher profile not found.');
+    const userDoc = await db
+      .collection('users')
+      .doc(user.uid)
+      .get();
+
+    if (userDoc.exists){
+
+      const userData = userDoc.data() || {};
+
+      if (userData.schoolId){
+        currentSchoolId = userData.schoolId;
+      }
+
+      if (userData.schoolName){
+        currentSchoolName = userData.schoolName;
+      }
+    }
+
+  } catch(err){
+
+    console.warn(
+      'Teacher profile could not be read. Using CampusConnect defaults.',
+      err
+    );
   }
 
-  const userData = userDoc.data() || {};
-
-  currentSchoolId =
-    userData.schoolId ||
-    null;
-
-  if (!currentSchoolId){
-    throw new Error('No school is assigned to this teacher.');
-  }
-
-  // Load school information
-  const schoolDoc = await db
-    .collection('schools')
-    .doc(currentSchoolId)
-    .get();
-
-  if (schoolDoc.exists){
-
-    const schoolData = schoolDoc.data() || {};
-
-    currentSchoolName =
-      schoolData.name ||
-      schoolData.schoolName ||
-      currentSchoolId;
-
-  } else {
-
-    currentSchoolName = currentSchoolId;
-
-  }
-
-  // Show actual school name in header
-  const titleEl = document.querySelector('.school-title');
+  const titleEl =
+    document.querySelector('.school-title');
 
   if (titleEl){
-    titleEl.textContent = currentSchoolName;
+    titleEl.textContent =
+      currentSchoolName;
   }
 }
 
 
-// School academic-year root
+// IMPORTANT:
+// students.html currently stores Classes/Sections here:
+//
+// years/{year}/classes/{class}/sections/{section}
+//
+// Therefore OMR must use the SAME structure.
 function schoolYearRef(){
 
-  if (!currentSchoolId){
-    throw new Error('School context not loaded.');
-  }
-
   return db
-    .collection('schools')
-    .doc(currentSchoolId)
     .collection('years')
     .doc(academicYear);
 }
 
 
-// All exams belonging to this school
+// OMR-specific exams.
+// Keep them separate from normal CampusConnect exams.
 function schoolExamsRef(){
 
-  if (!currentSchoolId){
-    throw new Error('School context not loaded.');
-  }
-
   return db
-    .collection('schools')
-    .doc(currentSchoolId)
     .collection('omrExams');
 }
 
 
-// Current exam
+// Current OMR exam
 function currentExamRef(){
 
   if (!current.examId){
@@ -882,12 +866,17 @@ function refreshCdrop(selectId, hostId){
   
    // ===== UI: load dropdowns (styles match your mobile UI) =====
 
-// Academic Year helper (use global if present; else compute Apr–Mar as "YYYY-YY")
-const academicYear = (window.academicYear) ? window.academicYear : (() => {
-  const now = new Date(); const y = now.getFullYear(); const m = now.getMonth(); // 0=Jan
-  const start = (m >= 3) ? y : (y-1); const end = String((start+1)).slice(-2);
-  return `${start}-${end}`;
-})();
+// Academic Year — use the same year selected in CampusConnect
+const academicYear =
+  localStorage.getItem('sp_selectedYear') ||
+  (() => {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = now.getMonth();
+    const start = (m >= 3) ? y : (y - 1);
+    const end = String(start + 1).slice(-2);
+    return `${start}-${end}`;
+  })();
 
 // Map class name to group (used by effective exam resolver fallback)
 function getClassGroupName(clsName='') {
@@ -4772,18 +4761,16 @@ el('btnDownloadExcel').onclick = ()=>{
 
   try{
 
-    // Identify logged-in teacher + school
     await resolveUserContext();
 
-    // Prepare dropdown
     refreshCdrop(
       'subtopicSel',
       'cdrop-subtopic'
     );
 
-    // -------------------------------------------------
-    // RESTORE CLASS + SECTION SELECTED IN students.html
-    // -------------------------------------------------
+    // ---------------------------------------------
+    // GET CURRENT CLASS + SECTION FROM students.html
+    // ---------------------------------------------
     const savedClassId =
       localStorage.getItem('sp_selectedClassId') || '';
 
@@ -4796,110 +4783,93 @@ el('btnDownloadExcel').onclick = ()=>{
     const savedSectionName =
       localStorage.getItem('sp_selectedSectionName') || '';
 
-    // First load available classes
-    await loadClasses();
-
-    const classSel = el('classSel');
-
-    // Try ID first.
-    // If IDs differ, fall back to matching the class name.
-    let classOption =
-      Array.from(classSel.options).find(
-        op => op.value === savedClassId
-      );
-
-    if (!classOption && savedClassName){
-
-      classOption =
-        Array.from(classSel.options).find(op =>
-          String(op.dataset.name || op.textContent || '').trim()
-            === String(savedClassName).trim()
-        );
-    }
-
-    // -------------------------------------------------
-    // AUTO SELECT CLASS
-    // -------------------------------------------------
-    if (classOption){
-
-      classSel.value = classOption.value;
+    // ---------------------------------------------
+    // OPENED FROM STUDENTS PAGE
+    // ---------------------------------------------
+    if (
+      savedClassId &&
+      savedSectionId
+    ){
 
       current.classId =
-        classOption.value;
+        savedClassId;
 
       current.className =
-        classOption.dataset.name ||
-        classOption.textContent ||
-        savedClassName;
+        savedClassName || savedClassId;
+
+      current.sectionId =
+        savedSectionId;
+
+      current.sectionName =
+        savedSectionName || savedSectionId;
+
+
+      // CLASS
+      const classSel =
+        el('classSel');
+
+      classSel.innerHTML = `
+        <option
+          value="${savedClassId}"
+          data-name="${savedClassName}"
+          selected
+        >
+          ${savedClassName || savedClassId}
+        </option>
+      `;
+
+      classSel.value =
+        savedClassId;
 
       refreshCdrop(
         'classSel',
         'cdrop-class'
       );
 
-      // Load sections belonging to this class
-      await loadSections(
-        current.classId
-      );
 
+      // SECTION
       const sectionSel =
         el('sectionSel');
 
-      // Try section ID first
-      let sectionOption =
-        Array.from(sectionSel.options).find(
-          op => op.value === savedSectionId
-        );
+      sectionSel.innerHTML = `
+        <option
+          value="${savedSectionId}"
+          data-name="${savedSectionName}"
+          selected
+        >
+          ${savedSectionName || savedSectionId}
+        </option>
+      `;
 
-      // Otherwise match section name
-      if (!sectionOption && savedSectionName){
+      sectionSel.value =
+        savedSectionId;
 
-        sectionOption =
-          Array.from(sectionSel.options).find(op =>
-            String(op.dataset.name || op.textContent || '').trim()
-              === String(savedSectionName).trim()
-          );
-      }
+      refreshCdrop(
+        'sectionSel',
+        'cdrop-section'
+      );
 
-      // -------------------------------------------------
-      // AUTO SELECT SECTION
-      // -------------------------------------------------
-      if (sectionOption){
 
-        sectionSel.value =
-          sectionOption.value;
+      // Now load OMR exams belonging to this
+      // class + section.
+      await loadExamsEffective();
 
-        current.sectionId =
-          sectionOption.value;
 
-        current.sectionName =
-          sectionOption.dataset.name ||
-          sectionOption.textContent ||
-          savedSectionName;
+      el('pickStatus').textContent =
+        `${current.className} – ${current.sectionName} loaded. Choose Exam.`;
 
-        refreshCdrop(
-          'sectionSel',
-          'cdrop-section'
-        );
+    }
 
-        // Now automatically load exams for this class + section
-        await loadExamsEffective();
+    // ---------------------------------------------
+    // OMR OPENED DIRECTLY
+    // ---------------------------------------------
+    else {
 
-        el('pickStatus').textContent =
-          `${current.className} – ${current.sectionName} loaded. Choose Exam.`;
+      await loadClasses();
 
-      } else {
-
-        el('pickStatus').textContent =
-          'Class loaded. Please select Section.';
-      }
-
-    } else {
-
-      // No Students-page selection available.
-      // Normal OMR behaviour remains available.
       el('pickStatus').textContent =
         'Select Class and Section. Then select an existing exam or create New Exam.';
+
     }
 
   }
@@ -4914,6 +4884,7 @@ el('btnDownloadExcel').onclick = ()=>{
       'Could not load OMR Scanner: ' +
       err.message
     );
+
   }
 
 })();
