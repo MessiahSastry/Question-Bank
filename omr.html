@@ -1464,14 +1464,24 @@ el('subjectSel').addEventListener('change', (e)=>{
   subSel.disabled  = true;
   refreshCdrop('subtopicSel','cdrop-subtopic');
 
+    // Combined OMR: all subjects are on the same sheet.
+  // No single-subject subtopic selection is required here.
+  if (current.subjectName === '__ALL__'){
+    if (subRow) subRow.style.display = 'none';
+    return;
+  }
+
   // no subject picked or no examSubjects -> stay hidden
   if (!current.subjectName || !Array.isArray(examSubjects)){
     return;
   }
 
-  const subj = examSubjects.find(s => s && s.name === current.subjectName);
-  if (!subj) return;
+  const subj =
+    examSubjects.find(
+      s => s && s.name === current.subjectName
+    );
 
+  if (!subj) return;
   const mode = subj.subtopicsMode || 'none';
   let stArr = [];
 
@@ -1506,13 +1516,88 @@ el('subtopicSel').addEventListener('change', (e)=>{
 });
 
     // ===== TEMPLATE UI =====
-    el('btnExamSettings').onclick = ()=>{
+        el('btnExamSettings').onclick = ()=>{
+
+      if (!Array.isArray(tpl.sections)){
+        tpl.sections = [];
+      }
+
+      // -----------------------------------------
+      // ALL SUBJECTS → ONE SECTION PER SUBJECT
+      // -----------------------------------------
+      if (
+        current.subjectName === '__ALL__' &&
+        Array.isArray(examSubjects) &&
+        examSubjects.length
+      ){
+
+        const existingNames =
+          new Set(
+            tpl.sections
+              .map(s => String(s.name || '').trim())
+              .filter(Boolean)
+          );
+
+        examSubjects.forEach(sub => {
+
+          const subjectName =
+            String(sub.name || '').trim();
+
+          if (
+            subjectName &&
+            !existingNames.has(subjectName)
+          ){
+
+            tpl.sections.push({
+              name: subjectName,
+              count: 10,
+              options: 4,
+              mark: 1,
+              negative: 0
+            });
+
+            existingNames.add(subjectName);
+          }
+
+        });
+      }
+
+      // -----------------------------------------
+      // SINGLE SUBJECT
+      // -----------------------------------------
+      else if (
+        current.subjectName &&
+        current.subjectName !== '__ALL__' &&
+        tpl.sections.length === 0
+      ){
+
+        tpl.sections.push({
+          name: current.subjectName,
+          count: 10,
+          options: 4,
+          mark: 1,
+          negative: 0
+        });
+
+      }
+
       // populate fields from tpl
-           el('inpRollDigits').value = tpl.rollDigits;
-      el('inpBubbleSize').value = tpl.bubbleSizeMm;
-      el('selQr').value = tpl.qrEnabled ? 'on' : 'off';
+      el('inpRollDigits').value =
+        tpl.rollDigits;
+
+      el('inpBubbleSize').value =
+        tpl.bubbleSizeMm;
+
+      el('selQr').value =
+        tpl.qrEnabled ? 'on' : 'off';
+
       renderSectionRows();
-      refreshCdrop('selQr','cdrop-qr');   // custom QR dropdown
+
+      refreshCdrop(
+        'selQr',
+        'cdrop-qr'
+      );
+
       el('dlgExam').showModal();
     }
 
@@ -4353,12 +4438,23 @@ drawAnswerOverlayFromROIs(
     // Stable → lock scanner for this sheet
     isScanBusy = true;
 
-    const out = {
+        const out = {
       examId:       current.examId,
       classId:      current.classId,
       sectionId:    current.sectionId,
-      subjectName:  current.subjectName || null,
-      subtopicName: current.subtopicName || null,
+
+      isAllSubjects:
+        current.subjectName === '__ALL__',
+
+      subjectName:
+        current.subjectName === '__ALL__'
+          ? 'All Subjects'
+          : (current.subjectName || null),
+
+      subtopicName:
+        current.subjectName === '__ALL__'
+          ? null
+          : (current.subtopicName || null),
      roll:         stable.roll,
 
       answers,
@@ -4648,15 +4744,65 @@ async function saveScanToFirestore(out) {
       ? Number(out.score.total.toFixed(2))
       : 0;
 
-    const subjectName   = out.subjectName || 'Unknown Subject';
-    const componentName = out.subtopicName || 'OMR';
+        const updateData = {};
 
-    const updateData = {
-      [`__subs.${subjectName}.${componentName}`]: totalMarks
-    };
+    // =========================================
+    // COMBINED OMR — SAVE EVERY SUBJECT
+    // =========================================
+    if (out.isAllSubjects){
 
-    if (!out.subtopicName) {
-      updateData[subjectName] = totalMarks;
+      const perSection =
+        out.score &&
+        out.score.perSection &&
+        typeof out.score.perSection === 'object'
+          ? out.score.perSection
+          : {};
+
+      Object.entries(perSection)
+        .forEach(([subjectName, marks]) => {
+
+          const subjectMarks =
+            Number.isFinite(Number(marks))
+              ? Number(Number(marks).toFixed(2))
+              : 0;
+
+          // Main subject total
+          updateData[subjectName] =
+            subjectMarks;
+
+          // OMR component
+          updateData[
+            `__subs.${subjectName}.OMR`
+          ] = subjectMarks;
+
+        });
+
+    }
+
+    // =========================================
+    // SINGLE SUBJECT OMR
+    // =========================================
+    else {
+
+      const subjectName =
+        out.subjectName ||
+        'Unknown Subject';
+
+      const componentName =
+        out.subtopicName ||
+        'OMR';
+
+      updateData[
+        `__subs.${subjectName}.${componentName}`
+      ] = totalMarks;
+
+      if (!out.subtopicName){
+
+        updateData[subjectName] =
+          totalMarks;
+
+      }
+
     }
 
    await marksRef.set(
@@ -4861,9 +5007,13 @@ function getCurrentOmrResultsForSelection(){
   }catch(e){
     arr = [];
   }
-  // filter by subject / subtopic if chosen
+    const selectedSubject =
+    current.subjectName === '__ALL__'
+      ? 'All Subjects'
+      : current.subjectName;
+
   return arr.filter(r =>
-    (!current.subjectName || r.subjectName === current.subjectName) &&
+    (!selectedSubject || r.subjectName === selectedSubject) &&
     (!current.subtopicName || r.subtopicName === current.subtopicName)
   );
 }
