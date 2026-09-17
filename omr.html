@@ -354,8 +354,16 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
   <div>
     <div class="label">Exam</div>
     <div style="display:flex; gap:8px; align-items:center; width:100%;">
-      <select id="examSel" class="select native-select-hidden" disabled></select>
-      <div id="cdrop-exam" class="cdrop" data-select="examSel" style="flex:1;"></div>
+  <select id="examSel" class="select native-select-hidden" disabled></select>
+  <div id="cdrop-exam" class="cdrop" data-select="examSel" style="flex:1;"></div>
+
+  <button class="btn primary"
+          id="btnNewExam"
+          type="button"
+          style="white-space:nowrap;">
+    <i class="fa fa-plus"></i> New Exam
+  </button>
+</div>
     </div>
   </div>
 
@@ -659,6 +667,121 @@ let examCommonSubtopics = []; // exam-level subtopics shared by "common" subject
 let answerKey = { /* sectionName -> { qIndex: ["A","C"] } */ };
 let btnES; // single global handle for the Exam Settings button
 
+// ===== SCHOOL + TEACHER CONTEXT =====
+let currentTeacherId = null;
+let currentSchoolId = null;
+let currentSchoolName = null;
+
+async function resolveUserContext(){
+
+  const user = auth.currentUser || await new Promise(resolve => {
+
+    let unsubscribe = null;
+
+    unsubscribe = auth.onAuthStateChanged(u => {
+      if (unsubscribe) unsubscribe();
+      resolve(u || null);
+    });
+
+  });
+
+  if (!user){
+    alert('Please login first.');
+    throw new Error('User not logged in.');
+  }
+
+  currentTeacherId = user.uid;
+
+  // Teacher profile must contain schoolId
+  const userDoc = await db
+    .collection('users')
+    .doc(user.uid)
+    .get();
+
+  if (!userDoc.exists){
+    throw new Error('Teacher profile not found.');
+  }
+
+  const userData = userDoc.data() || {};
+
+  currentSchoolId =
+    userData.schoolId ||
+    null;
+
+  if (!currentSchoolId){
+    throw new Error('No school is assigned to this teacher.');
+  }
+
+  // Load school information
+  const schoolDoc = await db
+    .collection('schools')
+    .doc(currentSchoolId)
+    .get();
+
+  if (schoolDoc.exists){
+
+    const schoolData = schoolDoc.data() || {};
+
+    currentSchoolName =
+      schoolData.name ||
+      schoolData.schoolName ||
+      currentSchoolId;
+
+  } else {
+
+    currentSchoolName = currentSchoolId;
+
+  }
+
+  // Show actual school name in header
+  const titleEl = document.querySelector('.school-title');
+
+  if (titleEl){
+    titleEl.textContent = currentSchoolName;
+  }
+}
+
+
+// School academic-year root
+function schoolYearRef(){
+
+  if (!currentSchoolId){
+    throw new Error('School context not loaded.');
+  }
+
+  return db
+    .collection('schools')
+    .doc(currentSchoolId)
+    .collection('years')
+    .doc(academicYear);
+}
+
+
+// All exams belonging to this school
+function schoolExamsRef(){
+
+  if (!currentSchoolId){
+    throw new Error('School context not loaded.');
+  }
+
+  return db
+    .collection('schools')
+    .doc(currentSchoolId)
+    .collection('omrExams');
+}
+
+
+// Current exam
+function currentExamRef(){
+
+  if (!current.examId){
+    throw new Error('No exam selected.');
+  }
+
+  return schoolExamsRef()
+    .doc(current.examId);
+}
+
     const $ = sel => document.querySelector(sel);
 const el = id => document.getElementById(id);
 
@@ -778,42 +901,63 @@ function getClassGroupName(clsName='') {
 
 
 // Try to use your existing resolver; otherwise do a minimal precedence merge
-async function fetchEffectiveExamsWrapper(classId, className, {forceRefresh=false}={}) {
-  if (typeof fetchEffectiveExams === 'function') {
-    return await fetchEffectiveExams(classId, className, { forceRefresh });
+// ===== LOAD THIS TEACHER'S EXAMS FOR SELECTED CLASS + SECTION =====
+async function fetchEffectiveExamsWrapper(
+  classId,
+  className,
+  {forceRefresh=false}={}
+){
+
+  if (!currentTeacherId || !currentSchoolId){
+    await resolveUserContext();
   }
-  const group = getClassGroupName(className||'');
-  const root = db.collection('years').doc(academicYear);
 
-  const [groupSnap, classSnap, sectionSnap] = await Promise.all([
-    root.collection('exams').doc('classGroups').collection(group).get(),
-    root.collection('classes').doc(classId).collection('examOverrides').get(),
-    current.sectionId
-      ? root.collection('classes').doc(classId).collection('sections').doc(current.sectionId).collection('examOverrides').get()
-      : Promise.resolve({ empty:true, docs:[] })
-  ]);
+  const snap = await schoolExamsRef().get();
 
-  const rank = (origin) => origin==='section' ? 3 : origin==='class' ? 2 : 1;
-  const byNameKey = new Map();
+  return snap.docs
+    .map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    }))
+    .filter(exam => {
 
-  const push = (doc, origin) => {
-    const d = doc.data()||{}; const k = (d.nameKey || (d.name||'').toLowerCase().replace(/\s+/g,''));
-    if (!k) return;
-    const cur = byNameKey.get(k);
-    const val = { id: doc.id, ...d, __scope: origin, __origin: origin };
-    if (!cur || rank(origin) >= rank(cur.__scope)) byNameKey.set(k, val);
-  };
+      // Only exams created by this teacher
+      if (exam.createdBy !== currentTeacherId){
+        return false;
+      }
 
-  groupSnap.forEach(x => push(x, 'group'));
-  classSnap.forEach(x => push(x, 'class'));
-  if (!sectionSnap.empty) sectionSnap.forEach(x => push(x, 'section'));
+      // Selected class
+      if (exam.classId !== classId){
+        return false;
+      }
 
-  return Array.from(byNameKey.values());
+      // Selected section
+      if (exam.sectionId !== current.sectionId){
+        return false;
+      }
+
+      // Ignore deleted/archived exams
+      if (exam.archived === true){
+        return false;
+      }
+
+      return true;
+
+    })
+    .sort((a,b) =>
+      String(a.name || '').localeCompare(
+        String(b.name || ''),
+        undefined,
+        {numeric:true}
+      )
+    );
 }
-
 // Loaders
 async function loadClasses(){
-  const root = db.collection('years').doc(academicYear).collection('classes');
+
+  const root = schoolYearRef()
+    .collection('classes');
+
   const snap = await root.get();
   // Restrict to 3rd–10th in label, keep original ids
   const desired = new Set(['3rd Class','4th Class','5th Class','6th Class','7th Class','8th Class','9th Class','10th Class']);
@@ -836,8 +980,10 @@ async function loadSections(classId){
   el('btnDownloadExcel').disabled = true;
 
   if(!classId){ el('sectionSel').innerHTML=''; return; }
-  const root = db.collection('years').doc(academicYear)
-    .collection('classes').doc(classId).collection('sections');
+  const root = schoolYearRef()
+    .collection('classes')
+    .doc(classId)
+    .collection('sections');
   const snap = await root.orderBy('name').get();
   el('sectionSel').innerHTML =
   '<option value="">Select Section</option>' +
@@ -895,90 +1041,158 @@ async function loadExamsEffective(){
 }
 
 async function loadSubjectsFromExam(examId){
+
   const subjectSel  = el('subjectSel');
   const subtopicSel = el('subtopicSel');
 
-  // reset Subject
-  subjectSel.innerHTML = '<option value="">Select Subject</option>';
-  subjectSel.disabled = true;
-  refreshCdrop('subjectSel','cdrop-subject');
+  subjectSel.innerHTML =
+    '<option value="">Select Subject</option>';
 
-  // reset Subtopic
+  subjectSel.disabled = true;
+
+  refreshCdrop(
+    'subjectSel',
+    'cdrop-subject'
+  );
+
   if (subtopicSel){
-    subtopicSel.innerHTML = '<option value="">Select Subtopic</option>';
+
+    subtopicSel.innerHTML =
+      '<option value="">Select Subtopic</option>';
+
     subtopicSel.disabled = true;
-    refreshCdrop('subtopicSel','cdrop-subtopic');
+
+    refreshCdrop(
+      'subtopicSel',
+      'cdrop-subtopic'
+    );
   }
 
   examSubjects = [];
-  el('btnKey').disabled  = true;
+  examCommonSubtopics = [];
+
+  el('btnKey').disabled = true;
   el('btnScan').disabled = true;
+  el('btnViewReports').disabled = true;
+  el('btnDownloadExcel').disabled = true;
 
-  if (!examId) {
+  if (!examId) return;
+
+  const examDoc = await schoolExamsRef()
+    .doc(examId)
+    .get();
+
+  if (!examDoc.exists){
+
+    subjectSel.innerHTML =
+      '<option value="">Exam not found</option>';
+
+    refreshCdrop(
+      'subjectSel',
+      'cdrop-subject'
+    );
+
     return;
   }
 
-  const root  = db.collection('years').doc(academicYear);
-  const group = getClassGroupName(current.className || '');
+  const d = examDoc.data() || {};
 
-  // try section override → class override → group (by id)
-  const secRef = root.collection('classes').doc(current.classId)
-                     .collection('sections').doc(current.sectionId)
-                     .collection('examOverrides').doc(examId);
-  const classRef = root.collection('classes').doc(current.classId)
-                       .collection('examOverrides').doc(examId);
-  const groupRef = root.collection('exams').doc('classGroups')
-                       .collection(group).doc(examId);
-
-  let doc = await secRef.get();
-  if (!doc.exists) doc = await classRef.get();
-  if (!doc.exists) doc = await groupRef.get();
-
-  if (!doc.exists) {
-    subjectSel.innerHTML = '<option value="">No subjects</option>';
-    subjectSel.disabled  = true;
-    refreshCdrop('subjectSel','cdrop-subject');
-    return;
-  }
-
-   const d = doc.data() || {};
-  // exam-level "common" subtopics (for subjects with subtopicsMode = "common")
-  examCommonSubtopics = Array.isArray(d.subtopics) ? d.subtopics : [];
   let subs = [];
 
-  // Case 1: normal "subjects" array field
-  if (Array.isArray(d.subjects)) {
-    subs = d.subjects;
-  } else {
-    // Case 2: Firestore shows 0,1,2,... fields
-    const numericKeys = Object.keys(d).filter(k => /^\d+$/.test(k));
-    subs = numericKeys
-      .map(k => d[k])
-      .filter(v => v && typeof v === 'object');
+  if (
+    Array.isArray(d.subjects) &&
+    d.subjects.length
+  ){
+
+    subs = d.subjects.map(s => {
+
+      if (typeof s === 'string'){
+
+        return {
+          name:s,
+          subtopicsMode:'none'
+        };
+
+      }
+
+      return {
+        ...s,
+        subtopicsMode:
+          s.subtopicsMode ||
+          'none'
+      };
+
+    }).filter(s => s && s.name);
+
+  }
+  else if (d.subjectName){
+
+    subs = [{
+      name:d.subjectName,
+      subtopicsMode:'none'
+    }];
+
   }
 
-  if (!subs.length) {
-    subjectSel.innerHTML = '<option value="">No subjects</option>';
-    subjectSel.disabled  = true;
-    refreshCdrop('subjectSel','cdrop-subject');
+  if (!subs.length){
+
+    subjectSel.innerHTML =
+      '<option value="">No subjects configured</option>';
+
+    refreshCdrop(
+      'subjectSel',
+      'cdrop-subject'
+    );
+
     return;
   }
 
-  // keep full objects for subtopics
   examSubjects = subs;
+
+  examCommonSubtopics =
+    Array.isArray(d.subtopics)
+      ? d.subtopics
+      : [];
 
   subjectSel.innerHTML =
     '<option value="">Select Subject</option>' +
-    subs.map(s => `<option value="${s.name}">${s.name}</option>`).join('');
+    subs
+      .map(s =>
+        `<option value="${s.name}">${s.name}</option>`
+      )
+      .join('');
 
-   subjectSel.disabled = false;
-  refreshCdrop('subjectSel','cdrop-subject');
+  subjectSel.disabled = false;
 
-  // enable actions once we at least have subjects
-  el('btnKey').disabled           = false;
-  el('btnScan').disabled          = false;
-  el('btnViewReports').disabled   = false;
+  refreshCdrop(
+    'subjectSel',
+    'cdrop-subject'
+  );
+
+  el('btnKey').disabled = false;
+  el('btnScan').disabled = false;
+  el('btnViewReports').disabled = false;
   el('btnDownloadExcel').disabled = false;
+
+  // Automatically choose subject
+  // when exam contains only one subject
+  if (subs.length === 1){
+
+    subjectSel.value =
+      subs[0].name;
+
+    refreshCdrop(
+      'subjectSel',
+      'cdrop-subject'
+    );
+
+    subjectSel.dispatchEvent(
+      new Event(
+        'change',
+        {bubbles:true}
+      )
+    );
+  }
 }
 
     // Events
@@ -1199,7 +1413,7 @@ el('subtopicSel').addEventListener('change', (e)=>{
 
     async function saveTemplate(){
       if(!current.examId) return alert('Pick Class/Section/Exam first');
-      const docRef = db.collection('omrTemplates').doc(current.examId);
+     const docRef = currentExamRef();
       await docRef.set({
         classId: current.classId,
         sectionId: current.sectionId,
@@ -1214,7 +1428,7 @@ el('subtopicSel').addEventListener('change', (e)=>{
     }
 
     async function loadTemplate(){
-      const doc = await db.collection('omrTemplates').doc(current.examId).get();
+      const doc = await currentExamRef().get();
       if(doc.exists){
         const d = doc.data();
         tpl.rollDigits = d.rollDigits||4; tpl.bubbleSizeMm = d.bubbleSizeMm||5.5; tpl.qrEnabled = !!d.qrEnabled;
@@ -1443,7 +1657,18 @@ el('btnKeySummaryClose').onclick = ()=> {
 
 el('btnKeySave').onclick = async ()=>{
   if(!current.examId) return alert('Pick Class/Section/Exam first');
-  await db.collection('omrTemplates').doc(current.examId).set({ answerKey }, {merge:true});
+  await currentExamRef().set({
+
+  answerKey,
+
+  updatedAt:
+    firebase.firestore
+      .FieldValue
+      .serverTimestamp()
+
+}, {
+  merge:true
+});
   alert('Answer Key saved.');
 };
 
@@ -1566,10 +1791,15 @@ async function loadImageAsDataURL(src){
       doc.setDrawColor(220, 38, 38);       // red outline
       doc.setLineWidth(0.2);               // thinner outline
       doc.setTextColor(15, 61, 107);       // blue fill
-      doc.text("St. Patrick's School", cx, titleY, {
-        align: 'center',
-        renderingMode: 'fillThenStroke'
-      });
+     doc.text(
+  currentSchoolName || 'School',
+  cx,
+  titleY,
+  {
+    align:'center',
+    renderingMode:'fillThenStroke'
+  }
+);
 
       // Subheading in blue
       doc.setFont('helvetica', 'normal');
@@ -1594,6 +1824,25 @@ async function loadImageAsDataURL(src){
 
         new QRCode(container, {
           text: JSON.stringify({
+
+  type:'scimentraOMR',
+
+  schoolId:
+    currentSchoolId,
+
+  teacherId:
+    currentTeacherId,
+
+  examId:
+    current.examId,
+
+  classId:
+    current.classId,
+
+  sectionId:
+    current.sectionId
+
+}),
             examId: current.examId,
             classId: current.classId,
             sectionId: current.sectionId
@@ -1630,21 +1879,37 @@ async function loadImageAsDataURL(src){
       // Each corner has a tiny QR: { type:"omrCorner", examId, classId, sectionId, corner:"tl|tr|bl|br" }
       // Scanner will only run roll/marks logic when all 4 are visible.
 
-      const cornerQrSize = 9;            // mm (small square)
-      const cornerInset  = inner + 1.5;  // slightly inside inner border
+     const cornerQrSize = OMR_CORNER_QR_SIZE_MM;
+const cornerInset  = OMR_CORNER_INSET_MM;
 
       function addCornerQr(corner, x, y) {
         if (!window.QRCode) return;
 
         const container = document.createElement('div');
         new QRCode(container, {
-          text: JSON.stringify({
-            type    : 'omrCorner',
-            examId  : current.examId  || '',
-            classId : current.classId || '',
-            sectionId: current.sectionId || '',
-            corner  : corner          // "tl", "tr", "bl", "br"
-          }),
+         text: JSON.stringify({
+
+  type:'omrCorner',
+
+  schoolId:
+    currentSchoolId || '',
+
+  teacherId:
+    currentTeacherId || '',
+
+  examId:
+    current.examId || '',
+
+  classId:
+    current.classId || '',
+
+  sectionId:
+    current.sectionId || '',
+
+  corner:
+    corner
+
+}),
           width:  cornerQrSize * 4,   // render bigger, shrink in PDF
           height: cornerQrSize * 4,
           correctLevel: QRCode.CorrectLevel.H,
@@ -1664,7 +1929,7 @@ async function loadImageAsDataURL(src){
 
       // Positions for the 4 corner QRs in mm (page coordinates)
       const tlX = cornerInset;
-      const tlY = headerH + 29;
+     const tlY = OMR_CORNER_TOP_Y_MM;
 
       const trX = W - cornerInset - cornerQrSize;
       const trY = tlY;
@@ -1951,7 +2216,18 @@ async function loadImageAsDataURL(src){
 
       // Save ROIs
       tpl.rois = rois;
-      await db.collection('omrTemplates').doc(current.examId).set({ rois }, { merge: true });
+      await currentExamRef().set({
+
+  rois,
+
+  updatedAt:
+    firebase.firestore
+      .FieldValue
+      .serverTimestamp()
+
+}, {
+  merge:true
+});
 
       // ---------- PREVIEW + DOWNLOAD ----------
       const dataUrl = doc.output('dataurlstring');
@@ -1968,6 +2244,26 @@ function mmToPx(mm){ return Math.round(mm * 300/25.4); }
 // ---- Page + fiducial helpers ----
 const PAGE_W_MM = 210;
 const PAGE_H_MM = 297;
+
+// IMPORTANT:
+// These values must match the QR positions used while generating the PDF.
+const OMR_CORNER_QR_SIZE_MM = 9;
+const OMR_CORNER_INSET_MM   = 10;     // inner 8.5 + 1.5
+const OMR_CORNER_TOP_Y_MM   = 69;     // headerH 40 + 29
+
+// QR centre positions on the printed A4 sheet
+const OMR_MARKER_LEFT_X_MM =
+  OMR_CORNER_INSET_MM + OMR_CORNER_QR_SIZE_MM / 2;
+
+const OMR_MARKER_RIGHT_X_MM =
+  PAGE_W_MM - OMR_CORNER_INSET_MM - OMR_CORNER_QR_SIZE_MM / 2;
+
+const OMR_MARKER_TOP_Y_MM =
+  OMR_CORNER_TOP_Y_MM + OMR_CORNER_QR_SIZE_MM / 2;
+
+const OMR_MARKER_BOTTOM_Y_MM =
+  PAGE_H_MM - OMR_CORNER_INSET_MM - OMR_CORNER_QR_SIZE_MM / 2;
+
 
 // simple distance helper
 function dist2D(a,b){
@@ -2086,40 +2382,228 @@ function detectPageAnchors(ctx, cvs) {
   return { tl, tr, bl, br };
 }
 
-// Bilinear mapping from page (mm) → camera pixel using the 4 anchors
+// ===== TRUE PERSPECTIVE MAPPING =====
+// Converts an exact position on the printed A4 sheet (mm)
+// into its position in the camera image.
+//
+// IMPORTANT:
+// tl/tr/bl/br are centres of the four QR markers,
+// NOT the physical four corners of the A4 paper.
 function mapPageMmToPixel(xMm, yMm, anchors){
-  const u = xMm / PAGE_W_MM;
-  const v = yMm / PAGE_H_MM;
 
-  const {tl,tr,bl,br} = anchors;
+  if (!anchors){
+    return {x:0, y:0};
+  }
 
-  // interpolate along top & bottom edges
-  const xTop = tl.x + u * (tr.x - tl.x);
-  const yTop = tl.y + u * (tr.y - tl.y);
+  const {tl, tr, bl, br} = anchors;
 
-  const xBot = bl.x + u * (br.x - bl.x);
-  const yBot = bl.y + u * (br.y - bl.y);
+  // Convert page-mm position into coordinates relative
+  // to the rectangle formed by the four QR CENTRES.
+  //
+  // u/v may legitimately be below 0 or above 1 because
+  // some page content is outside the QR-centre rectangle.
+  const u =
+    (xMm - OMR_MARKER_LEFT_X_MM) /
+    (OMR_MARKER_RIGHT_X_MM - OMR_MARKER_LEFT_X_MM);
+
+  const v =
+    (yMm - OMR_MARKER_TOP_Y_MM) /
+    (OMR_MARKER_BOTTOM_Y_MM - OMR_MARKER_TOP_Y_MM);
+
+
+  // --------------------------------------------------
+  // Projective transform: unit rectangle → camera quad
+  //
+  // Point order:
+  //
+  // tl -------- tr
+  // |            |
+  // |            |
+  // bl -------- br
+  //
+  // This correctly handles phone perspective/tilt.
+  // --------------------------------------------------
+
+  const x0 = tl.x;
+  const y0 = tl.y;
+
+  const x1 = tr.x;
+  const y1 = tr.y;
+
+  const x2 = br.x;
+  const y2 = br.y;
+
+  const x3 = bl.x;
+  const y3 = bl.y;
+
+
+  const dx1 = x1 - x2;
+  const dx2 = x3 - x2;
+  const dx3 = x0 - x1 + x2 - x3;
+
+  const dy1 = y1 - y2;
+  const dy2 = y3 - y2;
+  const dy3 = y0 - y1 + y2 - y3;
+
+
+  let a, b, c;
+  let d, e, f;
+  let g, h;
+
+
+  // Nearly affine / straight-on photograph
+  if (
+    Math.abs(dx3) < 0.000001 &&
+    Math.abs(dy3) < 0.000001
+  ){
+
+    a = x1 - x0;
+    b = x3 - x0;
+    c = x0;
+
+    d = y1 - y0;
+    e = y3 - y0;
+    f = y0;
+
+    g = 0;
+    h = 0;
+
+  }
+
+  // Perspective photograph
+  else {
+
+    const denominator =
+      dx1 * dy2 -
+      dx2 * dy1;
+
+    // Safety fallback
+    if (Math.abs(denominator) < 0.000001){
+
+      const xTop =
+        tl.x + u * (tr.x - tl.x);
+
+      const yTop =
+        tl.y + u * (tr.y - tl.y);
+
+      const xBottom =
+        bl.x + u * (br.x - bl.x);
+
+      const yBottom =
+        bl.y + u * (br.y - bl.y);
+
+      return {
+        x:
+          xTop +
+          v * (xBottom - xTop),
+
+        y:
+          yTop +
+          v * (yBottom - yTop)
+      };
+    }
+
+
+    g =
+      (dx3 * dy2 - dx2 * dy3) /
+      denominator;
+
+    h =
+      (dx1 * dy3 - dx3 * dy1) /
+      denominator;
+
+
+    a =
+      x1 - x0 +
+      g * x1;
+
+    b =
+      x3 - x0 +
+      h * x3;
+
+    c = x0;
+
+
+    d =
+      y1 - y0 +
+      g * y1;
+
+    e =
+      y3 - y0 +
+      h * y3;
+
+    f = y0;
+  }
+
+
+  const denominator =
+    g * u +
+    h * v +
+    1;
+
 
   return {
-    x: xTop + v * (xBot - xTop),
-    y: yTop + v * (yBot - yTop)
+
+    x:
+      (a * u + b * v + c) /
+      denominator,
+
+    y:
+      (d * u + e * v + f) /
+      denominator
   };
 }
 
-// Approximate mm→px scale from anchors (used for bubble radius)
+// Approximate mm → camera-pixel scale.
+//
+// IMPORTANT:
+// Anchor distances correspond to QR-centre distances,
+// not to the full 210 × 297 mm A4 page.
 function getPageScaleFromAnchors(anchors){
+
   const {tl,tr,bl,br} = anchors;
-  const w1 = dist2D(tl,tr);
-  const w2 = dist2D(bl,br);
-  const h1 = dist2D(tl,bl);
-  const h2 = dist2D(tr,br);
 
-  const scaleX = (w1 + w2) / (2 * PAGE_W_MM);
-  const scaleY = (h1 + h2) / (2 * PAGE_H_MM);
-  const avg = (scaleX + scaleY) / 2;
-  return { scaleX, scaleY, scaleAvg: avg };
+  const wTop =
+    dist2D(tl,tr);
+
+  const wBottom =
+    dist2D(bl,br);
+
+  const hLeft =
+    dist2D(tl,bl);
+
+  const hRight =
+    dist2D(tr,br);
+
+
+  const markerWidthMm =
+    OMR_MARKER_RIGHT_X_MM -
+    OMR_MARKER_LEFT_X_MM;
+
+  const markerHeightMm =
+    OMR_MARKER_BOTTOM_Y_MM -
+    OMR_MARKER_TOP_Y_MM;
+
+
+  const scaleX =
+    (wTop + wBottom) /
+    (2 * markerWidthMm);
+
+  const scaleY =
+    (hLeft + hRight) /
+    (2 * markerHeightMm);
+
+
+  const scaleAvg =
+    (scaleX + scaleY) / 2;
+
+
+  return {
+    scaleX,
+    scaleY,
+    scaleAvg
+  };
 }
-
  // ===== CAMERA & RECOGNITION =====
 // Camera + scan state
 let stream = null;
@@ -2130,64 +2614,549 @@ let isCameraOpen = false;
 let noRollStartTime = null; // timer for "no OMR sheet found"
 let detectionHistory = [];  // recent detections for stability gating
 
+// ===== DUPLICATE SHEET PROTECTION =====
+
+// Fingerprint of the last successfully SAVED sheet
+let lastSavedSheetFingerprint = null;
+
+// Time from which no valid OMR anchors were visible
+let sheetMissingSince = null;
+
+// Sheet must leave camera for this long
+// before the same sheet may be scanned again.
+const SHEET_REMOVAL_MS = 1000;
+
 const DETECTION_WINDOW_MS   = 2000;  // look at last 2 seconds
 const REQUIRED_STABLE_HITS  = 3;     // need 3 consistent frames
 
-// Store a candidate detection and decide if it's stable enough
+// ===== CAMERA PERFORMANCE =====
+//
+// Keep live video smooth, but do expensive OMR recognition
+// only about 5 times per second.
+const SCAN_PROCESS_INTERVAL_MS = 200;
+
+
+// ===== IMAGE PROCESSING RESOLUTION =====
+//
+// Camera itself may run at 1920×1080 or better,
+// but OMR recognition does not need to analyse
+// every original camera pixel.
+//
+// Maximum longest side used for recognition.
+const OMR_PROCESS_MAX_DIMENSION = 1440;
+
+// Last time a camera frame was actually analysed
+let lastFrameProcessTime = 0;
+
+// Prevent another analysis from starting while
+// the previous one is still running
+let frameProcessingBusy = false;
+
+
+// Build a stable identity for one scanned OMR.
+// Uses:
+// exam + roll + actual marked answers
+function buildSheetFingerprint(
+  examId,
+  roll,
+  answers
+){
+
+  const parts = [
+    String(examId || ''),
+    String(roll || '')
+  ];
+
+
+  const sectionNames =
+    Object.keys(answers || {})
+      .sort();
+
+
+  sectionNames.forEach(secName => {
+
+    parts.push(
+      'SEC:' + secName
+    );
+
+    const sec =
+      answers[secName] || {};
+
+    const qNos =
+      Object.keys(sec)
+        .sort((a,b) =>
+          Number(a) - Number(b)
+        );
+
+
+    qNos.forEach(qNo => {
+
+      const opts =
+        Array.isArray(sec[qNo])
+          ? sec[qNo].slice().sort()
+          : [];
+
+      parts.push(
+        qNo + ':' + opts.join('')
+      );
+
+    });
+
+  });
+
+
+  return parts.join('|');
+}
+
+// ===== STABLE OMR DETECTION =====
+//
+// A scan is accepted only when several recent frames agree on:
+//
+// 1. Roll Number
+// 2. Actual answer pattern
+// 3. Number of answered questions
+// 4. Marks
+//
+// This prevents noisy frames from being accepted merely
+// because they happen to produce the same total marks.
+
 function registerStableDetection(candidate) {
-  // candidate: { roll, total, filledCount }
-  const now = Date.now();
-  detectionHistory.push({ ...candidate, t: now });
-  if (detectionHistory.length > 20) detectionHistory.shift();
 
-  const recent = detectionHistory.filter(d => now - d.t <= DETECTION_WINDOW_MS);
-  if (recent.length < REQUIRED_STABLE_HITS) return null;
+  const now =
+    Date.now();
 
-  if (!candidate.roll) return null;
 
-  // Same roll in enough recent frames
-  const sameRoll = recent.filter(d => d.roll === candidate.roll);
-  if (sameRoll.length < REQUIRED_STABLE_HITS) return null;
+  detectionHistory.push({
+    ...candidate,
+    t: now
+  });
 
-  // Marks roughly same in last frames (avoid noise)
-  const avgMarks = sameRoll.reduce((s, d) => s + d.total, 0) / sameRoll.length;
-  const stable = sameRoll.every(d => Math.abs(d.total - avgMarks) <= 0.25);
 
-  if (!stable) return null;
+  // Prevent history growing forever
+  if (
+    detectionHistory.length > 25
+  ){
+    detectionHistory.shift();
+  }
 
-  // Good, clear history so we don't double-fire
+
+  // Keep only recent frames
+  const recent =
+    detectionHistory.filter(
+      d =>
+        now - d.t <=
+        DETECTION_WINDOW_MS
+    );
+
+
+  if (
+    recent.length <
+    REQUIRED_STABLE_HITS
+  ){
+    return null;
+  }
+
+
+  if (
+    !candidate.roll ||
+    !candidate.answerFingerprint
+  ){
+    return null;
+  }
+
+
+  // ------------------------------------------
+  // SAME ROLL + SAME ANSWER PATTERN
+  // ------------------------------------------
+
+  const exactMatches =
+    recent.filter(d =>
+
+      d.roll ===
+        candidate.roll
+
+      &&
+
+      d.answerFingerprint ===
+        candidate.answerFingerprint
+
+      &&
+
+      d.filledCount ===
+        candidate.filledCount
+
+    );
+
+
+  if (
+    exactMatches.length <
+    REQUIRED_STABLE_HITS
+  ){
+    return null;
+  }
+
+
+  // ------------------------------------------
+  // CHECK MARKS ALSO REMAIN CONSISTENT
+  // ------------------------------------------
+
+  const avgMarks =
+    exactMatches.reduce(
+      (sum,d) =>
+        sum +
+        Number(d.total || 0),
+      0
+    ) /
+    exactMatches.length;
+
+
+  const marksStable =
+    exactMatches.every(
+      d =>
+        Math.abs(
+          Number(d.total || 0) -
+          avgMarks
+        ) <= 0.01
+    );
+
+
+  if (
+    !marksStable
+  ){
+    return null;
+  }
+
+
+  // ------------------------------------------
+  // GOOD STABLE DETECTION
+  // ------------------------------------------
+
   detectionHistory = [];
+
+
   return {
-    roll: candidate.roll,
-    total: Number(avgMarks.toFixed(2))
+
+    roll:
+      candidate.roll,
+
+    total:
+      Number(
+        avgMarks.toFixed(2)
+      ),
+
+    answerFingerprint:
+      candidate.answerFingerprint,
+
+    filledCount:
+      candidate.filledCount
+
   };
 }
 
-// Basic bubble fill check – darker inner circle → filled
-function isBubbleFilled(ctx, cx, cy, r) {
-  const rad = Math.floor(r * 0.8);
-  const x = Math.floor(cx);
-  const y = Math.floor(cy);
-  const { width, height } = ctx.canvas;
-  let acc = 0, cnt = 0;
+// ===== ADAPTIVE BUBBLE RECOGNITION =====
+//
+// Instead of asking:
+// "Is this bubble darker than a fixed value like 130?"
+//
+// we compare the INSIDE of the bubble with the local
+// white paper immediately around that bubble.
+//
+// This makes scanning much more tolerant of:
+// - shadows
+// - different phone cameras
+// - bright/dim classrooms
+// - photocopies
+// - different printers
 
-  for (let dy = -rad; dy <= rad; dy++) {
-    for (let dx = -rad; dx <= rad; dx++) {
-      const xx = x + dx, yy = y + dy;
-      if (xx < 0 || yy < 0 || xx >= width || yy >= height) continue;
-      if (dx * dx + dy * dy > rad * rad) continue;
+function getBubbleFillMetrics(ctx, cx, cy, r){
 
-      const idx  = (yy * width + xx) * 4;
-      const data = ctx.getImageData(xx, yy, 1, 1).data;
-      const lum  = 0.2126 * data[0] + 0.7152 * data[1] + 0.0722 * data[2];
-      acc += lum;
-      cnt++;
+  const canvasW = ctx.canvas.width;
+  const canvasH = ctx.canvas.height;
+
+  // Inner area of bubble.
+  // Avoid printed circular border as much as possible.
+  const innerR = Math.max(
+    2,
+    r * 0.62
+  );
+
+  // Background ring OUTSIDE bubble outline
+  const bgInnerR = r * 1.25;
+  const bgOuterR = r * 1.75;
+
+  const sampleR = Math.ceil(bgOuterR);
+
+  const startX = Math.max(
+    0,
+    Math.floor(cx - sampleR)
+  );
+
+  const startY = Math.max(
+    0,
+    Math.floor(cy - sampleR)
+  );
+
+  const endX = Math.min(
+    canvasW - 1,
+    Math.ceil(cx + sampleR)
+  );
+
+  const endY = Math.min(
+    canvasH - 1,
+    Math.ceil(cy + sampleR)
+  );
+
+  const w =
+    endX - startX + 1;
+
+  const h =
+    endY - startY + 1;
+
+  if (w <= 0 || h <= 0){
+
+    return {
+      fillRatio:0,
+      contrast:0,
+      innerAvg:255,
+      backgroundAvg:255,
+      confidence:0
+    };
+  }
+
+  const image =
+    ctx.getImageData(
+      startX,
+      startY,
+      w,
+      h
+    );
+
+  const data =
+    image.data;
+
+
+  let innerSum = 0;
+  let innerCount = 0;
+
+  let bgSum = 0;
+  let bgCount = 0;
+
+  const innerPixels = [];
+
+
+  for (
+    let py = 0;
+    py < h;
+    py++
+  ){
+
+    for (
+      let px = 0;
+      px < w;
+      px++
+    ){
+
+      const realX =
+        startX + px;
+
+      const realY =
+        startY + py;
+
+      const dx =
+        realX - cx;
+
+      const dy =
+        realY - cy;
+
+      const dist =
+        Math.sqrt(
+          dx * dx +
+          dy * dy
+        );
+
+      const i =
+        (py * w + px) * 4;
+
+      const red   = data[i];
+      const green = data[i + 1];
+      const blue  = data[i + 2];
+
+      const lum =
+        0.2126 * red +
+        0.7152 * green +
+        0.0722 * blue;
+
+
+      // Inside bubble
+      if (dist <= innerR){
+
+        innerSum += lum;
+        innerCount++;
+
+        innerPixels.push(lum);
+
+      }
+
+      // Paper around bubble
+      else if (
+        dist >= bgInnerR &&
+        dist <= bgOuterR
+      ){
+
+        bgSum += lum;
+        bgCount++;
+
+      }
     }
   }
-  const avg = acc / (cnt || 1);
-  return avg < 130; // threshold; lower = stricter
+
+
+  if (
+    !innerCount ||
+    !bgCount
+  ){
+
+    return {
+      fillRatio:0,
+      contrast:0,
+      innerAvg:255,
+      backgroundAvg:255,
+      confidence:0
+    };
+  }
+
+
+  const innerAvg =
+    innerSum / innerCount;
+
+  const backgroundAvg =
+    bgSum / bgCount;
+
+
+  // Difference between paper and inside bubble.
+  // Bigger difference = more likely filled.
+  const contrast =
+    backgroundAvg -
+    innerAvg;
+
+
+  // Dynamic darkness threshold based on
+  // surrounding paper brightness.
+  //
+  // Example:
+  // background = 230
+  // threshold  = about 195
+  //
+  // background = 185
+  // threshold  = about 150
+  //
+  // So a dark classroom does not automatically
+  // make every bubble appear filled.
+  const darknessThreshold =
+    Math.max(
+      70,
+      backgroundAvg - 35
+    );
+
+
+  let darkPixels = 0;
+
+  innerPixels.forEach(lum => {
+
+    if (
+      lum <
+      darknessThreshold
+    ){
+      darkPixels++;
+    }
+
+  });
+
+
+  const fillRatio =
+    darkPixels /
+    innerPixels.length;
+
+
+  // Confidence combines:
+  // 1. how much of bubble is dark
+  // 2. how different it is from nearby paper
+  const fillPart =
+    Math.min(
+      1,
+      fillRatio / 0.55
+    );
+
+  const contrastPart =
+    Math.min(
+      1,
+      Math.max(
+        0,
+        contrast / 55
+      )
+    );
+
+  const confidence =
+    (
+      fillPart * 0.65 +
+      contrastPart * 0.35
+    );
+
+
+  return {
+
+    fillRatio,
+
+    contrast,
+
+    innerAvg,
+
+    backgroundAvg,
+
+    confidence
+
+  };
 }
 
+
+// Final decision
+function isBubbleFilled(
+  ctx,
+  cx,
+  cy,
+  r
+){
+
+  const m =
+    getBubbleFillMetrics(
+      ctx,
+      cx,
+      cy,
+      r
+    );
+
+
+  // Clearly filled
+  if (
+    m.fillRatio >= 0.34 &&
+    m.contrast >= 18
+  ){
+    return true;
+  }
+
+
+  // Strong contrast can accept a slightly
+  // less completely shaded bubble
+  if (
+    m.fillRatio >= 0.25 &&
+    m.contrast >= 32
+  ){
+    return true;
+  }
+
+
+  return false;
+}
 // Average brightness in a patch – used by roll decoder
 function sampleBubbleBrightness(ctx, cx, cy, r) {
   const size   = Math.floor(r * 2);
@@ -2207,91 +3176,525 @@ function sampleBubbleBrightness(ctx, cx, cy, r) {
   return count ? sum / count : 255;
 }
 
-// Roll detection using page anchors + roll ROI (in mm)
-// Darkest-wins: always pick the darkest row in each column so that
-// a roll number is decoded whenever bubbles are even slightly darker.
-// Teacher can fix the roll in the review screen if needed.
-async function decodeRoll(ctx, cvs, rollROI, anchors) {
-  if (!rollROI || !anchors) return null;
+// ===== RELIABLE ROLL NUMBER DETECTION =====
+//
+// Each digit column must have exactly ONE confidently
+// filled bubble.
+//
+// Blank column       → reject
+// Two filled bubbles → reject
+// One clear bubble   → accept
+//
+// Uses the same adaptive local-lighting recognition
+// used for answer bubbles.
 
-  // Values stored in mm in tpl.rois.roll
-  const gapMm = (rollROI.gapMm  != null) ? rollROI.gapMm  : 3;          // space between digit columns
-  const xMm   = (rollROI.xMm    != null) ? rollROI.xMm    : rollROI.x;  // left of first digit column
-  const yMm   = (rollROI.yMm    != null) ? rollROI.yMm    : rollROI.y;  // top of "0" row
-  const colW  = (rollROI.colWmm != null) ? rollROI.colWmm : (rollROI.colW || 10);
-  const rowH  = (rollROI.rowHmm != null) ? rollROI.rowHmm : (rollROI.rowH || 6);
-  const cols  = rollROI.cols || tpl.rollDigits || 4;
+async function decodeRoll(
+  ctx,
+  cvs,
+  rollROI,
+  anchors
+){
 
-  if (xMm == null || yMm == null || !colW || !rowH) return null;
-
-  const { scaleAvg } = getPageScaleFromAnchors(anchors);
-  const digits = [];
-
-  for (let c = 0; c < cols; c++) {
-    const samples = [];
-
-    // sample brightness for rows 0–9 in this column
-    for (let r = 0; r <= 9; r++) {
-      const centerMmX = xMm + c * (colW + gapMm) + colW / 2;
-      const centerMmY = yMm + r * rowH;
-
-      const pt    = mapPageMmToPixel(centerMmX, centerMmY, anchors);
-      const radPx = 2.6 * scaleAvg;   // a bit larger than bubble radius
-
-      const lum = sampleBubbleBrightness(ctx, pt.x, pt.y, radPx);
-      samples.push({ row: r, lum });
-    }
-
-    if (!samples.length) return null;
-
-    // sort darkest first, and simply take the darkest row as the chosen digit
-    samples.sort((a, b) => a.lum - b.lum);
-    const best = samples[0];
-
-    digits.push(String(best.row));
+  if (
+    !rollROI ||
+    !anchors
+  ){
+    return null;
   }
 
-  if (digits.length !== cols) return null;
+
+  // Values stored in page millimetres
+  const gapMm =
+    (rollROI.gapMm != null)
+      ? rollROI.gapMm
+      : 3;
+
+  const xMm =
+    (rollROI.xMm != null)
+      ? rollROI.xMm
+      : rollROI.x;
+
+  const yMm =
+    (rollROI.yMm != null)
+      ? rollROI.yMm
+      : rollROI.y;
+
+  const colW =
+    (rollROI.colWmm != null)
+      ? rollROI.colWmm
+      : (rollROI.colW || 10);
+
+  const rowH =
+    (rollROI.rowHmm != null)
+      ? rollROI.rowHmm
+      : (rollROI.rowH || 6);
+
+  const cols =
+    rollROI.cols ||
+    tpl.rollDigits ||
+    4;
+
+
+  if (
+    xMm == null ||
+    yMm == null ||
+    !colW ||
+    !rowH
+  ){
+    return null;
+  }
+
+
+  const {
+    scaleAvg
+  } =
+    getPageScaleFromAnchors(
+      anchors
+    );
+
+
+  const digits = [];
+
+
+  // Actual roll bubble radius in PDF is about 2.2 mm.
+  const rollBubbleRadiusMm = 2.2;
+
+
+  for (
+    let c = 0;
+    c < cols;
+    c++
+  ){
+
+    const candidates = [];
+
+
+    // Read bubbles 0–9 for this digit column
+    for (
+      let r = 0;
+      r <= 9;
+      r++
+    ){
+
+      const centerMmX =
+        xMm +
+        c * (colW + gapMm) +
+        colW / 2;
+
+      const centerMmY =
+        yMm +
+        r * rowH;
+
+
+      const pt =
+        mapPageMmToPixel(
+          centerMmX,
+          centerMmY,
+          anchors
+        );
+
+
+      const radPx =
+        rollBubbleRadiusMm *
+        scaleAvg;
+
+
+      const metrics =
+        getBubbleFillMetrics(
+          ctx,
+          pt.x,
+          pt.y,
+          radPx
+        );
+
+
+      // Same basic logic used for answer bubbles
+      const filled =
+        (
+          metrics.fillRatio >= 0.34 &&
+          metrics.contrast >= 18
+        )
+        ||
+        (
+          metrics.fillRatio >= 0.25 &&
+          metrics.contrast >= 32
+        );
+
+
+      candidates.push({
+
+        digit:r,
+
+        filled,
+
+        fillRatio:
+          metrics.fillRatio,
+
+        contrast:
+          metrics.contrast,
+
+        confidence:
+          metrics.confidence,
+
+        innerAvg:
+          metrics.innerAvg,
+
+        backgroundAvg:
+          metrics.backgroundAvg
+
+      });
+    }
+
+
+    // Only bubbles considered genuinely filled
+    let filledCandidates =
+      candidates.filter(
+        x => x.filled
+      );
+
+
+    // ------------------------------------------
+    // CASE 1:
+    // Exactly one clearly filled bubble
+    // ------------------------------------------
+
+    if (
+      filledCandidates.length === 1
+    ){
+
+      digits.push(
+        String(
+          filledCandidates[0].digit
+        )
+      );
+
+      continue;
+    }
+
+
+    // ------------------------------------------
+    // CASE 2:
+    // More than one bubble appears filled
+    //
+    // We do NOT guess.
+    // Student may have marked two numbers.
+    // ------------------------------------------
+
+    if (
+      filledCandidates.length > 1
+    ){
+
+      // Sort strongest first
+      filledCandidates.sort(
+        (a,b) =>
+          b.confidence -
+          a.confidence
+      );
+
+
+      const best =
+        filledCandidates[0];
+
+      const second =
+        filledCandidates[1];
+
+
+      // Sometimes a nearby bubble catches a little ink/shadow.
+      // Allow the strongest bubble only if it is
+      // VERY clearly stronger than the second.
+      const confidenceGap =
+        best.confidence -
+        second.confidence;
+
+      const fillGap =
+        best.fillRatio -
+        second.fillRatio;
+
+
+      if (
+        best.confidence >= 0.72 &&
+        confidenceGap >= 0.22 &&
+        fillGap >= 0.16
+      ){
+
+        digits.push(
+          String(best.digit)
+        );
+
+        continue;
+      }
+
+
+      // Ambiguous column
+      return null;
+    }
+
+
+    // ------------------------------------------
+    // CASE 3:
+    // No bubble passed normal threshold.
+    //
+    // Check whether one bubble is still clearly
+    // darker than all others. This helps with
+    // lightly shaded roll numbers.
+    // ------------------------------------------
+
+    candidates.sort(
+      (a,b) =>
+        b.confidence -
+        a.confidence
+    );
+
+
+    const best =
+      candidates[0];
+
+    const second =
+      candidates[1];
+
+
+    if (
+      best &&
+      second
+    ){
+
+      const confidenceGap =
+        best.confidence -
+        second.confidence;
+
+      const fillGap =
+        best.fillRatio -
+        second.fillRatio;
+
+
+      // Accept a light mark only when it is
+      // clearly unique.
+      if (
+        best.fillRatio >= 0.20 &&
+        best.contrast >= 22 &&
+        best.confidence >= 0.45 &&
+        confidenceGap >= 0.18 &&
+        fillGap >= 0.10
+      ){
+
+        digits.push(
+          String(best.digit)
+        );
+
+        continue;
+      }
+    }
+
+
+    // No reliable digit found
+    return null;
+  }
+
+
+  if (
+    digits.length !== cols
+  ){
+    return null;
+  }
+
+
   return digits.join('');
 }
+// ===== DECODE ANSWERS WITH ADAPTIVE FILL DETECTION =====
+function decodeAnswersFromFrame(
+  ctx,
+  cvs,
+  rois,
+  anchors
+){
 
-// Decode answers using ROIs (ROIs are stored in 300-dpi px; convert back to mm)
-// Decode answers using ROIs + page anchors (no raw width/height scaling)
-function decodeAnswersFromFrame(ctx, cvs, rois, anchors) {
   const answers = {};
-  if (!rois || !Array.isArray(rois.sections) || !anchors) return answers;
 
-  const FACTOR_300PX_TO_MM = 25.4 / 300;
-  const pageScale = getPageScaleFromAnchors(anchors);
+  if (
+    !rois ||
+    !Array.isArray(rois.sections) ||
+    !anchors
+  ){
+    return answers;
+  }
 
-  for (const sec of rois.sections) {
-    const secName = sec.name;
-    if (!secName || !Array.isArray(sec.bubbles)) continue;
-    if (!answers[secName]) answers[secName] = {};
 
-    for (const b of sec.bubbles) {
-      // convert stored 300-dpi px back to page mm
-      const xMm = (b.xMm != null) ? b.xMm :
-                  (b.cx  != null ? b.cx * FACTOR_300PX_TO_MM : null);
-      const yMm = (b.yMm != null) ? b.yMm :
-                  (b.cy  != null ? b.cy * FACTOR_300PX_TO_MM : null);
-      const rMm = (b.rMm != null) ? b.rMm :
-                  (b.r   != null ? b.r  * FACTOR_300PX_TO_MM : 2.1);
+  const FACTOR_300PX_TO_MM =
+    25.4 / 300;
 
-      if (xMm == null || yMm == null) continue;
+  const pageScale =
+    getPageScaleFromAnchors(
+      anchors
+    );
 
-      const pt  = mapPageMmToPixel(xMm, yMm, anchors);
-      const rPx = rMm * pageScale.scaleAvg;
 
-      const filled = isBubbleFilled(ctx, pt.x, pt.y, rPx);
-      if (filled) {
-        if (!answers[secName][b.q]) answers[secName][b.q] = [];
-        if (!answers[secName][b.q].includes(b.opt)) {
-          answers[secName][b.q].push(b.opt);
+  for (
+    const sec of rois.sections
+  ){
+
+    const secName =
+      sec.name;
+
+    if (
+      !secName ||
+      !Array.isArray(sec.bubbles)
+    ){
+      continue;
+    }
+
+    answers[secName] = {};
+
+
+    // Group bubbles question-wise.
+    //
+    // Example:
+    // Q1 → A,B,C,D
+    // Q2 → A,B,C,D
+    //
+    // This also prepares us for later
+    // confidence comparison.
+    const questionMap =
+      new Map();
+
+
+    for (
+      const b of sec.bubbles
+    ){
+
+      if (
+        !questionMap.has(b.q)
+      ){
+        questionMap.set(
+          b.q,
+          []
+        );
+      }
+
+      questionMap
+        .get(b.q)
+        .push(b);
+    }
+
+
+    for (
+      const [qNo, bubbles]
+      of questionMap.entries()
+    ){
+
+      const chosen = [];
+
+
+      for (
+        const b of bubbles
+      ){
+
+        const xMm =
+          (b.xMm != null)
+            ? b.xMm
+            : (
+                b.cx != null
+                  ? b.cx *
+                    FACTOR_300PX_TO_MM
+                  : null
+              );
+
+        const yMm =
+          (b.yMm != null)
+            ? b.yMm
+            : (
+                b.cy != null
+                  ? b.cy *
+                    FACTOR_300PX_TO_MM
+                  : null
+              );
+
+        const rMm =
+          (b.rMm != null)
+            ? b.rMm
+            : (
+                b.r != null
+                  ? b.r *
+                    FACTOR_300PX_TO_MM
+                  : 2.1
+              );
+
+
+        if (
+          xMm == null ||
+          yMm == null
+        ){
+          continue;
         }
+
+
+        const pt =
+          mapPageMmToPixel(
+            xMm,
+            yMm,
+            anchors
+          );
+
+
+        const rPx =
+          rMm *
+          pageScale.scaleAvg;
+
+
+        const metrics =
+          getBubbleFillMetrics(
+            ctx,
+            pt.x,
+            pt.y,
+            rPx
+          );
+
+
+        let filled = false;
+
+
+        // Normal full bubble
+        if (
+          metrics.fillRatio >= 0.34 &&
+          metrics.contrast >= 18
+        ){
+
+          filled = true;
+
+        }
+
+        // Lighter but clearly different
+        // from surrounding paper
+        else if (
+          metrics.fillRatio >= 0.25 &&
+          metrics.contrast >= 32
+        ){
+
+          filled = true;
+
+        }
+
+
+        if (filled){
+
+          chosen.push(
+            b.opt
+          );
+
+        }
+      }
+
+
+      if (
+        chosen.length
+      ){
+
+        answers[secName][qNo] =
+          chosen.sort();
+
       }
     }
   }
+
 
   return answers;
 }
@@ -2378,12 +3781,88 @@ async function startCameraAutoScan() {
   }
 
   try {
-    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-    video.srcObject = stream;
-    await video.play();
-    isCameraOpen = true;
-    statusEl.textContent =
-      'Keep the full OMR sheet inside the frame. It will auto-scan when stable.';
+    stream = await navigator.mediaDevices.getUserMedia({
+
+  audio: false,
+
+  video: {
+
+    // Prefer rear camera
+    facingMode: {
+      ideal: 'environment'
+    },
+
+    // Ask for a good-quality camera stream.
+    // Browser/device may choose the nearest supported value.
+    width: {
+      ideal: 1920
+    },
+
+    height: {
+      ideal: 1080
+    }
+
+  }
+
+});
+
+
+video.srcObject = stream;
+
+await video.play();
+
+
+// ------------------------------------------
+// TRY CONTINUOUS AUTOFOCUS
+// ------------------------------------------
+//
+// Not every browser/phone supports manual focus controls.
+// Therefore apply it only when capability exists.
+//
+try {
+
+  const track =
+    stream.getVideoTracks()[0];
+
+  if (track) {
+
+    const caps =
+      typeof track.getCapabilities === 'function'
+        ? track.getCapabilities()
+        : {};
+
+
+    if (
+      Array.isArray(caps.focusMode) &&
+      caps.focusMode.includes('continuous')
+    ) {
+
+      await track.applyConstraints({
+
+        advanced: [{
+          focusMode: 'continuous'
+        }]
+
+      });
+
+    }
+  }
+
+} catch (focusErr) {
+
+  // Autofocus enhancement is optional.
+  // Never stop scanning because a phone does not support it.
+  console.warn(
+    'Continuous autofocus not supported:',
+    focusErr
+  );
+
+}
+
+
+isCameraOpen = true;
+   statusEl.textContent =
+  'Keep the full OMR sheet inside the frame. Hold the phone steady and allow the camera to focus.';
     dlg.showModal();
   } catch (err) {
     alert('Camera error: ' + err.message);
@@ -2414,13 +3893,103 @@ async function startCameraAutoScan() {
     // Already reviewing one sheet → skip
     if (isScanBusy) return;
 
-    const vw = video.videoWidth  || 0;
-    const vh = video.videoHeight || 0;
-    if (!vw || !vh) return;
+    const vw =
+  video.videoWidth || 0;
 
-    cvs.width  = vw;
-    cvs.height = vh;
-    ctx.drawImage(video, 0, 0, cvs.width, cvs.height);
+const vh =
+  video.videoHeight || 0;
+
+
+if (
+  !vw ||
+  !vh
+){
+  return;
+}
+
+
+// ------------------------------------------
+// CONTROL PROCESSING RESOLUTION
+// ------------------------------------------
+//
+// Keep original camera video high quality,
+// but resize only the recognition canvas.
+//
+// Example:
+//
+// Camera:
+// 1920 × 1080
+//
+// Recognition:
+// 1440 × 810
+//
+// All QR / anchor / bubble coordinates remain
+// internally consistent because detection happens
+// entirely on this resized canvas.
+//
+const longestSide =
+  Math.max(vw, vh);
+
+
+let processScale = 1;
+
+
+if (
+  longestSide >
+  OMR_PROCESS_MAX_DIMENSION
+){
+
+  processScale =
+    OMR_PROCESS_MAX_DIMENSION /
+    longestSide;
+
+}
+
+
+const processW =
+  Math.max(
+    1,
+    Math.round(
+      vw * processScale
+    )
+  );
+
+
+const processH =
+  Math.max(
+    1,
+    Math.round(
+      vh * processScale
+    )
+  );
+
+
+// Resize canvas only when necessary.
+// Repeatedly changing canvas dimensions clears it
+// and creates unnecessary memory work.
+if (
+  cvs.width !== processW ||
+  cvs.height !== processH
+){
+
+  cvs.width =
+    processW;
+
+  cvs.height =
+    processH;
+
+}
+
+
+// Draw high-quality camera image into
+// smaller recognition canvas.
+ctx.drawImage(
+  video,
+  0,
+  0,
+  processW,
+  processH
+);
 
     // Optional QR check: if present and examId mismatches, ignore this frame
     try {
@@ -2448,16 +4017,57 @@ async function startCameraAutoScan() {
     const anchors = detectPageAnchors(ctx, cvs);
 
     if (!anchors) {
-      // No clear 4-corner anchors → treat as "no OMR" frame.
-      if (noRollStartTime === null) {
-        noRollStartTime = now;
-      } else if (now - noRollStartTime > 6000) {
-        alert('No OMR sheet found or not fully inside the frame. Align sheet so all six black squares are visible.');
-        noRollStartTime = null;
-      }
-      return;
-    }
 
+  // No valid OMR currently visible.
+  //
+  // Start timing how long the previous sheet
+  // has been removed from the camera.
+  if (sheetMissingSince === null){
+    sheetMissingSince = now;
+  }
+
+
+  // Only after the sheet has genuinely left the
+  // camera for enough time do we permit the same
+  // fingerprint again.
+  if (
+    now - sheetMissingSince >=
+    SHEET_REMOVAL_MS
+  ){
+
+    lastSavedSheetFingerprint = null;
+
+    detectionHistory = [];
+
+  }
+
+
+  // Existing "no OMR" warning logic
+  if (noRollStartTime === null) {
+
+    noRollStartTime = now;
+
+  }
+  else if (
+    now - noRollStartTime >
+    6000
+  ) {
+
+    alert(
+      'No OMR sheet found or not fully inside the frame. ' +
+      'Align the full sheet correctly.'
+    );
+
+    noRollStartTime = null;
+  }
+
+
+  return;
+}
+
+
+// OMR is visible again
+sheetMissingSince = null;
     // Try to decode roll using anchors
     const roll = await decodeRoll(ctx, cvs, tpl.rois.roll, anchors);
 
@@ -2466,7 +4076,10 @@ async function startCameraAutoScan() {
       if (noRollStartTime === null) {
         noRollStartTime = now;
       } else if (now - noRollStartTime > 6000) {
-        alert('OMR sheet detected, but Roll bubbles are not readable. Check lighting and bubble fill.');
+        alert(
+  'Roll Number could not be read clearly. ' +
+  'Check that exactly one bubble is filled in each Roll No. column.'
+);
         noRollStartTime = null;
       }
       return;
@@ -2492,20 +4105,86 @@ async function startCameraAutoScan() {
       return;
     }
 
-    const candidate = {
-      roll,
-      total: typeof score.total === 'number' ? score.total : 0,
-      filledCount
-    };
+    // Create identity of THIS sheet
+const sheetFingerprint =
+  buildSheetFingerprint(
+    current.examId,
+    roll,
+    answers
+  );
 
-    const stable = registerStableDetection(candidate);
-    if (!stable) {
-      // Not stable yet; keep scanning
-      return;
-    }
 
-    // We have a stable reading for this sheet – draw green/red overlay
-    drawAnswerOverlayFromROIs(ctx, tpl.rois, anchors, answers, score);
+const candidate = {
+
+  roll,
+
+  total:
+    typeof score.total === 'number'
+      ? score.total
+      : 0,
+
+  filledCount,
+
+  answerFingerprint:
+    sheetFingerprint
+
+};
+  roll,
+  total:
+    typeof score.total === 'number'
+      ? score.total
+      : 0,
+  filledCount
+};
+
+
+const stable =
+  registerStableDetection(
+    candidate
+  );
+   if (!stable) {
+
+  // Not stable yet
+  return;
+}
+
+
+// ------------------------------------------
+// DUPLICATE PROTECTION
+// ------------------------------------------
+//
+// If this exact OMR was already saved and
+// the teacher has not removed it from the
+// camera yet, DO NOT scan it again.
+//
+if (
+  lastSavedSheetFingerprint &&
+  sheetFingerprint ===
+    lastSavedSheetFingerprint
+){
+
+  el('cameraHint').textContent =
+    'Already saved. Remove this OMR sheet and place the next sheet.';
+
+  detectionHistory = [];
+
+  return;
+}
+
+
+// New sheet detected
+el('cameraHint').textContent =
+  'OMR detected. Checking answers...';
+
+
+// We have a stable reading for this sheet
+drawAnswerOverlayFromROIs(
+  ctx,
+  tpl.rois,
+  anchors,
+  answers,
+  score
+);
 
     // Stable → lock scanner for this sheet
     isScanBusy = true;
@@ -2516,34 +4195,118 @@ async function startCameraAutoScan() {
       sectionId:    current.sectionId,
       subjectName:  current.subjectName || null,
       subtopicName: current.subtopicName || null,
-      roll:         stable.roll,
-      answers,
-      // keep the same public shape used earlier; full `score` still available above
-      score:        { total: stable.total, perSection: score.perSection || {} },
-      capturedAt:   new Date().toISOString()
-    };
+     roll:         stable.roll,
 
+      answers,
+
+      // Remember the ORIGINAL scanned sheet identity.
+      // Even if teacher edits Roll No. later,
+      // duplicate protection still recognises
+      // the physical sheet correctly.
+      scanFingerprint:
+        sheetFingerprint,
+
+      score: {
+        total:
+          stable.total,
+
+        perSection:
+          score.perSection || {}
+      },
+
+      capturedAt:
+        new Date().toISOString()
     const previewDataUrl = cvs.toDataURL('image/png');
     showScanReview(out, previewDataUrl);
   }
 
-  async function loop() {
-    if (!stream || !isCameraOpen) {
-      scanLoopId = null;
-      return;
-    }
-    await processFrame();
-    scanLoopId = requestAnimationFrame(loop);
+  async function loop(timestamp) {
+
+  if (
+    !stream ||
+    !isCameraOpen
+  ){
+    scanLoopId = null;
+    return;
   }
-  loop();
+
+
+  // requestAnimationFrame itself may run at
+  // 30 / 60 / 90 / 120 FPS.
+  //
+  // We intentionally analyse only one frame
+  // approximately every 200 ms.
+  const enoughTimePassed =
+    (
+      timestamp -
+      lastFrameProcessTime
+    ) >= SCAN_PROCESS_INTERVAL_MS;
+
+
+  if (
+    enoughTimePassed &&
+    !frameProcessingBusy &&
+    !isScanBusy
+  ){
+
+    lastFrameProcessTime =
+      timestamp;
+
+    frameProcessingBusy =
+      true;
+
+    try{
+
+      await processFrame();
+
+    }
+    catch(err){
+
+      console.error(
+        'OMR frame processing error:',
+        err
+      );
+
+    }
+    finally{
+
+      frameProcessingBusy =
+        false;
+
+    }
+  }
+
+
+  // Keep video/UI loop smooth.
+  // Only recognition is throttled.
+  scanLoopId =
+    requestAnimationFrame(loop);
+}
+
+
+// Reset timing whenever scanner starts
+lastFrameProcessTime = 0;
+frameProcessingBusy = false;
+
+scanLoopId =
+  requestAnimationFrame(loop);
 }
 
 function stopCameraStream() {
   isCameraOpen = false;
-  if (scanLoopId) {
-    cancelAnimationFrame(scanLoopId);
-    scanLoopId = null;
-  }
+ if (scanLoopId) {
+
+  cancelAnimationFrame(
+    scanLoopId
+  );
+
+  scanLoopId = null;
+}
+
+
+// Reset recognition state
+lastFrameProcessTime = 0;
+frameProcessingBusy = false;
   if (stream) {
     stream.getTracks().forEach(t => t.stop());
     stream = null;
@@ -2698,7 +4461,7 @@ async function saveScanToFirestore(out) {
       return;
     }
 
-    const yearRef = db.collection('years').doc(academicYear);
+    const yearRef = schoolYearRef();
     const studentsRef = yearRef
       .collection('classes').doc(out.classId)
       .collection('sections').doc(out.sectionId)
@@ -2730,7 +4493,63 @@ async function saveScanToFirestore(out) {
       updateData[subjectName] = totalMarks;
     }
 
-    await marksRef.set(updateData, { merge: true });
+   await marksRef.set(
+  updateData,
+  {merge:true}
+);
+
+
+// Also keep complete OMR result under the teacher's exam
+await currentExamRef()
+  .collection('results')
+  .doc(String(out.roll))
+  .set({
+
+    schoolId:
+      currentSchoolId,
+
+    teacherId:
+      currentTeacherId,
+
+    studentId:
+      stuDoc.id,
+
+    roll:
+      String(out.roll),
+
+    classId:
+      out.classId,
+
+    sectionId:
+      out.sectionId,
+
+    subjectName:
+      out.subjectName || null,
+
+    subtopicName:
+      out.subtopicName || null,
+
+    totalMarks:
+      totalMarks,
+
+    answers:
+      out.answers || {},
+
+    score:
+      out.score || {},
+
+    capturedAt:
+      out.capturedAt ||
+      new Date().toISOString(),
+
+    updatedAt:
+      firebase.firestore
+        .FieldValue
+        .serverTimestamp()
+
+  }, {
+    merge:true
+  });
 
   } catch (err) {
     console.error('saveScanToFirestore error', err);
@@ -2827,6 +4646,15 @@ function showScanReview(out, previewDataUrl) {
 
 async function finalizeScanSave(out) {
   try {
+
+    // Mark this physical sheet as saved.
+    //
+    // Scanner will now refuse it until
+    // the sheet is removed from camera.
+    if (out.scanFingerprint){
+      lastSavedSheetFingerprint =
+        out.scanFingerprint;
+    }
     const key = `omrResults_${out.examId}`;
     const existing = JSON.parse(localStorage.getItem(key) || '[]');
     existing.push(out);
@@ -2835,7 +4663,22 @@ async function finalizeScanSave(out) {
     await saveScanToFirestore(out);
 
     el('pickStatus').innerHTML =
-      `<span class="pill ok">Saved: Roll ${out.roll || '?'} | ${out.score.total.toFixed(2)} marks</span>`;
+  `<span class="pill ok">
+    Saved: Roll ${out.roll || '?'} |
+    ${out.score.total.toFixed(2)} marks
+  </span>`;
+
+
+// Tell teacher exactly what to do next
+const cameraHint =
+  el('cameraHint');
+
+if (cameraHint){
+
+  cameraHint.textContent =
+    'Saved successfully. Remove this sheet and place the next OMR.';
+
+}
   } catch (err) {
     console.error('finalizeScanSave error:', err);
     alert('Could not save scan. Please try again.');
@@ -2926,9 +4769,38 @@ el('btnDownloadExcel').onclick = ()=>{
 
 // ===== BOOT =====
 (async()=>{
-  // mount empty subtopic dropdown in disabled state
-  refreshCdrop('subtopicSel','cdrop-subtopic');
-  await loadClasses();
+
+  try{
+
+    // Identify logged-in teacher + school
+    await resolveUserContext();
+
+    // Prepare dropdown
+    refreshCdrop(
+      'subtopicSel',
+      'cdrop-subtopic'
+    );
+
+    // Classes come from SCHOOL database
+    await loadClasses();
+
+    el('pickStatus').textContent =
+      'Select Class and Section. Then select an existing exam or create New Exam.';
+
+  }
+  catch(err){
+
+    console.error(
+      'OMR startup error:',
+      err
+    );
+
+    alert(
+      'Could not load OMR Scanner: ' +
+      err.message
+    );
+  }
+
 })();
 
   </script>
