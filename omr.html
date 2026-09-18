@@ -3133,9 +3133,293 @@ async function loadImageAsDataURL(src){
       const flowStartX =
         pageCenterX -
         flowGridW / 2;
+      // ==========================================
+      // BALANCED COLUMN PLAN
+      // ==========================================
+      //
+      // Goal:
+      // Last bubble row of every used column must
+      // finish on the SAME horizontal Y position.
+      //
+      // Roll-number area is NOT changed.
+      // ==========================================
 
-           let flowColumn = 0;
-      let flowY = sectionsTopY;
+      const totalFlowBlocks =
+        tpl.sections.reduce(
+          (sum, sec) =>
+            sum +
+            Math.ceil(
+              (Number(sec.count) || 0) /
+              rowsPerBlock
+            ),
+          0
+        );
+
+
+      // Divide the 5-question blocks as evenly
+      // as possible between the available columns.
+      //
+      // Example:
+      // 10 blocks / 3 columns = 4, 3, 3
+      //
+      // This prevents the LAST column from becoming
+      // the unusually long column.
+      const baseBlocksPerColumn =
+        Math.floor(
+          totalFlowBlocks /
+          flowColumnCount
+        );
+
+
+      const extraBlocks =
+        totalFlowBlocks %
+        flowColumnCount;
+
+
+      const flowColumnBlockCaps =
+        Array.from(
+          {
+            length:
+              flowColumnCount
+          },
+          (_, col) =>
+            baseBlocksPerColumn +
+            (
+              col < extraBlocks
+                ? 1
+                : 0
+            )
+        );
+
+
+      // ==========================================
+      // FIRST SIMULATE THE COLUMN CONTENT
+      // ==========================================
+      //
+      // We calculate where the LAST bubble of
+      // every column would be.
+      //
+      // Then shorter columns are started slightly
+      // lower so all final bubble rows line up.
+      // ==========================================
+
+      const columnLastBubbleRelativeY =
+        new Array(
+          flowColumnCount
+        ).fill(0);
+
+
+      let simColumn = 0;
+      let simBlocksInColumn = 0;
+      let simY = 0;
+
+
+      function nextSimColumn(){
+
+        if (
+          simColumn <
+          flowColumnCount - 1
+        ){
+
+          simColumn++;
+
+          simBlocksInColumn = 0;
+
+          simY = 0;
+        }
+      }
+
+
+      tpl.sections.forEach(sec => {
+
+        const secCount =
+          Number(sec.count) || 0;
+
+
+        const totalBlocks =
+          Math.ceil(
+            secCount /
+            rowsPerBlock
+          );
+
+
+        const printName =
+          Object.prototype.hasOwnProperty.call(
+            sec,
+            'displayName'
+          )
+            ? String(
+                sec.displayName ?? ''
+              ).trim()
+            : String(
+                sec.name || ''
+              ).trim();
+
+
+        const titleSpace =
+          printName
+            ? Math.max(
+                3,
+                4 * layoutScale
+              )
+            : 0;
+
+
+        const subjectGap =
+          Math.max(
+            2,
+            5 * layoutScale
+          );
+
+
+        // If previous column is already full,
+        // subject begins in the next column.
+        while (
+          simColumn <
+            flowColumnCount - 1
+          &&
+          simBlocksInColumn >=
+            flowColumnBlockCaps[
+              simColumn
+            ]
+        ){
+
+          nextSimColumn();
+        }
+
+
+        simY +=
+          titleSpace;
+
+
+        let remainingQuestions =
+          secCount;
+
+
+        for (
+          let b = 0;
+          b < totalBlocks;
+          b++
+        ){
+
+          while (
+            simColumn <
+              flowColumnCount - 1
+            &&
+            simBlocksInColumn >=
+              flowColumnBlockCaps[
+                simColumn
+              ]
+          ){
+
+            nextSimColumn();
+          }
+
+
+          const rowsThisBlock =
+            Math.min(
+              rowsPerBlock,
+              remainingQuestions
+            );
+
+
+          if (
+            rowsThisBlock > 0
+          ){
+
+            columnLastBubbleRelativeY[
+              simColumn
+            ] =
+              simY +
+              blockHeaderOffset +
+              (
+                rowsThisBlock - 1
+              ) *
+              rowGap -
+              1.0;
+          }
+
+
+          simY +=
+            perBlockHeight;
+
+
+          simBlocksInColumn++;
+
+
+          remainingQuestions -=
+            rowsThisBlock;
+        }
+
+
+        simY +=
+          subjectGap;
+      });
+
+
+      // ==========================================
+      // COMMON LAST-BUBBLE LINE
+      // ==========================================
+
+      const maxLastBubbleRelativeY =
+        Math.max(
+          0,
+          ...columnLastBubbleRelativeY
+        );
+
+
+      const idealCommonBottomBubbleY =
+        sectionsTopY +
+        maxLastBubbleRelativeY;
+
+
+      const maximumSafeBottomBubbleY =
+        bottomLimit -
+        bubbleR -
+        1;
+
+
+      const commonBottomBubbleY =
+        Math.min(
+          idealCommonBottomBubbleY,
+          maximumSafeBottomBubbleY
+        );
+
+
+      // Different start Y for each answer column.
+      //
+      // IMPORTANT:
+      // This changes ONLY answer-grid placement.
+      // Roll number coordinates remain untouched.
+      const flowColumnStartY =
+        columnLastBubbleRelativeY.map(
+          relativeY => {
+
+            if (
+              relativeY <= 0
+            ){
+              return sectionsTopY;
+            }
+
+
+            return Math.max(
+              sectionsTopY,
+              commonBottomBubbleY -
+              relativeY
+            );
+          }
+        );
+
+
+      let flowColumn = 0;
+
+      let flowY =
+        flowColumnStartY[0] ||
+        sectionsTopY;
+
+
+      let flowBlocksUsedInColumn = 0;
+
 
       // Printed question numbers continue across all subjects.
       // Internal section question numbers remain local for scoring.
@@ -3146,7 +3430,14 @@ async function loadImageAsDataURL(src){
 
         flowColumn++;
 
+
+        flowBlocksUsedInColumn = 0;
+
+
         flowY =
+          flowColumnStartY[
+            flowColumn
+          ] ||
           sectionsTopY;
       }
 
@@ -3201,16 +3492,19 @@ async function loadImageAsDataURL(src){
           4;
 
 
+              // ------------------------------------------
+        // MOVE TO NEXT BALANCED COLUMN
+        // WHEN THIS COLUMN HAS ITS PLANNED
+        // NUMBER OF 5-QUESTION BLOCKS
         // ------------------------------------------
-        // IF SUBJECT CANNOT START HERE,
-        // MOVE TO TOP OF NEXT COLUMN
-        // ------------------------------------------
-        if (
-          flowY > sectionsTopY &&
-          flowY +
-          titleSpace +
-          perBlockHeight >
-          bottomLimit
+        while (
+          flowColumn <
+            flowColumnCount - 1
+          &&
+          flowBlocksUsedInColumn >=
+            flowColumnBlockCaps[
+              flowColumn
+            ]
         ){
           nextFlowColumn();
         }
@@ -3283,10 +3577,16 @@ async function loadImageAsDataURL(src){
           b++
         ){
 
-          if (
-            flowY +
-            perBlockHeight >
-            bottomLimit
+                   // Column change is based on the balanced
+          // block plan, NOT simply on page bottom.
+          while (
+            flowColumn <
+              flowColumnCount - 1
+            &&
+            flowBlocksUsedInColumn >=
+              flowColumnBlockCaps[
+                flowColumn
+              ]
           ){
             nextFlowColumn();
           }
@@ -3431,9 +3731,14 @@ async function loadImageAsDataURL(src){
           }
 
 
-          // Continue DOWNWARD
+                   // Continue DOWNWARD
           flowY +=
             perBlockHeight;
+
+
+          // Count this completed 5-question block
+          // in the present column.
+          flowBlocksUsedInColumn++;
         }
 
 
