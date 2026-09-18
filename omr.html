@@ -11,11 +11,7 @@
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
   <!-- jsPDF for PDF generation -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-  <!-- QR generation (for embedding examId/class/section in the OMR) -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-  <!-- QR reading (from camera frames) -->
-  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+    <!-- OMR recognition uses solid black fiducial squares; no QR library required -->
   <style>
     :root{
       --brand:#0f3d6b;
@@ -499,7 +495,7 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
     <header>
       <div class="title">
         <div class="h1">Exam Settings</div>
-        <div class="sub">Define roll digits, sections, bubble size, QR</div>
+                <div class="sub">Define roll digits, sections, bubble size and black-marker recognition</div>
       </div>
           <button class="icon-btn modal-close" type="button"
         onclick="document.getElementById('dlgExam').close()" aria-label="Close">
@@ -516,14 +512,12 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
           <div class="label">Bubble size (mm)</div>
           <input id="inpBubbleSize" type="number" min="4" max="8" step="0.5" value="5.5" class="select" />
         </div>
-        <div>
-      <div class="label">QR on sheet</div>
-      <select id="selQr" class="select native-select-hidden">
-        <option value="on">On</option>
-        <option value="off">Off</option>
-      </select>
-      <div id="cdrop-qr" class="cdrop" data-select="selQr"></div>
-    </div>
+               <div>
+          <div class="label">Sheet Recognition</div>
+          <div class="select" style="display:flex;align-items:center;min-height:42px;">
+            Black square markers (automatic)
+          </div>
+        </div>
       </div>
       <div class="hr"></div>
       <div class="sectionTitle"><i class="fa fa-layer-group"></i> Subjects / Sections</div>
@@ -761,7 +755,7 @@ let lastScanPending = null;   // holds latest scan until user presses Save
 let tpl = {
       rollDigits:4,
       bubbleSizeMm:5.5,
-      qrEnabled:true,
+            markerMode:'black-square-v1',
       sections:[ /* {name, count, options:4|5, mark, negative} */ ],
       // computed ROIs saved after generation for deterministic scan
       rois:null,
@@ -1879,15 +1873,7 @@ el('subtopicSel').addEventListener('change', (e)=>{
       el('inpBubbleSize').value =
         tpl.bubbleSizeMm;
 
-      el('selQr').value =
-        tpl.qrEnabled ? 'on' : 'off';
-
-      renderSectionRows();
-
-      refreshCdrop(
-        'selQr',
-        'cdrop-qr'
-      );
+           renderSectionRows();
 
       // Subjects come from the exam itself.
       // Do not add arbitrary extra subject sections.
@@ -1993,8 +1979,8 @@ el('subtopicSel').addEventListener('change', (e)=>{
       tpl.bubbleSizeMm =
         Number(el('inpBubbleSize').value) || 5.5;
 
-      tpl.qrEnabled =
-        (el('selQr').value === 'on');
+           tpl.markerMode = 'black-square-v1';
+
 
       // Settings/layout changed.
       // Old ROIs must not be used.
@@ -2028,8 +2014,8 @@ el('subtopicSel').addEventListener('change', (e)=>{
             : [],
 
         rollDigits: tpl.rollDigits,
-        bubbleSizeMm: tpl.bubbleSizeMm,
-        qrEnabled: tpl.qrEnabled,
+                bubbleSizeMm: tpl.bubbleSizeMm,
+        markerMode: 'black-square-v1',
         sections: tpl.sections,
         rois: tpl.rois||null,
         updatedAt: firebase.firestore.FieldValue.serverTimestamp()
@@ -2040,8 +2026,16 @@ el('subtopicSel').addEventListener('change', (e)=>{
       const doc = await currentExamRef().get();
       if(doc.exists){
         const d = doc.data();
-        tpl.rollDigits = d.rollDigits||4; tpl.bubbleSizeMm = d.bubbleSizeMm||5.5; tpl.qrEnabled = !!d.qrEnabled;
-        tpl.sections = Array.isArray(d.sections)? d.sections:[]; tpl.rois = d.rois||null;
+                tpl.rollDigits = d.rollDigits || 4;
+        tpl.bubbleSizeMm = d.bubbleSizeMm || 5.5;
+        tpl.markerMode = 'black-square-v1';
+        tpl.sections = Array.isArray(d.sections) ? d.sections : [];
+
+        // Old QR-based ROIs must never be reused with the new scanner.
+        tpl.rois = (
+          d.rois &&
+          d.rois.markerMode === 'black-square-v1'
+        ) ? d.rois : null;
         answerKey = d.answerKey||{};
         el('tplStatus').textContent = tpl.rois? 'Template & ROIs loaded.' : 'Template loaded (no ROIs yet).';
         await buildKeyUI();
@@ -2082,7 +2076,8 @@ async function buildKeyUI(){
   }
   if(!answerKey || typeof answerKey !== 'object') answerKey = {};
 
-  const host = document.createElement('div');
+   const host = document.createElement('div');
+  let globalKeyNo = 1;
 
   tpl.sections.forEach(sec=>{
     if(!answerKey[sec.name]) answerKey[sec.name] = {};
@@ -2114,8 +2109,8 @@ async function buildKeyUI(){
       const either = !!entry.either;
       const addScore = !!entry.addScore;
 
-      const tr = document.createElement('tr');
-      const cell1 = `<td style="width:60px"><span class="kbd">${q}</span></td>`;
+            const tr = document.createElement('tr');
+      const cell1 = `<td style="width:60px"><span class="kbd">${globalKeyNo}</span></td>`;
 
       const optionsHtml = ['A','B','C','D','E','F']
         .slice(0, sec.options)
@@ -2145,7 +2140,8 @@ async function buildKeyUI(){
       `;
 
       tr.innerHTML = cell1 + `<td>${optionsHtml}${flagsHtml}</td>`;
-      tbody.appendChild(tr);
+           tbody.appendChild(tr);
+      globalKeyNo++;
     }
 
     tbl.appendChild(tbody);
@@ -2441,95 +2437,49 @@ async function loadImageAsDataURL(src){
       // Reset text colour
       doc.setTextColor(0, 0, 0);
 
-           // ---------- QR CODE (optional) ----------
-      let qrBox = null;
-      if (tpl.qrEnabled && window.QRCode) {
-        const qrSize = 22;
-        const container = document.createElement('div');
+                     // ---------- BLACK FIDUCIAL SQUARES (EvalBee-style recognition) ----------
+      // These 4 solid black squares are the fixed page anchors used by the scanner.
+      // No QR code is required.
 
-               new QRCode(container, {
-  text: JSON.stringify({
-    type: 'scimentraOMR',
-    examId: current.examId || ''
-  }),
-  width: qrSize * 4,
-  height: qrSize * 4,
-  correctLevel: QRCode.CorrectLevel.M
-});
+      const markerSize = OMR_MARKER_SIZE_MM;
+      const markerInset = OMR_MARKER_INSET_MM;
 
-        const canvasEl = container.querySelector('canvas');
-        if (canvasEl) {
-          try {
-            // jsPDF can take a canvas directly
-            doc.addImage(canvasEl, 'PNG',
-              W - margin - qrSize,
-              headerH + 29,
-              qrSize,
-              qrSize
-            );
-            qrBox = {
-              x: W - margin - qrSize,
-              y: headerH + 29,
-              w: qrSize,
-              h: qrSize
-            };
+      const markerTL = {
+        x: markerInset,
+        y: OMR_MARKER_TOP_Y_MM
+      };
 
-          } catch (e) {
-            console.warn('Header QR embed failed', e);
-          }
-        }
+      const markerTR = {
+        x: W - markerInset - markerSize,
+        y: OMR_MARKER_TOP_Y_MM
+      };
+
+      const markerBL = {
+        x: markerInset,
+        y: H - markerInset - markerSize
+      };
+
+      const markerBR = {
+        x: W - markerInset - markerSize,
+        y: H - markerInset - markerSize
+      };
+
+      function drawBlackMarker(pos){
+        doc.setFillColor(0, 0, 0);
+        doc.rect(
+          pos.x,
+          pos.y,
+          markerSize,
+          markerSize,
+          'F'
+        );
       }
 
-            // ---------- CORNER QR FIDUCIALS (4 unique anchors) ----------
-      // Each corner has a tiny QR: { type:"omrCorner", examId, classId, sectionId, corner:"tl|tr|bl|br" }
-      // Scanner will only run roll/marks logic when all 4 are visible.
+      drawBlackMarker(markerTL);
+      drawBlackMarker(markerTR);
+      drawBlackMarker(markerBL);
+      drawBlackMarker(markerBR);
 
-     const cornerQrSize = OMR_CORNER_QR_SIZE_MM;
-const cornerInset  = OMR_CORNER_INSET_MM;
-
-      function addCornerQr(corner, x, y) {
-        if (!window.QRCode) return;
-
-        const container = document.createElement('div');
-       new QRCode(container, {
-  text: JSON.stringify({
-    type: 'omrCorner',
-    examId: current.examId || '',
-    corner: corner
-  }),
-  width: cornerQrSize * 4,
-  height: cornerQrSize * 4,
-  correctLevel: QRCode.CorrectLevel.M,
-  margin: 0
-});
-        const canvasEl = container.querySelector('canvas');
-        if (!canvasEl) return;
-
-        try {
-          // embed the canvas directly as PNG
-          doc.addImage(canvasEl, 'PNG', x, y, cornerQrSize, cornerQrSize);
-        } catch (e) {
-          console.warn('Corner QR embed failed for', corner, e);
-        }
-      }
-
-      // Positions for the 4 corner QRs in mm (page coordinates)
-      const tlX = cornerInset;
-     const tlY = OMR_CORNER_TOP_Y_MM;
-
-      const trX = W - cornerInset - cornerQrSize;
-      const trY = tlY;
-
-      const blX = cornerInset;
-      const blY = H - cornerInset - cornerQrSize;
-
-      const brX = trX;
-      const brY = blY;
-
-      addCornerQr('tl', tlX, tlY);
-      addCornerQr('tr', trX, trY);
-      addCornerQr('bl', blX, blY);
-      addCornerQr('br', brX, brY);
 
            // ---------- STUDENT INFO BOX ----------
       const infoTop  = headerH + 6;
@@ -2643,7 +2593,7 @@ const cornerInset  = OMR_CORNER_INSET_MM;
         '5. Do not overwrite or try to erase answers.',
         '6. More than one bubble for a question will be treated as wrong.',
         '7. Avoid stray marks; do not fold, tear or damage the sheet.',
-        '8. Do not write in the QR / barcode area or page margins.',
+        '8. Do not write over the black square markers or page margins.',
         '9. Mark answers only on this OMR sheet, not on the question paper.',
         '10. Check Roll No. and answers before handing over the sheet; follow invigilator’s instructions.'
       ];
@@ -2793,7 +2743,8 @@ const cornerInset  = OMR_CORNER_INSET_MM;
       const pageCenterX =
         W / 2;
 
-      const rois = {
+           const rois = {
+        markerMode: 'black-square-v1',
         roll: { x: rollGridX, y: rollGridY, cols, colW, rowH },
         sections: []
       };
@@ -3114,8 +3065,12 @@ const cornerInset  = OMR_CORNER_INSET_MM;
         pageCenterX -
         flowGridW / 2;
 
-      let flowColumn = 0;
+           let flowColumn = 0;
       let flowY = sectionsTopY;
+
+      // Printed question numbers continue across all subjects.
+      // Internal section question numbers remain local for scoring.
+      let globalQuestionNo = 1;
 
 
       function nextFlowColumn(){
@@ -3250,7 +3205,7 @@ const cornerInset  = OMR_CORNER_INSET_MM;
         // WHEN BOTTOM IS REACHED,
         // CONTINUE AT TOP OF NEXT COLUMN.
         // ------------------------------------------
-        let qNum = 1;
+                let localQNum = 1;
 
 
         for (
@@ -3341,8 +3296,8 @@ const cornerInset  = OMR_CORNER_INSET_MM;
           for (
             let r = 0;
             r < rowsPerBlock &&
-            qNum <= sec.count;
-            r++, qNum++
+                        localQNum <= sec.count;
+            r++, localQNum++, globalQuestionNo++
           ){
 
             const y =
@@ -3353,7 +3308,7 @@ const cornerInset  = OMR_CORNER_INSET_MM;
 
 
             doc.text(
-              String(qNum),
+                           String(globalQuestionNo),
               blockLeftX,
               y
             );
@@ -3384,7 +3339,8 @@ const cornerInset  = OMR_CORNER_INSET_MM;
 
 
               secROI.bubbles.push({
-                q: qNum,
+                               q: localQNum,
+                globalQ: globalQuestionNo,
                 opt:
                   String.fromCharCode(
                     65 + o
@@ -3559,23 +3515,24 @@ const PAGE_W_MM = 210;
 const PAGE_H_MM = 297;
 
 // IMPORTANT:
-// These values must match the QR positions used while generating the PDF.
-const OMR_CORNER_QR_SIZE_MM = 9;
-const OMR_CORNER_INSET_MM   = 10;     // inner 8.5 + 1.5
-const OMR_CORNER_TOP_Y_MM   = 69;     // headerH 40 + 29
+// These values must exactly match the solid black marker positions
+// used while generating the PDF.
+const OMR_MARKER_SIZE_MM  = 5;
+const OMR_MARKER_INSET_MM = 10;
+const OMR_MARKER_TOP_Y_MM = 69;
 
-// QR centre positions on the printed A4 sheet
+// Centres of the four printed black fiducial squares.
 const OMR_MARKER_LEFT_X_MM =
-  OMR_CORNER_INSET_MM + OMR_CORNER_QR_SIZE_MM / 2;
+  OMR_MARKER_INSET_MM + OMR_MARKER_SIZE_MM / 2;
 
 const OMR_MARKER_RIGHT_X_MM =
-  PAGE_W_MM - OMR_CORNER_INSET_MM - OMR_CORNER_QR_SIZE_MM / 2;
+  PAGE_W_MM - OMR_MARKER_INSET_MM - OMR_MARKER_SIZE_MM / 2;
 
-const OMR_MARKER_TOP_Y_MM =
-  OMR_CORNER_TOP_Y_MM + OMR_CORNER_QR_SIZE_MM / 2;
+const OMR_MARKER_TOP_CENTER_Y_MM =
+  OMR_MARKER_TOP_Y_MM + OMR_MARKER_SIZE_MM / 2;
 
 const OMR_MARKER_BOTTOM_Y_MM =
-  PAGE_H_MM - OMR_CORNER_INSET_MM - OMR_CORNER_QR_SIZE_MM / 2;
+  PAGE_H_MM - OMR_MARKER_INSET_MM - OMR_MARKER_SIZE_MM / 2;
 
 
 // simple distance helper
@@ -3595,112 +3552,498 @@ function setFidOverlayState(hasAnchors){
   });
 }
 
-// ---------- QR-based page anchors (4 corner QR codes) ----------
 
-// Scan a rectangular region (fractions of full frame) for ONE QR,
-// and return its centre + payload if it is a valid corner QR.
-function scanCornerQR(ctx, fullW, fullH, region) {
-  const x0 = Math.floor(fullW * region.x0);
-  const y0 = Math.floor(fullH * region.y0);
-  const x1 = Math.floor(fullW * region.x1);
-  const y1 = Math.floor(fullH * region.y1);
-  const w  = Math.max(1, x1 - x0);
-  const h  = Math.max(1, y1 - y0);
-  if (w <= 0 || h <= 0) return null;
+// ---------- BLACK-SQUARE PAGE ANCHORS ----------
+function findBlackSquareInRegion(ctx, fullW, fullH, region){
 
-  const imgRegion = ctx.getImageData(x0, y0, w, h);
-  const qr = jsQR(imgRegion.data, imgRegion.width, imgRegion.height);
-  if (!qr) return null;
+  const x0 = Math.max(0, Math.floor(fullW * region.x0));
+  const y0 = Math.max(0, Math.floor(fullH * region.y0));
+  const x1 = Math.min(fullW, Math.ceil(fullW * region.x1));
+  const y1 = Math.min(fullH, Math.ceil(fullH * region.y1));
 
-  let payload;
-  try {
-    payload = JSON.parse(qr.data);
-  } catch (e) {
-    return null;
+  const w = Math.max(1, x1 - x0);
+  const h = Math.max(1, y1 - y0);
+
+  if (w < 8 || h < 8) return null;
+
+  const img = ctx.getImageData(x0, y0, w, h);
+
+  const step = 2;
+
+  const sw =
+    Math.ceil(w / step);
+
+  const sh =
+    Math.ceil(h / step);
+
+  const dark =
+    new Uint8Array(sw * sh);
+
+  const seen =
+    new Uint8Array(sw * sh);
+
+
+  for (let sy = 0; sy < sh; sy++){
+
+    const py =
+      Math.min(
+        h - 1,
+        sy * step
+      );
+
+    for (let sx = 0; sx < sw; sx++){
+
+      const px =
+        Math.min(
+          w - 1,
+          sx * step
+        );
+
+      const i =
+        (py * w + px) * 4;
+
+      const r = img.data[i];
+      const g = img.data[i + 1];
+      const b = img.data[i + 2];
+
+      const gray =
+        0.299 * r +
+        0.587 * g +
+        0.114 * b;
+
+      if (gray < 95){
+        dark[
+          sy * sw + sx
+        ] = 1;
+      }
+    }
   }
 
-  // Must be our special corner QR
-  if (!payload || payload.type !== 'omrCorner') return null;
 
-  // If examId is present, enforce it matches the currently selected exam
-  if (payload.examId && current.examId && payload.examId !== current.examId) {
-    return null;
+  let best = null;
+
+  const minSidePx =
+    Math.max(
+      5,
+      Math.round(
+        Math.min(fullW, fullH) *
+        0.006
+      )
+    );
+
+  const maxSidePx =
+    Math.max(
+      24,
+      Math.round(
+        Math.min(fullW, fullH) *
+        0.060
+      )
+    );
+
+
+  const queueX = [];
+  const queueY = [];
+
+
+  for (let sy = 0; sy < sh; sy++){
+
+    for (let sx = 0; sx < sw; sx++){
+
+      const startIdx =
+        sy * sw + sx;
+
+      if (
+        !dark[startIdx] ||
+        seen[startIdx]
+      ){
+        continue;
+      }
+
+
+      queueX.length = 0;
+      queueY.length = 0;
+
+      queueX.push(sx);
+      queueY.push(sy);
+
+      seen[startIdx] = 1;
+
+
+      let qi = 0;
+      let count = 0;
+
+      let minX = sx;
+      let maxX = sx;
+
+      let minY = sy;
+      let maxY = sy;
+
+
+      while (
+        qi < queueX.length
+      ){
+
+        const cx =
+          queueX[qi];
+
+        const cy =
+          queueY[qi];
+
+        qi++;
+
+        count++;
+
+
+        if (cx < minX) minX = cx;
+        if (cx > maxX) maxX = cx;
+
+        if (cy < minY) minY = cy;
+        if (cy > maxY) maxY = cy;
+
+
+        const neighbours = [
+          [cx - 1, cy],
+          [cx + 1, cy],
+          [cx, cy - 1],
+          [cx, cy + 1]
+        ];
+
+
+        for (
+          const [nx, ny]
+          of neighbours
+        ){
+
+          if (
+            nx < 0 ||
+            ny < 0 ||
+            nx >= sw ||
+            ny >= sh
+          ){
+            continue;
+          }
+
+
+          const ni =
+            ny * sw + nx;
+
+
+          if (
+            !dark[ni] ||
+            seen[ni]
+          ){
+            continue;
+          }
+
+
+          seen[ni] = 1;
+
+          queueX.push(nx);
+          queueY.push(ny);
+        }
+      }
+
+
+      const bwPx =
+        (
+          maxX -
+          minX +
+          1
+        ) * step;
+
+      const bhPx =
+        (
+          maxY -
+          minY +
+          1
+        ) * step;
+
+
+      if (
+        bwPx < minSidePx ||
+        bhPx < minSidePx ||
+        bwPx > maxSidePx ||
+        bhPx > maxSidePx
+      ){
+        continue;
+      }
+
+
+      const aspect =
+        bwPx /
+        (bhPx || 1);
+
+
+      if (
+        aspect < 0.68 ||
+        aspect > 1.47
+      ){
+        continue;
+      }
+
+
+      const boxSamples =
+        (
+          maxX -
+          minX +
+          1
+        ) *
+        (
+          maxY -
+          minY +
+          1
+        );
+
+
+      const fillRatio =
+        count /
+        Math.max(
+          1,
+          boxSamples
+        );
+
+
+      if (
+        fillRatio < 0.58
+      ){
+        continue;
+      }
+
+
+      const centerX =
+        x0 +
+        (
+          (
+            minX +
+            maxX +
+            1
+          ) *
+          step
+        ) / 2;
+
+
+      const centerY =
+        y0 +
+        (
+          (
+            minY +
+            maxY +
+            1
+          ) *
+          step
+        ) / 2;
+
+
+      const score =
+        (
+          bwPx *
+          bhPx
+        ) *
+        fillRatio;
+
+
+      if (
+        !best ||
+        score > best.score
+      ){
+
+        best = {
+          x:centerX,
+          y:centerY,
+          w:bwPx,
+          h:bhPx,
+          fillRatio,
+          score
+        };
+      }
+    }
   }
 
-  // If region expects a particular corner, check it
-  if (region.corner && payload.corner && payload.corner !== region.corner) {
-    return null;
-  }
 
-  const loc = qr.location;
-  const cxLocal =
-    (loc.topLeftCorner.x + loc.topRightCorner.x +
-     loc.bottomLeftCorner.x + loc.bottomRightCorner.x) / 4;
-  const cyLocal =
-    (loc.topLeftCorner.y + loc.topRightCorner.y +
-     loc.bottomLeftCorner.y + loc.bottomRightCorner.y) / 4;
-
-  const cx = cxLocal + x0;
-  const cy = cyLocal + y0;
-
-  return { corner: payload.corner || region.corner, x: cx, y: cy };
+  return best;
 }
 
-// Detect 4 QR anchors (tl,tr,bl,br). Returns null until ALL FOUR are visible.
-function detectPageAnchors(ctx, cvs) {
+
+// Detect all four printed black-square anchors.
+function detectPageAnchors(ctx, cvs){
+
   const w = cvs.width;
   const h = cvs.height;
-  if (!w || !h) {
+
+  if (!w || !h){
+
     setFidOverlayState(false);
+
     return null;
   }
 
-  // Four big corner regions where those QRs should appear
-  const tl = scanCornerQR(ctx, w, h, { x0: 0.00, x1: 0.40, y0: 0.00, y1: 0.40, corner: 'tl' });
-  const tr = scanCornerQR(ctx, w, h, { x0: 0.60, x1: 1.00, y0: 0.00, y1: 0.40, corner: 'tr' });
-  const bl = scanCornerQR(ctx, w, h, { x0: 0.00, x1: 0.40, y0: 0.60, y1: 1.00, corner: 'bl' });
-  const br = scanCornerQR(ctx, w, h, { x0: 0.60, x1: 1.00, y0: 0.60, y1: 1.00, corner: 'br' });
 
-  // If ANY corner is missing → treat as no OMR sheet
-  if (!tl || !tr || !bl || !br) {
+  const tl =
+    findBlackSquareInRegion(
+      ctx,
+      w,
+      h,
+      {
+        x0:0.00,
+        x1:0.28,
+        y0:0.14,
+        y1:0.42
+      }
+    );
+
+
+  const tr =
+    findBlackSquareInRegion(
+      ctx,
+      w,
+      h,
+      {
+        x0:0.72,
+        x1:1.00,
+        y0:0.14,
+        y1:0.42
+      }
+    );
+
+
+  const bl =
+    findBlackSquareInRegion(
+      ctx,
+      w,
+      h,
+      {
+        x0:0.00,
+        x1:0.28,
+        y0:0.72,
+        y1:1.00
+      }
+    );
+
+
+  const br =
+    findBlackSquareInRegion(
+      ctx,
+      w,
+      h,
+      {
+        x0:0.72,
+        x1:1.00,
+        y0:0.72,
+        y1:1.00
+      }
+    );
+
+
+  if (
+    !tl ||
+    !tr ||
+    !bl ||
+    !br
+  ){
+
     setFidOverlayState(false);
+
     return null;
   }
 
-  // Basic rectangle sanity check
-  const wTop   = dist2D(tl, tr);
-  const wBot   = dist2D(bl, br);
-  const hLeft  = dist2D(tl, bl);
-  const hRight = dist2D(tr, br);
 
-  const avgW = (wTop + wBot) / 2;
-  const avgH = (hLeft + hRight) / 2;
+  const wTop =
+    dist2D(tl, tr);
 
-  // Sheet must occupy a reasonable area
-  if (avgW < w * 0.30 || avgH < h * 0.35) {
+  const wBot =
+    dist2D(bl, br);
+
+  const hLeft =
+    dist2D(tl, bl);
+
+  const hRight =
+    dist2D(tr, br);
+
+
+  const avgW =
+    (wTop + wBot) / 2;
+
+  const avgH =
+    (hLeft + hRight) / 2;
+
+
+  if (
+    avgW < w * 0.30 ||
+    avgH < h * 0.45
+  ){
+
     setFidOverlayState(false);
+
     return null;
   }
 
-  const widthSimilar  = Math.abs(wTop  - wBot)   / (avgW || 1) <= 0.40;
-  const heightSimilar = Math.abs(hLeft - hRight) / (avgH || 1) <= 0.40;
 
-  if (!widthSimilar || !heightSimilar) {
+  const widthSimilar =
+    Math.abs(
+      wTop -
+      wBot
+    ) /
+    Math.max(
+      1,
+      avgW
+    ) <= 0.32;
+
+
+  const heightSimilar =
+    Math.abs(
+      hLeft -
+      hRight
+    ) /
+    Math.max(
+      1,
+      avgH
+    ) <= 0.32;
+
+
+  if (
+    !widthSimilar ||
+    !heightSimilar
+  ){
+
     setFidOverlayState(false);
+
     return null;
   }
 
-  // All good → highlight overlay boxes in green and return anchors
+
   setFidOverlayState(true);
-  return { tl, tr, bl, br };
+
+
+  return {
+    tl:{
+      x:tl.x,
+      y:tl.y
+    },
+
+    tr:{
+      x:tr.x,
+      y:tr.y
+    },
+
+    bl:{
+      x:bl.x,
+      y:bl.y
+    },
+
+    br:{
+      x:br.x,
+      y:br.y
+    }
+  };
 }
+
 
 // ===== TRUE PERSPECTIVE MAPPING =====
 // Converts an exact position on the printed A4 sheet (mm)
 // into its position in the camera image.
 //
 // IMPORTANT:
-// tl/tr/bl/br are centres of the four QR markers,
+// tl/tr/bl/br are centres of the four solid black markers,
 // NOT the physical four corners of the A4 paper.
 function mapPageMmToPixel(xMm, yMm, anchors){
 
@@ -3711,17 +4054,17 @@ function mapPageMmToPixel(xMm, yMm, anchors){
   const {tl, tr, bl, br} = anchors;
 
   // Convert page-mm position into coordinates relative
-  // to the rectangle formed by the four QR CENTRES.
+  // to the rectangle formed by the four BLACK-MARKER CENTRES.
   //
   // u/v may legitimately be below 0 or above 1 because
-  // some page content is outside the QR-centre rectangle.
+  // some page content is outside the black-marker-centre rectangle.
   const u =
     (xMm - OMR_MARKER_LEFT_X_MM) /
     (OMR_MARKER_RIGHT_X_MM - OMR_MARKER_LEFT_X_MM);
 
   const v =
-    (yMm - OMR_MARKER_TOP_Y_MM) /
-    (OMR_MARKER_BOTTOM_Y_MM - OMR_MARKER_TOP_Y_MM);
+    (yMm - OMR_MARKER_TOP_CENTER_Y_MM) /
+    (OMR_MARKER_BOTTOM_Y_MM - OMR_MARKER_TOP_CENTER_Y_MM);
 
 
   // --------------------------------------------------
@@ -3870,7 +4213,7 @@ function mapPageMmToPixel(xMm, yMm, anchors){
 // Approximate mm → camera-pixel scale.
 //
 // IMPORTANT:
-// Anchor distances correspond to QR-centre distances,
+// Anchor distances correspond to black-marker-centre distances,
 // not to the full 210 × 297 mm A4 page.
 function getPageScaleFromAnchors(anchors){
 
@@ -3895,8 +4238,7 @@ function getPageScaleFromAnchors(anchors){
 
   const markerHeightMm =
     OMR_MARKER_BOTTOM_Y_MM -
-    OMR_MARKER_TOP_Y_MM;
-
+    OMR_MARKER_TOP_CENTER_Y_MM;
 
   const scaleX =
     (wTop + wBottom) /
@@ -5304,27 +5646,7 @@ ctx.drawImage(
   processH
 );
 
-    // Optional QR check: if present and examId mismatches, ignore this frame
-    try {
-      const imgData = ctx.getImageData(0, 0, cvs.width, cvs.height);
-      const qr = jsQR(imgData.data, imgData.width, imgData.height);
-      if (qr) {
-        try {
-          const payload = JSON.parse(qr.data);
-          if (payload.examId && payload.examId !== current.examId) {
-            el('pickStatus').innerHTML =
-              '<span class="pill bad">QR exam mismatch for this sheet (frame ignored).</span>';
-            return;
-          }
-        } catch (e) {
-          // invalid QR – ignore
-        }
-      }
-    } catch (e) {
-      // if jsQR fails, just ignore QR and continue
-    }
-
-    const now = Date.now();
+      const now = Date.now();
 
     // Detect page anchors from the black squares.
     const anchors = detectPageAnchors(ctx, cvs);
