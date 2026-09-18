@@ -4090,7 +4090,9 @@ function findBlackSquareInRegion(ctx, fullW, fullH, region){
         0.587 * g +
         0.114 * b;
 
-      if (gray < 95){
+           // More tolerant for camera lighting, shadows and printed black ink.
+      // The shape/fill checks below still reject ordinary text and lines.
+      if (gray < 145){
         dark[
           sy * sw + sx
         ] = 1;
@@ -4421,6 +4423,137 @@ function findBlackSquareNearPoint(
 }
 
 
+// Find the OUTERMOST main marker on one side.
+//
+// We cannot use fixed camera percentages because the A4 sheet
+// may be larger/smaller in the camera frame.
+//
+// The sheet also contains intermediate guide markers, so:
+//
+// TOP    = first valid black square found while moving downward
+// BOTTOM = first valid black square found while moving upward
+//
+// This prevents guide markers from being mistaken for
+// the main top/bottom markers.
+function findPrimaryMarkerFromEdge(
+  ctx,
+  fullW,
+  fullH,
+  side,
+  edge
+){
+
+  const leftSide =
+    side === 'left';
+
+
+  // Broad horizontal side area.
+  //
+  // This still keeps us away from most answer bubbles
+  // and centre-page text.
+  const x0 =
+    leftSide
+      ? 0.00
+      : 0.66;
+
+  const x1 =
+    leftSide
+      ? 0.34
+      : 1.00;
+
+
+  // Narrow moving band.
+  //
+  // Narrow bands are important because there are
+  // several intermediate markers on each side.
+  const bandHeight = 0.085;
+
+  const step = 0.025;
+
+
+  // ==========================================
+  // SEARCH FROM TOP DOWN
+  // ==========================================
+  if (edge === 'top'){
+
+    for (
+      let y0 = 0.04;
+      y0 <= 0.62;
+      y0 += step
+    ){
+
+      const y1 =
+        Math.min(
+          1,
+          y0 + bandHeight
+        );
+
+
+      const hit =
+        findBlackSquareInRegion(
+          ctx,
+          fullW,
+          fullH,
+          {
+            x0,
+            x1,
+            y0,
+            y1
+          }
+        );
+
+
+      if (hit){
+        return hit;
+      }
+
+    }
+
+    return null;
+  }
+
+
+  // ==========================================
+  // SEARCH FROM BOTTOM UP
+  // ==========================================
+  for (
+    let y1 = 0.99;
+    y1 >= 0.45;
+    y1 -= step
+  ){
+
+    const y0 =
+      Math.max(
+        0,
+        y1 - bandHeight
+      );
+
+
+    const hit =
+      findBlackSquareInRegion(
+        ctx,
+        fullW,
+        fullH,
+        {
+          x0,
+          x1,
+          y0,
+          y1
+        }
+      );
+
+
+    if (hit){
+      return hit;
+    }
+
+  }
+
+
+  return null;
+}
+
+
 // Detect all four printed black-square anchors.
 function detectPageAnchors(ctx, cvs){
 
@@ -4435,68 +4568,63 @@ function detectPageAnchors(ctx, cvs){
   }
 
 
-   // ==========================================
-  // PRIMARY 4 MARKERS — TIGHT SEARCH ZONES
+    // ==========================================
+  // PRIMARY 4 MARKERS — DYNAMIC SEARCH
   // ==========================================
   //
-  // IMPORTANT:
-  // Intermediate guide markers must NEVER be
-  // mistaken for the four primary page markers.
+  // Do NOT assume the paper fills a fixed
+  // percentage of the camera frame.
   //
-  // Therefore the primary-marker search areas
-  // are deliberately restricted.
+  // Search from the outside edges toward the
+  // centre of the sheet instead.
+  //
+  // This allows:
+  //
+  // - normal camera margins
+  // - different phone aspect ratios
+  // - different camera distances
+  // - slightly tilted sheets
+  // - intermediate EvalBee-style guide markers
   // ==========================================
 
 
-  // TOP LEFT PRIMARY MARKER
   const tl =
-    findBlackSquareInRegion(
+    findPrimaryMarkerFromEdge(
       ctx,
       w,
       h,
-      {
-        x0:0.00,
-        x1:0.22,
-
-        y0:0.10,
-        y1:0.36
-      }
+      'left',
+      'top'
     );
 
 
-  // TOP RIGHT PRIMARY MARKER
   const tr =
-    findBlackSquareInRegion(
+    findPrimaryMarkerFromEdge(
       ctx,
       w,
       h,
-      {
-        x0:0.78,
-        x1:1.00,
-
-        y0:0.10,
-        y1:0.36
-      }
+      'right',
+      'top'
     );
 
 
-  // BOTTOM LEFT PRIMARY MARKER
-  //
-  // Start low enough that the 240 mm
-  // intermediate marker cannot normally enter
-  // this search zone.
   const bl =
-    findBlackSquareInRegion(
+    findPrimaryMarkerFromEdge(
       ctx,
       w,
       h,
-      {
-        x0:0.00,
-        x1:0.22,
+      'left',
+      'bottom'
+    );
 
-        y0:0.82,
-        y1:1.00
-      }
+
+  const br =
+    findPrimaryMarkerFromEdge(
+      ctx,
+      w,
+      h,
+      'right',
+      'bottom'
     );
 
 
@@ -4549,11 +4677,12 @@ function detectPageAnchors(ctx, cvs){
     (hLeft + hRight) / 2;
 
 
+   // Allow the whole A4 sheet to have comfortable
+  // margins around it in the camera preview.
   if (
-    avgW < w * 0.30 ||
-    avgH < h * 0.45
+    avgW < w * 0.22 ||
+    avgH < h * 0.32
   ){
-
     setFidOverlayState(false);
 
     return null;
