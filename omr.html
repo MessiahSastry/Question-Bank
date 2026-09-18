@@ -3411,14 +3411,10 @@ async function loadImageAsDataURL(src){
         );
 
 
+            // Start every answer column from the SAME top line.
+      // No balancing / stretching / downward shifting.
       let flowColumn = 0;
-
-      let flowY =
-        flowColumnStartY[0] ||
-        sectionsTopY;
-
-
-      let flowBlocksUsedInColumn = 0;
+      let flowY = sectionsTopY;
 
 
       // Printed question numbers continue across all subjects.
@@ -3426,19 +3422,22 @@ async function loadImageAsDataURL(src){
       let globalQuestionNo = 1;
 
 
-      function nextFlowColumn(){
+           function nextFlowColumn(){
+
+        // No more columns available
+        if (
+          flowColumn >=
+          flowColumnCount - 1
+        ){
+          return false;
+        }
 
         flowColumn++;
 
+        // Every new column starts at the SAME top.
+        flowY = sectionsTopY;
 
-        flowBlocksUsedInColumn = 0;
-
-
-        flowY =
-          flowColumnStartY[
-            flowColumn
-          ] ||
-          sectionsTopY;
+        return true;
       }
 
 
@@ -3492,23 +3491,25 @@ async function loadImageAsDataURL(src){
           4;
 
 
-              // ------------------------------------------
-        // MOVE TO NEXT BALANCED COLUMN
-        // WHEN THIS COLUMN HAS ITS PLANNED
-        // NUMBER OF 5-QUESTION BLOCKS
+                     // ------------------------------------------
+        // SUBJECT TITLE MUST HAVE ROOM FOR
+        // AT LEAST ONE QUESTION UNDER IT.
         // ------------------------------------------
-        while (
-          flowColumn <
-            flowColumnCount - 1
-          &&
-          flowBlocksUsedInColumn >=
-            flowColumnBlockCaps[
-              flowColumn
-            ]
+
+        const firstBubbleAfterTitleY =
+          flowY +
+          titleSpace +
+          blockHeaderOffset -
+          1.0;
+
+
+        if (
+          flowY > sectionsTopY &&
+          firstBubbleAfterTitleY >
+            bottomLimit - bubbleR
         ){
           nextFlowColumn();
         }
-
 
         // ------------------------------------------
         // SUBJECT TITLE
@@ -3571,26 +3572,80 @@ async function loadImageAsDataURL(src){
                 let localQNum = 1;
 
 
-        for (
-          let b = 0;
-          b < totalBlocks;
-          b++
+               // Keep flowing questions until this subject is finished.
+        //
+        // A normal block contains maximum 5 questions.
+        // If only 1, 2, 3 or 4 fit at the bottom,
+        // print only those and continue in the next column.
+        while (
+          localQNum <= sec.count
         ){
 
-                   // Column change is based on the balanced
-          // block plan, NOT simply on page bottom.
-          while (
-            flowColumn <
-              flowColumnCount - 1
-            &&
-            flowBlocksUsedInColumn >=
-              flowColumnBlockCaps[
-                flowColumn
-              ]
+                           // ==========================================
+          // HOW MANY QUESTIONS ACTUALLY FIT HERE?
+          // ==========================================
+
+          const blockBottomPad =
+            Math.max(
+              0.8,
+              1.5 * layoutScale
+            );
+
+
+          // Y-position of the FIRST bubble in this block.
+          const firstBubbleCenterY =
+            flowY +
+            blockHeaderOffset -
+            1.0;
+
+
+          // Bubble must remain completely above bottomLimit.
+          const lastAllowedBubbleCenterY =
+            bottomLimit -
+            bubbleR;
+
+
+          let maxRowsFit =
+            Math.floor(
+              (
+                lastAllowedBubbleCenterY -
+                firstBubbleCenterY
+              ) /
+              rowGap
+            ) + 1;
+
+
+          // Not even ONE question fits.
+          // Continue immediately at top of next column.
+          if (
+            maxRowsFit <= 0
           ){
-            nextFlowColumn();
+
+            if (
+              !nextFlowColumn()
+            ){
+              break;
+            }
+
+            continue;
           }
 
+
+          const questionsRemaining =
+            sec.count -
+            localQNum +
+            1;
+
+
+          // Maximum 5 questions per visual block.
+          // But at column bottom it may become:
+          // 1 / 2 / 3 / 4 questions.
+          const rowsThisBlock =
+            Math.min(
+              rowsPerBlock,
+              questionsRemaining,
+              maxRowsFit
+            );
 
           const cellLeftX =
             flowStartX +
@@ -3664,8 +3719,8 @@ async function loadImageAsDataURL(src){
 
           for (
             let r = 0;
-            r < rowsPerBlock &&
-                        localQNum <= sec.count;
+                       r < rowsThisBlock &&
+            localQNum <= sec.count;
             r++, localQNum++, globalQuestionNo++
           ){
 
@@ -3731,14 +3786,43 @@ async function loadImageAsDataURL(src){
           }
 
 
-                   // Continue DOWNWARD
+                            // ==========================================
+          // CONTINUE IMMEDIATELY UNDER THIS BLOCK
+          // ==========================================
+          //
+          // Full block:
+          // 5 questions → normal height
+          //
+          // Partial block:
+          // 1–4 questions → use only required height.
+          //
+          // No stretching and no artificial blank space.
+          // ==========================================
+
           flowY +=
-            perBlockHeight;
+            blockHeaderOffset +
+            rowsThisBlock *
+            rowGap +
+            blockBottomPad;
 
 
-          // Count this completed 5-question block
-          // in the present column.
-          flowBlocksUsedInColumn++;
+          // If this became a partial block because
+          // the column ran out of room, continue the
+          // remaining questions at TOP of next column.
+          if (
+            rowsThisBlock <
+              rowsPerBlock
+            &&
+            localQNum <=
+              sec.count
+          ){
+
+            if (
+              !nextFlowColumn()
+            ){
+              break;
+            }
+          }
         }
 
 
