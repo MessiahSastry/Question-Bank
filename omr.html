@@ -2621,14 +2621,20 @@ const cornerInset  = OMR_CORNER_INSET_MM;
       // Place the box immediately to the right of the roll grid,
       // slightly below the top-right scanning box.
 
-      const instrGapX = 4; // small horizontal gap from roll bubbles
+           const instrGapX = 4;
 
-      // totalBoxesWidth was computed above for Roll No. header
-      const instrX = boxesStartX + totalBoxesWidth + instrGapX;
-      const instrY = rollTop + 8; // move box down so it sits below the top square
-      const instrW = W - instrX - inner - 4; // up to the inner page border
+      const instrX =
+        boxesStartX +
+        totalBoxesWidth +
+        instrGapX;
 
-      // 10 short instructions
+      const instrY =
+        rollTop + 8;
+
+      const instrW =
+        W - instrX - inner - 4;
+
+
       const instructions = [
         '1. Use blue or black ball-point pen only.',
         '2. Fill Name, Class, Sec., Subject, Date, Roll No. and darken Roll No. bubbles.',
@@ -2642,33 +2648,150 @@ const cornerInset  = OMR_CORNER_INSET_MM;
         '10. Check Roll No. and answers before handing over the sheet; follow invigilator’s instructions.'
       ];
 
-      // Slightly larger font + line height (still fits above sections grid)
-      const instrLineH = 4.4;
-      const instrH = instructions.length * instrLineH + 6;
 
-      // Draw rounded rectangle with light background
-      doc.setDrawColor(23, 98, 167);
-      doc.setFillColor(248, 250, 252);
-      doc.roundedRect(instrX, instrY, instrW, instrH, 2, 2, 'FD');
+      // ------------------------------------------
+      // WRAP INSTRUCTIONS CORRECTLY
+      // ------------------------------------------
+      doc.setFont(
+        'helvetica',
+        'normal'
+      );
 
-      // Print text inside the box
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(8.6);  // bigger font
-      doc.setTextColor(15, 61, 107);
+      doc.setFontSize(
+        7.8
+      );
 
-      let iy = instrY + 4;
-      instructions.forEach(line => {
-        doc.text(line, instrX + 2, iy, { maxWidth: instrW - 4 });
-        iy += instrLineH;
-      });
 
-      // Reset text colour back to black for rest of page
-      doc.setTextColor(0, 0, 0);
+      const instrLineH =
+        3.7;
+
+      const instrRowGap =
+        0.7;
+
+      const instrPaddingTop =
+        4;
+
+      const instrPaddingBottom =
+        3;
+
+
+      const wrappedInstructions =
+        instructions.map(
+          line =>
+            doc.splitTextToSize(
+              line,
+              instrW - 4
+            )
+        );
+
+
+      const instructionTextHeight =
+        wrappedInstructions.reduce(
+          (sum, lines) =>
+            sum +
+            (
+              lines.length *
+              instrLineH
+            ) +
+            instrRowGap,
+          0
+        );
+
+
+      const instrH =
+        instrPaddingTop +
+        instructionTextHeight +
+        instrPaddingBottom;
+
+
+      // ------------------------------------------
+      // DRAW INSTRUCTION BOX
+      // ------------------------------------------
+      doc.setDrawColor(
+        23,
+        98,
+        167
+      );
+
+      doc.setFillColor(
+        248,
+        250,
+        252
+      );
+
+      doc.roundedRect(
+        instrX,
+        instrY,
+        instrW,
+        instrH,
+        2,
+        2,
+        'FD'
+      );
+
+
+      doc.setTextColor(
+        15,
+        61,
+        107
+      );
+
+
+      let iy =
+        instrY +
+        instrPaddingTop;
+
+
+      wrappedInstructions.forEach(
+        lines => {
+
+          doc.text(
+            lines,
+            instrX + 2,
+            iy
+          );
+
+          iy +=
+            (
+              lines.length *
+              instrLineH
+            ) +
+            instrRowGap;
+
+        }
+      );
+
+
+      doc.setTextColor(
+        0,
+        0,
+        0
+      );
 
             // ---------- SECTIONS BUBBLE GRIDS (5-question blocks, centred) ----------
       // Start just under the roll grid, inside the inner page border (not touching)
-      const sectionsTopY = bubblesTopY + 10 * rowH + 14;
-      const pageCenterX  = W / 2;
+           // ------------------------------------------
+      // SUBJECTS START AFTER BOTH
+      // ROLL GRID AND INSTRUCTION BOX
+      // ------------------------------------------
+
+      const rollBottomY =
+        bubblesTopY +
+        (9 * rowH) +
+        rollBubbleR;
+
+      const instructionBottomY =
+        instrY +
+        instrH;
+
+      const sectionsTopY =
+        Math.max(
+          rollBottomY,
+          instructionBottomY
+        ) + 10;
+
+      const pageCenterX =
+        W / 2;
 
       const rois = {
         roll: { x: rollGridX, y: rollGridY, cols, colW, rowH },
@@ -2711,44 +2834,143 @@ const cornerInset  = OMR_CORNER_INSET_MM;
         const secROI      = { name: sec.name, options: optCount, bubbles: [] };
         const totalBlocks = Math.ceil(sec.count / rowsPerBlock);
 
-              const startY = curY;
+                     const startY =
+          curY;
+
 
         const printName =
-          Object.prototype.hasOwnProperty.call(sec, 'displayName')
-            ? String(sec.displayName ?? '').trim()
-            : String(sec.name || '').trim();
+          Object.prototype.hasOwnProperty.call(
+            sec,
+            'displayName'
+          )
+            ? String(
+                sec.displayName ?? ''
+              ).trim()
+            : String(
+                sec.name || ''
+              ).trim();
+
+
+        const titleSpace =
+          printName
+            ? 4
+            : 0;
+
 
         const headerBaseY =
-          startY + (printName ? 4 : 0);
+          startY +
+          titleSpace;
 
-        const bottomLimit = H - inner - 12;              // keep above inner page border
-        const availableH  = bottomLimit - headerBaseY;
-        const blocksPerCol = Math.max(1, Math.floor(availableH / perBlockHeight));
 
-        const blockW   = numColW + optCount * optStep + 4;
-        const colCount = Math.ceil(totalBlocks / blocksPerCol);
+        const bottomLimit =
+          H -
+          inner -
+          12;
 
-        // Column gap: normal = 8mm, but if too many columns (>4), tighten more
-        let colGap = 8;
-        if (colCount > 4) {
-          colGap = 4;   // narrower gap between 5-question blocks when many columns
+
+        const availableH =
+          bottomLimit -
+          headerBaseY;
+
+
+        const blocksPerCol =
+          Math.max(
+            1,
+            Math.floor(
+              availableH /
+              perBlockHeight
+            )
+          );
+
+
+        const blockW =
+          numColW +
+          optCount *
+          optStep +
+          4;
+
+
+        const colCount =
+          Math.ceil(
+            totalBlocks /
+            blocksPerCol
+          );
+
+
+        let colGap =
+          8;
+
+        if (
+          colCount > 4
+        ){
+          colGap =
+            4;
         }
 
-        // Total width of all 5-question blocks for this section
-        const gridW = colCount * blockW + (colCount - 1) * colGap;
 
-        // Card is just a light background behind the centred grid
-        const cardW = gridW + 4;
-        const cardH = blocksPerCol * perBlockHeight;
-        const cardX = pageCenterX - cardW / 2;
-        const cardY = startY - 4;
+        const gridW =
+          colCount *
+          blockW +
+          (
+            colCount - 1
+          ) *
+          colGap;
 
-        // X where the first block starts (centred as a group)
-        const gridStartX = cardX + 2;
 
-        // light card background
-        doc.setFillColor(248, 250, 252);
-        doc.roundedRect(cardX, cardY, cardW, cardH, 2, 2, 'F');
+        // ------------------------------------------
+        // IMPORTANT:
+        // USE ONLY THE BLOCK ROWS ACTUALLY NEEDED
+        // ------------------------------------------
+
+        const usedBlockRows =
+          Math.min(
+            totalBlocks,
+            blocksPerCol
+          );
+
+
+        const cardW =
+          gridW + 4;
+
+
+        const cardH =
+          titleSpace +
+          (
+            usedBlockRows *
+            perBlockHeight
+          ) +
+          4;
+
+
+        const cardX =
+          pageCenterX -
+          cardW / 2;
+
+
+        const cardY =
+          startY - 4;
+
+
+        const gridStartX =
+          cardX + 2;
+
+
+        doc.setFillColor(
+          248,
+          250,
+          252
+        );
+
+
+        doc.roundedRect(
+          cardX,
+          cardY,
+          cardW,
+          cardH,
+          2,
+          2,
+          'F'
+        );
 
                       // section title (centred above the whole grid)
         if (printName) {
@@ -2812,9 +3034,22 @@ const cornerInset  = OMR_CORNER_INSET_MM;
 
         rois.sections.push(secROI);
 
-        // Move down for the next section (vertical stack)
-        const sectionAdvance = cardH + 6;
-        curY += sectionAdvance;
+               // ------------------------------------------
+        // NEXT SUBJECT STARTS IMMEDIATELY AFTER
+        // THE ACTUAL HEIGHT OF THIS SUBJECT
+        // ------------------------------------------
+
+        const sectionAdvance =
+          titleSpace +
+          (
+            usedBlockRows *
+            perBlockHeight
+          ) +
+          6;
+
+        curY =
+          startY +
+          sectionAdvance;
       });
 
            // Save ROIs locally first
