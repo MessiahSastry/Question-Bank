@@ -2839,38 +2839,73 @@ const cornerInset  = OMR_CORNER_INSET_MM;
         curY += sectionAdvance;
       });
 
-      // Save ROIs
+           // Save ROIs locally first
       tpl.rois = rois;
-      await currentExamRef().set({
 
-  rois,
-
-  updatedAt:
-    firebase.firestore
-      .FieldValue
-      .serverTimestamp()
-
-}, {
-  merge:true
-});
-
-      // ---------- PREVIEW + DOWNLOAD ----------
+      // ---------- PREVIEW ----------
       const dataUrl = doc.output('dataurlstring');
-      document.getElementById('pdfPreview').innerHTML =
-        `<img src="${dataUrl}" alt="preview" style="width:100%; max-width:760px; border:1px solid #e5e7eb; border-radius:12px"/>`;
 
-            doc.save(
-        `OMR_${examLabel.replace(/\s+/g, '_')}.pdf`
+      document.getElementById('pdfPreview').innerHTML =
+        `<img src="${dataUrl}" alt="OMR Preview"
+              style="width:100%; max-width:760px;
+              border:1px solid #e5e7eb;
+              border-radius:12px"/>`;
+
+      // ---------- DOWNLOAD PDF ----------
+      // Download must NOT depend on Firestore save.
+      const safeExamLabel =
+        String(examLabel || current.examId || 'Exam')
+          .replace(/[\\/:*?"<>|]/g, '')
+          .replace(/\s+/g, '_');
+
+      doc.save(
+        `OMR_${safeExamLabel}.pdf`
       );
+
+      // Scanner can use the ROIs immediately.
+      el('btnScan').disabled = false;
 
       document.getElementById(
         'tplStatus'
       ).textContent =
-        'PDF generated & ROIs saved. Ready to scan.';
+        'OMR PDF generated. Saving scanner data…';
 
-      // Fresh ROIs now exist.
-      // Scanner can be used.
-      el('btnScan').disabled = false;
+      // ---------- SAVE ROIs TO FIRESTORE ----------
+      // A Firestore error must never stop the PDF download.
+      try {
+
+        await currentExamRef().set({
+
+          rois: rois,
+
+          updatedAt:
+            firebase.firestore
+              .FieldValue
+              .serverTimestamp()
+
+        }, {
+          merge: true
+        });
+
+        document.getElementById(
+          'tplStatus'
+        ).textContent =
+          'PDF generated & ROIs saved. Ready to scan.';
+
+      }
+      catch (err) {
+
+        console.error(
+          'Could not save OMR ROIs:',
+          err
+        );
+
+        document.getElementById(
+          'tplStatus'
+        ).textContent =
+          'PDF downloaded. Scanner data could not be saved.';
+
+      }
 
     };
    // mm to px at 300 dpi (1 inch = 25.4 mm, 300 dpi => 300 px per inch)
