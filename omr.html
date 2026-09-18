@@ -878,7 +878,7 @@ let lastScanPending = null;   // holds latest scan until user presses Save
 let tpl = {
       rollDigits:4,
       bubbleSizeMm:5.5,
-            markerMode:'black-square-v2',
+            markerMode:'black-square-v3',
       sections:[ /* {name, count, options:4|5, mark, negative} */ ],
       // computed ROIs saved after generation for deterministic scan
       rois:null,
@@ -2102,7 +2102,7 @@ el('subtopicSel').addEventListener('change', (e)=>{
       tpl.bubbleSizeMm =
         Number(el('inpBubbleSize').value) || 5.5;
 
-           tpl.markerMode = 'black-square-v2';
+           tpl.markerMode = 'black-square-v3';
 
 
       // Settings/layout changed.
@@ -2138,7 +2138,7 @@ el('subtopicSel').addEventListener('change', (e)=>{
 
         rollDigits: tpl.rollDigits,
                 bubbleSizeMm: tpl.bubbleSizeMm,
-        markerMode: 'black-square-v2',
+        markerMode: 'black-square-v3',
         sections: tpl.sections,
         rois: tpl.rois||null,
         updatedAt: firebase.firestore.FieldValue.serverTimestamp()
@@ -2151,13 +2151,13 @@ el('subtopicSel').addEventListener('change', (e)=>{
         const d = doc.data();
                 tpl.rollDigits = d.rollDigits || 4;
         tpl.bubbleSizeMm = d.bubbleSizeMm || 5.5;
-        tpl.markerMode = 'black-square-v2';
+        tpl.markerMode = 'black-square-v3';
         tpl.sections = Array.isArray(d.sections) ? d.sections : [];
 
-        // Old QR-based ROIs must never be reused with the new scanner.
+        // Older marker layouts must never be reused with this scanner.
         tpl.rois = (
           d.rois &&
-          d.rois.markerMode === 'black-square-v2'
+          d.rois.markerMode === 'black-square-v3'
         ) ? d.rois : null;
         answerKey = d.answerKey||{};
         el('tplStatus').textContent = tpl.rois? 'Template & ROIs loaded.' : 'Template loaded (no ROIs yet).';
@@ -2562,7 +2562,8 @@ async function loadImageAsDataURL(src){
 
                         // ---------- BLACK FIDUCIAL SQUARES ----------
       //
-      // Four large corner markers establish the complete page.
+      // Four large registration markers establish the complete page.
+      // They are inset far enough to survive normal corner folding.
       // The camera aligns these with four fixed on-screen targets,
       // captures the sheet, and normalizes it before reading bubbles.
 
@@ -2931,7 +2932,7 @@ async function loadImageAsDataURL(src){
         W / 2;
 
            const rois = {
-        markerMode: 'black-square-v2',
+        markerMode: 'black-square-v3',
         roll: { x: rollGridX, y: rollGridY, cols, colW, rowH },
         sections: []
       };
@@ -2942,8 +2943,13 @@ async function loadImageAsDataURL(src){
 
       const rowsPerBlock = 5;
 
+      // Keep the complete answer area above the protected white zone around
+      // the two bottom registration markers.
       const bottomLimit =
-        H - inner - 12;
+        Math.min(
+          H - inner - 12,
+          H - OMR_MARKER_INSET_MM - OMR_MARKER_SIZE_MM - 4
+        );
 
       const availableSubjectsH =
         bottomLimit - sectionsTopY;
@@ -4094,10 +4100,11 @@ const PAGE_H_MM = 297;
 // These values must exactly match the solid black marker positions
 // used while generating the PDF.
 const OMR_MARKER_SIZE_MM  = 7;
-const OMR_MARKER_INSET_MM = 12;
-const OMR_MARKER_TOP_Y_MM = 12;
+const OMR_MARKER_INSET_MM = 20;
+const OMR_MARKER_TOP_Y_MM = 20;
 
-// Version 2 uses only four unmistakable corner markers.
+// Version 3 uses only four unmistakable registration markers, positioned
+// 20 mm inside the paper so bent or slightly damaged corners do not hide them.
 // Perspective correction makes intermediate side markers unnecessary.
 const OMR_GUIDE_MARKER_TOPS_MM = [];
 
@@ -5179,8 +5186,10 @@ function detectPageAnchors(ctx, cvs){
   }
 
   const hits = {};
-  const radiusX = Math.max(18, geometry.pageWidthCanvas * 0.055);
-  const radiusY = Math.max(18, geometry.pageHeightCanvas * 0.042);
+  // Search only the marker's white quiet zone. With the 20 mm inset this
+  // excludes the printed page borders and avoids false green boxes.
+  const radiusX = Math.max(16, geometry.pageWidthCanvas * 0.048);
+  const radiusY = Math.max(16, geometry.pageHeightCanvas * 0.036);
 
   ['tl','tr','bl','br'].forEach(key => {
     const target = geometry.targetsCanvas[key];
@@ -7499,7 +7508,7 @@ ctx.drawImage(
   if (hint){
 
     hint.textContent =
-      `Camera active — ${lastFiducialCount}/4 corner boxes aligned. ` +
+      `Camera active — ${lastFiducialCount}/4 registration boxes aligned. ` +
       'Move the sheet until every box turns green.';
 
   }
@@ -7519,7 +7528,7 @@ const normalized = rectifyOmrFrame(ctx, anchors);
 
 if (!normalized){
   el('cameraHint').textContent =
-    'The sheet could not be straightened. Realign all four corner boxes.';
+    'The sheet could not be straightened. Realign all four registration boxes.';
   return;
 }
 
@@ -7568,7 +7577,7 @@ const readAnchors = normalized.anchors;
     });
 
     // A short test may contain only one answered question. Four verified
-    // corner markers plus a complete roll number already reject random frames.
+    // registration markers plus a complete roll number already reject random frames.
     if (filledCount < 1) {
       el('cameraHint').textContent =
         `4/4 aligned and Roll ${roll} found, but no answer bubble is dark enough.`;
