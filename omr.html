@@ -2439,12 +2439,21 @@ async function loadImageAsDataURL(src){
       // Reset text colour
       doc.setTextColor(0, 0, 0);
 
-                     // ---------- BLACK FIDUCIAL SQUARES (EvalBee-style recognition) ----------
-      // These 4 solid black squares are the fixed page anchors used by the scanner.
-      // No QR code is required.
+                        // ---------- BLACK FIDUCIAL SQUARES ----------
+      //
+      // 4 main markers establish the complete page.
+      // Additional LEFT/RIGHT guide markers improve
+      // recognition through the answer area.
+      //
+      // This gives EvalBee-style multiple black
+      // reference points without using QR codes.
 
-      const markerSize = OMR_MARKER_SIZE_MM;
-      const markerInset = OMR_MARKER_INSET_MM;
+      const markerSize =
+        OMR_MARKER_SIZE_MM;
+
+      const markerInset =
+        OMR_MARKER_INSET_MM;
+
 
       const markerTL = {
         x: markerInset,
@@ -2452,22 +2461,45 @@ async function loadImageAsDataURL(src){
       };
 
       const markerTR = {
-        x: W - markerInset - markerSize,
-        y: OMR_MARKER_TOP_Y_MM
+        x:
+          W -
+          markerInset -
+          markerSize,
+
+        y:
+          OMR_MARKER_TOP_Y_MM
       };
 
       const markerBL = {
         x: markerInset,
-        y: H - markerInset - markerSize
+
+        y:
+          H -
+          markerInset -
+          markerSize
       };
 
       const markerBR = {
-        x: W - markerInset - markerSize,
-        y: H - markerInset - markerSize
+        x:
+          W -
+          markerInset -
+          markerSize,
+
+        y:
+          H -
+          markerInset -
+          markerSize
       };
 
+
       function drawBlackMarker(pos){
-        doc.setFillColor(0, 0, 0);
+
+        doc.setFillColor(
+          0,
+          0,
+          0
+        );
+
         doc.rect(
           pos.x,
           pos.y,
@@ -2477,10 +2509,45 @@ async function loadImageAsDataURL(src){
         );
       }
 
+
+      // ==========================================
+      // 4 PRIMARY PAGE MARKERS
+      // ==========================================
+
       drawBlackMarker(markerTL);
       drawBlackMarker(markerTR);
       drawBlackMarker(markerBL);
       drawBlackMarker(markerBR);
+
+
+      // ==========================================
+      // INTERMEDIATE GUIDE MARKERS
+      //
+      // One marker on each side of the page at
+      // every configured Y position.
+      // ==========================================
+
+      OMR_GUIDE_MARKER_TOPS_MM
+        .forEach(markerY => {
+
+          // LEFT
+          drawBlackMarker({
+            x: markerInset,
+            y: markerY
+          });
+
+          // RIGHT
+          drawBlackMarker({
+            x:
+              W -
+              markerInset -
+              markerSize,
+
+            y:
+              markerY
+          });
+
+        });
 
 
            // ---------- STUDENT INFO BOX ----------
@@ -3523,7 +3590,21 @@ const OMR_MARKER_SIZE_MM  = 5;
 const OMR_MARKER_INSET_MM = 10;
 const OMR_MARKER_TOP_Y_MM = 69;
 
-// Centres of the four printed black fiducial squares.
+// Four additional guide rows.
+// Each row has one black square on LEFT and one on RIGHT.
+//
+// So sheet now has:
+// 4 main corner markers
+// + 8 intermediate guide markers
+// = 12 black recognition markers.
+const OMR_GUIDE_MARKER_TOPS_MM = [
+  150,
+  180,
+  210,
+  240
+];
+
+// Centres of the main printed black fiducial squares.
 const OMR_MARKER_LEFT_X_MM =
   OMR_MARKER_INSET_MM + OMR_MARKER_SIZE_MM / 2;
 
@@ -3536,6 +3617,13 @@ const OMR_MARKER_TOP_CENTER_Y_MM =
 const OMR_MARKER_BOTTOM_Y_MM =
   PAGE_H_MM - OMR_MARKER_INSET_MM - OMR_MARKER_SIZE_MM / 2;
 
+// Centre-Y positions of the intermediate markers.
+const OMR_GUIDE_MARKER_CENTERS_Y_MM =
+  OMR_GUIDE_MARKER_TOPS_MM.map(
+    y =>
+      y +
+      OMR_MARKER_SIZE_MM / 2
+  );
 
 // simple distance helper
 function dist2D(a,b){
@@ -3862,7 +3950,85 @@ function findBlackSquareInRegion(ctx, fullW, fullH, region){
   }
 
 
-  return best;
+   return best;
+}
+
+
+// Find a black square close to an already predicted
+// camera position.
+//
+// The 4 primary anchors first tell us approximately
+// where each intermediate marker should appear.
+// Therefore we only search a small area around it.
+function findBlackSquareNearPoint(
+  ctx,
+  fullW,
+  fullH,
+  point
+){
+
+  if (
+    !point ||
+    !Number.isFinite(point.x) ||
+    !Number.isFinite(point.y)
+  ){
+    return null;
+  }
+
+
+  const halfSearchX =
+    fullW * 0.045;
+
+  const halfSearchY =
+    fullH * 0.035;
+
+
+  return findBlackSquareInRegion(
+    ctx,
+    fullW,
+    fullH,
+    {
+      x0:
+        Math.max(
+          0,
+          (
+            point.x -
+            halfSearchX
+          ) /
+          fullW
+        ),
+
+      x1:
+        Math.min(
+          1,
+          (
+            point.x +
+            halfSearchX
+          ) /
+          fullW
+        ),
+
+      y0:
+        Math.max(
+          0,
+          (
+            point.y -
+            halfSearchY
+          ) /
+          fullH
+        ),
+
+      y1:
+        Math.min(
+          1,
+          (
+            point.y +
+            halfSearchY
+          ) /
+          fullH
+        )
+    }
+  );
 }
 
 
@@ -4013,10 +4179,15 @@ function detectPageAnchors(ctx, cvs){
   }
 
 
-  setFidOverlayState(true);
+   setFidOverlayState(true);
 
 
-  return {
+  // ==========================================
+  // PRIMARY 4-CORNER GEOMETRY
+  // ==========================================
+
+  const baseAnchors = {
+
     tl:{
       x:tl.x,
       y:tl.y
@@ -4036,6 +4207,95 @@ function detectPageAnchors(ctx, cvs){
       x:br.x,
       y:br.y
     }
+
+  };
+
+
+  // ==========================================
+  // FIND INTERMEDIATE GUIDE MARKERS
+  // ==========================================
+  //
+  // First predict their camera positions using
+  // the main four anchors.
+  //
+  // Then search only near those positions.
+  //
+  // A guide row is accepted ONLY when both
+  // LEFT and RIGHT markers are found.
+  // ==========================================
+
+  const guides = [];
+
+
+  for (
+    const yMm
+    of OMR_GUIDE_MARKER_CENTERS_Y_MM
+  ){
+
+    const predictedLeft =
+      mapPageMmToPixelBase(
+        OMR_MARKER_LEFT_X_MM,
+        yMm,
+        baseAnchors
+      );
+
+
+    const predictedRight =
+      mapPageMmToPixelBase(
+        OMR_MARKER_RIGHT_X_MM,
+        yMm,
+        baseAnchors
+      );
+
+
+    const detectedLeft =
+      findBlackSquareNearPoint(
+        ctx,
+        w,
+        h,
+        predictedLeft
+      );
+
+
+    const detectedRight =
+      findBlackSquareNearPoint(
+        ctx,
+        w,
+        h,
+        predictedRight
+      );
+
+
+    if (
+      detectedLeft &&
+      detectedRight
+    ){
+
+      guides.push({
+
+        yMm,
+
+        left:{
+          x:detectedLeft.x,
+          y:detectedLeft.y
+        },
+
+        right:{
+          x:detectedRight.x,
+          y:detectedRight.y
+        }
+
+      });
+
+    }
+
+  }
+
+
+  return {
+    ...baseAnchors,
+
+    guides
   };
 }
 
@@ -4047,7 +4307,7 @@ function detectPageAnchors(ctx, cvs){
 // IMPORTANT:
 // tl/tr/bl/br are centres of the four solid black markers,
 // NOT the physical four corners of the A4 paper.
-function mapPageMmToPixel(xMm, yMm, anchors){
+function mapPageMmToPixelBase(xMm, yMm, anchors){
 
   if (!anchors){
     return {x:0, y:0};
@@ -4200,7 +4460,7 @@ function mapPageMmToPixel(xMm, yMm, anchors){
     1;
 
 
-  return {
+   return {
 
     x:
       (a * u + b * v + c) /
@@ -4211,6 +4471,289 @@ function mapPageMmToPixel(xMm, yMm, anchors){
       denominator
   };
 }
+
+
+// ==================================================
+// GUIDE-MARKER REFINED PAGE MAPPING
+// ==================================================
+//
+// If enough intermediate markers are visible,
+// use them to divide the page into smaller vertical
+// calibration zones.
+//
+// This means bubbles near the middle/bottom of the
+// sheet are no longer positioned only from the
+// four distant corner markers.
+//
+// If guide markers cannot be found, automatically
+// fall back to normal four-corner perspective mapping.
+// ==================================================
+
+function mapPageMmToPixel(
+  xMm,
+  yMm,
+  anchors
+){
+
+  if (!anchors){
+    return {
+      x:0,
+      y:0
+    };
+  }
+
+
+  const guides =
+    Array.isArray(
+      anchors.guides
+    )
+      ? anchors.guides
+      : [];
+
+
+  // Need at least two complete guide rows
+  // before enabling refined mapping.
+  if (
+    guides.length < 2
+  ){
+
+    return mapPageMmToPixelBase(
+      xMm,
+      yMm,
+      anchors
+    );
+  }
+
+
+  // ------------------------------------------
+  // BUILD VERTICAL CALIBRATION RAILS
+  // ------------------------------------------
+
+  const rows = [
+
+    {
+      yMm:
+        OMR_MARKER_TOP_CENTER_Y_MM,
+
+      left:
+        anchors.tl,
+
+      right:
+        anchors.tr
+    },
+
+    ...guides,
+
+    {
+      yMm:
+        OMR_MARKER_BOTTOM_Y_MM,
+
+      left:
+        anchors.bl,
+
+      right:
+        anchors.br
+    }
+
+  ]
+  .filter(row =>
+    row &&
+    row.left &&
+    row.right &&
+    Number.isFinite(row.yMm)
+  )
+  .sort(
+    (a,b) =>
+      a.yMm -
+      b.yMm
+  );
+
+
+  if (
+    rows.length < 4
+  ){
+
+    return mapPageMmToPixelBase(
+      xMm,
+      yMm,
+      anchors
+    );
+  }
+
+
+  // ------------------------------------------
+  // FIND THE TWO GUIDE ROWS SURROUNDING
+  // THE REQUESTED PAGE Y POSITION
+  // ------------------------------------------
+
+  let upper =
+    rows[0];
+
+  let lower =
+    rows[
+      rows.length - 1
+    ];
+
+
+  if (
+    yMm <=
+    rows[0].yMm
+  ){
+
+    upper =
+      rows[0];
+
+    lower =
+      rows[1];
+
+  }
+  else if (
+    yMm >=
+    rows[
+      rows.length - 1
+    ].yMm
+  ){
+
+    upper =
+      rows[
+        rows.length - 2
+      ];
+
+    lower =
+      rows[
+        rows.length - 1
+      ];
+
+  }
+  else {
+
+    for (
+      let i = 0;
+      i < rows.length - 1;
+      i++
+    ){
+
+      if (
+        yMm >= rows[i].yMm &&
+        yMm <= rows[i + 1].yMm
+      ){
+
+        upper =
+          rows[i];
+
+        lower =
+          rows[i + 1];
+
+        break;
+      }
+
+    }
+
+  }
+
+
+  const spanY =
+    lower.yMm -
+    upper.yMm;
+
+
+  const t =
+    Math.abs(spanY) < 0.000001
+      ? 0
+      :
+        (
+          yMm -
+          upper.yMm
+        ) /
+        spanY;
+
+
+  // ------------------------------------------
+  // INTERPOLATE LEFT PAGE EDGE
+  // ------------------------------------------
+
+  const leftPoint = {
+
+    x:
+      upper.left.x +
+      t *
+      (
+        lower.left.x -
+        upper.left.x
+      ),
+
+    y:
+      upper.left.y +
+      t *
+      (
+        lower.left.y -
+        upper.left.y
+      )
+
+  };
+
+
+  // ------------------------------------------
+  // INTERPOLATE RIGHT PAGE EDGE
+  // ------------------------------------------
+
+  const rightPoint = {
+
+    x:
+      upper.right.x +
+      t *
+      (
+        lower.right.x -
+        upper.right.x
+      ),
+
+    y:
+      upper.right.y +
+      t *
+      (
+        lower.right.y -
+        upper.right.y
+      )
+
+  };
+
+
+  // ------------------------------------------
+  // POSITION ACROSS THE PAGE WIDTH
+  // ------------------------------------------
+
+  const u =
+    (
+      xMm -
+      OMR_MARKER_LEFT_X_MM
+    ) /
+    (
+      OMR_MARKER_RIGHT_X_MM -
+      OMR_MARKER_LEFT_X_MM
+    );
+
+
+  return {
+
+    x:
+      leftPoint.x +
+      u *
+      (
+        rightPoint.x -
+        leftPoint.x
+      ),
+
+    y:
+      leftPoint.y +
+      u *
+      (
+        rightPoint.y -
+        leftPoint.y
+      )
+
+  };
+}
+
 
 // Approximate mm → camera-pixel scale.
 //
