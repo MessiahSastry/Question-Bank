@@ -2798,29 +2798,238 @@ const cornerInset  = OMR_CORNER_INSET_MM;
         sections: []
       };
 
-      // Each block: A–D header + 5 vertical questions (1–5, 6–10, …)
-      const rowsPerBlock   = 5;
+          // ==========================================
+      // AUTO-SHRINK COMPLETE OMR BUBBLE AREA
+      // ==========================================
 
-      // Look at the largest section to decide density
-      const maxQsInSection = tpl.sections.reduce(
-        (m, s) => Math.max(m, Number(s.count) || 0),
-        0
-      );
+      const rowsPerBlock = 5;
 
-      // Base spacing + size (for up to 50 questions)
-      let rowGap   = 6.0;   // vertical gap between each question row
-      let bubbleR  = 2.1;   // bubble radius in mm
-      let optStep  = 5.9;   // gap between A/B/C/D (comfortable when <= 50)
+      const bottomLimit =
+        H - inner - 12;
 
-      // If any section has more than 50 questions, pack tighter
-      if (maxQsInSection > 50) {
-        rowGap  = 5.4;   // closer rows
-        bubbleR = 1.9;   // slightly smaller bubbles
-        optStep = 5.0;   // narrower option spacing so more columns fit
+      const availableSubjectsH =
+        bottomLimit - sectionsTopY;
+
+      const maxGridW =
+        W - (2 * inner) - 8;
+
+
+      // ------------------------------------------
+      // TEST HOW MUCH SPACE ALL SUBJECTS NEED
+      // ------------------------------------------
+      function measureSubjects(scale){
+
+        const testRowGap =
+          Math.max(
+            3.0,
+            6.0 * scale
+          );
+
+        const testOptStep =
+          Math.max(
+            4.1,
+            5.9 * scale
+          );
+
+        const testNumColW =
+          Math.max(
+            4.2,
+            6.0 * scale
+          );
+
+        const testColGap =
+          Math.max(
+            2.2,
+            7.0 * scale
+          );
+
+        const testHeaderOffset =
+          Math.max(
+            2.5,
+            4.0 * scale
+          );
+
+        const testPerBlockHeight =
+          testHeaderOffset +
+          rowsPerBlock *
+          testRowGap +
+          1.5;
+
+        let totalH = 0;
+
+
+        tpl.sections.forEach(sec => {
+
+          const options =
+            Number(sec.options) || 4;
+
+          const totalBlocks =
+            Math.ceil(
+              (Number(sec.count) || 0) /
+              rowsPerBlock
+            );
+
+          const blockW =
+            testNumColW +
+            options *
+            testOptStep +
+            3;
+
+
+          let blocksPerRow =
+            Math.floor(
+              (
+                maxGridW +
+                testColGap
+              ) /
+              (
+                blockW +
+                testColGap
+              )
+            );
+
+
+          blocksPerRow =
+            Math.max(
+              1,
+              Math.min(
+                totalBlocks,
+                blocksPerRow
+              )
+            );
+
+
+          const blockRows =
+            Math.ceil(
+              totalBlocks /
+              blocksPerRow
+            );
+
+
+          const hasTitle =
+            Object.prototype.hasOwnProperty.call(
+              sec,
+              'displayName'
+            )
+              ? String(
+                  sec.displayName ?? ''
+                ).trim()
+              : String(
+                  sec.name || ''
+                ).trim();
+
+
+          const titleH =
+            hasTitle
+              ? Math.max(
+                  3,
+                  4 * scale
+                )
+              : 0;
+
+
+          totalH +=
+            titleH +
+            blockRows *
+            testPerBlockHeight +
+            Math.max(
+              2,
+              5 * scale
+            );
+
+        });
+
+
+        return totalH;
       }
 
-      const numColW        = 6.0;   // space for question number (extra gap from bubbles)
-      const perBlockHeight = 4 + 2 + rowsPerBlock * rowGap + 2; // height per 5-question block
+
+      // ------------------------------------------
+      // FIND LARGEST SIZE THAT STILL FITS
+      // ------------------------------------------
+      let layoutScale = 1.0;
+
+      for (
+        let s = 1.0;
+        s >= 0.55;
+        s -= 0.05
+      ){
+
+        layoutScale = s;
+
+        if (
+          measureSubjects(s) <=
+          availableSubjectsH
+        ){
+          break;
+        }
+      }
+
+
+      // ------------------------------------------
+      // FINAL DIMENSIONS
+      // ------------------------------------------
+      let rowGap =
+        Math.max(
+          3.0,
+          6.0 * layoutScale
+        );
+
+
+      let optStep =
+        Math.max(
+          4.1,
+          5.9 * layoutScale
+        );
+
+
+      let numColW =
+        Math.max(
+          4.2,
+          6.0 * layoutScale
+        );
+
+
+      let colGap =
+        Math.max(
+          2.2,
+          7.0 * layoutScale
+        );
+
+
+      let bubbleR =
+        Math.max(
+          1.15,
+          2.1 * layoutScale
+        );
+
+
+      // Never allow bubbles to touch vertically.
+      bubbleR =
+        Math.min(
+          bubbleR,
+          rowGap * 0.42
+        );
+
+
+      const blockHeaderOffset =
+        Math.max(
+          2.5,
+          4.0 * layoutScale
+        );
+
+
+      const perBlockHeight =
+        blockHeaderOffset +
+        rowsPerBlock *
+        rowGap +
+        1.5;
+
+
+      console.log(
+        'OMR adaptive layout scale:',
+        layoutScale
+      );
 
       // Make answer bubbles darker & thicker
       doc.setDrawColor(23, 98, 167); // deep blue outline
@@ -2851,9 +3060,12 @@ const cornerInset  = OMR_CORNER_INSET_MM;
               ).trim();
 
 
-        const titleSpace =
+               const titleSpace =
           printName
-            ? 4
+            ? Math.max(
+                3,
+                4 * layoutScale
+              )
             : 0;
 
 
@@ -2887,9 +3099,12 @@ const cornerInset  = OMR_CORNER_INSET_MM;
           8;
 
 
-        // Start with normal gap
+               // Gap also becomes smaller when OMR is crowded
         let colGap =
-          8;
+          Math.max(
+            2.2,
+            7.0 * layoutScale
+          );
 
 
         // How many 5-question blocks fit in one row?
@@ -3032,7 +3247,12 @@ const cornerInset  = OMR_CORNER_INSET_MM;
                       // section title (centred above the whole grid)
         if (printName) {
           doc.setFont('helvetica', 'bold');
-          doc.setFontSize(11);
+                   doc.setFontSize(
+            Math.max(
+              8,
+              11 * layoutScale
+            )
+          );
           doc.setTextColor(23, 98, 167);
 
           doc.text(
@@ -3113,7 +3333,12 @@ const cornerInset  = OMR_CORNER_INSET_MM;
             );
           // A/B/C/D/E/F header for this 5-question block
           doc.setFont('helvetica', 'bold');
-          doc.setFontSize(8);
+                    doc.setFontSize(
+            Math.max(
+              6,
+              8 * layoutScale
+            )
+          );
           for (let o = 0; o < optCount; o++) {
             const hx = blockLeftX + numColW + 2 + o * optStep;
             doc.text(String.fromCharCode(65 + o), hx, blockTopY);
@@ -3121,9 +3346,17 @@ const cornerInset  = OMR_CORNER_INSET_MM;
 
           // Up to 5 questions under this header
           doc.setFont('helvetica', 'normal');
-          doc.setFontSize(10);
+                    doc.setFontSize(
+            Math.max(
+              6.5,
+              10 * layoutScale
+            )
+          );
           for (let r = 0; r < rowsPerBlock && qNum <= sec.count; r++, qNum++) {
-            const y = blockTopY + 4 + r * rowGap;
+                        const y =
+              blockTopY +
+              blockHeaderOffset +
+              r * rowGap;
 
             // question number
             doc.text(String(qNum), blockLeftX, y);
@@ -3153,13 +3386,16 @@ const cornerInset  = OMR_CORNER_INSET_MM;
         // THE ACTUAL HEIGHT OF THIS SUBJECT
         // ------------------------------------------
 
-        const sectionAdvance =
+                const sectionAdvance =
           titleSpace +
           (
             usedBlockRows *
             perBlockHeight
           ) +
-          6;
+          Math.max(
+            2,
+            5 * layoutScale
+          );
 
         curY =
           startY +
