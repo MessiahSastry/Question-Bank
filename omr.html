@@ -96,11 +96,17 @@
       border-radius:6px;
       box-shadow:0 0 0 1px rgba(15,23,42,.35);
     }
-    .fid-box.tl{ top:10%; left:8%; }
-    .fid-box.tr{ top:10%; right:8%; }
-    .fid-box.bl{ bottom:10%; left:8%; }
-    .fid-box.br{ bottom:10%; right:8%; }
-
+       /*
+      These boxes follow the ACTUAL detected
+      black markers. They are not fixed targets.
+    */
+    .fid-box.tl,
+    .fid-box.tr,
+    .fid-box.bl,
+    .fid-box.br{
+      display:none;
+      transform:translate(-50%, -50%);
+    }
     /* Turn box green when anchors are confidently detected */
     .fid-box.ok{
       border-color:rgba(22,163,74,.95);
@@ -661,8 +667,8 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
         <div class="sub">Answer Key Summary</div>
       </div>
       <button class="icon-btn modal-close" type="button"
-              onclick="document.getElementById('dlgKeySummary').close()"
-              aria-label="Close">
+        onclick="stopCameraStream(); document.getElementById('dlgCamera').close();"
+        aria-label="Close">
         <i class="fa fa-xmark"></i>
       </button>
     </header>
@@ -4122,14 +4128,197 @@ function dist2D(a,b){
   return Math.sqrt(dx*dx + dy*dy);
 }
 
-// Toggle green state on the 4 overlay boxes
+// ==================================================
+// OMR MARKER OVERLAY
+// ==================================================
+
 function setFidOverlayState(hasAnchors){
-  const on = !!hasAnchors;
-  ['tl','tr','bl','br'].forEach(key=>{
-    const box = document.getElementById('fidBox_' + key);
-    if (!box) return;
-    box.classList.toggle('ok', on);
-  });
+
+  const on =
+    !!hasAnchors;
+
+  ['tl','tr','bl','br']
+    .forEach(key => {
+
+      const box =
+        document.getElementById(
+          'fidBox_' + key
+        );
+
+      if (!box) return;
+
+      box.classList.toggle(
+        'ok',
+        on
+      );
+
+      if (!on){
+
+        box.style.display =
+          'none';
+
+      }
+
+    });
+
+}
+
+
+// Move the four overlay boxes directly onto the
+// four black squares detected in the camera image.
+function positionFidOverlay(
+  anchors,
+  cvs
+){
+
+  const video =
+    document.getElementById(
+      'cameraPreview'
+    );
+
+  const wrap =
+    video
+      ? video.closest('.videoWrap')
+      : null;
+
+
+  if (
+    !video ||
+    !wrap ||
+    !anchors ||
+    !cvs ||
+    !cvs.width ||
+    !cvs.height
+  ){
+
+    setFidOverlayState(false);
+
+    return;
+  }
+
+
+  const viewW =
+    video.clientWidth;
+
+  const viewH =
+    video.clientHeight;
+
+
+  if (
+    !viewW ||
+    !viewH
+  ){
+
+    setFidOverlayState(false);
+
+    return;
+  }
+
+
+  // cameraPreview uses object-fit:contain.
+  // Calculate the real displayed camera image.
+
+  const scale =
+    Math.min(
+      viewW / cvs.width,
+      viewH / cvs.height
+    );
+
+
+  const imageW =
+    cvs.width * scale;
+
+  const imageH =
+    cvs.height * scale;
+
+
+  const offsetX =
+    (
+      viewW -
+      imageW
+    ) / 2;
+
+  const offsetY =
+    (
+      viewH -
+      imageH
+    ) / 2;
+
+
+  ['tl','tr','bl','br']
+    .forEach(key => {
+
+      const point =
+        anchors[key];
+
+      const box =
+        document.getElementById(
+          'fidBox_' + key
+        );
+
+
+      if (
+        !point ||
+        !box
+      ){
+        return;
+      }
+
+
+      const x =
+        offsetX +
+        point.x * scale;
+
+      const y =
+        offsetY +
+        point.y * scale;
+
+
+      // Box size follows the detected marker size.
+      const detectedSize =
+        Math.max(
+          Number(point.w) || 20,
+          Number(point.h) || 20
+        ) * scale;
+
+
+      const boxSize =
+        Math.max(
+          26,
+          Math.min(
+            60,
+            detectedSize * 1.7
+          )
+        );
+
+
+      box.style.display =
+        'block';
+
+      box.style.left =
+        x + 'px';
+
+      box.style.top =
+        y + 'px';
+
+      box.style.right =
+        'auto';
+
+      box.style.bottom =
+        'auto';
+
+      box.style.width =
+        boxSize + 'px';
+
+      box.style.height =
+        boxSize + 'px';
+
+      box.classList.add(
+        'ok'
+      );
+
+    });
+
 }
 
 
@@ -4806,7 +4995,15 @@ function detectPageAnchors(ctx, cvs){
   }
 
 
-   setFidOverlayState(true);
+   positionFidOverlay(
+  {
+    tl,
+    tr,
+    bl,
+    br
+  },
+  cvs
+);
 
 
   // ==========================================
@@ -6687,10 +6884,36 @@ try {
 }
 
 
-isCameraOpen = true;
-   statusEl.textContent =
-  'Keep the full OMR sheet inside the frame. Hold the phone steady and allow the camera to focus.';
-    dlg.showModal();
+// Fresh camera session.
+// Never carry detection timers from an earlier scan.
+
+noRollStartTime =
+  null;
+
+sheetMissingSince =
+  null;
+
+detectionHistory =
+  [];
+
+lastFrameProcessTime =
+  0;
+
+frameProcessingBusy =
+  false;
+
+setFidOverlayState(false);
+
+
+isCameraOpen =
+  true;
+
+
+statusEl.textContent =
+  'Keep the complete A4 OMR sheet visible. The four marker boxes will appear automatically when the black squares are detected.';
+
+
+dlg.showModal();
   } catch (err) {
     alert('Camera error: ' + err.message);
     return;
@@ -6849,23 +7072,25 @@ ctx.drawImage(
   }
 
 
-  // Existing "no OMR" warning logic
-  if (noRollStartTime === null) {
+    // Keep scanning continuously.
+  // Never interrupt the teacher with a popup
+  // while the sheet is being positioned.
 
-    noRollStartTime = now;
+  noRollStartTime =
+    null;
 
-  }
-  else if (
-    now - noRollStartTime >
-    6000
-  ) {
 
-    alert(
-      'No OMR sheet found or not fully inside the frame. ' +
-      'Align the full sheet correctly.'
+  const hint =
+    document.getElementById(
+      'cameraHint'
     );
 
-    noRollStartTime = null;
+
+  if (hint){
+
+    hint.textContent =
+      'Looking for OMR... Keep the complete A4 sheet visible and hold the phone steady.';
+
   }
 
 
