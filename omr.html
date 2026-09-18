@@ -2814,14 +2814,26 @@ const cornerInset  = OMR_CORNER_INSET_MM;
         W - (2 * inner) - 8;
 
 
+           // ------------------------------------------
+      // TEST EVALBEE-STYLE VERTICAL-FIRST FLOW
       // ------------------------------------------
-      // TEST HOW MUCH SPACE ALL SUBJECTS NEED
-      // ------------------------------------------
-           function measureSubjects(scale){
+      function layoutFits(scale){
 
         const testRowGap =
           Math.max(
             1.5,
+            6.0 * scale
+          );
+
+        const testOptStep =
+          Math.max(
+            3.2,
+            5.9 * scale
+          );
+
+        const testNumColW =
+          Math.max(
+            3.5,
             6.0 * scale
           );
 
@@ -2840,10 +2852,48 @@ const cornerInset  = OMR_CORNER_INSET_MM;
             1.5 * scale
           );
 
-        let totalH = 0;
+        const testMaxOptions =
+          Math.max(
+            4,
+            ...tpl.sections.map(
+              sec => Number(sec.options) || 4
+            )
+          );
 
+        const testBlockW =
+          testNumColW +
+          testMaxOptions *
+          testOptStep +
+          4;
 
-        tpl.sections.forEach(sec => {
+        const testColumnGap =
+          Math.max(
+            8,
+            12 * scale
+          );
+
+        const testMaxColumns =
+          Math.max(
+            1,
+            Math.min(
+              3,
+              Math.floor(
+                (
+                  maxGridW +
+                  testColumnGap
+                ) /
+                (
+                  testBlockW +
+                  testColumnGap
+                )
+              )
+            )
+          );
+
+        let testColumn = 0;
+        let testY = 0;
+
+        for (const sec of tpl.sections){
 
           const totalBlocks =
             Math.ceil(
@@ -2851,8 +2901,7 @@ const cornerInset  = OMR_CORNER_INSET_MM;
               rowsPerBlock
             );
 
-
-          const hasTitle =
+          const printName =
             Object.prototype.hasOwnProperty.call(
               sec,
               'displayName'
@@ -2864,54 +2913,88 @@ const cornerInset  = OMR_CORNER_INSET_MM;
                   sec.name || ''
                 ).trim();
 
-
-          const titleH =
-            hasTitle
+          const titleSpace =
+            printName
               ? Math.max(
-                  2.5,
+                  3,
                   4 * scale
                 )
               : 0;
 
-
-          // IMPORTANT:
-          // ALL 5-question blocks go DOWNWARD.
-          // No horizontal distribution.
-          totalH +=
-            titleH +
-            totalBlocks *
-            testPerBlockHeight +
+          const subjectGap =
             Math.max(
-              1.5,
-              4 * scale
+              2,
+              5 * scale
             );
 
-        });
+          // If the subject title + first block will not fit,
+          // start the subject at the top of the next column.
+          if (
+            testY > 0 &&
+            testY +
+            titleSpace +
+            testPerBlockHeight >
+            availableSubjectsH
+          ){
+            testColumn++;
+            testY = 0;
+          }
 
+          testY += titleSpace;
 
-        return totalH;
+          // Fill DOWN first.
+          for (
+            let b = 0;
+            b < totalBlocks;
+            b++
+          ){
+
+            // Bottom reached -> continue at TOP of next column.
+            if (
+              testY > 0 &&
+              testY +
+              testPerBlockHeight >
+              availableSubjectsH
+            ){
+              testColumn++;
+              testY = 0;
+            }
+
+            testY +=
+              testPerBlockHeight;
+          }
+
+          // Next subject follows directly below.
+          testY +=
+            subjectGap;
+        }
+
+        return (
+          testColumn <
+          testMaxColumns
+        );
       }
 
+
       // ------------------------------------------
-      // FIND LARGEST SIZE THAT STILL FITS
+      // FIND LARGEST SIZE THAT FITS IN MAX 3 COLUMNS
       // ------------------------------------------
       let layoutScale = 1.0;
 
-           for (
+      for (
         let s = 1.0;
         s >= 0.20;
         s -= 0.02
       ){
+
         layoutScale = s;
 
         if (
-          measureSubjects(s) <=
-          availableSubjectsH
+          layoutFits(s)
         ){
           break;
         }
       }
-
 
       // ------------------------------------------
       // FINAL DIMENSIONS
@@ -2972,21 +3055,94 @@ const cornerInset  = OMR_CORNER_INSET_MM;
         layoutScale
       );
 
-      // Make answer bubbles darker & thicker
-      doc.setDrawColor(23, 98, 167); // deep blue outline
-      doc.setLineWidth(0.35);        // thicker circle border
+            // Make answer bubbles darker & thicker
+      doc.setDrawColor(23, 98, 167);
+      doc.setLineWidth(0.35);
 
-      // We now stack all sections vertically, each one horizontally centred
-      let curY = sectionsTopY;
 
-           tpl.sections.forEach((sec) => {
-        const optCount    = sec.options;
-        const secROI      = { name: sec.name, options: optCount, bubbles: [] };
-        const totalBlocks = Math.ceil(sec.count / rowsPerBlock);
+      // ==========================================
+      // EVALBEE-STYLE VERTICAL-FIRST COLUMN FLOW
+      // ==========================================
 
-                     const startY =
-          curY;
+      const flowColumnGap =
+        Math.max(
+          8,
+          12 * layoutScale
+        );
 
+      const flowMaxOptions =
+        Math.max(
+          4,
+          ...tpl.sections.map(
+            sec => Number(sec.options) || 4
+          )
+        );
+
+      const flowBlockW =
+        numColW +
+        flowMaxOptions *
+        optStep +
+        4;
+
+      const flowColumnCount =
+        Math.max(
+          1,
+          Math.min(
+            3,
+            Math.floor(
+              (
+                maxGridW +
+                flowColumnGap
+              ) /
+              (
+                flowBlockW +
+                flowColumnGap
+              )
+            )
+          )
+        );
+
+      const flowGridW =
+        flowColumnCount *
+        flowBlockW +
+        (
+          flowColumnCount - 1
+        ) *
+        flowColumnGap;
+
+      const flowStartX =
+        pageCenterX -
+        flowGridW / 2;
+
+      let flowColumn = 0;
+      let flowY = sectionsTopY;
+
+
+      function nextFlowColumn(){
+
+        flowColumn++;
+
+        flowY =
+          sectionsTopY;
+      }
+
+
+      tpl.sections.forEach((sec) => {
+
+        const optCount =
+          Number(sec.options) || 4;
+
+        const secROI = {
+          name: sec.name,
+          options: optCount,
+          bubbles: []
+        };
+
+        const totalBlocks =
+          Math.ceil(
+            sec.count /
+            rowsPerBlock
+          );
 
         const printName =
           Object.prototype.hasOwnProperty.call(
@@ -3000,8 +3156,7 @@ const cornerInset  = OMR_CORNER_INSET_MM;
                 sec.name || ''
               ).trim();
 
-
-               const titleSpace =
+        const titleSpace =
           printName
             ? Math.max(
                 3,
@@ -3009,17 +3164,11 @@ const cornerInset  = OMR_CORNER_INSET_MM;
               )
             : 0;
 
-
-        const headerBaseY =
-          startY +
-          titleSpace;
-
-
-                const bottomLimit =
-          H -
-          inner -
-          12;
-
+        const subjectGap =
+          Math.max(
+            2,
+            5 * layoutScale
+          );
 
         const blockW =
           numColW +
@@ -3029,137 +3178,80 @@ const cornerInset  = OMR_CORNER_INSET_MM;
 
 
         // ------------------------------------------
-        // FLOW QUESTION BLOCKS LEFT → RIGHT FIRST
-        // THEN MOVE TO THE NEXT ROW
+        // IF SUBJECT CANNOT START HERE,
+        // MOVE TO TOP OF NEXT COLUMN
         // ------------------------------------------
-
-        // Width safely available inside page
-        const maxGridW =
-          W -
-          (2 * inner) -
-          8;
-
-
-               // Gap also becomes smaller when OMR is crowded
-        let colGap =
-          Math.max(
-            2.2,
-            7.0 * layoutScale
-          );
-
-
-               // STRICT VERTICAL FLOW
-        // Math finishes downward completely,
-        // then the next subject starts below it.
-        const blocksPerRow = 1;
-
-        // Number of actual block rows
-        const usedBlockRows =
-          Math.ceil(
-            totalBlocks /
-            blocksPerRow
-          );
-
-
-        // Number of columns used by the widest row
-        const usedBlockCols =
-          Math.min(
-            totalBlocks,
-            blocksPerRow
-          );
-
-
-        const gridW =
-          usedBlockCols *
-          blockW +
-          (
-            usedBlockCols - 1
-          ) *
-          colGap;
-
-
-        const cardW =
-          gridW + 4;
-
-
-        const cardH =
-          titleSpace +
-          (
-            usedBlockRows *
-            perBlockHeight
-          ) +
-          4;
-
-
-        // Safety: subject must remain inside page
         if (
-          startY +
-          cardH >
+          flowY > sectionsTopY &&
+          flowY +
+          titleSpace +
+          perBlockHeight >
           bottomLimit
         ){
-          console.warn(
-            'OMR subject exceeds available page height:',
-            sec.name
-          );
+          nextFlowColumn();
         }
 
 
-        const cardX =
-          pageCenterX -
-          cardW / 2;
+        // ------------------------------------------
+        // SUBJECT TITLE
+        // ------------------------------------------
+        if (printName){
 
+          const titleCenterX =
+            flowStartX +
+            flowColumn *
+            (
+              flowBlockW +
+              flowColumnGap
+            ) +
+            flowBlockW / 2;
 
-        const cardY =
-          startY - 4;
+          doc.setFont(
+            'helvetica',
+            'bold'
+          );
 
-
-        const gridStartX =
-          cardX + 2;
-
-
-        doc.setFillColor(
-          248,
-          250,
-          252
-        );
-
-
-        doc.roundedRect(
-          cardX,
-          cardY,
-          cardW,
-          cardH,
-          2,
-          2,
-          'F'
-        );
-
-                      // section title (centred above the whole grid)
-        if (printName) {
-          doc.setFont('helvetica', 'bold');
-                   doc.setFontSize(
+          doc.setFontSize(
             Math.max(
               8,
               11 * layoutScale
             )
           );
-          doc.setTextColor(23, 98, 167);
+
+          doc.setTextColor(
+            23,
+            98,
+            167
+          );
 
           doc.text(
             printName,
-            pageCenterX,
-            startY,
-            { align: 'center' }
+            titleCenterX,
+            flowY,
+            {
+              align: 'center'
+            }
           );
+
+          flowY +=
+            titleSpace;
         }
 
-        doc.setTextColor(0, 0, 0);
 
-               // ------------------------------------------
-        // 5-QUESTION BLOCKS:
-        // LEFT → RIGHT FIRST, THEN NEXT ROW
+        doc.setTextColor(
+          0,
+          0,
+          0
+        );
+
+
+        // ------------------------------------------
+        // QUESTIONS FLOW DOWN FIRST.
+        // WHEN BOTTOM IS REACHED,
+        // CONTINUE AT TOP OF NEXT COLUMN.
         // ------------------------------------------
         let qNum = 1;
+
 
         for (
           let b = 0;
@@ -3167,129 +3259,169 @@ const cornerInset  = OMR_CORNER_INSET_MM;
           b++
         ){
 
-          const rowIndex =
-            Math.floor(
-              b /
-              blocksPerRow
-            );
-
-          const colIndex =
-            b %
-            blocksPerRow;
+          if (
+            flowY +
+            perBlockHeight >
+            bottomLimit
+          ){
+            nextFlowColumn();
+          }
 
 
-          // Number of blocks actually present
-          // in this particular row
-          const firstBlockInRow =
-            rowIndex *
-            blocksPerRow;
-
-          const remainingBlocks =
-            totalBlocks -
-            firstBlockInRow;
-
-          const blocksThisRow =
-            Math.min(
-              blocksPerRow,
-              remainingBlocks
-            );
-
-
-          // Centre every row independently
-          const thisRowW =
-            blocksThisRow *
-            blockW +
+          const cellLeftX =
+            flowStartX +
+            flowColumn *
             (
-              blocksThisRow - 1
-            ) *
-            colGap;
-
-          const rowStartX =
-            pageCenterX -
-            thisRowW / 2;
-
-
-          const blockTopY =
-            headerBaseY +
-            rowIndex *
-            perBlockHeight;
+              flowBlockW +
+              flowColumnGap
+            );
 
           const blockLeftX =
-            rowStartX +
-            colIndex *
+            cellLeftX +
             (
-              blockW +
-              colGap
-            );
-          // A/B/C/D/E/F header for this 5-question block
-          doc.setFont('helvetica', 'bold');
-                    doc.setFontSize(
+              flowBlockW -
+              blockW
+            ) / 2;
+
+          const blockTopY =
+            flowY;
+
+
+          // A / B / C / D header
+          doc.setFont(
+            'helvetica',
+            'bold'
+          );
+
+          doc.setFontSize(
             Math.max(
               6,
               8 * layoutScale
             )
           );
-          for (let o = 0; o < optCount; o++) {
-            const hx = blockLeftX + numColW + 2 + o * optStep;
-            doc.text(String.fromCharCode(65 + o), hx, blockTopY);
+
+
+          for (
+            let o = 0;
+            o < optCount;
+            o++
+          ){
+
+            const hx =
+              blockLeftX +
+              numColW +
+              2 +
+              o *
+              optStep;
+
+            doc.text(
+              String.fromCharCode(
+                65 + o
+              ),
+              hx,
+              blockTopY
+            );
           }
 
-          // Up to 5 questions under this header
-          doc.setFont('helvetica', 'normal');
-                    doc.setFontSize(
+
+          // Up to 5 questions
+          doc.setFont(
+            'helvetica',
+            'normal'
+          );
+
+          doc.setFontSize(
             Math.max(
               6.5,
               10 * layoutScale
             )
           );
-          for (let r = 0; r < rowsPerBlock && qNum <= sec.count; r++, qNum++) {
-                        const y =
+
+
+          for (
+            let r = 0;
+            r < rowsPerBlock &&
+            qNum <= sec.count;
+            r++, qNum++
+          ){
+
+            const y =
               blockTopY +
               blockHeaderOffset +
-              r * rowGap;
+              r *
+              rowGap;
 
-            // question number
-            doc.text(String(qNum), blockLeftX, y);
 
-            // bubbles A–D (or up to F) under this header
-            for (let o = 0; o < optCount; o++) {
-              const cxMm = blockLeftX + numColW + 2 + o * optStep;
-              const cyMm = y - 1.0;
+            doc.text(
+              String(qNum),
+              blockLeftX,
+              y
+            );
 
-              doc.circle(cxMm, cyMm, bubbleR);
+
+            for (
+              let o = 0;
+              o < optCount;
+              o++
+            ){
+
+              const cxMm =
+                blockLeftX +
+                numColW +
+                2 +
+                o *
+                optStep;
+
+              const cyMm =
+                y - 1.0;
+
+
+              doc.circle(
+                cxMm,
+                cyMm,
+                bubbleR
+              );
+
 
               secROI.bubbles.push({
-                q:   qNum,
-                opt: String.fromCharCode(65 + o),
-                cx:  mmToPx(cxMm),
-                cy:  mmToPx(cyMm),
-                r:   mmToPx(bubbleR)
+                q: qNum,
+                opt:
+                  String.fromCharCode(
+                    65 + o
+                  ),
+                cx:
+                  mmToPx(
+                    cxMm
+                  ),
+                cy:
+                  mmToPx(
+                    cyMm
+                  ),
+                r:
+                  mmToPx(
+                    bubbleR
+                  )
               });
             }
           }
+
+
+          // Continue DOWNWARD
+          flowY +=
+            perBlockHeight;
         }
 
-        rois.sections.push(secROI);
 
-               // ------------------------------------------
-        // NEXT SUBJECT STARTS IMMEDIATELY AFTER
-        // THE ACTUAL HEIGHT OF THIS SUBJECT
+        rois.sections.push(
+          secROI
+        );
+
+
         // ------------------------------------------
-
-                const sectionAdvance =
-          titleSpace +
-          (
-            usedBlockRows *
-            perBlockHeight
-          ) +
-          Math.max(
-            2,
-            5 * layoutScale
-          );
-
-        curY =
-          startY +
-          sectionAdvance;
+        // NEXT SUBJECT FOLLOWS BELOW THIS SUBJECT
+        // ------------------------------------------
+        flowY +=
+          subjectGap;
       });
 
            // Save ROIs locally first
