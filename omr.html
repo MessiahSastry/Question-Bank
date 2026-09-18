@@ -704,7 +704,7 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
     <header>
       <div class="title">
         <div class="h1">Scan OMR</div>
-        <div class="sub">Align the four black squares inside the blue boxes</div>
+        <div class="sub">Scanner v4 · Align all four black squares inside the blue boxes</div>
       </div>
       <button class="icon-btn modal-close" type="button"
               onclick="stopCameraStream(); document.getElementById('dlgCamera').close()"
@@ -744,32 +744,54 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
     <header>
       <div class="title">
         <div class="h1">Scan Result</div>
-        <div class="sub">Confirm Roll No. and Marks before saving</div>
+        <div class="sub">Scanner v4 · Confirm Roll No. and Marks before saving</div>
       </div>
       <button class="icon-btn modal-close" type="button"
-              onclick="document.getElementById('dlgScanReview').close()"
+              id="btnScanReviewClose"
               aria-label="Close">
         <i class="fa fa-xmark"></i>
       </button>
     </header>
     <div class="content">
-      <!-- OMR page preview -->
-      <div id="scanReviewImageWrap"
-           style="margin-bottom:10px; text-align:center; display:none;">
-        <img id="scanReviewImage"
-             alt="Scanned OMR"
-             style="max-width:100%; border:1px solid #e5e7eb; border-radius:12px;" />
+      <div id="scanReviewSummary"
+           style="text-align:center; line-height:1.45; color:#374151;">
+        <div style="font-size:24px; font-weight:800; color:#111827;">
+          Roll No : <span id="scanReviewRollText">0</span>
+        </div>
+        <div style="font-size:20px;">
+          Marks : <span id="scanReviewMarksText">0.00</span>
+        </div>
       </div>
-
-      <div class="grid cols-3">
+      <div id="scanReviewWarning"
+           style="display:none; margin:8px 0; padding:8px 10px; border-radius:10px; background:#fff7ed; color:#9a3412; text-align:center; font-size:12px; font-weight:700;">
+        Roll Number was not clear. Tap Edit before saving.
+      </div>
+      <div id="scanReviewEditFields" class="grid cols-3" style="display:none;">
         <div>
           <div class="label">Roll Number</div>
-          <input id="scanReviewRoll" class="select" type="number" min="1" />
+          <input id="scanReviewRoll" class="select" type="number" min="0"
+                 style="font-size:20px; font-weight:800; text-align:center;" />
         </div>
         <div>
           <div class="label">Total Marks</div>
-          <input id="scanReviewMarks" class="select" type="number" step="0.25" />
+          <input id="scanReviewMarks" class="select" type="number" step="0.25"
+                 style="font-size:20px; font-weight:800; text-align:center;" />
         </div>
+      </div>
+      <div id="scanReviewSections"
+           style="display:none; margin-top:10px;"></div>
+      <div id="scanReviewLegend"
+           style="display:flex; flex-wrap:wrap; justify-content:center; gap:8px 14px; margin-top:10px; font-size:12px; font-weight:700;">
+        <span style="color:#16a34a;">● Correctly marked</span>
+        <span style="color:#dc2626;">● Wrongly marked</span>
+        <span style="color:#2563eb;">● Correct option missed</span>
+      </div>
+      <!-- OMR page preview appears below Roll/Marks/subject totals. -->
+      <div id="scanReviewImageWrap"
+           style="margin-top:10px; margin-bottom:10px; text-align:center; display:none;">
+        <img id="scanReviewImage"
+             alt="Scanned OMR"
+             style="max-width:100%; max-height:58vh; object-fit:contain; border:1px solid #e5e7eb; border-radius:12px;" />
       </div>
       <div class="hr"></div>
       <div class="toolbar" style="justify-content:flex-end; gap:8px;">
@@ -5463,7 +5485,9 @@ function mapPageMmToPixelBase(xMm, yMm, anchors){
 // Once the four targets are aligned, transform the photographed sheet into
 // one fixed A4 canvas. All bubble recognition then happens on this stable,
 // front-facing image instead of on a tilted moving camera frame.
-const OMR_CANONICAL_PX_PER_MM = 4;
+// 3 px/mm gives a clear 630 × 891 normalized page while avoiding a costly
+// million-pixel warp on every successful phone scan.
+const OMR_CANONICAL_PX_PER_MM = 3;
 
 function createCanonicalAnchors(pxPerMm = OMR_CANONICAL_PX_PER_MM){
   const markerPx = OMR_MARKER_SIZE_MM * pxPerMm;
@@ -6047,6 +6071,10 @@ let isScanBusy = false;     // true = review dialog open / saving
 let isCameraOpen = false;
 let noRollStartTime = null; // timer for "no OMR sheet found"
 let detectionHistory = [];  // recent detections for stability gating
+let alignmentCandidate = null;
+let lastFullReadTime = 0;
+let lastReadFeedback = '';
+let omrAudioContext = null;
 
 // ===== DUPLICATE SHEET PROTECTION =====
 
@@ -6060,14 +6088,20 @@ let sheetMissingSince = null;
 // before the same sheet may be scanned again.
 const SHEET_REMOVAL_MS = 1000;
 
-const DETECTION_WINDOW_MS   = 2000;  // look at last 2 seconds
-const REQUIRED_STABLE_HITS  = 2;     // two normalized frames must agree
+const DETECTION_WINDOW_MS   = 2000;  // retained for older saved workflows
+const REQUIRED_STABLE_HITS  = 2;
+
+// Two inexpensive marker frames must agree before one full-page read.
+// The costly perspective correction is therefore performed only once.
+const ALIGNMENT_HOLD_MS = 100;
+const ALIGNMENT_MAX_DRIFT_RATIO = 0.022;
+const FULL_READ_RETRY_MS = 450;
 
 // ===== CAMERA PERFORMANCE =====
 //
 // Keep live video smooth, but do expensive OMR recognition
-// only about 5 times per second.
-const SCAN_PROCESS_INTERVAL_MS = 200;
+// about 8 times per second. Full-page recognition is separately throttled.
+const SCAN_PROCESS_INTERVAL_MS = 120;
 
 
 // ===== IMAGE PROCESSING RESOLUTION =====
@@ -6085,6 +6119,144 @@ let lastFrameProcessTime = 0;
 // Prevent another analysis from starting while
 // the previous one is still running
 let frameProcessingBusy = false;
+
+function prepareOmrScanSound(){
+  try {
+    const AudioCtor = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtor) return;
+
+    if (!omrAudioContext){
+      omrAudioContext = new AudioCtor();
+    }
+
+    if (omrAudioContext.state === 'suspended'){
+      omrAudioContext.resume().catch(() => {});
+    }
+  }
+  catch (err){
+    console.warn('OMR sound could not be prepared:', err);
+  }
+}
+
+function playOmrSuccessSound(){
+  try {
+    prepareOmrScanSound();
+    if (!omrAudioContext) return;
+
+    const play = () => {
+      const startAt = omrAudioContext.currentTime + 0.015;
+      const notes = [
+        {frequency:880,  offset:0,    duration:0.075},
+        {frequency:1175, offset:0.09, duration:0.12}
+      ];
+
+      notes.forEach(note => {
+        const oscillator = omrAudioContext.createOscillator();
+        const gain = omrAudioContext.createGain();
+        const noteStart = startAt + note.offset;
+        const noteEnd = noteStart + note.duration;
+
+        oscillator.type = 'sine';
+        oscillator.frequency.setValueAtTime(note.frequency, noteStart);
+        gain.gain.setValueAtTime(0.0001, noteStart);
+        gain.gain.exponentialRampToValueAtTime(0.18, noteStart + 0.012);
+        gain.gain.exponentialRampToValueAtTime(0.0001, noteEnd);
+        oscillator.connect(gain);
+        gain.connect(omrAudioContext.destination);
+        oscillator.start(noteStart);
+        oscillator.stop(noteEnd + 0.02);
+      });
+
+      if (navigator.vibrate){
+        navigator.vibrate(45);
+      }
+    };
+
+    if (omrAudioContext.state === 'suspended'){
+      omrAudioContext.resume().then(play).catch(() => {});
+    }
+    else {
+      play();
+    }
+  }
+  catch (err){
+    console.warn('OMR success sound could not play:', err);
+  }
+}
+
+function clonePrimaryAnchors(anchors){
+  if (!anchors) return null;
+  const copy = {};
+
+  ['tl','tr','bl','br'].forEach(key => {
+    const point = anchors[key];
+    if (point){
+      copy[key] = {x:Number(point.x), y:Number(point.y)};
+    }
+  });
+
+  return copy;
+}
+
+function primaryAnchorsAreStable(previous, current){
+  if (!previous || !current) return false;
+  const keys = ['tl','tr','bl','br'];
+
+  if (keys.some(key => !previous[key] || !current[key])){
+    return false;
+  }
+
+  const pageWidth = (
+    dist2D(previous.tl, previous.tr) +
+    dist2D(previous.bl, previous.br)
+  ) / 2;
+
+  const pageHeight = (
+    dist2D(previous.tl, previous.bl) +
+    dist2D(previous.tr, previous.br)
+  ) / 2;
+
+  const pageDiagonal = Math.max(
+    1,
+    Math.hypot(pageWidth, pageHeight)
+  );
+
+  const averageDrift = keys.reduce(
+    (sum, key) => sum + dist2D(previous[key], current[key]),
+    0
+  ) / keys.length;
+
+  return (
+    averageDrift / pageDiagonal
+  ) <= ALIGNMENT_MAX_DRIFT_RATIO;
+}
+
+function registerAlignedMarkerFrame(anchors, now){
+  if (
+    !alignmentCandidate ||
+    !primaryAnchorsAreStable(alignmentCandidate.anchors, anchors)
+  ){
+    alignmentCandidate = {
+      anchors:clonePrimaryAnchors(anchors),
+      firstSeen:now,
+      hits:1
+    };
+    return false;
+  }
+
+  alignmentCandidate.hits++;
+  alignmentCandidate.anchors = clonePrimaryAnchors(anchors);
+
+  const ready =
+    alignmentCandidate.hits >= 2 &&
+    now - alignmentCandidate.firstSeen >= ALIGNMENT_HOLD_MS;
+
+  if (ready){
+    alignmentCandidate = null;
+  }
+
+  return ready;
+}
 
 
 // Build a stable identity for one scanned OMR.
@@ -6615,7 +6787,8 @@ function sampleBubbleBrightness(ctx, cx, cy, r) {
 // Each digit column must have exactly ONE confidently
 // filled bubble.
 //
-// Blank column       → reject
+// Every column blank → return Roll No. 0 for review/edit
+// Some columns blank → reject as an incomplete roll number
 // Two filled bubbles → reject
 // One clear bubble   → accept
 //
@@ -6688,6 +6861,7 @@ async function decodeRoll(
 
 
   const digits = [];
+  let blankColumns = 0;
 
 
   // Actual roll bubble radius in PDF is about 2.2 mm.
@@ -6920,12 +7094,20 @@ async function decodeRoll(
     }
 
 
-    // No reliable digit found
-    return null;
+    // No reliable digit was found in this column. Keep checking the other
+    // columns so a completely blank roll grid can still be reviewed as 0.
+    blankColumns++;
+    digits.push(null);
+  }
+
+
+  if (blankColumns === cols){
+    return '0';
   }
 
 
   if (
+    blankColumns > 0 ||
     digits.length !== cols
   ){
     return null;
@@ -7132,58 +7314,240 @@ function decodeAnswersFromFrame(
 
   return answers;
 }
-// Draw green/red circles around student's chosen bubbles on the current frame
-// Green = correct, Red = wrong. Uses ROIs + perQuestionStatus.
-function drawAnswerOverlayFromROIs(ctx, rois, anchors, answers, score) {
-  if (!ctx || !rois || !Array.isArray(rois.sections) || !anchors || !answers) return;
+function getOmrKeyDetails(entry){
+  if (Array.isArray(entry)){
+    return {
+      options:[...new Set(entry.map(String))],
+      either:false,
+      addScore:false
+    };
+  }
 
-  const perQ = (score && score.perQuestionStatus) ? score.perQuestionStatus : {};
+  if (entry && typeof entry === 'object'){
+    return {
+      options:Array.isArray(entry.options)
+        ? [...new Set(entry.options.map(String))]
+        : [],
+      either:!!entry.either,
+      addScore:!!entry.addScore
+    };
+  }
+
+  return {options:[], either:false, addScore:false};
+}
+
+// EvalBee-style result overlay:
+// green = selected and correct
+// red   = selected but wrong
+// blue  = correct option that was not selected
+function drawAnswerOverlayFromROIs(
+  ctx,
+  rois,
+  anchors,
+  answers,
+  score,
+  key
+){
+  if (
+    !ctx ||
+    !rois ||
+    !Array.isArray(rois.sections) ||
+    !anchors ||
+    !answers
+  ){
+    return;
+  }
+
+  const perQ =
+    score && score.perQuestionStatus
+      ? score.perQuestionStatus
+      : {};
+
+  const keyData = key || {};
   const FACTOR_300PX_TO_MM = 25.4 / 300;
   const pageScale = getPageScaleFromAnchors(anchors);
 
-  ctx.save();
-  ctx.lineWidth = 2;
-  ctx.globalAlpha = 0.95;
+  const colors = {
+    green:{stroke:'#16a34a', fill:'rgba(22,163,74,.22)'},
+    red:{stroke:'#dc2626', fill:'rgba(220,38,38,.22)'},
+    blue:{stroke:'#2563eb', fill:'rgba(37,99,235,.18)'}
+  };
 
-  for (const sec of rois.sections) {
+  ctx.save();
+  ctx.lineWidth = Math.max(2.5, pageScale.scaleAvg * 0.78);
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  for (const sec of rois.sections){
     const secName = sec.name;
     if (!secName || !Array.isArray(sec.bubbles)) continue;
 
     const secAnswers = answers[secName] || {};
+    const secKey = keyData[secName] || {};
     const qStatusMap = perQ[secName] || {};
 
-    for (const b of sec.bubbles) {
+    for (const b of sec.bubbles){
       const qNo = b.q;
-      const opt = b.opt;
+      const opt = String(b.opt);
+      const chosen = Array.isArray(secAnswers[qNo])
+        ? secAnswers[qNo].map(String)
+        : [];
 
-      const chosen = secAnswers[qNo] || [];
-      if (!Array.isArray(chosen) || !chosen.includes(opt)) continue;
+      const details = getOmrKeyDetails(secKey[qNo]);
+      if (!details.options.length || details.addScore) continue;
 
-      const st = qStatusMap[qNo];
-      if (!st || typeof st.isCorrect === 'undefined' || st.isCorrect === null) continue;
+      const selected = chosen.includes(opt);
+      const isKeyOption = details.options.includes(opt);
+      const questionStatus = qStatusMap[qNo] || {};
 
-      const color = st.isCorrect ? '#00c853' : '#ff1744';
+      let style = null;
 
-      const xMm = (b.xMm != null) ? b.xMm :
-                  (b.cx  != null ? b.cx * FACTOR_300PX_TO_MM : null);
-      const yMm = (b.yMm != null) ? b.yMm :
-                  (b.cy  != null ? b.cy * FACTOR_300PX_TO_MM : null);
-      const rMm = (b.rMm != null) ? b.rMm :
-                  (b.r   != null ? b.r  * FACTOR_300PX_TO_MM : 2.1);
+      if (selected){
+        style = isKeyOption ? colors.green : colors.red;
+      }
+      else if (isKeyOption){
+        // For "Either" questions one accepted choice is enough. Do not mark
+        // the unused alternative blue when the student's answer is correct.
+        if (details.either && questionStatus.isCorrect === true){
+          continue;
+        }
+        style = colors.blue;
+      }
+
+      if (!style) continue;
+
+      const xMm = b.xMm != null
+        ? b.xMm
+        : (b.cx != null ? b.cx * FACTOR_300PX_TO_MM : null);
+
+      const yMm = b.yMm != null
+        ? b.yMm
+        : (b.cy != null ? b.cy * FACTOR_300PX_TO_MM : null);
+
+      const rMm = b.rMm != null
+        ? b.rMm
+        : (b.r != null ? b.r * FACTOR_300PX_TO_MM : 2.1);
 
       if (xMm == null || yMm == null) continue;
 
-      const pt  = mapPageMmToPixel(xMm, yMm, anchors);
-      const rPx = rMm * pageScale.scaleAvg * 1.25; // slightly larger than bubble
+      const point = mapPageMmToPixel(xMm, yMm, anchors);
+      const radius = rMm * pageScale.scaleAvg * 1.38;
 
       ctx.beginPath();
-      ctx.strokeStyle = color;
-      ctx.arc(pt.x, pt.y, rPx, 0, Math.PI * 2);
+      ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
+      ctx.fillStyle = style.fill;
+      ctx.fill();
+      ctx.strokeStyle = style.stroke;
+      ctx.globalAlpha = 0.98;
       ctx.stroke();
     }
   }
 
   ctx.restore();
+}
+
+// Always return a reviewable result after a valid 4/4 capture. Individual
+// recognition failures become warnings instead of silently blocking the UI.
+async function analyzeNormalizedOmr(
+  readCtx,
+  readCanvas,
+  readAnchors
+){
+  const recognitionWarnings = [];
+  let roll = '0';
+  let rollNeedsEdit = false;
+
+  try {
+    const decodedRoll = await decodeRoll(
+      readCtx,
+      readCanvas,
+      tpl.rois && tpl.rois.roll,
+      readAnchors
+    );
+
+    if (decodedRoll){
+      roll = String(decodedRoll);
+    }
+    else {
+      rollNeedsEdit = true;
+      recognitionWarnings.push(
+        'Roll Number was not clear; it is shown as 0.'
+      );
+    }
+  }
+  catch (err){
+    console.error('Roll recognition error:', err);
+    rollNeedsEdit = true;
+    recognitionWarnings.push(
+      'Roll Number could not be read; it is shown as 0.'
+    );
+  }
+
+  let answers = {};
+
+  try {
+    answers = decodeAnswersFromFrame(
+      readCtx,
+      readCanvas,
+      tpl.rois,
+      readAnchors
+    );
+  }
+  catch (err){
+    console.error('Answer recognition error:', err);
+    recognitionWarnings.push(
+      'Answer bubbles could not be read automatically.'
+    );
+  }
+
+  let score;
+
+  try {
+    score = scoreAnswers(
+      answers,
+      answerKey,
+      Array.isArray(tpl.sections) ? tpl.sections : []
+    );
+  }
+  catch (err){
+    console.error('OMR scoring error:', err);
+    const perSection = {};
+    (Array.isArray(tpl.sections) ? tpl.sections : [])
+      .forEach(section => {
+        if (section && section.name){
+          perSection[section.name] = 0;
+        }
+      });
+
+    score = {
+      total:0,
+      perSection,
+      perQuestionStatus:{}
+    };
+
+    recognitionWarnings.push(
+      'The score could not be calculated automatically.'
+    );
+  }
+
+  let filledCount = 0;
+
+  Object.values(answers || {}).forEach(sectionAnswers => {
+    Object.values(sectionAnswers || {}).forEach(selected => {
+      if (Array.isArray(selected) && selected.length){
+        filledCount++;
+      }
+    });
+  });
+
+  return {
+    roll,
+    rollNeedsEdit,
+    answers,
+    score,
+    filledCount,
+    recognitionWarnings
+  };
 }
 
 // Start camera once and keep it open for continuous auto-scan
@@ -7306,6 +7670,15 @@ sheetMissingSince =
 detectionHistory =
   [];
 
+alignmentCandidate =
+  null;
+
+lastFullReadTime =
+  0;
+
+lastReadFeedback =
+  '';
+
 lastFrameProcessTime =
   0;
 
@@ -7320,7 +7693,7 @@ isCameraOpen =
 
 
 statusEl.textContent =
-  'Place the complete A4 sheet inside the white frame and align all four black corner squares with the blue boxes.';
+  'Place the complete A4 sheet inside the white frame and align all four black registration squares with the blue boxes.';
 
 
 dlg.showModal();
@@ -7463,6 +7836,9 @@ ctx.drawImage(
 
     if (!anchors) {
 
+  alignmentCandidate = null;
+  lastReadFeedback = '';
+
   // Count a sheet as removed only when none of its four markers is visible.
   // While one to three markers are aligned, keep the previous-sheet lock.
   if (lastFiducialCount === 0){
@@ -7518,17 +7894,25 @@ ctx.drawImage(
 }
 
 
-// All four markers are aligned. Capture and normalize this frame before
-// attempting to read any bubble.
+// Four verified targets are enough to trigger one immediate full-page read.
+// Do not add a hidden stability gate here: on some phone cameras the detected
+// centres move by a few pixels even while all four boxes remain green.
 sheetMissingSince = null;
+
+if (now - lastFullReadTime < FULL_READ_RETRY_MS){
+  return;
+}
+
+lastFullReadTime = now;
 el('cameraHint').textContent =
-  '4/4 aligned — hold steady while the sheet is being read.';
+  'Reading Roll Number and answers…';
 
 const normalized = rectifyOmrFrame(ctx, anchors);
 
 if (!normalized){
-  el('cameraHint').textContent =
+  lastReadFeedback =
     'The sheet could not be straightened. Realign all four registration boxes.';
+  el('cameraHint').textContent = lastReadFeedback;
   return;
 }
 
@@ -7536,53 +7920,24 @@ const readCanvas = normalized.canvas;
 const readCtx = normalized.ctx;
 const readAnchors = normalized.anchors;
 
-    // Try to decode roll from the normalized A4 capture.
-    const roll = await decodeRoll(
-      readCtx,
-      readCanvas,
-      tpl.rois.roll,
-      readAnchors
-    );
+const analysis = await analyzeNormalizedOmr(
+  readCtx,
+  readCanvas,
+  readAnchors
+);
 
-    if (!roll) {
-      // Anchors found but roll not confidently detected
-      if (noRollStartTime === null) {
-        noRollStartTime = now;
-      } else if (now - noRollStartTime > 6000) {
-        el('cameraHint').textContent =
-          '4/4 aligned, but Roll Number is unclear. Fill exactly one dark bubble in every Roll No. column.';
-        noRollStartTime = null;
-      }
-      return;
-    }
+const {
+  roll,
+  rollNeedsEdit,
+  answers,
+  score,
+  filledCount,
+  recognitionWarnings
+} = analysis;
 
     // We have a roll – reset "no OMR" timer
     noRollStartTime = null;
-
-    // Decode answers from the normalized A4 capture.
-        const answers = decodeAnswersFromFrame(
-          readCtx,
-          readCanvas,
-          tpl.rois,
-          readAnchors
-        );
-    const score   = scoreAnswers(answers, answerKey, tpl.sections);
-
-    // Count how many questions have at least one bubble filled
-    let filledCount = 0;
-    Object.values(answers).forEach(secObj => {
-      Object.values(secObj).forEach(arr => {
-        if (Array.isArray(arr) && arr.length) filledCount++;
-      });
-    });
-
-    // A short test may contain only one answered question. Four verified
-    // registration markers plus a complete roll number already reject random frames.
-    if (filledCount < 1) {
-      el('cameraHint').textContent =
-        `4/4 aligned and Roll ${roll} found, but no answer bubble is dark enough.`;
-      return;
-    }
+    lastReadFeedback = '';
 
     // Create identity of THIS sheet
 const sheetFingerprint =
@@ -7593,7 +7948,9 @@ const sheetFingerprint =
   );
 
 
-const candidate = {
+// The four page anchors were verified before this one full-page read.
+// Accept this normalized result immediately for EvalBee-like speed.
+const stable = {
 
   roll,
 
@@ -7608,18 +7965,6 @@ const candidate = {
     sheetFingerprint
 
 };
-const stable =
-  registerStableDetection(
-    candidate
-  );
-   if (!stable) {
-
-  el('cameraHint').textContent =
-    `Roll ${roll} and ${filledCount} marked answer${filledCount === 1 ? '' : 's'} found — hold steady to confirm.`;
-
-  // Wait for the second matching normalized frame.
-  return;
-}
 
 
 // ------------------------------------------
@@ -7647,20 +7992,30 @@ if (
 
 // New sheet detected
 el('cameraHint').textContent =
-  'OMR detected. Checking answers...';
+  `Scan complete — Roll ${roll}, ${Number(score.total || 0).toFixed(2)} marks.`;
 
 
-// We have a stable reading for this sheet
-drawAnswerOverlayFromROIs(
-  readCtx,
-  tpl.rois,
-  readAnchors,
-  answers,
-  score
-);
+try {
+  drawAnswerOverlayFromROIs(
+    readCtx,
+    tpl.rois,
+    readAnchors,
+    answers,
+    score,
+    answerKey
+  );
+}
+catch (err){
+  console.error('Result overlay error:', err);
+  recognitionWarnings.push(
+    'The coloured bubble overlay could not be drawn.'
+  );
+}
 
-    // Stable → lock scanner for this sheet
+    // Lock the live scanner before sound/review so this sheet cannot trigger
+    // a second result while the dialog is being opened.
     isScanBusy = true;
+    playOmrSuccessSound();
 
                 const out = {
       examId:       current.examId,
@@ -7698,6 +8053,10 @@ drawAnswerOverlayFromROIs(
       scanFingerprint:
         sheetFingerprint,
 
+      rollNeedsEdit,
+
+      recognitionWarnings,
+
       score: {
         total:
           stable.total,
@@ -7710,7 +8069,18 @@ drawAnswerOverlayFromROIs(
         new Date().toISOString()
     };
 
-    const previewDataUrl = readCanvas.toDataURL('image/png');
+    let previewDataUrl = null;
+
+    try {
+      previewDataUrl = readCanvas.toDataURL('image/png');
+    }
+    catch (err){
+      console.error('OMR preview creation error:', err);
+      recognitionWarnings.push(
+        'The scanned preview image could not be created.'
+      );
+    }
+
     showScanReview(out, previewDataUrl);
   }
 
@@ -7728,8 +8098,8 @@ drawAnswerOverlayFromROIs(
   // requestAnimationFrame itself may run at
   // 30 / 60 / 90 / 120 FPS.
   //
-  // We intentionally analyse only one frame
-  // approximately every 200 ms.
+  // Analyse marker frames frequently; full-page reading is separately
+  // limited and starts immediately when all four targets are valid.
   const enoughTimePassed =
     (
       timestamp -
@@ -7760,6 +8130,15 @@ drawAnswerOverlayFromROIs(
         'OMR frame processing error:',
         err
       );
+
+      isScanBusy = false;
+      lastReadFeedback =
+        'The sheet aligned, but recognition encountered an error. Hold it steady and try again.';
+
+      const hint = el('cameraHint');
+      if (hint){
+        hint.textContent = lastReadFeedback;
+      }
 
     }
     finally{
@@ -7801,6 +8180,9 @@ function stopCameraStream() {
 // Reset recognition state
 lastFrameProcessTime = 0;
 frameProcessingBusy = false;
+alignmentCandidate = null;
+lastFullReadTime = 0;
+lastReadFeedback = '';
   if (stream) {
     stream.getTracks().forEach(t => t.stop());
     stream = null;
@@ -7891,6 +8273,9 @@ el('btnScan').onclick = async () => {
     alert('Pick Class / Section / Exam first');
     return;
   }
+  // Unlock Web Audio during this direct user gesture so the success beep is
+  // permitted later when automatic recognition completes.
+  prepareOmrScanSound();
   await scanAndSaveOnce();
 };
 
@@ -8155,10 +8540,31 @@ function showScanReview(out, previewDataUrl) {
   const btnCancel = el('btnScanCancel');
   const btnEdit   = el('btnScanEdit');
   const btnSave   = el('btnScanSave');
+  const btnClose  = el('btnScanReviewClose');
   const imgWrap   = el('scanReviewImageWrap');
   const imgEl     = el('scanReviewImage');
+  const sectionsEl = el('scanReviewSections');
+  const summaryEl = el('scanReviewSummary');
+  const rollTextEl = el('scanReviewRollText');
+  const marksTextEl = el('scanReviewMarksText');
+  const editFieldsEl = el('scanReviewEditFields');
+  const warningEl = el('scanReviewWarning');
+  const cameraDlg = el('dlgCamera');
 
-  if (!dlg || !rollI || !markI || !btnCancel || !btnEdit || !btnSave) {
+  if (
+    !dlg ||
+    !rollI ||
+    !markI ||
+    !btnCancel ||
+    !btnEdit ||
+    !btnSave ||
+    !btnClose ||
+    !summaryEl ||
+    !rollTextEl ||
+    !marksTextEl ||
+    !editFieldsEl ||
+    !warningEl
+  ) {
     console.warn('Scan review dialog elements missing');
     isScanBusy = false;
     return;
@@ -8171,11 +8577,62 @@ function showScanReview(out, previewDataUrl) {
     imgWrap.style.display = 'none';
   }
 
-  rollI.value = out.roll || '';
+  rollI.value = out.roll != null ? out.roll : '';
   const totalMarks = (out.score && typeof out.score.total === 'number')
     ? out.score.total.toFixed(2)
     : '';
   markI.value = totalMarks;
+  rollTextEl.textContent = String(out.roll != null ? out.roll : '0');
+  marksTextEl.textContent = totalMarks || '0.00';
+  summaryEl.style.display = 'block';
+  editFieldsEl.style.display = 'none';
+
+  const warnings = Array.isArray(out.recognitionWarnings)
+    ? out.recognitionWarnings.filter(Boolean)
+    : [];
+
+  if (out.rollNeedsEdit && !warnings.length){
+    warnings.push(
+      'Roll Number was not clear. Tap Edit before saving.'
+    );
+  }
+
+  warningEl.textContent = warnings.join(' ');
+  warningEl.style.display = warnings.length ? 'block' : 'none';
+
+  if (sectionsEl){
+    sectionsEl.replaceChildren();
+
+    const perSection =
+      out.score &&
+      out.score.perSection &&
+      typeof out.score.perSection === 'object'
+        ? out.score.perSection
+        : {};
+
+    Object.entries(perSection).forEach(([name, marks]) => {
+      const row = document.createElement('div');
+      row.style.cssText =
+        'display:flex;justify-content:center;align-items:center;' +
+        'gap:6px;margin-top:4px;color:#4b5563;font-size:18px;';
+
+      const label = document.createElement('span');
+      label.textContent = name;
+
+      const value = document.createElement('span');
+      value.style.color = '#374151';
+      value.textContent = Number.isFinite(Number(marks))
+        ? Number(marks).toFixed(2)
+        : '0.00';
+
+      row.append(label, document.createTextNode(' : '), value);
+      sectionsEl.appendChild(row);
+    });
+
+    sectionsEl.style.display = sectionsEl.children.length
+      ? 'block'
+      : 'none';
+  }
 
   rollI.disabled = true;
   markI.disabled = true;
@@ -8183,16 +8640,44 @@ function showScanReview(out, previewDataUrl) {
   btnCancel.onclick = null;
   btnEdit.onclick   = null;
   btnSave.onclick   = null;
+  btnClose.onclick  = null;
 
-  btnCancel.onclick = () => {
+  const resumeCameraDialog = () => {
+    if (
+      cameraDlg &&
+      isCameraOpen &&
+      stream &&
+      !cameraDlg.open
+    ){
+      try {
+        cameraDlg.showModal();
+      }
+      catch (err){
+        cameraDlg.setAttribute('open', '');
+      }
+    }
+  };
+
+  const cancelReview = () => {
     lastScanPending = null;
     dlg.close();
     isScanBusy = false;
+    resumeCameraDialog();
     el('pickStatus').innerHTML =
       '<span class="pill bad">Scan cancelled. Nothing saved.</span>';
   };
 
+  btnCancel.onclick = cancelReview;
+  btnClose.onclick = cancelReview;
+
+  dlg.oncancel = event => {
+    event.preventDefault();
+    cancelReview();
+  };
+
   btnEdit.onclick = () => {
+    summaryEl.style.display = 'none';
+    editFieldsEl.style.display = 'grid';
     rollI.disabled = false;
     markI.disabled = false;
     rollI.focus();
@@ -8202,6 +8687,7 @@ function showScanReview(out, previewDataUrl) {
     if (!lastScanPending) {
       dlg.close();
       isScanBusy = false;
+      resumeCameraDialog();
       return;
     }
 
@@ -8210,12 +8696,10 @@ function showScanReview(out, previewDataUrl) {
 
     if (!newRoll) {
       alert('Please enter a valid Roll Number.');
-      isScanBusy = false;
       return;
     }
     if (isNaN(newMarks)) {
       alert('Please enter valid marks.');
-      isScanBusy = false;
       return;
     }
 
@@ -8227,9 +8711,22 @@ function showScanReview(out, previewDataUrl) {
     await finalizeScanSave(lastScanPending);
     lastScanPending = null;
     isScanBusy = false;
+    resumeCameraDialog();
   };
 
-  dlg.showModal();
+  // Replace the camera dialog with the review dialog. This avoids nested
+  // modal-dialog failures seen in some Android/Samsung browsers.
+  if (cameraDlg && cameraDlg.open){
+    cameraDlg.close();
+  }
+
+  try {
+    dlg.showModal();
+  }
+  catch (err){
+    console.warn('Modal review fallback used:', err);
+    dlg.setAttribute('open', '');
+  }
 }
 
 async function finalizeScanSave(out) {
