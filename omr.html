@@ -81,36 +81,49 @@
     video{width:100%; display:block; background:#000}
     canvas{max-width:100%}
 
-    /* OMR fiducial overlay (4 guide boxes like Evalbee) */
+    /* Fixed EvalBee-style OMR alignment overlay */
     #fidOverlay{
       position:absolute;
       inset:0;
       pointer-events:none;
     }
+    #omrPageGuide{
+      position:absolute;
+      display:none;
+      border:2px solid rgba(255,255,255,.78);
+      border-radius:8px;
+      box-shadow:
+        0 0 0 1px rgba(15,23,42,.45),
+        inset 0 0 0 1px rgba(15,23,42,.25);
+      transition:left .12s linear, top .12s linear,
+                 width .12s linear, height .12s linear;
+    }
     .fid-box{
       position:absolute;
-      width:64px;
-      height:64px;
-      border:2px solid rgba(37,99,235,.95);
+      display:block;
+      width:52px;
+      height:52px;
+      border:3px solid rgba(37,99,235,.98);
       box-sizing:border-box;
-      border-radius:6px;
-      box-shadow:0 0 0 1px rgba(15,23,42,.35);
-    }
-       /*
-      These boxes follow the ACTUAL detected
-      black markers. They are not fixed targets.
-    */
-    .fid-box.tl,
-    .fid-box.tr,
-    .fid-box.bl,
-    .fid-box.br{
-      display:none;
+      border-radius:8px;
       transform:translate(-50%, -50%);
+      box-shadow:
+        0 0 0 1px rgba(255,255,255,.85),
+        0 0 12px rgba(37,99,235,.35);
+      transition:left .12s linear, top .12s linear,
+                 width .12s linear, height .12s linear,
+                 border-color .12s linear, box-shadow .12s linear;
     }
-    /* Turn box green when anchors are confidently detected */
+    .fid-box.tl{left:20%;top:12%}
+    .fid-box.tr{left:80%;top:12%}
+    .fid-box.bl{left:20%;top:88%}
+    .fid-box.br{left:80%;top:88%}
+    /* Each box turns green independently when its marker is aligned. */
     .fid-box.ok{
-      border-color:rgba(22,163,74,.95);
-      box-shadow:0 0 0 2px rgba(22,163,74,.55);
+      border-color:rgba(22,163,74,1);
+      box-shadow:
+        0 0 0 1px rgba(255,255,255,.92),
+        0 0 14px rgba(22,163,74,.78);
     }
     .status{font-size:12px; color:var(--muted)}
     .pill{display:inline-block; padding:4px 8px; border-radius:999px; font-size:12px; font-weight:700}
@@ -694,7 +707,7 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
         <div class="sub">Align the four black squares inside the blue boxes</div>
       </div>
       <button class="icon-btn modal-close" type="button"
-              onclick="document.getElementById('dlgCamera').close()"
+              onclick="stopCameraStream(); document.getElementById('dlgCamera').close()"
               aria-label="Close">
         <i class="fa fa-xmark"></i>
       </button>
@@ -706,6 +719,7 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
 
         <!-- 4 fixed guide boxes (Evalbee-style) -->
         <div id="fidOverlay">
+          <div id="omrPageGuide"></div>
           <div id="fidBox_tl" class="fid-box tl"></div>
           <div id="fidBox_tr" class="fid-box tr"></div>
           <div id="fidBox_bl" class="fid-box bl"></div>
@@ -864,7 +878,7 @@ let lastScanPending = null;   // holds latest scan until user presses Save
 let tpl = {
       rollDigits:4,
       bubbleSizeMm:5.5,
-            markerMode:'black-square-v1',
+            markerMode:'black-square-v2',
       sections:[ /* {name, count, options:4|5, mark, negative} */ ],
       // computed ROIs saved after generation for deterministic scan
       rois:null,
@@ -2088,7 +2102,7 @@ el('subtopicSel').addEventListener('change', (e)=>{
       tpl.bubbleSizeMm =
         Number(el('inpBubbleSize').value) || 5.5;
 
-           tpl.markerMode = 'black-square-v1';
+           tpl.markerMode = 'black-square-v2';
 
 
       // Settings/layout changed.
@@ -2124,7 +2138,7 @@ el('subtopicSel').addEventListener('change', (e)=>{
 
         rollDigits: tpl.rollDigits,
                 bubbleSizeMm: tpl.bubbleSizeMm,
-        markerMode: 'black-square-v1',
+        markerMode: 'black-square-v2',
         sections: tpl.sections,
         rois: tpl.rois||null,
         updatedAt: firebase.firestore.FieldValue.serverTimestamp()
@@ -2137,13 +2151,13 @@ el('subtopicSel').addEventListener('change', (e)=>{
         const d = doc.data();
                 tpl.rollDigits = d.rollDigits || 4;
         tpl.bubbleSizeMm = d.bubbleSizeMm || 5.5;
-        tpl.markerMode = 'black-square-v1';
+        tpl.markerMode = 'black-square-v2';
         tpl.sections = Array.isArray(d.sections) ? d.sections : [];
 
         // Old QR-based ROIs must never be reused with the new scanner.
         tpl.rois = (
           d.rois &&
-          d.rois.markerMode === 'black-square-v1'
+          d.rois.markerMode === 'black-square-v2'
         ) ? d.rois : null;
         answerKey = d.answerKey||{};
         el('tplStatus').textContent = tpl.rois? 'Template & ROIs loaded.' : 'Template loaded (no ROIs yet).';
@@ -2548,12 +2562,9 @@ async function loadImageAsDataURL(src){
 
                         // ---------- BLACK FIDUCIAL SQUARES ----------
       //
-      // 4 main markers establish the complete page.
-      // Additional LEFT/RIGHT guide markers improve
-      // recognition through the answer area.
-      //
-      // This gives EvalBee-style multiple black
-      // reference points without using QR codes.
+      // Four large corner markers establish the complete page.
+      // The camera aligns these with four fixed on-screen targets,
+      // captures the sheet, and normalizes it before reading bubbles.
 
       const markerSize =
         OMR_MARKER_SIZE_MM;
@@ -2920,7 +2931,7 @@ async function loadImageAsDataURL(src){
         W / 2;
 
            const rois = {
-        markerMode: 'black-square-v1',
+        markerMode: 'black-square-v2',
         roll: { x: rollGridX, y: rollGridY, cols, colW, rowH },
         sections: []
       };
@@ -4082,23 +4093,13 @@ const PAGE_H_MM = 297;
 // IMPORTANT:
 // These values must exactly match the solid black marker positions
 // used while generating the PDF.
-const OMR_MARKER_SIZE_MM  = 5;
-const OMR_MARKER_INSET_MM = 10;
-const OMR_MARKER_TOP_Y_MM = 69;
+const OMR_MARKER_SIZE_MM  = 7;
+const OMR_MARKER_INSET_MM = 12;
+const OMR_MARKER_TOP_Y_MM = 12;
 
-// Four additional guide rows.
-// Each row has one black square on LEFT and one on RIGHT.
-//
-// So sheet now has:
-// 4 main corner markers
-// + 8 intermediate guide markers
-// = 12 black recognition markers.
-const OMR_GUIDE_MARKER_TOPS_MM = [
-  150,
-  180,
-  210,
-  240
-];
+// Version 2 uses only four unmistakable corner markers.
+// Perspective correction makes intermediate side markers unnecessary.
+const OMR_GUIDE_MARKER_TOPS_MM = [];
 
 // Centres of the main printed black fiducial squares.
 const OMR_MARKER_LEFT_X_MM =
@@ -4132,193 +4133,124 @@ function dist2D(a,b){
 // OMR MARKER OVERLAY
 // ==================================================
 
+let lastFiducialCount = 0;
+let lastFixedGuideGeometry = null;
+
 function setFidOverlayState(hasAnchors){
+  const on = !!hasAnchors;
 
-  const on =
-    !!hasAnchors;
-
-  ['tl','tr','bl','br']
-    .forEach(key => {
-
-      const box =
-        document.getElementById(
-          'fidBox_' + key
-        );
-
-      if (!box) return;
-
-      box.classList.toggle(
-        'ok',
-        on
-      );
-
-      if (!on){
-
-        box.style.display =
-          'none';
-
-      }
-
-    });
-
+  ['tl','tr','bl','br'].forEach(key => {
+    const box = document.getElementById('fidBox_' + key);
+    if (!box) return;
+    box.style.display = 'block';
+    box.classList.toggle('ok', on);
+  });
 }
 
-
-// Move the four overlay boxes directly onto the
-// four black squares detected in the camera image.
-function positionFidOverlay(
-  anchors,
-  cvs
-){
-
-  const video =
-    document.getElementById(
-      'cameraPreview'
-    );
-
-  const wrap =
-    video
-      ? video.closest('.videoWrap')
-      : null;
-
+// Lay out one fixed A4 target inside the real displayed camera image.
+// The targets never chase the paper. The teacher moves the paper until
+// each printed corner square sits inside its corresponding target.
+function layoutFixedFidOverlay(cvs){
+  const video = document.getElementById('cameraPreview');
+  const pageGuide = document.getElementById('omrPageGuide');
 
   if (
     !video ||
-    !wrap ||
-    !anchors ||
     !cvs ||
     !cvs.width ||
-    !cvs.height
+    !cvs.height ||
+    !video.clientWidth ||
+    !video.clientHeight
   ){
-
-    setFidOverlayState(false);
-
-    return;
+    return null;
   }
 
-
-  const viewW =
-    video.clientWidth;
-
-  const viewH =
-    video.clientHeight;
-
-
-  if (
-    !viewW ||
-    !viewH
-  ){
-
-    setFidOverlayState(false);
-
-    return;
-  }
-
+  const viewW = video.clientWidth;
+  const viewH = video.clientHeight;
 
   // cameraPreview uses object-fit:contain.
-  // Calculate the real displayed camera image.
+  const displayScale = Math.min(
+    viewW / cvs.width,
+    viewH / cvs.height
+  );
 
-  const scale =
-    Math.min(
-      viewW / cvs.width,
-      viewH / cvs.height
-    );
+  const imageW = cvs.width * displayScale;
+  const imageH = cvs.height * displayScale;
+  const imageLeft = (viewW - imageW) / 2;
+  const imageTop = (viewH - imageH) / 2;
 
+  const pageAspect = PAGE_W_MM / PAGE_H_MM;
+  const maxPageW = imageW * 0.88;
+  const maxPageH = imageH * 0.88;
 
-  const imageW =
-    cvs.width * scale;
+  let pageW = maxPageH * pageAspect;
+  let pageH = maxPageH;
 
-  const imageH =
-    cvs.height * scale;
+  if (pageW > maxPageW){
+    pageW = maxPageW;
+    pageH = pageW / pageAspect;
+  }
 
+  const pageLeft = imageLeft + (imageW - pageW) / 2;
+  const pageTop = imageTop + (imageH - pageH) / 2;
 
-  const offsetX =
-    (
-      viewW -
-      imageW
-    ) / 2;
+  if (pageGuide){
+    pageGuide.style.display = 'block';
+    pageGuide.style.left = pageLeft + 'px';
+    pageGuide.style.top = pageTop + 'px';
+    pageGuide.style.width = pageW + 'px';
+    pageGuide.style.height = pageH + 'px';
+  }
 
-  const offsetY =
-    (
-      viewH -
-      imageH
-    ) / 2;
+  const mmTargets = {
+    tl:{x:OMR_MARKER_LEFT_X_MM,  y:OMR_MARKER_TOP_CENTER_Y_MM},
+    tr:{x:OMR_MARKER_RIGHT_X_MM, y:OMR_MARKER_TOP_CENTER_Y_MM},
+    bl:{x:OMR_MARKER_LEFT_X_MM,  y:OMR_MARKER_BOTTOM_Y_MM},
+    br:{x:OMR_MARKER_RIGHT_X_MM, y:OMR_MARKER_BOTTOM_Y_MM}
+  };
 
+  const targetsCanvas = {};
+  const targetBoxSize = Math.max(34, Math.min(64, pageW * 0.075));
 
-  ['tl','tr','bl','br']
-    .forEach(key => {
+  Object.entries(mmTargets).forEach(([key, mm]) => {
+    const viewX = pageLeft + (mm.x / PAGE_W_MM) * pageW;
+    const viewY = pageTop + (mm.y / PAGE_H_MM) * pageH;
+    const box = document.getElementById('fidBox_' + key);
 
-      const point =
-        anchors[key];
+    if (box){
+      box.style.display = 'block';
+      box.style.left = viewX + 'px';
+      box.style.top = viewY + 'px';
+      box.style.width = targetBoxSize + 'px';
+      box.style.height = targetBoxSize + 'px';
+    }
 
-      const box =
-        document.getElementById(
-          'fidBox_' + key
-        );
+    targetsCanvas[key] = {
+      x:(viewX - imageLeft) / displayScale,
+      y:(viewY - imageTop) / displayScale
+    };
+  });
 
+  lastFixedGuideGeometry = {
+    targetsCanvas,
+    pageWidthCanvas:pageW / displayScale,
+    pageHeightCanvas:pageH / displayScale,
+    displayScale
+  };
 
-      if (
-        !point ||
-        !box
-      ){
-        return;
-      }
+  return lastFixedGuideGeometry;
+}
 
+// Keep targets fixed and only change each target's colour.
+function positionFidOverlay(anchors, cvs){
+  const geometry = layoutFixedFidOverlay(cvs);
+  if (!geometry) return;
 
-      const x =
-        offsetX +
-        point.x * scale;
-
-      const y =
-        offsetY +
-        point.y * scale;
-
-
-      // Box size follows the detected marker size.
-      const detectedSize =
-        Math.max(
-          Number(point.w) || 20,
-          Number(point.h) || 20
-        ) * scale;
-
-
-      const boxSize =
-        Math.max(
-          26,
-          Math.min(
-            60,
-            detectedSize * 1.7
-          )
-        );
-
-
-      box.style.display =
-        'block';
-
-      box.style.left =
-        x + 'px';
-
-      box.style.top =
-        y + 'px';
-
-      box.style.right =
-        'auto';
-
-      box.style.bottom =
-        'auto';
-
-      box.style.width =
-        boxSize + 'px';
-
-      box.style.height =
-        boxSize + 'px';
-
-      box.classList.add(
-        'ok'
-      );
-
-    });
-
+  ['tl','tr','bl','br'].forEach(key => {
+    const box = document.getElementById('fidBox_' + key);
+    if (!box) return;
+    box.classList.toggle('ok', !!(anchors && anchors[key]));
+  });
 }
 
 
@@ -4351,6 +4283,32 @@ function findBlackSquareInRegion(ctx, fullW, fullH, region){
   const seen =
     new Uint8Array(sw * sh);
 
+  // Local exposure changes greatly between phones and rooms.
+  // Derive the darkness cut-off from this small target region instead
+  // of using one fixed value for every camera frame.
+  let luminanceTotal = 0;
+  let luminanceCount = 0;
+
+  for (let py = 0; py < h; py += 4){
+    for (let px = 0; px < w; px += 4){
+      const i = (py * w + px) * 4;
+      luminanceTotal +=
+        0.299 * img.data[i] +
+        0.587 * img.data[i + 1] +
+        0.114 * img.data[i + 2];
+      luminanceCount++;
+    }
+  }
+
+  const localAverage = luminanceCount
+    ? luminanceTotal / luminanceCount
+    : 220;
+
+  const darkThreshold = Math.max(
+    45,
+    Math.min(190, localAverage - 34)
+  );
+
 
   for (let sy = 0; sy < sh; sy++){
 
@@ -4380,9 +4338,7 @@ function findBlackSquareInRegion(ctx, fullW, fullH, region){
         0.587 * g +
         0.114 * b;
 
-           // More tolerant for camera lighting, shadows and printed black ink.
-      // The shape/fill checks below still reject ordinary text and lines.
-      if (gray < 145){
+      if (gray < darkThreshold){
         dark[
           sy * sw + sx
         ] = 1;
@@ -4575,7 +4531,7 @@ function findBlackSquareInRegion(ctx, fullW, fullH, region){
 
 
       if (
-        fillRatio < 0.58
+        fillRatio < 0.52
       ){
         continue;
       }
@@ -4848,7 +4804,7 @@ const x1 =
 
 
 // Detect all four printed black-square anchors.
-function detectPageAnchors(ctx, cvs){
+function detectPageAnchorsLegacy(ctx, cvs){
 
   const w = cvs.width;
   const h = cvs.height;
@@ -5208,6 +5164,118 @@ function detectPageAnchors(ctx, cvs){
   };
 }
 
+// EvalBee-style recognition: each corner is searched only inside its
+// fixed on-screen target. This prevents headings, filled bubbles and page
+// borders elsewhere in the frame from being mistaken for registration marks.
+function detectPageAnchors(ctx, cvs){
+  const w = cvs.width;
+  const h = cvs.height;
+  const geometry = layoutFixedFidOverlay(cvs);
+
+  if (!w || !h || !geometry){
+    lastFiducialCount = 0;
+    positionFidOverlay({}, cvs);
+    return null;
+  }
+
+  const hits = {};
+  const radiusX = Math.max(18, geometry.pageWidthCanvas * 0.055);
+  const radiusY = Math.max(18, geometry.pageHeightCanvas * 0.042);
+
+  ['tl','tr','bl','br'].forEach(key => {
+    const target = geometry.targetsCanvas[key];
+    if (!target) return;
+
+    const hit = findBlackSquareInRegion(
+      ctx,
+      w,
+      h,
+      {
+        x0:Math.max(0, (target.x - radiusX) / w),
+        x1:Math.min(1, (target.x + radiusX) / w),
+        y0:Math.max(0, (target.y - radiusY) / h),
+        y1:Math.min(1, (target.y + radiusY) / h)
+      }
+    );
+
+    if (hit){
+      hits[key] = hit;
+    }
+  });
+
+  lastFiducialCount =
+    ['tl','tr','bl','br'].filter(key => !!hits[key]).length;
+
+  positionFidOverlay(hits, cvs);
+
+  if (lastFiducialCount !== 4){
+    return null;
+  }
+
+  const {tl,tr,bl,br} = hits;
+
+  if (
+    tl.x >= tr.x ||
+    bl.x >= br.x ||
+    tl.y >= bl.y ||
+    tr.y >= br.y
+  ){
+    lastFiducialCount = 0;
+    positionFidOverlay({}, cvs);
+    return null;
+  }
+
+  const topWidth = dist2D(tl, tr);
+  const bottomWidth = dist2D(bl, br);
+  const leftHeight = dist2D(tl, bl);
+  const rightHeight = dist2D(tr, br);
+  const averageWidth = (topWidth + bottomWidth) / 2;
+  const averageHeight = (leftHeight + rightHeight) / 2;
+
+  const widthDifference =
+    Math.abs(topWidth - bottomWidth) / Math.max(1, averageWidth);
+
+  const heightDifference =
+    Math.abs(leftHeight - rightHeight) / Math.max(1, averageHeight);
+
+  const observedRatio =
+    averageHeight / Math.max(1, averageWidth);
+
+  if (
+    averageWidth < geometry.pageWidthCanvas * 0.72 ||
+    averageHeight < geometry.pageHeightCanvas * 0.72 ||
+    widthDifference > 0.38 ||
+    heightDifference > 0.38 ||
+    observedRatio < 1.05 ||
+    observedRatio > 1.95
+  ){
+    lastFiducialCount = 0;
+    positionFidOverlay({}, cvs);
+    return null;
+  }
+
+  const markerSizes = [tl,tr,bl,br].map(point =>
+    Math.max(Number(point.w) || 1, Number(point.h) || 1)
+  );
+
+  if (
+    Math.max(...markerSizes) /
+    Math.max(1, Math.min(...markerSizes)) > 2.25
+  ){
+    lastFiducialCount = 0;
+    positionFidOverlay({}, cvs);
+    return null;
+  }
+
+  return {
+    tl:{x:tl.x, y:tl.y, w:tl.w, h:tl.h},
+    tr:{x:tr.x, y:tr.y, w:tr.w, h:tr.h},
+    bl:{x:bl.x, y:bl.y, w:bl.w, h:bl.h},
+    br:{x:br.x, y:br.y, w:br.w, h:br.h},
+    guides:[]
+  };
+}
+
 // ===== TRUE PERSPECTIVE MAPPING =====
 // Converts an exact position on the printed A4 sheet (mm)
 // into its position in the camera image.
@@ -5377,6 +5445,255 @@ function mapPageMmToPixelBase(xMm, yMm, anchors){
     y:
       (d * u + e * v + f) /
       denominator
+  };
+}
+
+// ==================================================
+// NORMALIZED OMR CAPTURE
+// ==================================================
+// Once the four targets are aligned, transform the photographed sheet into
+// one fixed A4 canvas. All bubble recognition then happens on this stable,
+// front-facing image instead of on a tilted moving camera frame.
+const OMR_CANONICAL_PX_PER_MM = 4;
+
+function createCanonicalAnchors(pxPerMm = OMR_CANONICAL_PX_PER_MM){
+  const markerPx = OMR_MARKER_SIZE_MM * pxPerMm;
+
+  return {
+    tl:{
+      x:OMR_MARKER_LEFT_X_MM * pxPerMm,
+      y:OMR_MARKER_TOP_CENTER_Y_MM * pxPerMm,
+      w:markerPx,
+      h:markerPx
+    },
+    tr:{
+      x:OMR_MARKER_RIGHT_X_MM * pxPerMm,
+      y:OMR_MARKER_TOP_CENTER_Y_MM * pxPerMm,
+      w:markerPx,
+      h:markerPx
+    },
+    bl:{
+      x:OMR_MARKER_LEFT_X_MM * pxPerMm,
+      y:OMR_MARKER_BOTTOM_Y_MM * pxPerMm,
+      w:markerPx,
+      h:markerPx
+    },
+    br:{
+      x:OMR_MARKER_RIGHT_X_MM * pxPerMm,
+      y:OMR_MARKER_BOTTOM_Y_MM * pxPerMm,
+      w:markerPx,
+      h:markerPx
+    },
+    guides:[]
+  };
+}
+
+function normalizeCanonicalOmr(canvas){
+  const ctx = canvas.getContext('2d', {willReadFrequently:true});
+  const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const data = image.data;
+  const histogram = new Uint32Array(256);
+  let samples = 0;
+
+  for (let i = 0; i < data.length; i += 16){
+    const luminance = Math.max(
+      0,
+      Math.min(
+        255,
+        Math.round(
+          0.299 * data[i] +
+          0.587 * data[i + 1] +
+          0.114 * data[i + 2]
+        )
+      )
+    );
+    histogram[luminance]++;
+    samples++;
+  }
+
+  const lowTarget = samples * 0.02;
+  const highTarget = samples * 0.94;
+  let running = 0;
+  let low = 0;
+  let high = 255;
+
+  for (let i = 0; i < 256; i++){
+    running += histogram[i];
+    if (running >= lowTarget){
+      low = i;
+      break;
+    }
+  }
+
+  running = 0;
+  for (let i = 0; i < 256; i++){
+    running += histogram[i];
+    if (running >= highTarget){
+      high = i;
+      break;
+    }
+  }
+
+  if (high - low < 80){
+    low = Math.max(0, high - 80);
+  }
+
+  const range = Math.max(1, high - low);
+
+  for (let i = 0; i < data.length; i += 4){
+    const luminance =
+      0.299 * data[i] +
+      0.587 * data[i + 1] +
+      0.114 * data[i + 2];
+
+    const adjusted = Math.max(
+      0,
+      Math.min(255, ((luminance - low) * 255) / range)
+    );
+
+    data[i] = adjusted;
+    data[i + 1] = adjusted;
+    data[i + 2] = adjusted;
+    data[i + 3] = 255;
+  }
+
+  ctx.putImageData(image, 0, 0);
+  return ctx;
+}
+
+function rectifyOmrFrame(sourceCtx, sourceAnchors){
+  if (!sourceCtx || !sourceAnchors) return null;
+
+  const pxPerMm = OMR_CANONICAL_PX_PER_MM;
+  const outputW = Math.round(PAGE_W_MM * pxPerMm);
+  const outputH = Math.round(PAGE_H_MM * pxPerMm);
+  const outputCanvas = document.createElement('canvas');
+  outputCanvas.width = outputW;
+  outputCanvas.height = outputH;
+
+  const outputCtx = outputCanvas.getContext(
+    '2d',
+    {willReadFrequently:true}
+  );
+
+  const sourceCanvas = sourceCtx.canvas;
+  const sourceW = sourceCanvas.width;
+  const sourceH = sourceCanvas.height;
+  const sourceImage = sourceCtx.getImageData(0, 0, sourceW, sourceH);
+  const sourceData = sourceImage.data;
+  const outputImage = outputCtx.createImageData(outputW, outputH);
+  const outputData = outputImage.data;
+
+  const {tl,tr,bl,br} = sourceAnchors;
+  const x0 = tl.x, y0 = tl.y;
+  const x1 = tr.x, y1 = tr.y;
+  const x2 = br.x, y2 = br.y;
+  const x3 = bl.x, y3 = bl.y;
+
+  const dx1 = x1 - x2;
+  const dx2 = x3 - x2;
+  const dx3 = x0 - x1 + x2 - x3;
+  const dy1 = y1 - y2;
+  const dy2 = y3 - y2;
+  const dy3 = y0 - y1 + y2 - y3;
+
+  let a, b, c, d, e, f, g, hh;
+  let useBilinearFallback = false;
+
+  if (
+    Math.abs(dx3) < 0.000001 &&
+    Math.abs(dy3) < 0.000001
+  ){
+    a = x1 - x0;
+    b = x3 - x0;
+    c = x0;
+    d = y1 - y0;
+    e = y3 - y0;
+    f = y0;
+    g = 0;
+    hh = 0;
+  }
+  else {
+    const projectiveDenominator = dx1 * dy2 - dx2 * dy1;
+
+    if (Math.abs(projectiveDenominator) < 0.000001){
+      useBilinearFallback = true;
+    }
+    else {
+      g = (dx3 * dy2 - dx2 * dy3) / projectiveDenominator;
+      hh = (dx1 * dy3 - dx3 * dy1) / projectiveDenominator;
+      a = x1 - x0 + g * x1;
+      b = x3 - x0 + hh * x3;
+      c = x0;
+      d = y1 - y0 + g * y1;
+      e = y3 - y0 + hh * y3;
+      f = y0;
+    }
+  }
+
+  const markerSpanX =
+    OMR_MARKER_RIGHT_X_MM - OMR_MARKER_LEFT_X_MM;
+  const markerSpanY =
+    OMR_MARKER_BOTTOM_Y_MM - OMR_MARKER_TOP_CENTER_Y_MM;
+
+  for (let outY = 0; outY < outputH; outY++){
+    const yMm = (outY + 0.5) / pxPerMm;
+    const v = (yMm - OMR_MARKER_TOP_CENTER_Y_MM) / markerSpanY;
+
+    for (let outX = 0; outX < outputW; outX++){
+      const xMm = (outX + 0.5) / pxPerMm;
+      const u = (xMm - OMR_MARKER_LEFT_X_MM) / markerSpanX;
+
+      let sourceX;
+      let sourceY;
+
+      if (useBilinearFallback){
+        const topX = tl.x + u * (tr.x - tl.x);
+        const topY = tl.y + u * (tr.y - tl.y);
+        const bottomX = bl.x + u * (br.x - bl.x);
+        const bottomY = bl.y + u * (br.y - bl.y);
+        sourceX = topX + v * (bottomX - topX);
+        sourceY = topY + v * (bottomY - topY);
+      }
+      else {
+        const denominator = g * u + hh * v + 1;
+        sourceX = (a * u + b * v + c) / denominator;
+        sourceY = (d * u + e * v + f) / denominator;
+      }
+
+      const destinationIndex = (outY * outputW + outX) * 4;
+      const sourcePixelX = Math.round(sourceX);
+      const sourcePixelY = Math.round(sourceY);
+
+      if (
+        sourcePixelX >= 0 &&
+        sourcePixelY >= 0 &&
+        sourcePixelX < sourceW &&
+        sourcePixelY < sourceH
+      ){
+        const sourceIndex =
+          (sourcePixelY * sourceW + sourcePixelX) * 4;
+        outputData[destinationIndex] = sourceData[sourceIndex];
+        outputData[destinationIndex + 1] = sourceData[sourceIndex + 1];
+        outputData[destinationIndex + 2] = sourceData[sourceIndex + 2];
+        outputData[destinationIndex + 3] = 255;
+      }
+      else {
+        outputData[destinationIndex] = 255;
+        outputData[destinationIndex + 1] = 255;
+        outputData[destinationIndex + 2] = 255;
+        outputData[destinationIndex + 3] = 255;
+      }
+    }
+  }
+
+  outputCtx.putImageData(outputImage, 0, 0);
+  const normalizedCtx = normalizeCanonicalOmr(outputCanvas);
+
+  return {
+    canvas:outputCanvas,
+    ctx:normalizedCtx,
+    anchors:createCanonicalAnchors(pxPerMm)
   };
 }
 
@@ -5735,7 +6052,7 @@ let sheetMissingSince = null;
 const SHEET_REMOVAL_MS = 1000;
 
 const DETECTION_WINDOW_MS   = 2000;  // look at last 2 seconds
-const REQUIRED_STABLE_HITS  = 3;     // need 3 consistent frames
+const REQUIRED_STABLE_HITS  = 2;     // two normalized frames must agree
 
 // ===== CAMERA PERFORMANCE =====
 //
@@ -6994,7 +7311,7 @@ isCameraOpen =
 
 
 statusEl.textContent =
-  'Keep the complete A4 OMR sheet visible. The four marker boxes will appear automatically when the black squares are detected.';
+  'Place the complete A4 sheet inside the white frame and align all four black corner squares with the blue boxes.';
 
 
 dlg.showModal();
@@ -7014,7 +7331,12 @@ dlg.showModal();
   };
 
   const cvs = hiddenCanvas;
-  const ctx = cvs.getContext('2d');
+  const ctx = cvs.getContext('2d', {willReadFrequently:true});
+
+  // Escape/back must stop the physical camera too, not only hide the dialog.
+  dlg.oncancel = () => {
+    stopCameraStream();
+  };
 
   async function processFrame() {
     if (!stream || !isCameraOpen) return;
@@ -7132,12 +7454,15 @@ ctx.drawImage(
 
     if (!anchors) {
 
-  // No valid OMR currently visible.
-  //
-  // Start timing how long the previous sheet
-  // has been removed from the camera.
-  if (sheetMissingSince === null){
-    sheetMissingSince = now;
+  // Count a sheet as removed only when none of its four markers is visible.
+  // While one to three markers are aligned, keep the previous-sheet lock.
+  if (lastFiducialCount === 0){
+    if (sheetMissingSince === null){
+      sheetMissingSince = now;
+    }
+  }
+  else {
+    sheetMissingSince = null;
   }
 
 
@@ -7145,6 +7470,7 @@ ctx.drawImage(
   // camera for enough time do we permit the same
   // fingerprint again.
   if (
+    sheetMissingSince !== null &&
     now - sheetMissingSince >=
     SHEET_REMOVAL_MS
   ){
@@ -7173,7 +7499,8 @@ ctx.drawImage(
   if (hint){
 
     hint.textContent =
-      'Looking for OMR... Keep the complete A4 sheet visible and hold the phone steady.';
+      `Camera active — ${lastFiducialCount}/4 corner boxes aligned. ` +
+      'Move the sheet until every box turns green.';
 
   }
 
@@ -7182,20 +7509,39 @@ ctx.drawImage(
 }
 
 
-// OMR is visible again
+// All four markers are aligned. Capture and normalize this frame before
+// attempting to read any bubble.
 sheetMissingSince = null;
-    // Try to decode roll using anchors
-    const roll = await decodeRoll(ctx, cvs, tpl.rois.roll, anchors);
+el('cameraHint').textContent =
+  '4/4 aligned — hold steady while the sheet is being read.';
+
+const normalized = rectifyOmrFrame(ctx, anchors);
+
+if (!normalized){
+  el('cameraHint').textContent =
+    'The sheet could not be straightened. Realign all four corner boxes.';
+  return;
+}
+
+const readCanvas = normalized.canvas;
+const readCtx = normalized.ctx;
+const readAnchors = normalized.anchors;
+
+    // Try to decode roll from the normalized A4 capture.
+    const roll = await decodeRoll(
+      readCtx,
+      readCanvas,
+      tpl.rois.roll,
+      readAnchors
+    );
 
     if (!roll) {
       // Anchors found but roll not confidently detected
       if (noRollStartTime === null) {
         noRollStartTime = now;
       } else if (now - noRollStartTime > 6000) {
-        alert(
-  'Roll Number could not be read clearly. ' +
-  'Check that exactly one bubble is filled in each Roll No. column.'
-);
+        el('cameraHint').textContent =
+          '4/4 aligned, but Roll Number is unclear. Fill exactly one dark bubble in every Roll No. column.';
         noRollStartTime = null;
       }
       return;
@@ -7204,8 +7550,13 @@ sheetMissingSince = null;
     // We have a roll – reset "no OMR" timer
     noRollStartTime = null;
 
-    // Decode answers & score using anchors
-        const answers = decodeAnswersFromFrame(ctx, cvs, tpl.rois, anchors);
+    // Decode answers from the normalized A4 capture.
+        const answers = decodeAnswersFromFrame(
+          readCtx,
+          readCanvas,
+          tpl.rois,
+          readAnchors
+        );
     const score   = scoreAnswers(answers, answerKey, tpl.sections);
 
     // Count how many questions have at least one bubble filled
@@ -7216,8 +7567,11 @@ sheetMissingSince = null;
       });
     });
 
-    // Ignore frames with almost no answers (random noise)
-    if (filledCount < 3) {
+    // A short test may contain only one answered question. Four verified
+    // corner markers plus a complete roll number already reject random frames.
+    if (filledCount < 1) {
+      el('cameraHint').textContent =
+        `4/4 aligned and Roll ${roll} found, but no answer bubble is dark enough.`;
       return;
     }
 
@@ -7251,7 +7605,10 @@ const stable =
   );
    if (!stable) {
 
-  // Not stable yet
+  el('cameraHint').textContent =
+    `Roll ${roll} and ${filledCount} marked answer${filledCount === 1 ? '' : 's'} found — hold steady to confirm.`;
+
+  // Wait for the second matching normalized frame.
   return;
 }
 
@@ -7286,9 +7643,9 @@ el('cameraHint').textContent =
 
 // We have a stable reading for this sheet
 drawAnswerOverlayFromROIs(
-  ctx,
+  readCtx,
   tpl.rois,
-  anchors,
+  readAnchors,
   answers,
   score
 );
@@ -7344,7 +7701,7 @@ drawAnswerOverlayFromROIs(
         new Date().toISOString()
     };
 
-    const previewDataUrl = cvs.toDataURL('image/png');
+    const previewDataUrl = readCanvas.toDataURL('image/png');
     showScanReview(out, previewDataUrl);
   }
 
@@ -8128,7 +8485,6 @@ el('btnDownloadExcel').onclick = ()=>{
   </script>
 </body>
 </html>
-
 
 
 
