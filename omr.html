@@ -4854,97 +4854,222 @@ function detectPageAnchors(ctx, cvs){
   const h = cvs.height;
 
   if (!w || !h){
+    setFidOverlayState(false);
+    return null;
+  }
+
+  // Display any markers already found so that
+  // the scanner gives visible feedback.
+  function showPartial(points){
 
     setFidOverlayState(false);
+
+    positionFidOverlay(
+      {
+        tl: points.tl || null,
+        tr: points.tr || null,
+        bl: points.bl || null,
+        br: points.br || null
+      },
+      cvs
+    );
+  }
+
+  // First locate the two bottom markers.
+  // Bottom markers are safer because there is
+  // almost no printed content below them.
+  function findBottomMarker(leftSide){
+
+    const x0 = leftSide ? 0.00 : 0.50;
+    const x1 = leftSide ? 0.50 : 1.00;
+
+    for (
+      let y1 = 0.99;
+      y1 >= 0.42;
+      y1 -= 0.025
+    ){
+
+      const hit = findBlackSquareInRegion(
+        ctx,
+        w,
+        h,
+        {
+          x0,
+          x1,
+          y0: Math.max(0, y1 - 0.09),
+          y1
+        }
+      );
+
+      if (hit){
+        return hit;
+      }
+    }
 
     return null;
   }
 
+  const bl = findBottomMarker(true);
+  const br = findBottomMarker(false);
 
-    // ==========================================
-  // PRIMARY 4 MARKERS — DYNAMIC SEARCH
-  // ==========================================
-  //
-  // Do NOT assume the paper fills a fixed
-  // percentage of the camera frame.
-  //
-  // Search from the outside edges toward the
-  // centre of the sheet instead.
-  //
-  // This allows:
-  //
-  // - normal camera margins
-  // - different phone aspect ratios
-  // - different camera distances
-  // - slightly tilted sheets
-  // - intermediate EvalBee-style guide markers
-  // ==========================================
+  showPartial({ bl, br });
 
+  if (!bl || !br){
+    return null;
+  }
 
-  const tl =
-    findPrimaryMarkerFromEdge(
-      ctx,
-      w,
-      h,
-      'left',
-      'top'
-    );
+  const edgeDX = br.x - bl.x;
+  const edgeDY = br.y - bl.y;
 
-
-  const tr =
-    findPrimaryMarkerFromEdge(
-      ctx,
-      w,
-      h,
-      'right',
-      'top'
-    );
-
-
-  const bl =
-    findPrimaryMarkerFromEdge(
-      ctx,
-      w,
-      h,
-      'left',
-      'bottom'
-    );
-
-
-  const br =
-    findPrimaryMarkerFromEdge(
-      ctx,
-      w,
-      h,
-      'right',
-      'bottom'
+  const bottomWidth =
+    Math.sqrt(
+      edgeDX * edgeDX +
+      edgeDY * edgeDY
     );
 
   if (
-    !tl ||
-    !tr ||
-    !bl ||
-    !br
+    br.x <= bl.x ||
+    bottomWidth < w * 0.12
   ){
+    showPartial({});
+    return null;
+  }
 
-    setFidOverlayState(false);
+  // Predict the top-marker positions from the
+  // accurately detected bottom-marker pair.
+  const horizontalMarkerSpanMm =
+    OMR_MARKER_RIGHT_X_MM -
+    OMR_MARKER_LEFT_X_MM;
+
+  const verticalMarkerSpanMm =
+    OMR_MARKER_BOTTOM_Y_MM -
+    OMR_MARKER_TOP_CENTER_Y_MM;
+
+  const expectedHeight =
+    bottomWidth *
+    (
+      verticalMarkerSpanMm /
+      horizontalMarkerSpanMm
+    );
+
+  // Upward vector perpendicular to bottom edge.
+  let normalX =
+    edgeDY / bottomWidth;
+
+  let normalY =
+    -edgeDX / bottomWidth;
+
+  if (normalY > 0){
+    normalX *= -1;
+    normalY *= -1;
+  }
+
+  const predictedTL = {
+    x: bl.x + normalX * expectedHeight,
+    y: bl.y + normalY * expectedHeight
+  };
+
+  const predictedTR = {
+    x: br.x + normalX * expectedHeight,
+    y: br.y + normalY * expectedHeight
+  };
+
+  // Search increasingly larger areas around
+  // the predicted top-marker positions.
+  function findNearPrediction(point){
+
+    const searchScales = [
+      1,
+      1.6,
+      2.3
+    ];
+
+    for (const scale of searchScales){
+
+      const radiusX =
+        Math.max(
+          18,
+          bottomWidth * 0.075 * scale
+        );
+
+      const radiusY =
+        Math.max(
+          18,
+          expectedHeight * 0.055 * scale
+        );
+
+      const hit =
+        findBlackSquareInRegion(
+          ctx,
+          w,
+          h,
+          {
+            x0:
+              Math.max(
+                0,
+                (point.x - radiusX) / w
+              ),
+
+            x1:
+              Math.min(
+                1,
+                (point.x + radiusX) / w
+              ),
+
+            y0:
+              Math.max(
+                0,
+                (point.y - radiusY) / h
+              ),
+
+            y1:
+              Math.min(
+                1,
+                (point.y + radiusY) / h
+              )
+          }
+        );
+
+      if (hit){
+        return hit;
+      }
+    }
 
     return null;
   }
 
+  const tl =
+    findNearPrediction(predictedTL);
 
-  const wTop =
-    dist2D(tl, tr);
+  const tr =
+    findNearPrediction(predictedTR);
 
-  const wBot =
-    dist2D(bl, br);
+  showPartial({
+    tl,
+    tr,
+    bl,
+    br
+  });
 
-  const hLeft =
-    dist2D(tl, bl);
+  if (!tl || !tr){
+    return null;
+  }
 
-  const hRight =
-    dist2D(tr, br);
+  // Confirm correct corner order.
+  if (
+    tl.x >= tr.x ||
+    bl.x >= br.x ||
+    tl.y >= bl.y ||
+    tr.y >= br.y
+  ){
+    showPartial({});
+    return null;
+  }
 
+  const wTop  = dist2D(tl, tr);
+  const wBot  = dist2D(bl, br);
+  const hLeft = dist2D(tl, bl);
+  const hRight = dist2D(tr, br);
 
   const avgW =
     (wTop + wBot) / 2;
@@ -4952,107 +5077,75 @@ function detectPageAnchors(ctx, cvs){
   const avgH =
     (hLeft + hRight) / 2;
 
-
-   // Allow the whole A4 sheet to have comfortable
-  // margins around it in the camera preview.
   if (
-  avgW < w * 0.14 ||
-  avgH < h * 0.28
-){
-    setFidOverlayState(false);
-
-    return null;
-  }
-
-
-  const widthSimilar =
-    Math.abs(
-      wTop -
-      wBot
-    ) /
-    Math.max(
-      1,
-      avgW
-    ) <= 0.32;
-
-
-  const heightSimilar =
-    Math.abs(
-      hLeft -
-      hRight
-    ) /
-    Math.max(
-      1,
-      avgH
-    ) <= 0.32;
-
-
-  if (
-    !widthSimilar ||
-    !heightSimilar
+    avgW < w * 0.12 ||
+    avgH < h * 0.20
   ){
-
-    setFidOverlayState(false);
-
+    showPartial({});
     return null;
   }
 
+  const widthDifference =
+    Math.abs(wTop - wBot) /
+    Math.max(1, avgW);
 
-   positionFidOverlay(
-  {
-    tl,
-    tr,
-    bl,
-    br
-  },
-  cvs
-);
+  const heightDifference =
+    Math.abs(hLeft - hRight) /
+    Math.max(1, avgH);
 
+  if (
+    widthDifference > 0.48 ||
+    heightDifference > 0.48
+  ){
+    showPartial({});
+    return null;
+  }
 
-  // ==========================================
-  // PRIMARY 4-CORNER GEOMETRY
-  // ==========================================
+  // All four detected markers should be
+  // approximately similar in size.
+  const markerSizes =
+    [tl, tr, bl, br]
+      .map(point =>
+        Math.max(
+          Number(point.w) || 1,
+          Number(point.h) || 1
+        )
+      );
+
+  const smallestMarker =
+    Math.min(...markerSizes);
+
+  const largestMarker =
+    Math.max(...markerSizes);
+
+  if (
+    largestMarker /
+    Math.max(1, smallestMarker) >
+    2.8
+  ){
+    showPartial({});
+    return null;
+  }
+
+  positionFidOverlay(
+    {
+      tl,
+      tr,
+      bl,
+      br
+    },
+    cvs
+  );
 
   const baseAnchors = {
-
-    tl:{
-      x:tl.x,
-      y:tl.y
-    },
-
-    tr:{
-      x:tr.x,
-      y:tr.y
-    },
-
-    bl:{
-      x:bl.x,
-      y:bl.y
-    },
-
-    br:{
-      x:br.x,
-      y:br.y
-    }
-
+    tl: { x: tl.x, y: tl.y },
+    tr: { x: tr.x, y: tr.y },
+    bl: { x: bl.x, y: bl.y },
+    br: { x: br.x, y: br.y }
   };
 
-
-  // ==========================================
-  // FIND INTERMEDIATE GUIDE MARKERS
-  // ==========================================
-  //
-  // First predict their camera positions using
-  // the main four anchors.
-  //
-  // Then search only near those positions.
-  //
-  // A guide row is accepted ONLY when both
-  // LEFT and RIGHT markers are found.
-  // ==========================================
-
+  // Detect optional intermediate guide markers.
   const guides = [];
-
 
   for (
     const yMm
@@ -5066,14 +5159,12 @@ function detectPageAnchors(ctx, cvs){
         baseAnchors
       );
 
-
     const predictedRight =
       mapPageMmToPixelBase(
         OMR_MARKER_RIGHT_X_MM,
         yMm,
         baseAnchors
       );
-
 
     const detectedLeft =
       findBlackSquareNearPoint(
@@ -5083,7 +5174,6 @@ function detectPageAnchors(ctx, cvs){
         predictedLeft
       );
 
-
     const detectedRight =
       findBlackSquareNearPoint(
         ctx,
@@ -5092,40 +5182,31 @@ function detectPageAnchors(ctx, cvs){
         predictedRight
       );
 
-
     if (
       detectedLeft &&
       detectedRight
     ){
-
       guides.push({
-
         yMm,
 
-        left:{
-          x:detectedLeft.x,
-          y:detectedLeft.y
+        left: {
+          x: detectedLeft.x,
+          y: detectedLeft.y
         },
 
-        right:{
-          x:detectedRight.x,
-          y:detectedRight.y
+        right: {
+          x: detectedRight.x,
+          y: detectedRight.y
         }
-
       });
-
     }
-
   }
-
 
   return {
     ...baseAnchors,
-
     guides
   };
 }
-
 
 // ===== TRUE PERSPECTIVE MAPPING =====
 // Converts an exact position on the printed A4 sheet (mm)
