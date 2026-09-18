@@ -2862,25 +2862,10 @@ const cornerInset  = OMR_CORNER_INSET_MM;
           titleSpace;
 
 
-        const bottomLimit =
+                const bottomLimit =
           H -
           inner -
           12;
-
-
-        const availableH =
-          bottomLimit -
-          headerBaseY;
-
-
-        const blocksPerCol =
-          Math.max(
-            1,
-            Math.floor(
-              availableH /
-              perBlockHeight
-            )
-          );
 
 
         const blockW =
@@ -2890,43 +2875,102 @@ const cornerInset  = OMR_CORNER_INSET_MM;
           4;
 
 
-        const colCount =
-          Math.ceil(
-            totalBlocks /
-            blocksPerCol
-          );
+        // ------------------------------------------
+        // FLOW QUESTION BLOCKS LEFT → RIGHT FIRST
+        // THEN MOVE TO THE NEXT ROW
+        // ------------------------------------------
+
+        // Width safely available inside page
+        const maxGridW =
+          W -
+          (2 * inner) -
+          8;
 
 
+        // Start with normal gap
         let colGap =
           8;
 
+
+        // How many 5-question blocks fit in one row?
+        let blocksPerRow =
+          Math.max(
+            1,
+            Math.floor(
+              (
+                maxGridW +
+                colGap
+              ) /
+              (
+                blockW +
+                colGap
+              )
+            )
+          );
+
+
+        blocksPerRow =
+          Math.min(
+            totalBlocks,
+            blocksPerRow
+          );
+
+
+        // If 5 blocks almost fit, use smaller gap.
         if (
-          colCount > 4
+          totalBlocks >= 5 &&
+          blocksPerRow < 5
         ){
+
           colGap =
             4;
+
+          blocksPerRow =
+            Math.max(
+              1,
+              Math.floor(
+                (
+                  maxGridW +
+                  colGap
+                ) /
+                (
+                  blockW +
+                  colGap
+                )
+              )
+            );
+
+          blocksPerRow =
+            Math.min(
+              totalBlocks,
+              blocksPerRow
+            );
         }
 
 
-        const gridW =
-          colCount *
-          blockW +
-          (
-            colCount - 1
-          ) *
-          colGap;
-
-
-        // ------------------------------------------
-        // IMPORTANT:
-        // USE ONLY THE BLOCK ROWS ACTUALLY NEEDED
-        // ------------------------------------------
-
+        // Number of actual block rows
         const usedBlockRows =
+          Math.ceil(
+            totalBlocks /
+            blocksPerRow
+          );
+
+
+        // Number of columns used by the widest row
+        const usedBlockCols =
           Math.min(
             totalBlocks,
-            blocksPerCol
+            blocksPerRow
           );
+
+
+        const gridW =
+          usedBlockCols *
+          blockW +
+          (
+            usedBlockCols - 1
+          ) *
+          colGap;
 
 
         const cardW =
@@ -2940,6 +2984,19 @@ const cornerInset  = OMR_CORNER_INSET_MM;
             perBlockHeight
           ) +
           4;
+
+
+        // Safety: subject must remain inside page
+        if (
+          startY +
+          cardH >
+          bottomLimit
+        ){
+          console.warn(
+            'OMR subject exceeds available page height:',
+            sec.name
+          );
+        }
 
 
         const cardX =
@@ -2988,15 +3045,72 @@ const cornerInset  = OMR_CORNER_INSET_MM;
 
         doc.setTextColor(0, 0, 0);
 
-        // ---- SAME 5-QUESTION BLOCK LOGIC AS BEFORE ----
+               // ------------------------------------------
+        // 5-QUESTION BLOCKS:
+        // LEFT → RIGHT FIRST, THEN NEXT ROW
+        // ------------------------------------------
         let qNum = 1;
-        for (let b = 0; b < totalBlocks; b++) {
-          const colIndex = Math.floor(b / blocksPerCol);  // which column inside this section
-          const rowIndex = b % blocksPerCol;              // which block vertically in that column
 
-          const blockTopY  = headerBaseY + rowIndex * perBlockHeight;
-          const blockLeftX = gridStartX + colIndex * (blockW + colGap);
+        for (
+          let b = 0;
+          b < totalBlocks;
+          b++
+        ){
 
+          const rowIndex =
+            Math.floor(
+              b /
+              blocksPerRow
+            );
+
+          const colIndex =
+            b %
+            blocksPerRow;
+
+
+          // Number of blocks actually present
+          // in this particular row
+          const firstBlockInRow =
+            rowIndex *
+            blocksPerRow;
+
+          const remainingBlocks =
+            totalBlocks -
+            firstBlockInRow;
+
+          const blocksThisRow =
+            Math.min(
+              blocksPerRow,
+              remainingBlocks
+            );
+
+
+          // Centre every row independently
+          const thisRowW =
+            blocksThisRow *
+            blockW +
+            (
+              blocksThisRow - 1
+            ) *
+            colGap;
+
+          const rowStartX =
+            pageCenterX -
+            thisRowW / 2;
+
+
+          const blockTopY =
+            headerBaseY +
+            rowIndex *
+            perBlockHeight;
+
+          const blockLeftX =
+            rowStartX +
+            colIndex *
+            (
+              blockW +
+              colGap
+            );
           // A/B/C/D/E/F header for this 5-question block
           doc.setFont('helvetica', 'bold');
           doc.setFontSize(8);
