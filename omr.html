@@ -10,8 +10,11 @@
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js"></script>
    <!-- jsPDF for PDF generation -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <!-- Real XLSX workbooks for reports -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
   <!-- OMR recognition uses solid black fiducial squares; no QR library required -->
   <style>
@@ -501,6 +504,45 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
   color:#0f3d6b;
 }
 
+/* Scanner v5: parts, reports and manual marks */
+.part-map-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
+.part-map-card{border:1px solid #dbe7f3;border-radius:12px;padding:10px;background:#f8fbff}
+.part-map-card .part-subject{font-weight:800;color:#0f3d6b;margin-bottom:6px}
+.report-modal{width:min(980px,96vw);max-width:980px;max-height:92vh}
+.report-summary-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-bottom:12px}
+.report-stat{background:#eef5ff;border:1px solid #dbeafe;border-radius:12px;padding:10px;text-align:center}
+.report-stat strong{display:block;font-size:20px;color:#0f3d6b}
+.report-stat span{font-size:11px;color:#64748b;font-weight:700}
+.report-table-wrap{overflow:auto;border:1px solid #e5e7eb;border-radius:12px}
+.report-table{width:100%;border-collapse:collapse;min-width:760px}
+.report-table th,.report-table td{padding:9px 8px;border-bottom:1px solid #e5e7eb;text-align:left;font-size:12px;vertical-align:middle}
+.report-table th{position:sticky;top:0;background:#eaf2ff;color:#0f3d6b;z-index:1}
+.report-table tbody tr{cursor:pointer}
+.report-table tbody tr:hover{background:#f8fbff}
+.status-dot{display:inline-flex;align-items:center;justify-content:center;min-width:26px;height:26px;border-radius:999px;font-weight:800;font-size:11px}
+.status-dot.ok{background:#dcfce7;color:#15803d}.status-dot.bad{background:#fee2e2;color:#b91c1c}.status-dot.blank{background:#f1f5f9;color:#475569}
+.detail-head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap}
+.detail-title{font-size:22px;font-weight:800;color:#111827}
+.detail-meta{font-size:12px;color:#64748b;line-height:1.55}
+.detail-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin:12px 0}
+.detail-card{border:1px solid #dbeafe;background:#f8fbff;border-radius:12px;padding:10px}
+.detail-card span{display:block;font-size:11px;color:#64748b}.detail-card strong{font-size:18px;color:#0f3d6b}
+.manual-student{border:1px solid #e5e7eb;border-radius:12px;padding:10px;margin-bottom:9px}
+.manual-name{font-weight:800;color:#0f3d6b;margin-bottom:8px}
+.manual-parts{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:8px}
+.manual-part label{display:block;font-size:11px;color:#64748b;margin-bottom:4px}
+.manual-total{background:#eef5ff;font-weight:800}
+.scan-section-row{display:grid;grid-template-columns:minmax(110px,1fr) 110px;gap:8px;align-items:center;margin-top:7px}
+.scan-section-row label{text-align:right;color:#4b5563;font-weight:700}
+.scan-section-row input{text-align:center}
+.warning-box{padding:9px 10px;border-radius:10px;background:#fff7ed;color:#9a3412;font-size:12px;font-weight:700}
+.status-correct{color:#15803d;font-weight:800}.status-wrong{color:#b91c1c;font-weight:800}
+.status-unanswered,.status-not-keyed{color:#64748b;font-weight:700}
+@media(max-width:700px){
+  .report-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .report-modal{width:100vw;max-width:none;max-height:100vh;height:100vh;border-radius:0}
+}
+
 /* keep existing styles above */
 </style>
 </head>
@@ -550,7 +592,6 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
   </button>
 </div>
     </div>
-  </div>
 
    <!-- Subjects: one or more can be selected -->
   <div>
@@ -581,11 +622,17 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
     </div>
   </div>
 
-    <!-- Subtopic (5th, only when subject has subtopics) -->
+    <!-- OMR part (only when the selected subject has configured parts) -->
   <div id="subtopicRow" style="display:none;">
-    <div class="label">Subtopic</div>
+    <div class="label">OMR Part / Subtopic</div>
     <select id="subtopicSel" class="select native-select-hidden" disabled></select>
     <div id="cdrop-subtopic" class="cdrop" data-select="subtopicSel"></div>
+  </div>
+
+  <!-- Multi-subject OMR part mapping -->
+  <div id="scanPartMapRow" style="display:none;grid-column:1/-1;">
+    <div class="label">OMR Part for each selected subject</div>
+    <div id="scanPartMap" class="part-map-grid"></div>
   </div>
 </div>
 
@@ -594,6 +641,7 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
   <button class="btn" id="btnExamSettings" disabled><i class="fa fa-sliders"></i> Exam Settings</button>
   <button class="btn" id="btnKey" disabled><i class="fa fa-key"></i> Set Answer Key</button>
   <button class="btn primary" id="btnScan" disabled><i class="fa fa-camera"></i> Scan &amp; Save</button>
+  <button class="btn" id="btnManualMarks" disabled><i class="fa fa-pen-to-square"></i> Manual Marks</button>
   <button class="btn" id="btnViewReports" disabled><i class="fa fa-list"></i> View Reports</button>
   <button class="btn" id="btnDownloadExcel" disabled><i class="fa fa-file-excel"></i> Download Excel</button>
 </div>
@@ -704,7 +752,7 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
     <header>
       <div class="title">
         <div class="h1">Scan OMR</div>
-        <div class="sub">Scanner v4 · Align all four black squares inside the blue boxes</div>
+        <div class="sub">Scanner v5 · Align all four black squares inside the blue boxes</div>
       </div>
       <button class="icon-btn modal-close" type="button"
               onclick="stopCameraStream(); document.getElementById('dlgCamera').close()"
@@ -744,7 +792,7 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
     <header>
       <div class="title">
         <div class="h1">Scan Result</div>
-        <div class="sub">Scanner v4 · Confirm Roll No. and Marks before saving</div>
+        <div class="sub">Scanner v5 · Confirm Roll No. and Marks before saving</div>
       </div>
       <button class="icon-btn modal-close" type="button"
               id="btnScanReviewClose"
@@ -758,6 +806,7 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
         <div style="font-size:24px; font-weight:800; color:#111827;">
           Roll No : <span id="scanReviewRollText">0</span>
         </div>
+        <div id="scanReviewStudentText" style="font-size:15px;color:#64748b;font-weight:700;"></div>
         <div style="font-size:20px;">
           Marks : <span id="scanReviewMarksText">0.00</span>
         </div>
@@ -773,9 +822,9 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
                  style="font-size:20px; font-weight:800; text-align:center;" />
         </div>
         <div>
-          <div class="label">Total Marks</div>
+          <div class="label">Total Marks (automatic)</div>
           <input id="scanReviewMarks" class="select" type="number" step="0.25"
-                 style="font-size:20px; font-weight:800; text-align:center;" />
+                 readonly style="font-size:20px; font-weight:800; text-align:center;background:#f1f5f9;" />
         </div>
       </div>
       <div id="scanReviewSections"
@@ -807,19 +856,105 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
       </div>
     </div>
   </dialog>
+
+  <!-- Manual / descriptive part marks -->
+  <dialog id="dlgManualMarks" class="modal report-modal">
+    <header>
+      <div class="title">
+        <div class="h1">Manual Marks</div>
+        <div class="sub">OMR parts are protected; enter descriptive/manual parts only</div>
+      </div>
+      <button class="icon-btn modal-close" type="button" id="btnManualClose" aria-label="Close"><i class="fa fa-xmark"></i></button>
+    </header>
+    <div class="content">
+      <div class="grid cols-3">
+        <div>
+          <div class="label">Subject</div>
+          <select id="manualSubjectSel" class="select"></select>
+        </div>
+        <div id="manualSubjectInfo" class="status" style="align-self:end;"></div>
+      </div>
+      <div class="hr"></div>
+      <div id="manualMarksStatus" class="status">Select a subject.</div>
+      <div id="manualMarksRows" style="margin-top:10px;max-height:58vh;overflow:auto;"></div>
+      <div class="toolbar" style="justify-content:flex-end;margin-top:12px;">
+        <button class="btn" type="button" id="btnManualCancel">Cancel</button>
+        <button class="btn primary" type="button" id="btnManualSave"><i class="fa fa-floppy-disk"></i> Save Manual Marks</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- Firestore report list -->
+  <dialog id="dlgReports" class="modal report-modal">
+    <header>
+      <div class="title">
+        <div class="h1" id="reportTitle">OMR Reports</div>
+        <div class="sub" id="reportSubtitle"></div>
+      </div>
+      <button class="icon-btn modal-close" type="button" id="btnReportsClose" aria-label="Close"><i class="fa fa-xmark"></i></button>
+    </header>
+    <div class="content">
+      <div class="report-summary-grid">
+        <div class="report-stat"><strong id="reportMax">0</strong><span>MAXIMUM MARKS</span></div>
+        <div class="report-stat"><strong id="reportCount">0</strong><span>REPORTS</span></div>
+        <div class="report-stat"><strong id="reportAverage">0</strong><span>CLASS AVERAGE</span></div>
+        <div class="report-stat"><strong id="reportHighest">0</strong><span>HIGHEST</span></div>
+      </div>
+      <div class="toolbar" style="justify-content:space-between;align-items:center;margin-bottom:10px;">
+        <input id="reportSearch" class="select" placeholder="Search roll or student name" style="max-width:360px;" />
+        <button class="btn" id="btnReportExcel" type="button"><i class="fa fa-file-excel"></i> Download XLSX</button>
+      </div>
+      <div id="reportStatus" class="status">Loading reports…</div>
+      <div class="report-table-wrap" id="reportTableWrap" style="display:none;">
+        <table class="report-table">
+          <thead id="reportHead"></thead>
+          <tbody id="reportBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- Individual student report -->
+  <dialog id="dlgReportDetail" class="modal report-modal">
+    <header>
+      <div class="title">
+        <div class="h1" id="detailTitle">Student Report</div>
+        <div class="sub" id="detailSubtitle"></div>
+      </div>
+      <button class="icon-btn modal-close" type="button" id="btnDetailClose" aria-label="Close"><i class="fa fa-xmark"></i></button>
+    </header>
+    <div class="content">
+      <div id="detailSummary"></div>
+      <div id="detailImageWrap" style="display:none;text-align:center;margin:12px 0;">
+        <img id="detailImage" alt="Scanned OMR" style="max-width:100%;max-height:58vh;object-fit:contain;border:1px solid #e5e7eb;border-radius:12px;" />
+      </div>
+      <div id="detailQuestions"></div>
+      <div class="toolbar" style="justify-content:space-between;margin-top:12px;">
+        <div class="toolbar">
+          <button class="btn" id="btnDetailPrev" type="button"><i class="fa fa-chevron-left"></i> Previous</button>
+          <button class="btn" id="btnDetailNext" type="button">Next <i class="fa fa-chevron-right"></i></button>
+        </div>
+        <div class="toolbar">
+          <button class="btn" id="btnDetailEdit" type="button"><i class="fa fa-pen"></i> Edit Marks</button>
+          <button class="btn" id="btnDetailDelete" type="button" style="color:#b91c1c;"><i class="fa fa-trash"></i> Delete Scan</button>
+        </div>
+      </div>
+    </div>
+  </dialog>
   <script>
     // ==================== CONFIG ====================
 const firebaseConfig = {
   apiKey: "AIzaSyAszVhWXUUOYLQ7VimKmPKf1yEu_CI9RCE",
   authDomain: "stpatricks-questionbank.firebaseapp.com",
   projectId: "stpatricks-questionbank",
-  storageBucket: "stpatricks-questionbank.appspot.com",
+  storageBucket: "stpatricks-questionbank.firebasestorage.app",
   messagingSenderId: "917615322861",
   appId: "1:917615322861:web:c6c890aa2184dd395b8ee4"
 };
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 const auth = firebase.auth();
+const storage = firebase.storage();
 
 // CampusConnect custom alert (replaces window.alert)
 (function setupCampusConnectAlert(){
@@ -889,6 +1024,10 @@ const auth = firebase.auth();
     // Math + Physics + Chemistry, etc.
     selectedSubjects:[],
 
+    // OMR destination component for every selected subject.
+    // Example: { Math:'MCQ', Chemistry:'Objective' }
+    partBySubject:{},
+
     subtopicName:null,
 
     examId:null,
@@ -902,13 +1041,165 @@ let tpl = {
       bubbleSizeMm:5.5,
             markerMode:'black-square-v3',
       sections:[ /* {name, count, options:4|5, mark, negative} */ ],
+      omrPartBySubject:{},
       // computed ROIs saved after generation for deterministic scan
       rois:null,
     };
-    let examSubjects = [];   // subjects for the currently selected exam
+let examSubjects = [];   // subjects for the currently selected exam
 let examCommonSubtopics = []; // exam-level subtopics shared by "common" subjects
 let answerKey = { /* sectionName -> { qIndex: ["A","C"] } */ };
 let btnES; // single global handle for the Exam Settings button
+let lastBubbleRecognitionMeta = {uncertainCount:0, uncertain:[]};
+
+function omrNorm(value){
+  return String(value ?? '')
+    .normalize('NFKC')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+function escapeHtml(value){
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+function safeResultIdPart(value){
+  return String(value ?? '')
+    .trim()
+    .replace(/[^a-zA-Z0-9_-]+/g, '_')
+    .slice(0, 120) || 'unknown';
+}
+
+function simpleHash(value){
+  const text = String(value ?? '');
+  let hash = 2166136261;
+  for (let index = 0; index < text.length; index++){
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
+function selectedEffectiveExam(){
+  const rows = Array.isArray(window.__omrEffectiveExams)
+    ? window.__omrEffectiveExams
+    : [];
+  return rows.find(row => String(row.id) === String(current.examId)) || null;
+}
+
+function getExamSubjectDefinition(subjectName){
+  return (Array.isArray(examSubjects) ? examSubjects : [])
+    .find(subject => omrNorm(subject && subject.name) === omrNorm(subjectName)) || null;
+}
+
+function getSubjectParts(subjectName){
+  const subject = getExamSubjectDefinition(subjectName);
+  if (!subject) return [];
+
+  const mode = subject.subtopicsMode ||
+    (Array.isArray(subject.subtopics) && subject.subtopics.length ? 'custom' :
+      (Array.isArray(examCommonSubtopics) && examCommonSubtopics.length ? 'common' : 'none'));
+
+  if (mode === 'custom'){
+    return Array.isArray(subject.subtopics) ? subject.subtopics.filter(Boolean) : [];
+  }
+  if (mode === 'common'){
+    return Array.isArray(examCommonSubtopics) ? examCommonSubtopics.filter(Boolean) : [];
+  }
+  return [];
+}
+
+function getPartMode(part){
+  if (!part) return 'manual';
+  if (part.computed === true) return 'computed';
+
+  const declared = omrNorm(
+    part.entryMode || part.entryMethod || part.markSource || part.mode || ''
+  );
+  if (['omr','scan','scanned','objective'].includes(declared)) return 'omr';
+  if (['computed','internal','automatic'].includes(declared)) return 'computed';
+  if (['manual','descriptive','written'].includes(declared)) return 'manual';
+
+  const name = omrNorm(part.name);
+  if (/\b(omr|mcq|objective|bubble)\b/.test(name)) return 'omr';
+  if (/\binternal\b/.test(name) && Array.isArray(part.sources)) return 'computed';
+  return 'manual';
+}
+
+function inferOmrPartName(subjectName){
+  const parts = getSubjectParts(subjectName);
+  if (!parts.length) return '';
+
+  const configured =
+    current.partBySubject[subjectName] ||
+    (tpl.omrPartBySubject && tpl.omrPartBySubject[subjectName]);
+
+  if (configured && parts.some(part => omrNorm(part.name) === omrNorm(configured))){
+    return parts.find(part => omrNorm(part.name) === omrNorm(configured)).name;
+  }
+
+  const omrPart = parts.find(part => getPartMode(part) === 'omr');
+  if (omrPart) return omrPart.name;
+
+  const editable = parts.filter(part => getPartMode(part) !== 'computed');
+  return editable.length === 1 ? editable[0].name : '';
+}
+
+function getOmrPartCandidates(subjectName){
+  const parts = getSubjectParts(subjectName);
+  const declared = parts.filter(part => getPartMode(part) === 'omr');
+  if (declared.length) return declared;
+  return parts.filter(part => getPartMode(part) !== 'computed');
+}
+
+function areOmrPartsReady(){
+  return (current.selectedSubjects || []).every(subjectName => {
+    const parts = getSubjectParts(subjectName);
+    return !parts.length || !!current.partBySubject[subjectName];
+  });
+}
+
+function getPartMaximum(subjectName, partName){
+  const part = getSubjectParts(subjectName)
+    .find(row => omrNorm(row && row.name) === omrNorm(partName));
+  const max = Number(part && part.max);
+  return Number.isFinite(max) && max >= 0 ? max : null;
+}
+
+function getSubjectMaximum(subjectName){
+  const subject = getExamSubjectDefinition(subjectName);
+  const declared = Number(subject && (subject.max ?? subject.subjectMax));
+  if (Number.isFinite(declared) && declared >= 0) return declared;
+
+  const partTotal = getSubjectParts(subjectName)
+    .reduce((sum, part) => sum + (Number(part && part.max) || 0), 0);
+  if (partTotal) return partTotal;
+
+  const section = (Array.isArray(tpl.sections) ? tpl.sections : [])
+    .find(row => omrNorm(row && row.name) === omrNorm(subjectName));
+  const sectionMaximum = section
+    ? Number(section.count || 0) * Number(section.mark || 0)
+    : 0;
+  return sectionMaximum || null;
+}
+
+function getExamMaximum(){
+  const names = (Array.isArray(examSubjects) ? examSubjects : [])
+    .filter(subject => !subject.excludeFromTotal)
+    .map(subject => subject.name);
+  return names.reduce((sum, name) => sum + (getSubjectMaximum(name) || 0), 0);
+}
+
+function getResultDocumentId(roll){
+  return [currentSchoolId, academicYear, current.classId, current.sectionId, roll]
+    .map(safeResultIdPart)
+    .join('__');
+}
 
 // ===== CAMPUSCONNECT / TEACHER CONTEXT =====
 let currentTeacherId = null;
@@ -1401,6 +1692,7 @@ async function loadSections(classId){
   el('btnScan').disabled = true;
   el('btnViewReports').disabled = true;
   el('btnDownloadExcel').disabled = true;
+  el('btnManualMarks').disabled = true;
 
   if(!classId){ el('sectionSel').innerHTML=''; return; }
   const root = schoolYearRef()
@@ -1431,6 +1723,7 @@ async function loadExamsEffective(){
   el('btnScan').disabled = true;
   el('btnViewReports').disabled = true;
   el('btnDownloadExcel').disabled = true;
+  el('btnManualMarks').disabled = true;
   btnES = el('btnExamSettings');
   if (btnES) btnES.disabled = true;
 
@@ -1498,6 +1791,7 @@ async function loadSubjectsFromExam(examId){
   el('btnScan').disabled = true;
   el('btnViewReports').disabled = true;
   el('btnDownloadExcel').disabled = true;
+  el('btnManualMarks').disabled = true;
 
   if (!examId) return;
 
@@ -1551,7 +1845,9 @@ async function loadSubjectsFromExam(examId){
         ...s,
         subtopicsMode:
           s.subtopicsMode ||
-          'none'
+          (Array.isArray(s.subtopics) && s.subtopics.length
+            ? 'custom'
+            : (Array.isArray(d.subtopics) && d.subtopics.length ? 'common' : 'none'))
       };
 
     }).filter(s => s && s.name);
@@ -1637,6 +1933,7 @@ async function loadSubjectsFromExam(examId){
   el('btnScan').disabled = true;
   el('btnViewReports').disabled = true;
   el('btnDownloadExcel').disabled = true;
+  el('btnManualMarks').disabled = true;
 
 
   function updateSubjectSelection(){
@@ -1694,6 +1991,9 @@ async function loadSubjectsFromExam(examId){
     el('btnDownloadExcel').disabled =
       !hasSelection;
 
+    el('btnManualMarks').disabled =
+      !hasSelection;
+
 
     // =========================================
     // BUILD ONE OMR SECTION FOR EACH
@@ -1705,6 +2005,11 @@ async function loadSubjectsFromExam(examId){
         Array.isArray(tpl.sections)
           ? tpl.sections
           : [];
+
+      const oldSectionNames = oldSections.map(sec => String(sec.name || ''));
+      const subjectLayoutChanged =
+        oldSectionNames.length !== current.selectedSubjects.length ||
+        oldSectionNames.some((name, index) => name !== current.selectedSubjects[index]);
 
       const oldByName =
         new Map(
@@ -1758,11 +2063,12 @@ async function loadSubjectsFromExam(examId){
           }
         );
 
-      // Different subjects = different OMR layout
-      tpl.rois = null;
-
-      el('tplStatus').textContent =
-        'Subjects selected. Check Exam Settings, then generate the OMR.';
+      if (subjectLayoutChanged){
+        // Different subjects = different OMR layout.
+        tpl.rois = null;
+        el('tplStatus').textContent =
+          'Subjects selected. Check Exam Settings, then generate the OMR.';
+      }
 
     }
     else {
@@ -1774,97 +2080,113 @@ async function loadSubjectsFromExam(examId){
 
 
     // =========================================
-    // SUBTOPIC ONLY WHEN EXACTLY ONE SUBJECT
-    // IS SELECTED
+    // MAP EACH SELECTED SUBJECT TO ITS OMR PART
     // =========================================
-    const subSel =
-      el('subtopicSel');
+    const subSel = el('subtopicSel');
+    const subRow = el('subtopicRow');
+    const mapRow = el('scanPartMapRow');
+    const mapHost = el('scanPartMap');
 
-    const subRow =
-      el('subtopicRow');
+    if (subRow) subRow.style.display = 'none';
+    if (mapRow) mapRow.style.display = 'none';
+    if (mapHost) mapHost.replaceChildren();
 
-    if (subRow){
-      subRow.style.display = 'none';
+    if (subSel){
+      subSel.innerHTML = '<option value="">Select OMR Part</option>';
+      subSel.disabled = true;
+      refreshCdrop('subtopicSel','cdrop-subtopic');
     }
 
-    if (!subSel){
-      return;
+    // Remove mappings for subjects that are no longer selected.
+    Object.keys(current.partBySubject).forEach(name => {
+      if (!current.selectedSubjects.includes(name)){
+        delete current.partBySubject[name];
+      }
+    });
+
+    current.selectedSubjects.forEach(subjectName => {
+      const parts = getSubjectParts(subjectName);
+      if (!parts.length){
+        delete current.partBySubject[subjectName];
+        return;
+      }
+
+      const candidates = getOmrPartCandidates(subjectName);
+      const inferred = inferOmrPartName(subjectName);
+      if (
+        inferred &&
+        candidates.some(part => omrNorm(part.name) === omrNorm(inferred))
+      ){
+        current.partBySubject[subjectName] = inferred;
+      }
+    });
+
+    if (current.selectedSubjects.length === 1 && subSel){
+      const subjectName = current.selectedSubjects[0];
+      const parts = getSubjectParts(subjectName);
+      const candidates = getOmrPartCandidates(subjectName);
+
+      if (parts.length){
+        subSel.innerHTML =
+          '<option value="">Select OMR Part</option>' +
+          candidates.map(part =>
+            `<option value="${escapeHtml(part.name)}">${escapeHtml(part.name)} (Max: ${Number(part.max) || 0})</option>`
+          ).join('');
+        subSel.disabled = false;
+        subSel.value = current.partBySubject[subjectName] || '';
+        current.subtopicName = subSel.value || null;
+        refreshCdrop('subtopicSel','cdrop-subtopic');
+        if (subRow) subRow.style.display = '';
+      }
+    }
+    else if (current.selectedSubjects.length > 1 && mapHost){
+      let hasMappedParts = false;
+
+      current.selectedSubjects.forEach(subjectName => {
+        const parts = getSubjectParts(subjectName);
+        if (!parts.length) return;
+        hasMappedParts = true;
+
+        const candidates = getOmrPartCandidates(subjectName);
+        const card = document.createElement('div');
+        card.className = 'part-map-card';
+        card.innerHTML = `
+          <div class="part-subject">${escapeHtml(subjectName)}</div>
+          <select class="select omr-part-select" data-subject="${escapeHtml(subjectName)}">
+            <option value="">Select OMR Part</option>
+            ${candidates.map(part =>
+              `<option value="${escapeHtml(part.name)}">${escapeHtml(part.name)} (Max: ${Number(part.max) || 0})</option>`
+            ).join('')}
+          </select>
+        `;
+        const select = card.querySelector('select');
+        select.value = current.partBySubject[subjectName] || '';
+        select.addEventListener('change', () => {
+          if (select.value){
+            current.partBySubject[subjectName] = select.value;
+          }
+          else {
+            delete current.partBySubject[subjectName];
+          }
+          tpl.omrPartBySubject = {...current.partBySubject};
+          el('btnScan').disabled = !(tpl.rois && areOmrPartsReady());
+        });
+        mapHost.appendChild(card);
+      });
+
+      if (hasMappedParts && mapRow){
+        mapRow.style.display = '';
+      }
     }
 
-    subSel.innerHTML =
-      '<option value="">Select Subtopic</option>';
-
-    subSel.disabled = true;
-
-    refreshCdrop(
-      'subtopicSel',
-      'cdrop-subtopic'
-    );
-
-    if (
-      current.selectedSubjects.length !== 1
-    ){
-      return;
-    }
-
-    const selectedName =
-      current.selectedSubjects[0];
-
-    const subj =
-      examSubjects.find(
-        s => s && s.name === selectedName
-      );
-
-    if (!subj){
-      return;
-    }
-
-    const mode =
-      subj.subtopicsMode || 'none';
-
-    let stArr = [];
-
-    if (mode === 'common'){
-
-      stArr =
-        Array.isArray(examCommonSubtopics)
-          ? examCommonSubtopics
-          : [];
-
-    }
-    else if (mode === 'custom'){
-
-      stArr =
-        Array.isArray(subj.subtopics)
-          ? subj.subtopics
-          : [];
-
-    }
-
-    if (!stArr.length){
-      return;
-    }
-
-    subSel.innerHTML =
-      '<option value="">Select Subtopic</option>' +
-      stArr
-        .map(st =>
-          `<option value="${st.name}">${st.name}</option>`
-        )
-        .join('');
-
-    subSel.disabled = false;
-
-    refreshCdrop(
-      'subtopicSel',
-      'cdrop-subtopic'
-    );
-
-    if (subRow){
-      subRow.style.display = '';
-    }
+    tpl.omrPartBySubject = {...current.partBySubject};
+    el('btnScan').disabled = !(tpl.rois && areOmrPartsReady());
 
   }
+
+  // Template loading can restore saved OMR-part mappings after the checkboxes
+  // already exist, so expose one safe refresh hook for this exam session.
+  window.refreshOmrSubjectSelection = updateSubjectSelection;
 
 
   // =========================================
@@ -1953,6 +2275,8 @@ el('examSel').addEventListener('change', async (e)=>{
   current.examId       = e.target.value || null;
   current.subjectName  = null;
   current.subtopicName = null;
+  current.selectedSubjects = [];
+  current.partBySubject = {};
 
   // reset & hide subtopic row whenever exam changes
   const subSel = el('subtopicSel');
@@ -1981,6 +2305,7 @@ el('pickStatus').innerHTML =
     el('btnScan').disabled = true;
     el('btnViewReports').disabled = true;
     el('btnDownloadExcel').disabled = true;
+    el('btnManualMarks').disabled = true;
     if (btnES) btnES.disabled = false; // still allow opening settings for this class/section
   }
 
@@ -1992,6 +2317,17 @@ el('pickStatus').innerHTML =
 // track selected subtopic
 el('subtopicSel').addEventListener('change', (e)=>{
   current.subtopicName = e.target.value || null;
+  if (current.selectedSubjects.length === 1){
+    const subjectName = current.selectedSubjects[0];
+    if (e.target.value){
+      current.partBySubject[subjectName] = e.target.value;
+    }
+    else {
+      delete current.partBySubject[subjectName];
+    }
+    tpl.omrPartBySubject = {...current.partBySubject};
+    el('btnScan').disabled = !(tpl.rois && areOmrPartsReady());
+  }
 });
 
     // ===== TEMPLATE UI =====
@@ -2122,7 +2458,19 @@ el('subtopicSel').addEventListener('change', (e)=>{
         );
 
       tpl.bubbleSizeMm =
-        Number(el('inpBubbleSize').value) || 5.5;
+        Math.max(4, Math.min(8, Number(el('inpBubbleSize').value) || 5.5));
+
+      tpl.omrPartBySubject = {...current.partBySubject};
+
+      for (const section of tpl.sections){
+        const partName = current.partBySubject[section.name];
+        const partMaximum = partName ? getPartMaximum(section.name, partName) : getSubjectMaximum(section.name);
+        const scanMaximum = Number(section.count || 0) * Number(section.mark || 0);
+        if (partMaximum != null && scanMaximum > partMaximum + 0.001){
+          alert(`${section.name} OMR maximum is ${scanMaximum}, but ${partName || section.name} is configured for only ${partMaximum}. Reduce the questions/marks or increase that part maximum.`);
+          return;
+        }
+      }
 
            tpl.markerMode = 'black-square-v3';
 
@@ -2159,7 +2507,8 @@ el('subtopicSel').addEventListener('change', (e)=>{
             : [],
 
         rollDigits: tpl.rollDigits,
-                bubbleSizeMm: tpl.bubbleSizeMm,
+        bubbleSizeMm: tpl.bubbleSizeMm,
+        omrPartBySubject: {...current.partBySubject},
         markerMode: 'black-square-v3',
         sections: tpl.sections,
         rois: tpl.rois||null,
@@ -2173,6 +2522,10 @@ el('subtopicSel').addEventListener('change', (e)=>{
         const d = doc.data();
                 tpl.rollDigits = d.rollDigits || 4;
         tpl.bubbleSizeMm = d.bubbleSizeMm || 5.5;
+        tpl.omrPartBySubject = (
+          d.omrPartBySubject && typeof d.omrPartBySubject === 'object'
+        ) ? {...d.omrPartBySubject} : {};
+        current.partBySubject = {...tpl.omrPartBySubject};
         tpl.markerMode = 'black-square-v3';
         tpl.sections = Array.isArray(d.sections) ? d.sections : [];
 
@@ -2182,10 +2535,22 @@ el('subtopicSel').addEventListener('change', (e)=>{
           d.rois.markerMode === 'black-square-v3'
         ) ? d.rois : null;
         answerKey = d.answerKey||{};
+
+        const savedSubjects = Array.isArray(d.selectedSubjects) && d.selectedSubjects.length
+          ? d.selectedSubjects
+          : tpl.sections.map(section => section && section.name).filter(Boolean);
+        document.querySelectorAll('#subjectMultiList .subject-check')
+          .forEach(box => {
+            box.checked = savedSubjects.includes(box.value);
+          });
+        if (typeof window.refreshOmrSubjectSelection === 'function'){
+          window.refreshOmrSubjectSelection();
+        }
+
         el('tplStatus').textContent = tpl.rois? 'Template & ROIs loaded.' : 'Template loaded (no ROIs yet).';
         await buildKeyUI();
       } else {
-        tpl.sections = []; tpl.rois=null; answerKey={};
+        tpl.sections = []; tpl.rois=null; tpl.omrPartBySubject={}; answerKey={};
         el('tplStatus').textContent = 'No template saved for this exam yet.';
         el('keyContent').textContent = '(Key grid appears after template is saved)';
       }
@@ -2407,9 +2772,24 @@ el('btnKeySummaryClose').onclick = ()=> {
 
 el('btnKeySave').onclick = async ()=>{
   if(!current.examId) return alert('Pick Class/Section/Exam first');
+  const savedResults = await currentExamRef().collection('results')
+    .where('classId', '==', current.classId)
+    .get();
+  const hasCurrentResults = savedResults.docs.some(doc => {
+    const data = doc.data() || {};
+    return String(data.sectionId) === String(current.sectionId) &&
+      (!data.academicYear || String(data.academicYear) === String(academicYear));
+  });
+  if (hasCurrentResults){
+    alert('The answer key is locked because this exam already has saved scans. Delete the affected scans before changing the key, so old and new scoring cannot be mixed.');
+    return;
+  }
   await currentExamRef().set({
 
   answerKey,
+
+  answerKeyVersion:
+    firebase.firestore.FieldValue.increment(1),
 
   updatedAt:
     firebase.firestore
@@ -2983,18 +3363,27 @@ async function loadImageAsDataURL(src){
            // ------------------------------------------
       // TEST EVALBEE-STYLE VERTICAL-FIRST FLOW
       // ------------------------------------------
+      const requestedBubbleDiameterMm =
+        Math.max(4, Math.min(8, Number(tpl.bubbleSizeMm) || 5.5));
+
       function layoutFits(scale){
+
+        // Bubble size is a physical PDF setting. Fonts and headings may
+        // shrink to fit, but the requested bubble diameter must not.
+        const scaledBubbleDiameter = requestedBubbleDiameterMm;
 
         const testRowGap =
           Math.max(
             1.5,
-            6.0 * scale
+            6.0 * scale,
+            scaledBubbleDiameter + Math.max(0.8, 1.0 * scale)
           );
 
         const testOptStep =
           Math.max(
             3.2,
-            5.9 * scale
+            5.9 * scale,
+            scaledBubbleDiameter + Math.max(0.9, 1.1 * scale)
           );
 
         const testNumColW =
@@ -3165,17 +3554,21 @@ async function loadImageAsDataURL(src){
       // ------------------------------------------
       // FINAL DIMENSIONS
       // ------------------------------------------
-            let rowGap =
+      const scaledBubbleDiameter = requestedBubbleDiameterMm;
+
+      let rowGap =
         Math.max(
           1.5,
-          6.0 * layoutScale
+          6.0 * layoutScale,
+          scaledBubbleDiameter + Math.max(0.8, 1.0 * layoutScale)
         );
 
 
       let optStep =
         Math.max(
           3.2,
-          5.9 * layoutScale
+          5.9 * layoutScale,
+          scaledBubbleDiameter + Math.max(0.9, 1.1 * layoutScale)
         );
 
 
@@ -3188,15 +3581,16 @@ async function loadImageAsDataURL(src){
 
       let bubbleR =
         Math.max(
-          0.55,
-          2.1 * layoutScale
+          0.65,
+          requestedBubbleDiameterMm / 2
         );
 
 
       bubbleR =
         Math.min(
           bubbleR,
-          rowGap * 0.38
+          rowGap * 0.46,
+          optStep * 0.46
         );
 
 
@@ -3926,7 +4320,10 @@ async function loadImageAsDataURL(src){
                 r:
                   mmToPx(
                     bubbleR
-                  )
+                  ),
+                xMm: cxMm,
+                yMm: cyMm,
+                rMm: bubbleR
               });
             }
           }
@@ -6482,8 +6879,8 @@ function getBubbleFillMetrics(ctx, cx, cy, r){
   // Inner area of bubble.
   // Avoid printed circular border as much as possible.
   const innerR = Math.max(
-    2,
-    r * 0.62
+    1.5,
+    r * 0.48
   );
 
   // Background ring OUTSIDE bubble outline
@@ -6744,8 +7141,8 @@ function isBubbleFilled(
 
   // Clearly filled
   if (
-    m.fillRatio >= 0.34 &&
-    m.contrast >= 18
+    m.fillRatio >= 0.50 &&
+    m.contrast >= 28
   ){
     return true;
   }
@@ -6754,14 +7151,55 @@ function isBubbleFilled(
   // Strong contrast can accept a slightly
   // less completely shaded bubble
   if (
-    m.fillRatio >= 0.25 &&
-    m.contrast >= 32
+    m.fillRatio >= 0.38 &&
+    m.contrast >= 45
   ){
     return true;
   }
 
 
   return false;
+}
+
+function medianNumber(values){
+  const rows = values
+    .map(Number)
+    .filter(Number.isFinite)
+    .sort((a,b) => a-b);
+  if (!rows.length) return 0;
+  const middle = Math.floor(rows.length / 2);
+  return rows.length % 2
+    ? rows[middle]
+    : (rows[middle - 1] + rows[middle]) / 2;
+}
+
+// The printed circle is deliberately excluded by getBubbleFillMetrics. A
+// bubble must then pass a strong absolute test, or be clearly darker than the
+// other options in that same question. Border ink and page shadows therefore
+// cannot create marks on a blank sheet.
+function classifyQuestionBubbles(rows){
+  const metrics = Array.isArray(rows) ? rows : [];
+  const medianFill = medianNumber(metrics.map(row => row.fillRatio));
+  const medianContrast = medianNumber(metrics.map(row => row.contrast));
+
+  return metrics.map(row => {
+    const fill = Number(row.fillRatio) || 0;
+    const contrast = Number(row.contrast) || 0;
+    const absolute =
+      (fill >= 0.50 && contrast >= 28) ||
+      (fill >= 0.38 && contrast >= 45);
+    const relative =
+      fill >= 0.40 &&
+      contrast >= 32 &&
+      fill - medianFill >= 0.18 &&
+      contrast - medianContrast >= 18;
+    const filled = absolute || relative;
+    const uncertain = !filled && (
+      (fill >= 0.30 && contrast >= 22) ||
+      (fill >= 0.24 && contrast >= 38)
+    );
+    return {...row, filled, uncertain};
+  });
 }
 // Average brightness in a patch – used by roll decoder
 function sampleBubbleBrightness(ctx, cx, cy, r) {
@@ -6916,16 +7354,17 @@ async function decodeRoll(
         );
 
 
-      // Same basic logic used for answer bubbles
+      // Roll digits use the same strict centre-only rule. This prevents the
+      // printed ring from being mistaken for a shaded digit.
       const filled =
         (
-          metrics.fillRatio >= 0.34 &&
-          metrics.contrast >= 18
+          metrics.fillRatio >= 0.50 &&
+          metrics.contrast >= 28
         )
         ||
         (
-          metrics.fillRatio >= 0.25 &&
-          metrics.contrast >= 32
+          metrics.fillRatio >= 0.38 &&
+          metrics.contrast >= 45
         );
 
 
@@ -7078,11 +7517,11 @@ async function decodeRoll(
       // Accept a light mark only when it is
       // clearly unique.
       if (
-        best.fillRatio >= 0.20 &&
-        best.contrast >= 22 &&
-        best.confidence >= 0.45 &&
-        confidenceGap >= 0.18 &&
-        fillGap >= 0.10
+        best.fillRatio >= 0.36 &&
+        best.contrast >= 36 &&
+        best.confidence >= 0.62 &&
+        confidenceGap >= 0.24 &&
+        fillGap >= 0.18
       ){
 
         digits.push(
@@ -7125,6 +7564,7 @@ function decodeAnswersFromFrame(
 ){
 
   const answers = {};
+  const uncertain = [];
 
   if (
     !rois ||
@@ -7198,6 +7638,7 @@ function decodeAnswersFromFrame(
     ){
 
       const chosen = [];
+      const measured = [];
 
 
       for (
@@ -7265,39 +7706,28 @@ function decodeAnswersFromFrame(
           );
 
 
-        let filled = false;
-
-
-        // Normal full bubble
-        if (
-          metrics.fillRatio >= 0.34 &&
-          metrics.contrast >= 18
-        ){
-
-          filled = true;
-
-        }
-
-        // Lighter but clearly different
-        // from surrounding paper
-        else if (
-          metrics.fillRatio >= 0.25 &&
-          metrics.contrast >= 32
-        ){
-
-          filled = true;
-
-        }
-
-
-        if (filled){
-
-          chosen.push(
-            b.opt
-          );
-
-        }
+        measured.push({
+          opt:b.opt,
+          fillRatio:metrics.fillRatio,
+          contrast:metrics.contrast,
+          confidence:metrics.confidence
+        });
       }
+
+      classifyQuestionBubbles(measured).forEach(result => {
+        if (result.filled){
+          chosen.push(result.opt);
+        }
+        else if (result.uncertain){
+          uncertain.push({
+            section:secName,
+            question:Number(qNo),
+            option:String(result.opt),
+            fillRatio:Number(result.fillRatio.toFixed(3)),
+            contrast:Number(result.contrast.toFixed(1))
+          });
+        }
+      });
 
 
       if (
@@ -7311,7 +7741,10 @@ function decodeAnswersFromFrame(
     }
   }
 
-
+  lastBubbleRecognitionMeta = {
+    uncertainCount:uncertain.length,
+    uncertain
+  };
   return answers;
 }
 function getOmrKeyDetails(entry){
@@ -7486,6 +7919,7 @@ async function analyzeNormalizedOmr(
   let answers = {};
 
   try {
+    lastBubbleRecognitionMeta = {uncertainCount:0, uncertain:[]};
     answers = decodeAnswersFromFrame(
       readCtx,
       readCanvas,
@@ -7497,6 +7931,12 @@ async function analyzeNormalizedOmr(
     console.error('Answer recognition error:', err);
     recognitionWarnings.push(
       'Answer bubbles could not be read automatically.'
+    );
+  }
+
+  if (lastBubbleRecognitionMeta.uncertainCount > 0){
+    recognitionWarnings.push(
+      `${lastBubbleRecognitionMeta.uncertainCount} light or unclear bubble(s) were not awarded marks. Review the sheet before saving.`
     );
   }
 
@@ -7546,6 +7986,7 @@ async function analyzeNormalizedOmr(
     answers,
     score,
     filledCount,
+    recognitionMeta:{...lastBubbleRecognitionMeta},
     recognitionWarnings
   };
 }
@@ -7932,6 +8373,7 @@ const {
   answers,
   score,
   filledCount,
+  recognitionMeta,
   recognitionWarnings
 } = analysis;
 
@@ -8019,6 +8461,7 @@ catch (err){
 
                 const out = {
       examId:       current.examId,
+      academicYear,
       classId:      current.classId,
       sectionId:    current.sectionId,
 
@@ -8026,6 +8469,8 @@ catch (err){
         Array.isArray(current.selectedSubjects)
           ? current.selectedSubjects.slice()
           : [],
+
+      partBySubject:{...current.partBySubject},
 
       isMultiSubject:
         Array.isArray(current.selectedSubjects) &&
@@ -8056,13 +8501,17 @@ catch (err){
       rollNeedsEdit,
 
       recognitionWarnings,
+      recognitionMeta:recognitionMeta || {uncertainCount:0, uncertain:[]},
 
       score: {
         total:
           stable.total,
 
         perSection:
-          score.perSection || {}
+          score.perSection || {},
+
+        perQuestionStatus:
+          score.perQuestionStatus || {}
       },
 
            capturedAt:
@@ -8080,6 +8529,9 @@ catch (err){
         'The scanned preview image could not be created.'
       );
     }
+
+    out._previewDataUrl = previewDataUrl;
+    out.questionDetails = buildQuestionDetails(out);
 
     showScanReview(out, previewDataUrl);
   }
@@ -8273,6 +8725,21 @@ el('btnScan').onclick = async () => {
     alert('Pick Class / Section / Exam first');
     return;
   }
+
+  const missingKey = [];
+  (Array.isArray(tpl.sections) ? tpl.sections : []).forEach(section => {
+    const sectionKey = answerKey[section.name] || {};
+    for (let question = 1; question <= Number(section.count || 0); question++){
+      const details = getOmrKeyDetails(sectionKey[question]);
+      if (!details.options.length && !details.addScore){
+        missingKey.push(`${section.name} Q${question}`);
+      }
+    }
+  });
+  if (missingKey.length){
+    alert(`Answer key is incomplete (${missingKey.length} question(s)). Set the key before scanning. First missing: ${missingKey.slice(0, 5).join(', ')}.`);
+    return;
+  }
   // Unlock Web Audio during this direct user gesture so the success beep is
   // permitted later when automatic recognition completes.
   prepareOmrScanSound();
@@ -8363,171 +8830,352 @@ function scoreAnswers(answers, key, sections) {
       perQuestionStatus[sec.name][q] = { isCorrect, answered };
     }
 
-    perSection[sec.name] = s;
-    total += s;
+    // School mark sheets do not accept a negative subject total. Negative
+    // marking still applies question by question, but the section floors at 0.
+    const sectionScore = Math.max(0, roundMark(s));
+    perSection[sec.name] = sectionScore;
+    total += sectionScore;
   }
 
   return { total, perSection, perQuestionStatus };
 }
 
-// ===== SAVE SCAN RESULT INTO FIRESTORE (student → marks → examId) =====
-async function saveScanToFirestore(out) {
-  try {
-    if (!out.roll) {
-      alert('Roll number is required to save marks in Firestore.');
-      return;
+function roundMark(value){
+  const number = Number(value);
+  return Number.isFinite(number) ? Number(number.toFixed(2)) : 0;
+}
+
+function buildQuestionDetails(out){
+  const rows = [];
+  const sections = Array.isArray(tpl.sections) ? tpl.sections : [];
+  const scannedAnswers = out && out.answers ? out.answers : {};
+  const perQuestion = out && out.score && out.score.perQuestionStatus
+    ? out.score.perQuestionStatus
+    : {};
+
+  sections.forEach(section => {
+    const sectionAnswers = scannedAnswers[section.name] || {};
+    const sectionKey = answerKey[section.name] || {};
+    const sectionStatus = perQuestion[section.name] || {};
+
+    for (let question = 1; question <= Number(section.count || 0); question++){
+      const attempted = Array.isArray(sectionAnswers[question])
+        ? sectionAnswers[question].map(String).sort()
+        : [];
+      const keyDetails = getOmrKeyDetails(sectionKey[question]);
+      const statusRow = sectionStatus[question] || {};
+      let status = 'unanswered';
+      if (statusRow.isCorrect === true) status = 'correct';
+      else if (statusRow.isCorrect === false) status = 'wrong';
+      else if (!keyDetails.options.length && !keyDetails.addScore) status = 'not-keyed';
+
+      const marks = status === 'correct'
+        ? Number(section.mark || 0)
+        : (status === 'wrong' ? Number(section.negative || 0) : 0);
+
+      rows.push({
+        subject:section.name,
+        part:(out.partBySubject && out.partBySubject[section.name]) || '',
+        question,
+        attempted:attempted.join(','),
+        correct:keyDetails.options.slice().sort().join(','),
+        status,
+        marks:roundMark(marks)
+      });
     }
-    if (!out.classId || !out.sectionId || !out.examId) {
-      alert('Missing class/section/exam information while saving marks.');
-      return;
-    }
-
-    const yearRef = schoolYearRef();
-    const studentsRef = yearRef
-      .collection('classes').doc(out.classId)
-      .collection('sections').doc(out.sectionId)
-      .collection('students');
-
-    const rollNum = Number(out.roll);
-    const snap = await studentsRef.where('roll', '==', rollNum).limit(1).get();
-
-    if (snap.empty) {
-      alert(`No student found with roll ${out.roll} in this Class & Section.`);
-      return;
-    }
-
-    const stuDoc = snap.docs[0];
-    const marksRef = stuDoc.ref.collection('marks').doc(out.examId);
-
-    const totalMarks = (out.score && typeof out.score.total === 'number')
-      ? Number(out.score.total.toFixed(2))
-      : 0;
-
-        const updateData = {};
-
-    // =========================================
-    // COMBINED OMR — SAVE EVERY SUBJECT
-    // =========================================
-        if (
-      Array.isArray(out.selectedSubjects) &&
-      out.selectedSubjects.length > 1
-    ){
-      const perSection =
-        out.score &&
-        out.score.perSection &&
-        typeof out.score.perSection === 'object'
-          ? out.score.perSection
-          : {};
-
-      Object.entries(perSection)
-        .forEach(([subjectName, marks]) => {
-
-          const subjectMarks =
-            Number.isFinite(Number(marks))
-              ? Number(Number(marks).toFixed(2))
-              : 0;
-
-          // Main subject total
-          updateData[subjectName] =
-            subjectMarks;
-
-          // OMR component
-          updateData[
-            `__subs.${subjectName}.OMR`
-          ] = subjectMarks;
-
-        });
-
-    }
-
-    // =========================================
-    // SINGLE SUBJECT OMR
-    // =========================================
-    else {
-
-      const subjectName =
-        out.subjectName ||
-        'Unknown Subject';
-
-      const componentName =
-        out.subtopicName ||
-        'OMR';
-
-      updateData[
-        `__subs.${subjectName}.${componentName}`
-      ] = totalMarks;
-
-      if (!out.subtopicName){
-
-        updateData[subjectName] =
-          totalMarks;
-
-      }
-
-    }
-
-   await marksRef.set(
-  updateData,
-  {merge:true}
-);
-
-
-// Also keep complete OMR result under the teacher's exam
-await currentExamRef()
-  .collection('results')
-  .doc(String(out.roll))
-  .set({
-
-    schoolId:
-      currentSchoolId,
-
-    teacherId:
-      currentTeacherId,
-
-    studentId:
-      stuDoc.id,
-
-    roll:
-      String(out.roll),
-
-    classId:
-      out.classId,
-
-    sectionId:
-      out.sectionId,
-
-    subjectName:
-      out.subjectName || null,
-
-    subtopicName:
-      out.subtopicName || null,
-
-    totalMarks:
-      totalMarks,
-
-    answers:
-      out.answers || {},
-
-    score:
-      out.score || {},
-
-    capturedAt:
-      out.capturedAt ||
-      new Date().toISOString(),
-
-    updatedAt:
-      firebase.firestore
-        .FieldValue
-        .serverTimestamp()
-
-  }, {
-    merge:true
   });
 
-  } catch (err) {
-    console.error('saveScanToFirestore error', err);
-    alert('Error saving marks to Firestore: ' + err.message);
+  return rows;
+}
+
+function getResultCounts(questionDetails){
+  const rows = Array.isArray(questionDetails) ? questionDetails : [];
+  return rows.reduce((counts, row) => {
+    if (row.status === 'correct') counts.correct++;
+    else if (row.status === 'wrong') counts.wrong++;
+    else if (row.status === 'unanswered') counts.unanswered++;
+    return counts;
+  }, {correct:0, wrong:0, unanswered:0});
+}
+
+function configuredPartNames(subjectName){
+  return getSubjectParts(subjectName)
+    .map(part => String(part && part.name || '').trim())
+    .filter(Boolean);
+}
+
+function sumSubjectParts(subjectName, partValues){
+  const values = partValues && typeof partValues === 'object' ? partValues : {};
+  const configured = configuredPartNames(subjectName);
+  const keys = configured.length ? configured : Object.keys(values);
+  return roundMark(keys.reduce((sum, key) => {
+    const match = Object.keys(values).find(existing => omrNorm(existing) === omrNorm(key));
+    return sum + (match && Number.isFinite(Number(values[match])) ? Number(values[match]) : 0);
+  }, 0));
+}
+
+function scanSectionMarks(out, subjectName){
+  const perSection = out && out.score && out.score.perSection
+    ? out.score.perSection
+    : {};
+  const exact = Object.keys(perSection)
+    .find(key => omrNorm(key) === omrNorm(subjectName));
+  return roundMark(exact ? perSection[exact] : 0);
+}
+
+function mergeOmrIntoMarksData(existingData, out){
+  const existing = existingData && typeof existingData === 'object'
+    ? existingData
+    : {};
+  const nextSubs = JSON.parse(JSON.stringify(existing.__subs || {}));
+  const subjectTotals = {};
+  const selected = Array.isArray(out.selectedSubjects) && out.selectedSubjects.length
+    ? out.selectedSubjects
+    : [out.subjectName].filter(Boolean);
+
+  selected.forEach(subjectName => {
+    const marks = scanSectionMarks(out, subjectName);
+    const parts = getSubjectParts(subjectName);
+
+    if (parts.length){
+      const partName =
+        (out.partBySubject && out.partBySubject[subjectName]) ||
+        out.subtopicName ||
+        inferOmrPartName(subjectName);
+      if (!partName){
+        throw new Error(`No OMR part is mapped for ${subjectName}.`);
+      }
+      const max = getPartMaximum(subjectName, partName);
+      if (max != null && (marks < 0 || marks > max + 0.001)){
+        throw new Error(`${subjectName} ${partName} marks must be between 0 and ${max}.`);
+      }
+      const currentParts = nextSubs[subjectName] && typeof nextSubs[subjectName] === 'object'
+        ? {...nextSubs[subjectName]}
+        : {};
+      const legacyOmrKey = Object.keys(currentParts)
+        .find(key => omrNorm(key) === 'omr');
+      const hasConfiguredOmrPart = parts.some(part => omrNorm(part.name) === 'omr');
+      if (legacyOmrKey && !hasConfiguredOmrPart && omrNorm(partName) !== 'omr'){
+        delete currentParts[legacyOmrKey];
+      }
+      const existingKey = Object.keys(currentParts)
+        .find(key => omrNorm(key) === omrNorm(partName));
+      currentParts[existingKey || partName] = marks;
+      nextSubs[subjectName] = currentParts;
+      subjectTotals[subjectName] = sumSubjectParts(subjectName, currentParts);
+      const subjectMaximum = getSubjectMaximum(subjectName);
+      if (subjectMaximum != null && subjectTotals[subjectName] > subjectMaximum + 0.001){
+        throw new Error(`${subjectName} total ${subjectTotals[subjectName]} exceeds the configured maximum ${subjectMaximum}.`);
+      }
+    }
+    else {
+      const max = getSubjectMaximum(subjectName);
+      if (max != null && (marks < 0 || marks > max + 0.001)){
+        throw new Error(`${subjectName} marks must be between 0 and ${max}.`);
+      }
+      subjectTotals[subjectName] = marks;
+    }
+  });
+
+  return {nextSubs, subjectTotals};
+}
+
+function studentsCollectionRef(classId=current.classId, sectionId=current.sectionId){
+  return schoolYearRef()
+    .collection('classes').doc(classId)
+    .collection('sections').doc(sectionId)
+    .collection('students');
+}
+
+async function findStudentByRoll(roll, classId=current.classId, sectionId=current.sectionId){
+  const value = Number(roll);
+  if (!Number.isFinite(value) || value <= 0) return null;
+  const snap = await studentsCollectionRef(classId, sectionId)
+    .where('roll', '==', value)
+    .get();
+  if (snap.empty) return null;
+  const doc = snap.docs.find(row => (row.data() || {}).isDeleted !== true);
+  if (!doc) return null;
+  return {id:doc.id, ref:doc.ref, ...doc.data()};
+}
+
+function dataUrlToCompressedBlob(dataUrl, maxWidth=1200, quality=0.72){
+  return new Promise((resolve, reject) => {
+    if (!dataUrl){ resolve(null); return; }
+    const image = new Image();
+    image.onload = () => {
+      const scale = Math.min(1, maxWidth / Math.max(1, image.naturalWidth));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+      canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+      const context = canvas.getContext('2d');
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('Image compression failed.')), 'image/jpeg', quality);
+    };
+    image.onerror = () => reject(new Error('The captured image could not be prepared.'));
+    image.src = dataUrl;
+  });
+}
+
+async function uploadScanPreview(out){
+  if (!out._previewDataUrl) return {imageUrl:null, imagePath:null};
+  const blob = await dataUrlToCompressedBlob(out._previewDataUrl);
+  if (!blob) return {imageUrl:null, imagePath:null};
+  const stamp = String(Date.now());
+  const path = [
+    'omrScans', safeResultIdPart(currentSchoolId), safeResultIdPart(academicYear),
+    safeResultIdPart(out.classId), safeResultIdPart(out.sectionId),
+    safeResultIdPart(out.examId), `${safeResultIdPart(out.roll)}_${stamp}.jpg`
+  ].join('/');
+  const ref = storage.ref().child(path);
+  await ref.put(blob, {contentType:'image/jpeg', customMetadata:{roll:String(out.roll)}});
+  return {imageUrl:await ref.getDownloadURL(), imagePath:path};
+}
+
+// ===== SAVE SCAN RESULT INTO FIRESTORE (student → marks → examId) =====
+// Only the mapped OMR component is replaced. Manual/descriptive and computed
+// components remain intact, so scanning before or after manual entry is safe.
+async function saveScanToFirestore(out) {
+  if (!out || Number(out.roll) <= 0) {
+    throw new Error('Enter a Roll Number greater than 0 before saving.');
   }
+  if (!out.classId || !out.sectionId || !out.examId) {
+    throw new Error('Class, section, or exam information is missing.');
+  }
+  if (out.academicYear && String(out.academicYear) !== String(academicYear)){
+    throw new Error(`This queued scan belongs to academic year ${out.academicYear}, not ${academicYear}.`);
+  }
+
+  const student = await findStudentByRoll(out.roll, out.classId, out.sectionId);
+  if (!student) {
+    throw new Error(`No student was found with Roll ${out.roll} in this class and section.`);
+  }
+
+  const marksRef = student.ref.collection('marks').doc(out.examId);
+  const resultId = [currentSchoolId, academicYear, out.classId, out.sectionId, out.roll]
+    .map(safeResultIdPart)
+    .join('__');
+  const resultRef = currentExamRef().collection('results').doc(resultId);
+  const legacyRef = currentExamRef().collection('results').doc(String(out.roll));
+  const [existingSnap, legacySnap] = await Promise.all([
+    resultRef.get(),
+    legacyRef.path === resultRef.path ? Promise.resolve(null) : legacyRef.get()
+  ]);
+  const legacyMatches = legacySnap && legacySnap.exists &&
+    String((legacySnap.data() || {}).classId) === String(out.classId) &&
+    String((legacySnap.data() || {}).sectionId) === String(out.sectionId);
+  const duplicateSnap = existingSnap.exists
+    ? existingSnap
+    : (legacyMatches ? legacySnap : null);
+
+  if (duplicateSnap){
+    const replace = window.confirm(
+      `Roll ${out.roll} already has a saved scan for this exam. Replace it? The old scan will be kept in history.`
+    );
+    if (!replace) return {saved:false, cancelled:true};
+  }
+
+  let uploaded = {imageUrl:null, imagePath:null};
+  try {
+    uploaded = await uploadScanPreview(out);
+  }
+  catch (error){
+    console.warn('Scan image upload failed; marks will still be saved.', error);
+    out.recognitionWarnings = [
+      ...(Array.isArray(out.recognitionWarnings) ? out.recognitionWarnings : []),
+      'Marks were saved, but the scan image could not be uploaded.'
+    ];
+  }
+
+  const counts = getResultCounts(out.questionDetails);
+  const storedScore = {
+    total:roundMark(out.score && out.score.total),
+    perSection:{...(out.score && out.score.perSection || {})}
+  };
+  const resultData = {
+    schemaVersion:5,
+    scannerVersion:'5.0',
+    schoolId:currentSchoolId,
+    teacherId:currentTeacherId,
+    studentId:student.id,
+    studentName:student.name || '',
+    roll:String(out.roll),
+    examId:out.examId,
+    academicYear,
+    classId:out.classId,
+    sectionId:out.sectionId,
+    className:current.className || '',
+    sectionName:current.sectionName || '',
+    selectedSubjects:Array.isArray(out.selectedSubjects) ? out.selectedSubjects.slice() : [],
+    subjectName:out.subjectName || null,
+    subtopicName:out.subtopicName || null,
+    partBySubject:{...(out.partBySubject || {})},
+    totalMarks:storedScore.total,
+    answers:out.answers || {},
+    score:storedScore,
+    counts,
+    questionDetails:Array.isArray(out.questionDetails) ? out.questionDetails : [],
+    recognitionMeta:out.recognitionMeta || {uncertainCount:0, uncertain:[]},
+    recognitionWarnings:Array.isArray(out.recognitionWarnings) ? out.recognitionWarnings : [],
+    manualScoreAdjustment:!!out.manualScoreAdjustment,
+    answerKeyHash:simpleHash(JSON.stringify(answerKey)),
+    imageUrl:uploaded.imageUrl || (duplicateSnap && duplicateSnap.data().imageUrl) || null,
+    imagePath:uploaded.imagePath || (duplicateSnap && duplicateSnap.data().imagePath) || null,
+    capturedAt:out.capturedAt || new Date().toISOString(),
+    updatedAt:firebase.firestore.FieldValue.serverTimestamp()
+  };
+
+  const historyRef = duplicateSnap
+    ? resultRef.collection('history').doc()
+    : null;
+
+  try {
+    await db.runTransaction(async transaction => {
+      const [marksSnap, liveResultSnap] = await Promise.all([
+        transaction.get(marksRef),
+        transaction.get(resultRef)
+      ]);
+      if (liveResultSnap.exists && !duplicateSnap){
+        throw new Error('Another device saved this roll while you were reviewing it. Try Save again to choose whether to replace it.');
+      }
+      const merged = mergeOmrIntoMarksData(marksSnap.exists ? marksSnap.data() : {}, out);
+      const updateData = {
+        __subs:merged.nextSubs,
+        __meta:{
+          lastOmrScanAt:new Date().toISOString(),
+          lastOmrTeacherId:currentTeacherId,
+          scannerVersion:'5.0'
+        }
+      };
+      Object.entries(merged.subjectTotals).forEach(([subject, total]) => {
+        updateData[subject] = total;
+      });
+
+      transaction.set(marksRef, updateData, {merge:true});
+      if (historyRef){
+        const replacedData = liveResultSnap.exists
+          ? liveResultSnap.data()
+          : duplicateSnap.data();
+        transaction.set(historyRef, {
+          ...replacedData,
+          replacedAt:firebase.firestore.FieldValue.serverTimestamp(),
+          replacedBy:currentTeacherId
+        });
+      }
+      transaction.set(resultRef, resultData, {merge:false});
+      if (duplicateSnap && duplicateSnap.ref.path !== resultRef.path){
+        transaction.delete(duplicateSnap.ref);
+      }
+    });
+  }
+  catch (error){
+    if (uploaded.imagePath){
+      storage.ref().child(uploaded.imagePath).delete().catch(() => {});
+    }
+    throw error;
+  }
+
+  return {saved:true, student, resultRef, resultData};
 }
 
 // ===== SCAN REVIEW (Cancel / Edit / Save) =====
@@ -8549,6 +9197,7 @@ function showScanReview(out, previewDataUrl) {
   const marksTextEl = el('scanReviewMarksText');
   const editFieldsEl = el('scanReviewEditFields');
   const warningEl = el('scanReviewWarning');
+  const studentTextEl = el('scanReviewStudentText');
   const cameraDlg = el('dlgCamera');
 
   if (
@@ -8587,6 +9236,30 @@ function showScanReview(out, previewDataUrl) {
   summaryEl.style.display = 'block';
   editFieldsEl.style.display = 'none';
 
+  let studentLookupSequence = 0;
+  const refreshReviewStudent = rollValue => {
+    if (!studentTextEl) return;
+    const sequence = ++studentLookupSequence;
+    studentTextEl.textContent = Number(rollValue) > 0 ? 'Checking student…' : 'Roll 0 cannot be saved';
+    if (Number(rollValue) > 0){
+      findStudentByRoll(rollValue, out.classId, out.sectionId)
+        .then(student => {
+          if (lastScanPending !== out || sequence !== studentLookupSequence) return;
+          studentTextEl.textContent = student
+            ? (student.name || `Student ID: ${student.id}`)
+            : 'No matching student — tap Edit';
+        })
+        .catch(() => {
+          if (lastScanPending === out && sequence === studentLookupSequence) studentTextEl.textContent = 'Student lookup unavailable';
+        });
+    }
+  };
+  refreshReviewStudent(out.roll);
+  rollI.oninput = () => {
+    rollTextEl.textContent = rollI.value || '0';
+    refreshReviewStudent(rollI.value);
+  };
+
   const warnings = Array.isArray(out.recognitionWarnings)
     ? out.recognitionWarnings.filter(Boolean)
     : [];
@@ -8613,19 +9286,28 @@ function showScanReview(out, previewDataUrl) {
     Object.entries(perSection).forEach(([name, marks]) => {
       const row = document.createElement('div');
       row.style.cssText =
-        'display:flex;justify-content:center;align-items:center;' +
-        'gap:6px;margin-top:4px;color:#4b5563;font-size:18px;';
+        'display:grid;grid-template-columns:minmax(110px,1fr) minmax(90px,140px);' +
+        'gap:8px;margin:7px auto;align-items:center;color:#4b5563;font-size:16px;max-width:440px;';
 
       const label = document.createElement('span');
-      label.textContent = name;
+      const partName = (out.partBySubject && out.partBySubject[name]) || '';
+      label.textContent = partName ? `${name} — ${partName}` : name;
 
-      const value = document.createElement('span');
-      value.style.color = '#374151';
-      value.textContent = Number.isFinite(Number(marks))
-        ? Number(marks).toFixed(2)
-        : '0.00';
+      const value = document.createElement('input');
+      value.type = 'number';
+      value.step = '0.25';
+      value.min = '0';
+      value.className = 'select scan-section-input';
+      value.dataset.subject = name;
+      const maximum = partName
+        ? getPartMaximum(name, partName)
+        : getSubjectMaximum(name);
+      if (maximum != null) value.max = String(maximum);
+      value.value = Number.isFinite(Number(marks)) ? Number(marks).toFixed(2) : '0.00';
+      value.disabled = true;
+      value.style.cssText = 'text-align:center;font-weight:800;';
 
-      row.append(label, document.createTextNode(' : '), value);
+      row.append(label, value);
       sectionsEl.appendChild(row);
     });
 
@@ -8636,6 +9318,16 @@ function showScanReview(out, previewDataUrl) {
 
   rollI.disabled = true;
   markI.disabled = true;
+
+  const updateReviewTotal = () => {
+    const total = Array.from(sectionsEl.querySelectorAll('.scan-section-input'))
+      .reduce((sum, input) => sum + (Number(input.value) || 0), 0);
+    markI.value = roundMark(total).toFixed(2);
+    marksTextEl.textContent = roundMark(total).toFixed(2);
+  };
+  sectionsEl.querySelectorAll('.scan-section-input').forEach(input => {
+    input.addEventListener('input', updateReviewTotal);
+  });
 
   btnCancel.onclick = null;
   btnEdit.onclick   = null;
@@ -8676,10 +9368,13 @@ function showScanReview(out, previewDataUrl) {
   };
 
   btnEdit.onclick = () => {
-    summaryEl.style.display = 'none';
+    summaryEl.style.display = 'block';
     editFieldsEl.style.display = 'grid';
     rollI.disabled = false;
-    markI.disabled = false;
+    markI.disabled = true;
+    sectionsEl.querySelectorAll('.scan-section-input').forEach(input => {
+      input.disabled = false;
+    });
     rollI.focus();
   };
 
@@ -8692,26 +9387,55 @@ function showScanReview(out, previewDataUrl) {
     }
 
     const newRoll  = (rollI.value || '').trim();
-    const newMarks = parseFloat(markI.value);
+    if (!newRoll || Number(newRoll) <= 0 || !Number.isInteger(Number(newRoll))) {
+      alert('Enter a whole-number Roll Number greater than 0. Roll 0 is for review only and cannot be saved.');
+      return;
+    }
 
-    if (!newRoll) {
-      alert('Please enter a valid Roll Number.');
+    const changedSections = {};
+    let invalidMessage = '';
+    sectionsEl.querySelectorAll('.scan-section-input').forEach(input => {
+      const value = Number(input.value);
+      const maximum = input.max !== '' ? Number(input.max) : null;
+      if (!Number.isFinite(value) || value < 0 || (maximum != null && value > maximum + 0.001)){
+        invalidMessage = `${input.dataset.subject} marks must be between 0 and ${maximum != null ? maximum : 'the allowed maximum'}.`;
+      }
+      changedSections[input.dataset.subject] = roundMark(value);
+    });
+    if (invalidMessage){
+      alert(invalidMessage);
       return;
     }
-    if (isNaN(newMarks)) {
-      alert('Please enter valid marks.');
-      return;
-    }
+
+    const previousSections = lastScanPending.score && lastScanPending.score.perSection || {};
+    const wasAdjusted = Object.keys(changedSections).some(name =>
+      Math.abs(Number(changedSections[name]) - Number(previousSections[name] || 0)) > 0.001
+    );
+    const newMarks = roundMark(
+      Object.values(changedSections).reduce((sum, value) => sum + Number(value || 0), 0)
+    );
 
     lastScanPending.roll = newRoll;
     if (!lastScanPending.score) lastScanPending.score = { total: 0, perSection: {} };
+    lastScanPending.score.perSection = changedSections;
     lastScanPending.score.total = newMarks;
+    lastScanPending.manualScoreAdjustment = !!lastScanPending.manualScoreAdjustment || wasAdjusted;
 
-    dlg.close();
-    await finalizeScanSave(lastScanPending);
-    lastScanPending = null;
-    isScanBusy = false;
-    resumeCameraDialog();
+    btnSave.disabled = true;
+    btnSave.innerHTML = '<i class="fa fa-spinner fa-spin"></i> Saving…';
+    try {
+      const saved = await finalizeScanSave(lastScanPending);
+      if (saved){
+        dlg.close();
+        lastScanPending = null;
+        isScanBusy = false;
+        resumeCameraDialog();
+      }
+    }
+    finally {
+      btnSave.disabled = false;
+      btnSave.innerHTML = '<i class="fa fa-floppy-disk"></i> Save';
+    }
   };
 
   // Replace the camera dialog with the review dialog. This avoids nested
@@ -8731,21 +9455,18 @@ function showScanReview(out, previewDataUrl) {
 
 async function finalizeScanSave(out) {
   try {
-
-    // Mark this physical sheet as saved.
-    //
-    // Scanner will now refuse it until
-    // the sheet is removed from camera.
-    if (out.scanFingerprint){
-      lastSavedSheetFingerprint =
-        out.scanFingerprint;
+    const result = await saveScanToFirestore(out);
+    if (!result || !result.saved){
+      if (result && result.cancelled){
+        el('pickStatus').innerHTML = '<span class="pill bad">Existing scan kept. New scan was not saved.</span>';
+      }
+      return false;
     }
-    const key = `omrResults_${out.examId}`;
-    const existing = JSON.parse(localStorage.getItem(key) || '[]');
-    existing.push(out);
-    localStorage.setItem(key, JSON.stringify(existing));
 
-    await saveScanToFirestore(out);
+    // Lock only after Firestore has confirmed the save.
+    if (out.scanFingerprint){
+      lastSavedSheetFingerprint = out.scanFingerprint;
+    }
 
     el('pickStatus').innerHTML =
   `<span class="pill ok">
@@ -8764,96 +9485,676 @@ if (cameraHint){
     'Saved successfully. Remove this sheet and place the next OMR.';
 
 }
+    return true;
   } catch (err) {
     console.error('finalizeScanSave error:', err);
-    alert('Could not save scan. Please try again.');
+    const errorCode = String(err && err.code || '').toLowerCase();
+    const mayBeOffline = navigator.onLine === false ||
+      /unavailable|network|deadline-exceeded|storage\/retry-limit-exceeded/.test(errorCode);
+    if (!mayBeOffline){
+      alert('Could not save the scan: ' + err.message);
+      return false;
+    }
+    const offlineKey = `omrOfflineQueue_${currentSchoolId}`;
+    try {
+      const queue = JSON.parse(localStorage.getItem(offlineKey) || '[]');
+      const compact = JSON.parse(JSON.stringify(out, (key, value) =>
+        key.startsWith('_') ? undefined : value
+      ));
+      queue.push(compact);
+      localStorage.setItem(offlineKey, JSON.stringify(queue.slice(-100)));
+      if (out.scanFingerprint) lastSavedSheetFingerprint = out.scanFingerprint;
+      el('pickStatus').innerHTML = '<span class="pill bad">Cloud unavailable — scan queued on this device.</span>';
+      alert(`Cloud save failed: ${err.message}\n\nThe marks were queued on this device and will retry when this scanner is opened online.`);
+      return true;
+    }
+    catch (queueError){
+      alert('Could not save the scan: ' + err.message);
+      return false;
+    }
   }
 }
 
-// ===== LOCAL RESULTS HELPERS (View Reports / Download Excel) =====
-function getCurrentOmrResultsForSelection(){
-  if (!current.examId) return [];
-  const key = `omrResults_${current.examId}`;
-  let arr = [];
-  try{
-    arr = JSON.parse(localStorage.getItem(key) || '[]');
-  }catch(e){
-    arr = [];
-  }
-    const selectedSubject =
-    current.subjectName === '__ALL__'
-      ? 'All Subjects'
-      : current.subjectName;
-
-  return arr.filter(r =>
-    (!selectedSubject || r.subjectName === selectedSubject) &&
-    (!current.subtopicName || r.subtopicName === current.subtopicName)
-  );
-}
-
-el('btnViewReports').onclick = ()=>{
-  if (!current.examId){
-    alert('Pick Class / Section / Exam first');
-    return;
-  }
-  const rows = getCurrentOmrResultsForSelection();
-  if (!rows.length){
-    alert('No scans found for this exam/subject in this browser.');
-    return;
-  }
-  let title = `Scans for ${current.examId}`;
-  if (current.subjectName)  title += ` – ${current.subjectName}`;
-  if (current.subtopicName) title += ` (${current.subtopicName})`;
-
-  let msg = title + '\n\n';
-  rows.forEach((r, i)=>{
-    const roll = r.roll || '?';
-    const marks = (r.score && typeof r.score.total === 'number')
-      ? r.score.total.toFixed(2)
-      : '';
-    msg += `${i+1}. Roll ${roll} – ${marks} marks\n`;
-  });
-  alert(msg);
+// ===== MANUAL / DESCRIPTIVE MARKS =====
+const manualEditorState = {
+  subjectName:'',
+  parts:[],
+  rows:[],
+  focusStudentId:null
 };
 
-el('btnDownloadExcel').onclick = ()=>{
-  if (!current.examId){
-    alert('Pick Class / Section / Exam first');
+function sourceExamSubjectMaximum(examId, subjectName){
+  const exams = Array.isArray(window.__omrEffectiveExams) ? window.__omrEffectiveExams : [];
+  const exam = exams.find(row => String(row.id) === String(examId));
+  const subject = exam && Array.isArray(exam.subjects)
+    ? exam.subjects.find(row => omrNorm(typeof row === 'string' ? row : row.name) === omrNorm(subjectName))
+    : null;
+  if (!subject || typeof subject === 'string') return null;
+  const direct = Number(subject.max ?? subject.subjectMax);
+  if (Number.isFinite(direct) && direct > 0) return direct;
+  const parts = Array.isArray(subject.subtopics) ? subject.subtopics : [];
+  const total = parts.reduce((sum, part) => sum + (Number(part && part.max) || 0), 0);
+  return total || null;
+}
+
+async function computeInternalPart(studentRef, subjectName, part, existingValue){
+  const sources = Array.isArray(part && part.sources) ? part.sources : [];
+  const targetMax = Number(part && part.max);
+  if (!sources.length || !Number.isFinite(targetMax)) return roundMark(existingValue);
+
+  const normalized = [];
+  for (const source of sources){
+    const examId = typeof source === 'string' ? source : (source.examId || source.id);
+    if (!examId) continue;
+    const maximum = sourceExamSubjectMaximum(examId, subjectName);
+    if (!maximum || maximum <= 0) continue;
+    let mark = 0;
+    try {
+      const snap = await studentRef.collection('marks').doc(String(examId)).get();
+      if (snap.exists) mark = Number((snap.data() || {})[subjectName]) || 0;
+    }
+    catch (_) { mark = 0; }
+    normalized.push(Math.max(0, Math.min(1, mark / maximum)));
+  }
+  if (!normalized.length) return 0;
+  const average = normalized.reduce((sum, value) => sum + value, 0) / normalized.length;
+  return Math.round(Math.min(targetMax, average * targetMax));
+}
+
+function recalculateManualRow(rowIndex){
+  const row = manualEditorState.rows[rowIndex];
+  if (!row) return;
+  const inputs = el('manualMarksRows').querySelectorAll(`[data-manual-row="${rowIndex}"]`);
+  inputs.forEach(input => {
+    row.values[input.dataset.partName] = roundMark(input.value);
+  });
+  const total = manualEditorState.parts.length
+    ? sumSubjectParts(manualEditorState.subjectName, row.values)
+    : roundMark(row.directTotal);
+  row.total = total;
+  const totalCell = el('manualMarksRows').querySelector(`[data-manual-total="${rowIndex}"]`);
+  if (totalCell) totalCell.textContent = total.toFixed(2);
+}
+
+async function renderManualMarksSubject(){
+  const subjectName = el('manualSubjectSel').value;
+  manualEditorState.subjectName = subjectName;
+  const host = el('manualMarksRows');
+  const status = el('manualMarksStatus');
+  host.replaceChildren();
+  if (!subjectName){
+    status.textContent = 'Select a subject.';
     return;
   }
-  const rows = getCurrentOmrResultsForSelection();
-  if (!rows.length){
-    alert('No scans found for this exam/subject in this browser.');
-    return;
-  }
 
-  const header = ['Roll','Total Marks','Subject','Subtopic','Captured At'];
-  const lines = [header.join(',')];
+  status.textContent = 'Loading students and existing marks…';
+  const studentSnap = await studentsCollectionRef().orderBy('roll').get();
+  const students = studentSnap.docs
+    .map(doc => ({id:doc.id, ref:doc.ref, ...doc.data()}))
+    .filter(student => student.isDeleted !== true);
+  const parts = getSubjectParts(subjectName).map(part => ({...part, name:String(part.name || '')}));
+  manualEditorState.parts = parts;
 
-  rows.forEach(r=>{
-    const roll   = r.roll || '';
-    const marks  = (r.score && typeof r.score.total === 'number')
-      ? r.score.total.toFixed(2) : '';
-    const subj   = r.subjectName || '';
-    const subtop = r.subtopicName || '';
-    const ts     = r.capturedAt || '';
+  const rows = await Promise.all(students.map(async student => {
+    const markSnap = await student.ref.collection('marks').doc(current.examId).get();
+    const data = markSnap.exists ? markSnap.data() || {} : {};
+    const values = {...(data.__subs && data.__subs[subjectName] || {})};
+    const originalValues = {};
+    for (const part of parts){
+      const existingKey = Object.keys(values).find(key => omrNorm(key) === omrNorm(part.name));
+      const value = existingKey ? values[existingKey] : 0;
+      originalValues[part.name] = roundMark(value);
+      if (getPartMode(part) === 'computed'){
+        values[part.name] = await computeInternalPart(student.ref, subjectName, part, value);
+      }
+      else {
+        values[part.name] = roundMark(value);
+      }
+      if (existingKey && existingKey !== part.name) delete values[existingKey];
+    }
+    return {
+      student,
+      values,
+      originalValues,
+      directTotal:roundMark(data[subjectName]),
+      originalDirectTotal:roundMark(data[subjectName]),
+      total:parts.length ? sumSubjectParts(subjectName, values) : roundMark(data[subjectName])
+    };
+  }));
+  manualEditorState.rows = rows;
 
-    const row = [roll, marks, subj, subtop, ts]
-      .map(v => String(v).replace(/"/g,'""'))
-      .map(v => `"${v}"`)
-      .join(',');
-    lines.push(row);
+  const wrap = document.createElement('div');
+  wrap.className = 'report-table-wrap';
+  const table = document.createElement('table');
+  table.className = 'report-table';
+  const partHeads = parts.length
+    ? parts.map(part => `<th>${escapeHtml(part.name)}<br><small>${escapeHtml(getPartMode(part))} · Max ${Number(part.max) || 0}</small></th>`).join('')
+    : `<th>${escapeHtml(subjectName)} Marks</th>`;
+  table.innerHTML = `
+    <thead><tr><th>Roll</th><th>Student</th>${partHeads}<th>Total</th></tr></thead>
+    <tbody>${rows.map((row, rowIndex) => {
+      const fields = parts.length
+        ? parts.map(part => {
+            const mode = getPartMode(part);
+            const readOnly = mode !== 'manual';
+            const max = Number(part.max);
+            return `<td><input class="select manual-mark-input" type="number" min="0" step="0.25"
+              ${Number.isFinite(max) ? `max="${max}"` : ''}
+              data-manual-row="${rowIndex}" data-part-name="${escapeHtml(part.name)}"
+              value="${roundMark(row.values[part.name]).toFixed(2)}" ${readOnly ? 'disabled' : ''}
+              title="${readOnly ? (mode === 'omr' ? 'Saved by scanner' : 'Calculated automatically') : 'Teacher entry'}" /></td>`;
+          }).join('')
+        : `<td><input class="select manual-direct-input" type="number" min="0" ${getSubjectMaximum(subjectName) != null ? `max="${getSubjectMaximum(subjectName)}"` : ''} step="0.25"
+             data-direct-row="${rowIndex}" value="${row.directTotal.toFixed(2)}" /></td>`;
+      return `<tr data-student-row="${escapeHtml(row.student.id)}">
+        <td>${escapeHtml(row.student.roll || '')}</td><td>${escapeHtml(row.student.name || '')}</td>
+        ${fields}<td><strong data-manual-total="${rowIndex}">${row.total.toFixed(2)}</strong></td></tr>`;
+    }).join('')}</tbody>`;
+  wrap.appendChild(table);
+  host.appendChild(wrap);
+
+  host.querySelectorAll('.manual-mark-input:not(:disabled)').forEach(input => {
+    input.addEventListener('input', () => recalculateManualRow(Number(input.dataset.manualRow)));
+  });
+  host.querySelectorAll('.manual-direct-input').forEach(input => {
+    input.addEventListener('input', () => {
+      const rowIndex = Number(input.dataset.directRow);
+      const row = manualEditorState.rows[rowIndex];
+      row.directTotal = roundMark(input.value);
+      row.total = row.directTotal;
+      const cell = host.querySelector(`[data-manual-total="${rowIndex}"]`);
+      if (cell) cell.textContent = row.total.toFixed(2);
+    });
   });
 
-  const blob = new Blob([lines.join('\r\n')], { type:'text/csv;charset=utf-8;' });
-  const url  = URL.createObjectURL(blob);
-  const a    = document.createElement('a');
-  a.href = url;
-  a.download = `omr_results_${current.examId}.csv`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  const omrNames = parts.filter(part => getPartMode(part) === 'omr').map(part => part.name);
+  const manualNames = parts.filter(part => getPartMode(part) === 'manual').map(part => part.name);
+  el('manualSubjectInfo').textContent = parts.length
+    ? `Scanner: ${omrNames.join(', ') || 'none'} · Teacher: ${manualNames.join(', ') || 'none'}`
+    : 'Direct subject total entry';
+  status.textContent = `${rows.length} students loaded. Grey fields are protected.`;
+
+  if (manualEditorState.focusStudentId){
+    const target = Array.from(host.querySelectorAll('[data-student-row]'))
+      .find(row => row.dataset.studentRow === manualEditorState.focusStudentId);
+    if (target){ target.scrollIntoView({block:'center'}); target.style.background = '#fff7d6'; }
+  }
+}
+
+async function openManualMarksDialog(preferredSubject='', focusStudentId=null){
+  if (!current.examId){ alert('Pick Class / Section / Exam first.'); return; }
+  const select = el('manualSubjectSel');
+  select.innerHTML = examSubjects.map(subject =>
+    `<option value="${escapeHtml(subject.name)}">${escapeHtml(subject.name)}</option>`
+  ).join('');
+  manualEditorState.focusStudentId = focusStudentId;
+  if (preferredSubject && examSubjects.some(subject => omrNorm(subject.name) === omrNorm(preferredSubject))){
+    select.value = examSubjects.find(subject => omrNorm(subject.name) === omrNorm(preferredSubject)).name;
+  }
+  else if (current.selectedSubjects.length){
+    select.value = current.selectedSubjects[0];
+  }
+  const dialog = el('dlgManualMarks');
+  if (!dialog.open) dialog.showModal();
+  try { await renderManualMarksSubject(); }
+  catch (error){
+    console.error(error);
+    el('manualMarksStatus').textContent = 'Could not load marks: ' + error.message;
+  }
+}
+
+async function saveManualMarks(){
+  const subjectName = manualEditorState.subjectName;
+  if (!subjectName) return;
+  const parts = manualEditorState.parts;
+  const validatedRows = [];
+
+  for (let rowIndex = 0; rowIndex < manualEditorState.rows.length; rowIndex++){
+    recalculateManualRow(rowIndex);
+    const row = manualEditorState.rows[rowIndex];
+    let invalid = '';
+    parts.forEach(part => {
+      const value = Number(row.values[part.name]) || 0;
+      const max = Number(part.max);
+      if (value < 0 || (Number.isFinite(max) && value > max + 0.001)){
+        invalid = `${row.student.name || row.student.roll}: ${part.name} must be 0 to ${max}.`;
+      }
+    });
+    if (invalid) throw new Error(invalid);
+    if (parts.length){
+      const subjectMaximum = getSubjectMaximum(subjectName);
+      const rowTotal = sumSubjectParts(subjectName, row.values);
+      if (subjectMaximum != null && rowTotal > subjectMaximum + 0.001){
+        throw new Error(`${row.student.name || row.student.roll}: ${subjectName} total ${rowTotal} exceeds ${subjectMaximum}.`);
+      }
+    }
+    if (!parts.length){
+      const maximum = getSubjectMaximum(subjectName);
+      if (row.directTotal < 0 || (maximum != null && row.directTotal > maximum + 0.001)){
+        throw new Error(`${row.student.name || row.student.roll}: ${subjectName} must be 0 to ${maximum}.`);
+      }
+    }
+    const changed = parts.length
+      ? parts.some(part =>
+          getPartMode(part) !== 'omr' &&
+          Math.abs(roundMark(row.values[part.name]) - roundMark(row.originalValues[part.name])) > 0.001
+        )
+      : Math.abs(roundMark(row.directTotal) - roundMark(row.originalDirectTotal)) > 0.001;
+    if (changed) validatedRows.push(row);
+  }
+
+  if (!validatedRows.length){
+    el('manualMarksStatus').textContent = 'No manual marks changed.';
+    return;
+  }
+
+  const saveOne = row => db.runTransaction(async transaction => {
+    const marksRef = row.student.ref.collection('marks').doc(current.examId);
+    const snap = await transaction.get(marksRef);
+    const currentData = snap.exists ? snap.data() || {} : {};
+    const currentSubs = JSON.parse(JSON.stringify(currentData.__subs || {}));
+
+    if (parts.length){
+      const latestParts = currentSubs[subjectName] && typeof currentSubs[subjectName] === 'object'
+        ? {...currentSubs[subjectName]}
+        : {};
+      parts.forEach(part => {
+        // The scanner owns OMR fields. Manual save updates only teacher-entered
+        // and computed fields, using the latest Firestore value for OMR.
+        if (getPartMode(part) === 'omr') return;
+        const oldKey = Object.keys(latestParts).find(key => omrNorm(key) === omrNorm(part.name));
+        latestParts[oldKey || part.name] = roundMark(row.values[part.name]);
+      });
+      currentSubs[subjectName] = latestParts;
+      transaction.set(marksRef, {
+        [subjectName]:sumSubjectParts(subjectName, latestParts),
+        __subs:currentSubs,
+        __meta:{
+          ...(currentData.__meta || {}),
+          lastManualEntryAt:new Date().toISOString(),
+          lastManualTeacherId:currentTeacherId
+        }
+      }, {merge:true});
+    }
+    else {
+      transaction.set(marksRef, {
+        [subjectName]:roundMark(row.directTotal),
+        __meta:{
+          ...(currentData.__meta || {}),
+          lastManualEntryAt:new Date().toISOString(),
+          lastManualTeacherId:currentTeacherId
+        }
+      }, {merge:true});
+    }
+  });
+
+  // Limit concurrent transactions on large classes.
+  for (let start = 0; start < validatedRows.length; start += 10){
+    await Promise.all(validatedRows.slice(start, start + 10).map(saveOne));
+  }
+  validatedRows.forEach(row => {
+    row.originalValues = {...row.values};
+    row.originalDirectTotal = row.directTotal;
+  });
+  el('manualMarksStatus').textContent = 'Manual marks saved. OMR marks were preserved.';
+}
+
+el('btnManualMarks').onclick = () => openManualMarksDialog();
+el('manualSubjectSel').onchange = () => renderManualMarksSubject().catch(error => alert(error.message));
+el('btnManualClose').onclick = () => el('dlgManualMarks').close();
+el('btnManualCancel').onclick = () => el('dlgManualMarks').close();
+el('btnManualSave').onclick = async () => {
+  const button = el('btnManualSave');
+  button.disabled = true;
+  try {
+    await saveManualMarks();
+    if (el('dlgReports').open) await loadReportsFromFirestore(false);
+  }
+  catch (error){ alert('Could not save manual marks: ' + error.message); }
+  finally { button.disabled = false; }
+};
+
+// ===== FIRESTORE REPORTS =====
+const reportState = {rows:[], filtered:[], subjects:[], detailIndex:0};
+
+function getReportMaximum(){
+  return reportState.subjects.reduce((sum, name) => {
+    const subject = getExamSubjectDefinition(name);
+    return sum + (subject && subject.excludeFromTotal === true ? 0 : (getSubjectMaximum(name) || 0));
+  }, 0);
+}
+
+function reportSubjectNames(){
+  const selected = Array.isArray(current.selectedSubjects) ? current.selectedSubjects : [];
+  return (selected.length ? selected : examSubjects.map(subject => subject.name)).slice();
+}
+
+function timestampText(value){
+  if (!value) return '';
+  if (typeof value.toDate === 'function') return value.toDate().toISOString();
+  return String(value);
+}
+
+async function syncOfflineQueueForCurrentSelection(){
+  const key = `omrOfflineQueue_${currentSchoolId}`;
+  let queue = [];
+  try { queue = JSON.parse(localStorage.getItem(key) || '[]'); }
+  catch (_) { return; }
+  if (!Array.isArray(queue) || !queue.length) return;
+  const remaining = [];
+  for (const item of queue){
+    const matches = String(item.examId) === String(current.examId) &&
+      (!item.academicYear || String(item.academicYear) === String(academicYear)) &&
+      String(item.classId) === String(current.classId) &&
+      String(item.sectionId) === String(current.sectionId);
+    if (!matches){ remaining.push(item); continue; }
+    try {
+      const saved = await saveScanToFirestore(item);
+      if (!saved || !saved.saved) remaining.push(item);
+    }
+    catch (_) { remaining.push(item); }
+  }
+  localStorage.setItem(key, JSON.stringify(remaining));
+}
+
+async function loadReportsFromFirestore(showDialog=true){
+  if (!current.examId){ alert('Pick Class / Section / Exam first.'); return []; }
+  const dialog = el('dlgReports');
+  if (showDialog && !dialog.open) dialog.showModal();
+  el('reportStatus').textContent = 'Loading reports from Firestore…';
+  el('reportTableWrap').style.display = 'none';
+
+  await syncOfflineQueueForCurrentSelection();
+  const [studentsSnap, resultsSnap] = await Promise.all([
+    studentsCollectionRef().orderBy('roll').get(),
+    currentExamRef().collection('results').where('classId', '==', current.classId).get()
+  ]);
+  const students = studentsSnap.docs
+    .map(doc => ({id:doc.id, ref:doc.ref, ...doc.data()}))
+    .filter(student => student.isDeleted !== true);
+  const marksSnaps = await Promise.all(students.map(student =>
+    student.ref.collection('marks').doc(current.examId).get()
+  ));
+  const scans = resultsSnap.docs
+    .map(doc => ({...doc.data(), _ref:doc.ref, _id:doc.id}))
+    .filter(scan =>
+      String(scan.classId) === String(current.classId) &&
+      String(scan.sectionId) === String(current.sectionId) &&
+      (!scan.academicYear || String(scan.academicYear) === String(academicYear))
+    );
+  const scanByStudent = new Map();
+  scans.forEach(scan => {
+    const key = scan.studentId || `roll:${Number(scan.roll)}`;
+    const existing = scanByStudent.get(key);
+    if (!existing || Number(scan.schemaVersion || 0) >= Number(existing.schemaVersion || 0)) scanByStudent.set(key, scan);
+  });
+
+  const subjects = reportSubjectNames();
+  reportState.subjects = subjects;
+  const rows = [];
+  students.forEach((student, index) => {
+    const marksSnap = marksSnaps[index];
+    const scan = scanByStudent.get(student.id) || scanByStudent.get(`roll:${Number(student.roll)}`) || null;
+    if (!marksSnap.exists && !scan) return;
+    const marks = marksSnap.exists ? marksSnap.data() || {} : {};
+    const breakdown = {};
+    let total = 0;
+    subjects.forEach(subjectName => {
+      const parts = marks.__subs && marks.__subs[subjectName] && typeof marks.__subs[subjectName] === 'object'
+        ? {...marks.__subs[subjectName]}
+        : {};
+      const subjectTotal = Number.isFinite(Number(marks[subjectName]))
+        ? roundMark(marks[subjectName])
+        : sumSubjectParts(subjectName, parts);
+      breakdown[subjectName] = {total:subjectTotal, parts};
+      const cfg = getExamSubjectDefinition(subjectName);
+      if (!cfg || cfg.excludeFromTotal !== true) total += subjectTotal;
+    });
+    rows.push({
+      student,
+      marks,
+      scan,
+      breakdown,
+      total:roundMark(total),
+      counts:scan && scan.counts ? scan.counts : getResultCounts(scan && scan.questionDetails),
+      rank:0
+    });
+  });
+
+  const scores = [...new Set(rows.map(row => row.total))].sort((a,b) => b-a);
+  rows.forEach(row => { row.rank = scores.indexOf(row.total) + 1; });
+  reportState.rows = rows;
+  reportState.filtered = rows.slice();
+  renderReportTable();
+  return rows;
+}
+
+function renderReportTable(){
+  const rows = reportState.filtered;
+  const subjects = reportState.subjects;
+  const maximum = getReportMaximum();
+  const average = rows.length ? rows.reduce((sum,row) => sum + row.total, 0) / rows.length : 0;
+  const highest = rows.length ? Math.max(...rows.map(row => row.total)) : 0;
+  const exam = selectedEffectiveExam();
+  el('reportTitle').textContent = exam && exam.name ? exam.name : 'OMR Reports';
+  el('reportSubtitle').textContent = `${current.className || ''} ${current.sectionName || ''} · Firestore records`;
+  el('reportMax').textContent = roundMark(maximum).toFixed(2);
+  el('reportCount').textContent = String(rows.length);
+  el('reportAverage').textContent = roundMark(average).toFixed(2);
+  el('reportHighest').textContent = roundMark(highest).toFixed(2);
+  el('reportHead').innerHTML = `<tr><th>Rank</th><th>Roll</th><th>Student</th>${subjects.map(name => `<th>${escapeHtml(name)}</th>`).join('')}<th>Total</th><th>✓</th><th>✕</th><th>Blank</th></tr>`;
+  el('reportBody').innerHTML = rows.map(row => {
+    const originalIndex = reportState.rows.indexOf(row);
+    return `<tr class="report-row-link" data-report-index="${originalIndex}">
+      <td>${row.rank}</td><td>${escapeHtml(row.student.roll || '')}</td><td>${escapeHtml(row.student.name || '')}</td>
+      ${subjects.map(name => `<td>${roundMark(row.breakdown[name] && row.breakdown[name].total).toFixed(2)}</td>`).join('')}
+      <td><strong>${row.total.toFixed(2)}</strong></td><td style="color:#15803d">${row.counts.correct || 0}</td>
+      <td style="color:#b91c1c">${row.counts.wrong || 0}</td><td>${row.counts.unanswered || 0}</td></tr>`;
+  }).join('');
+  el('reportBody').querySelectorAll('[data-report-index]').forEach(row => {
+    row.addEventListener('click', () => openReportDetail(Number(row.dataset.reportIndex)));
+  });
+  el('reportStatus').textContent = rows.length ? `${rows.length} report(s). Tap a student for details.` : 'No marks or scans were found for this selection.';
+  el('reportTableWrap').style.display = rows.length ? 'block' : 'none';
+}
+
+function openReportDetail(index){
+  const row = reportState.rows[index];
+  if (!row) return;
+  reportState.detailIndex = index;
+  const maximum = getReportMaximum();
+  const percentage = maximum ? (row.total / maximum * 100) : 0;
+  el('detailTitle').textContent = `Roll No : ${row.student.roll || ''}`;
+  el('detailSubtitle').textContent = `${row.student.name || 'Student'} · Rank ${row.rank}`;
+
+  const subjectRows = reportState.subjects.map(subjectName => {
+    const item = row.breakdown[subjectName] || {total:0,parts:{}};
+    const max = getSubjectMaximum(subjectName) || 0;
+    const partRows = Object.entries(item.parts || {}).map(([name,value]) =>
+      `<tr><td>${escapeHtml(name)}</td><td>${roundMark(value).toFixed(2)}</td><td>${escapeHtml(getPartMode(getSubjectParts(subjectName).find(part => omrNorm(part.name) === omrNorm(name))))}</td></tr>`
+    ).join('');
+    return `<section class="detail-card"><h3>${escapeHtml(subjectName)} — ${item.total.toFixed(2)} / ${roundMark(max).toFixed(2)}</h3>
+      ${partRows ? `<table class="report-table"><thead><tr><th>Part</th><th>Marks</th><th>Entry</th></tr></thead><tbody>${partRows}</tbody></table>` : ''}</section>`;
+  }).join('');
+  const adjustmentNote = row.scan && row.scan.manualScoreAdjustment
+    ? '<div class="warning-box" style="margin-bottom:10px;">The teacher adjusted one or more scanned section marks during review.</div>'
+    : '';
+  el('detailSummary').innerHTML = `${adjustmentNote}<div class="report-summary-grid">
+    <div class="report-stat"><strong>${row.total.toFixed(2)}</strong><span>TOTAL MARKS</span></div>
+    <div class="report-stat"><strong>${percentage.toFixed(1)}%</strong><span>PERCENTAGE</span></div>
+    <div class="report-stat"><strong>${row.counts.correct || 0}</strong><span>CORRECT</span></div>
+    <div class="report-stat"><strong>${row.counts.wrong || 0}</strong><span>WRONG</span></div>
+  </div>${subjectRows}`;
+
+  const imageWrap = el('detailImageWrap');
+  if (row.scan && row.scan.imageUrl){
+    el('detailImage').src = row.scan.imageUrl;
+    imageWrap.style.display = 'block';
+  }
+  else imageWrap.style.display = 'none';
+
+  const questions = row.scan && Array.isArray(row.scan.questionDetails) ? row.scan.questionDetails : [];
+  el('detailQuestions').innerHTML = questions.length
+    ? `<h3>Question Details</h3><div class="report-table-wrap"><table class="report-table"><thead><tr><th>Subject</th><th>Q No</th><th>Attempted</th><th>Correct</th><th>Status</th><th>Marks</th></tr></thead><tbody>${questions.map(item => `<tr>
+       <td>${escapeHtml(item.subject)}</td><td>${item.question}</td><td>${escapeHtml(item.attempted || '—')}</td>
+       <td>${escapeHtml(item.correct || '—')}</td><td class="status-${escapeHtml(item.status)}">${escapeHtml(item.status)}</td><td>${roundMark(item.marks).toFixed(2)}</td></tr>`).join('')}</tbody></table></div>`
+    : '<div class="status">No question-level scan data is available for this record.</div>';
+  el('btnDetailPrev').disabled = index <= 0;
+  el('btnDetailNext').disabled = index >= reportState.rows.length - 1;
+  if (!el('dlgReportDetail').open) el('dlgReportDetail').showModal();
+}
+
+async function deleteCurrentReportScan(){
+  const row = reportState.rows[reportState.detailIndex];
+  if (!row || !row.scan || !row.scan._ref){ alert('There is no saved scan to delete.'); return; }
+  if (!window.confirm(`Delete the scan for Roll ${row.student.roll}? Manual/descriptive marks will be kept.`)) return;
+  const scan = row.scan;
+  const marksRef = row.student.ref.collection('marks').doc(current.examId);
+  const auditRef = currentExamRef().collection('deletedResults').doc();
+
+  await db.runTransaction(async transaction => {
+    const marksSnap = await transaction.get(marksRef);
+    const data = marksSnap.exists ? marksSnap.data() || {} : {};
+    const nextSubs = JSON.parse(JSON.stringify(data.__subs || {}));
+    const nextData = {...data, __subs:nextSubs};
+    const subjects = Array.isArray(scan.selectedSubjects) && scan.selectedSubjects.length
+      ? scan.selectedSubjects
+      : [scan.subjectName].filter(Boolean);
+    subjects.forEach(subjectName => {
+      const parts = getSubjectParts(subjectName);
+      if (parts.length){
+        const partName = scan.partBySubject && scan.partBySubject[subjectName] || scan.subtopicName || inferOmrPartName(subjectName);
+        const values = {...(nextSubs[subjectName] || {})};
+        const key = Object.keys(values).find(name => omrNorm(name) === omrNorm(partName));
+        if (key) delete values[key];
+        nextSubs[subjectName] = values;
+        nextData[subjectName] = sumSubjectParts(subjectName, values);
+      }
+      else {
+        delete nextSubs[subjectName];
+        delete nextData[subjectName];
+      }
+    });
+    nextData.__meta = {
+      ...(data.__meta || {}),
+      lastOmrDeleteAt:new Date().toISOString(),
+      lastOmrTeacherId:currentTeacherId
+    };
+    transaction.set(marksRef, nextData, {merge:false});
+    const archived = {...scan};
+    delete archived._ref;
+    transaction.set(auditRef, {...archived, deletedAt:firebase.firestore.FieldValue.serverTimestamp(), deletedBy:currentTeacherId});
+    transaction.delete(scan._ref);
+  });
+  if (scan.imagePath) storage.ref().child(scan.imagePath).delete().catch(() => {});
+  el('dlgReportDetail').close();
+  await loadReportsFromFirestore(false);
+}
+
+function exportReportsXlsx(){
+  if (!window.XLSX){ alert('The Excel library did not load. Check the internet connection and try again.'); return; }
+  if (!reportState.rows.length){ alert('No reports are available to export.'); return; }
+  const maximum = getReportMaximum();
+  const summary = reportState.rows.map(row => {
+    const record = {
+      Rank:row.rank,
+      Roll:row.student.roll || '',
+      Student:row.student.name || ''
+    };
+    reportState.subjects.forEach(subjectName => {
+      const item = row.breakdown[subjectName] || {total:0,parts:{}};
+      Object.entries(item.parts || {}).forEach(([part,value]) => {
+        record[`${subjectName} - ${part}`] = roundMark(value);
+      });
+      record[`${subjectName} Total`] = roundMark(item.total);
+    });
+    record['Total Marks'] = row.total;
+    record['Maximum Marks'] = roundMark(maximum);
+    record['Percentage'] = maximum ? roundMark(row.total / maximum * 100) : 0;
+    record.Correct = row.counts.correct || 0;
+    record.Wrong = row.counts.wrong || 0;
+    record.Unanswered = row.counts.unanswered || 0;
+    record['Captured At'] = timestampText(row.scan && (row.scan.updatedAt || row.scan.capturedAt));
+    return record;
+  });
+  const details = [];
+  const analytics = new Map();
+  reportState.rows.forEach(row => {
+    const questions = row.scan && Array.isArray(row.scan.questionDetails) ? row.scan.questionDetails : [];
+    questions.forEach(item => {
+      details.push({
+        Roll:row.student.roll || '', Student:row.student.name || '', Subject:item.subject || '',
+        Part:item.part || '', 'Q No':item.question, Attempted:item.attempted || '',
+        'Correct Option':item.correct || '', Status:item.status || '', Marks:roundMark(item.marks)
+      });
+      const key = `${item.subject}||${item.question}`;
+      const stat = analytics.get(key) || {Subject:item.subject, 'Q No':item.question, Correct:0, Wrong:0, Unanswered:0, Attempts:0};
+      if (item.status === 'correct'){ stat.Correct++; stat.Attempts++; }
+      else if (item.status === 'wrong'){ stat.Wrong++; stat.Attempts++; }
+      else if (item.status === 'unanswered') stat.Unanswered++;
+      analytics.set(key, stat);
+    });
+  });
+  const analysis = Array.from(analytics.values()).map(stat => ({
+    ...stat,
+    'Accuracy %':stat.Attempts ? roundMark(stat.Correct / stat.Attempts * 100) : 0
+  }));
+  const workbook = XLSX.utils.book_new();
+  const makeSheet = rows => {
+    const sheet = XLSX.utils.json_to_sheet(rows);
+    const keys = rows.length ? Object.keys(rows[0]) : [];
+    sheet['!cols'] = keys.map(key => ({wch:Math.min(34, Math.max(10, key.length + 3))}));
+    sheet['!autofilter'] = sheet['!ref'] ? {ref:sheet['!ref']} : undefined;
+    return sheet;
+  };
+  XLSX.utils.book_append_sheet(workbook, makeSheet(summary), 'Summary');
+  XLSX.utils.book_append_sheet(workbook, makeSheet(details), 'Question Details');
+  XLSX.utils.book_append_sheet(workbook, makeSheet(analysis), 'Question Analysis');
+  const exam = selectedEffectiveExam();
+  XLSX.writeFile(workbook, `${safeResultIdPart(exam && exam.name || current.examId)}_${safeResultIdPart(current.className)}_${safeResultIdPart(current.sectionName)}.xlsx`);
+}
+
+el('btnViewReports').onclick = () => loadReportsFromFirestore(true).catch(error => {
+  console.error(error); alert('Could not load Firestore reports: ' + error.message);
+});
+el('btnDownloadExcel').onclick = async () => {
+  try { await loadReportsFromFirestore(false); exportReportsXlsx(); }
+  catch (error){ alert('Could not prepare Excel: ' + error.message); }
+};
+el('btnReportExcel').onclick = exportReportsXlsx;
+el('btnReportsClose').onclick = () => el('dlgReports').close();
+el('btnDetailClose').onclick = () => el('dlgReportDetail').close();
+el('btnDetailPrev').onclick = () => openReportDetail(reportState.detailIndex - 1);
+el('btnDetailNext').onclick = () => openReportDetail(reportState.detailIndex + 1);
+el('btnDetailDelete').onclick = () => deleteCurrentReportScan().catch(error => alert('Could not delete scan: ' + error.message));
+el('btnDetailEdit').onclick = () => {
+  const row = reportState.rows[reportState.detailIndex];
+  if (!row) return;
+  if (row.scan){
+    const editable = {
+      ...row.scan,
+      examId:current.examId,
+      classId:current.classId,
+      sectionId:current.sectionId,
+      roll:String(row.student.roll),
+      _previewDataUrl:null
+    };
+    el('dlgReportDetail').close();
+    if (el('dlgReports').open) el('dlgReports').close();
+    showScanReview(editable, row.scan.imageUrl || null);
+  }
+  else {
+    el('dlgReportDetail').close();
+    if (el('dlgReports').open) el('dlgReports').close();
+    openManualMarksDialog(reportState.subjects[0] || '', row.student.id);
+  }
+};
+el('reportSearch').oninput = event => {
+  const query = omrNorm(event.target.value);
+  reportState.filtered = reportState.rows.filter(row =>
+    !query || omrNorm(row.student.name).includes(query) || String(row.student.roll || '').includes(query)
+  );
+  renderReportTable();
 };
 
 // ===== BOOT =====
