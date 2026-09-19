@@ -416,25 +416,34 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
 .native-select-hidden{ display:none; }
 
 .cdrop{ position:relative; }
+.cdrop.open{ z-index:120; }
 .cdrop-btn{
-  width:100%; border:1px solid #e5e7eb; border-radius:12px;
-  padding:12px; background:#fff; font-weight:600; text-align:left;
-  box-shadow:0 2px 6px rgba(0,0,0,.04);
+  width:100%; min-height:48px; border:1px solid #d8e2ee; border-radius:14px;
+  padding:12px 14px; background:#fff; font-weight:700; text-align:left;
+  box-shadow:0 4px 12px rgba(15,61,107,.07);
   display:flex; align-items:center; justify-content:space-between;
+  gap:12px; cursor:pointer; transition:border-color .18s,box-shadow .18s,transform .18s;
 }
 .cdrop-btn .cdrop-text{ color:#0f3d6b; }
 .cdrop-btn .cdrop-chevron{ font-family: "Font Awesome 6 Free"; font-weight:900; }
 .cdrop-btn .cdrop-chevron::before{ content:"\f078"; } /* chevron-down */
+.cdrop.open .cdrop-btn{border-color:#1762a7;box-shadow:0 0 0 3px rgba(23,98,167,.13),0 8px 18px rgba(15,61,107,.10)}
+.cdrop.open .cdrop-chevron{transform:rotate(180deg)}
+.cdrop-chevron{transition:transform .18s}
 
 .cdrop-list{
   position:absolute; left:0; right:0; top:calc(100% + 6px);
-  background:#fff; border:1px solid #e5e7eb; border-radius:12px;
-  max-height:290px; overflow:auto; box-shadow:0 10px 24px rgba(0,0,0,.08);
+  background:#fff; border:1px solid #dbe7f3; border-radius:14px;
+  padding:6px; max-height:290px; overflow:auto; box-shadow:0 18px 38px rgba(15,61,107,.18);
   display:none; z-index:40;
 }
 .cdrop.open .cdrop-list{ display:block; }
-.cdrop-item{ padding:12px; cursor:pointer; }
+.cdrop-item{padding:11px 12px;border-radius:10px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:10px;color:#263548;font-weight:650}
 .cdrop-item:hover{ background:#f4f8fc; }
+.cdrop-item.selected{background:#eaf3ff;color:#0f3d6b;font-weight:800}
+.cdrop-item .cdrop-check{color:#1762a7;opacity:0}
+.cdrop-item.selected .cdrop-check{opacity:1}
+.cdrop-item[aria-disabled="true"]{opacity:.55;pointer-events:none}
 .cdrop.disabled .cdrop-btn{ opacity:.6; pointer-events:none; }
 
 /* MULTI SUBJECT SELECTOR */
@@ -1347,26 +1356,46 @@ function mountCdrop(selectId, hostId){
   const curOpt = sel.selectedOptions && sel.selectedOptions[0] ? sel.selectedOptions[0].textContent : (sel.options[0]?.textContent || 'Select');
   host.classList.toggle('disabled', !!sel.disabled);
   host.innerHTML = `
-    <button type="button" class="cdrop-btn"><span class="cdrop-text">${curOpt}</span><span class="cdrop-chevron"></span></button>
-    <div class="cdrop-list"></div>
+    <button type="button" class="cdrop-btn" aria-haspopup="listbox" aria-expanded="false"><span class="cdrop-text">${escapeHtml(curOpt)}</span><span class="cdrop-chevron"></span></button>
+    <div class="cdrop-list" role="listbox"></div>
   `;
   const btn = host.querySelector('.cdrop-btn');
   const list = host.querySelector('.cdrop-list');
+
+  const closeList = ()=>{
+    host.classList.remove('open');
+    btn.setAttribute('aria-expanded','false');
+  };
 
   // build items from native select
   list.innerHTML = '';
   Array.from(sel.options).forEach(op=>{
     const item = document.createElement('div');
     item.className = 'cdrop-item';
-    item.textContent = op.textContent;
-    if (op.disabled) item.style.opacity = .6;
+    item.setAttribute('role','option');
+    item.setAttribute('aria-selected', op.selected ? 'true' : 'false');
+    item.setAttribute('aria-disabled', op.disabled ? 'true' : 'false');
+    item.classList.toggle('selected', op.selected);
+
+    const label = document.createElement('span');
+    label.textContent = op.textContent;
+    const check = document.createElement('i');
+    check.className = 'fa fa-check cdrop-check';
+    item.append(label, check);
+
     item.addEventListener('click', ()=>{
+      if (op.disabled) return;
       sel.value = op.value;
       // update label
       host.querySelector('.cdrop-text').textContent = op.textContent;
+      list.querySelectorAll('.cdrop-item').forEach((row,index)=>{
+        const selected = sel.options[index] && sel.options[index].value === sel.value;
+        row.classList.toggle('selected', !!selected);
+        row.setAttribute('aria-selected', selected ? 'true' : 'false');
+      });
       // dispatch real change so your existing handlers run
       sel.dispatchEvent(new Event('change', {bubbles:true}));
-      host.classList.remove('open');
+      closeList();
     });
     list.appendChild(item);
   });
@@ -1374,10 +1403,16 @@ function mountCdrop(selectId, hostId){
   // open/close
   btn.addEventListener('click', ()=>{
     if (sel.disabled) return;
-    document.querySelectorAll('.cdrop.open').forEach(x=>{ if(x!==host) x.classList.remove('open'); });
+    document.querySelectorAll('.cdrop.open').forEach(x=>{
+      if(x!==host){
+        x.classList.remove('open');
+        x.querySelector('.cdrop-btn')?.setAttribute('aria-expanded','false');
+      }
+    });
     host.classList.toggle('open');
+    btn.setAttribute('aria-expanded', host.classList.contains('open') ? 'true' : 'false');
   });
-  document.addEventListener('click', (e)=>{ if(!host.contains(e.target)) host.classList.remove('open'); });
+  document.addEventListener('click', (e)=>{ if(!host.contains(e.target)) closeList(); });
 }
 
 function refreshCdrop(selectId, hostId){
@@ -2124,22 +2159,25 @@ async function loadSubjectsFromExam(examId){
     else if (current.selectedSubjects.length > 1 && mapHost){
       let hasMappedParts = false;
 
-      current.selectedSubjects.forEach(subjectName => {
+      current.selectedSubjects.forEach((subjectName, subjectIndex) => {
         const parts = getSubjectParts(subjectName);
         if (!parts.length) return;
         hasMappedParts = true;
 
         const candidates = getOmrPartCandidates(subjectName);
+        const selectId = `omr-part-select-${subjectIndex}`;
+        const dropId = `cdrop-omr-part-${subjectIndex}`;
         const card = document.createElement('div');
         card.className = 'part-map-card';
         card.innerHTML = `
           <div class="part-subject">${escapeHtml(subjectName)}</div>
-          <select class="select omr-part-select" data-subject="${escapeHtml(subjectName)}">
+          <select id="${selectId}" class="select native-select-hidden omr-part-select" data-subject="${escapeHtml(subjectName)}">
             <option value="">Select Subtopic</option>
             ${candidates.map(part =>
               `<option value="${escapeHtml(part.name)}">${escapeHtml(part.name)} (Max: ${Number(part.max) || 0})</option>`
             ).join('')}
           </select>
+          <div id="${dropId}" class="cdrop" data-select="${selectId}"></div>
         `;
         const select = card.querySelector('select');
         select.value = current.partBySubject[subjectName] || '';
@@ -2155,6 +2193,7 @@ async function loadSubjectsFromExam(examId){
           void persistOmrPartMapping();
         });
         mapHost.appendChild(card);
+        mountCdrop(selectId, dropId);
       });
 
       if (hasMappedParts && mapRow){
@@ -3509,7 +3548,7 @@ async function loadImageAsDataURL(src){
         );
 
       const answerLabelClearanceMm =
-        Math.max(0.8, 0.95 * answerBubbleScale);
+        Math.max(0.45, 0.55 * answerBubbleScale);
 
       const answerNumberGapMm =
         Math.max(0.9, 0.95 * answerBubbleScale);
@@ -3542,14 +3581,14 @@ async function loadImageAsDataURL(src){
           Math.max(
             1.5,
             6.0 * scale,
-            scaledBubbleDiameter + Math.max(0.8, 1.0 * scale)
+            scaledBubbleDiameter + Math.max(0.28, 0.30 * answerBubbleScale)
           );
 
         const testOptStep =
           Math.max(
             3.2,
             5.9 * scale,
-            scaledBubbleDiameter + Math.max(0.9, 1.1 * scale)
+            scaledBubbleDiameter + Math.max(0.55, 0.65 * answerBubbleScale)
           );
 
         const testNumColW =
@@ -3565,8 +3604,8 @@ async function loadImageAsDataURL(src){
           rowsPerBlock *
           testRowGap +
           Math.max(
-            0.8,
-            1.5 * scale
+            0.35,
+            0.65 * scale
           );
 
         const testMaxOptions =
@@ -3595,7 +3634,7 @@ async function loadImageAsDataURL(src){
           Math.max(
             1,
             Math.min(
-              3,
+              4,
               Math.floor(
                 (
                   maxGridW +
@@ -3693,7 +3732,7 @@ async function loadImageAsDataURL(src){
 
 
       // ------------------------------------------
-      // FIND LARGEST SIZE THAT FITS IN MAX 3 COLUMNS
+      // FIND LARGEST SIZE THAT FITS IN MAX 4 COLUMNS
       // ------------------------------------------
       let layoutScale = 1.0;
       let layoutCouldFit = false;
@@ -3731,7 +3770,7 @@ async function loadImageAsDataURL(src){
         Math.max(
           1.5,
           6.0 * layoutScale,
-          scaledBubbleDiameter + Math.max(0.8, 1.0 * layoutScale)
+          scaledBubbleDiameter + Math.max(0.28, 0.30 * answerBubbleScale)
         );
 
 
@@ -3739,7 +3778,7 @@ async function loadImageAsDataURL(src){
         Math.max(
           3.2,
           5.9 * layoutScale,
-          scaledBubbleDiameter + Math.max(0.9, 1.1 * layoutScale)
+          scaledBubbleDiameter + Math.max(0.55, 0.65 * answerBubbleScale)
         );
 
 
@@ -3757,8 +3796,8 @@ async function loadImageAsDataURL(src){
       bubbleR =
         Math.min(
           bubbleR,
-          rowGap * 0.46,
-          optStep * 0.46
+          rowGap * 0.49,
+          optStep * 0.49
         );
 
 
@@ -3773,8 +3812,8 @@ async function loadImageAsDataURL(src){
         rowsPerBlock *
         rowGap +
         Math.max(
-          0.8,
-          1.5 * layoutScale
+          0.35,
+          0.65 * layoutScale
         );
 
       console.log(
@@ -3817,7 +3856,7 @@ async function loadImageAsDataURL(src){
         Math.max(
           1,
           Math.min(
-            3,
+            4,
             Math.floor(
               (
                 maxGridW +
@@ -3869,7 +3908,7 @@ async function loadImageAsDataURL(src){
       // as possible between the available columns.
       //
       // Example:
-      // 10 blocks / 3 columns = 4, 3, 3
+      // 10 blocks / 4 columns = 3, 3, 2, 2
       //
       // This prevents the LAST column from becoming
       // the unusually long column.
@@ -4289,8 +4328,8 @@ async function loadImageAsDataURL(src){
 
           const blockBottomPad =
             Math.max(
-              0.8,
-              1.5 * layoutScale
+              0.35,
+              0.65 * layoutScale
             );
 
 
@@ -6066,9 +6105,10 @@ function mapPageMmToPixelBase(xMm, yMm, anchors){
 // Once the four targets are aligned, transform the photographed sheet into
 // one fixed A4 canvas. All bubble recognition then happens on this stable,
 // front-facing image instead of on a tilted moving camera frame.
-// 3 px/mm gives a clear 630 × 891 normalized page while avoiding a costly
-// million-pixel warp on every successful phone scan.
-const OMR_CANONICAL_PX_PER_MM = 3;
+// Four pixels per millimetre keeps the inside of each bubble large enough for
+// reliable centre-ink measurement while remaining fast enough for one
+// perspective correction after alignment.
+const OMR_CANONICAL_PX_PER_MM = 4;
 
 function createCanonicalAnchors(pxPerMm = OMR_CANONICAL_PX_PER_MM){
   const markerPx = OMR_MARKER_SIZE_MM * pxPerMm;
@@ -6276,20 +6316,32 @@ function rectifyOmrFrame(sourceCtx, sourceAnchors){
       }
 
       const destinationIndex = (outY * outputW + outX) * 4;
-      const sourcePixelX = Math.round(sourceX);
-      const sourcePixelY = Math.round(sourceY);
 
       if (
-        sourcePixelX >= 0 &&
-        sourcePixelY >= 0 &&
-        sourcePixelX < sourceW &&
-        sourcePixelY < sourceH
+        sourceX >= 0 &&
+        sourceY >= 0 &&
+        sourceX <= sourceW - 1 &&
+        sourceY <= sourceH - 1
       ){
-        const sourceIndex =
-          (sourcePixelY * sourceW + sourcePixelX) * 4;
-        outputData[destinationIndex] = sourceData[sourceIndex];
-        outputData[destinationIndex + 1] = sourceData[sourceIndex + 1];
-        outputData[destinationIndex + 2] = sourceData[sourceIndex + 2];
+        // Bilinear sampling preserves thin printed rings and pen strokes.
+        // Nearest-neighbour sampling made some phone captures look broken or
+        // shifted by a pixel after perspective correction.
+        const sx0 = Math.floor(sourceX);
+        const sy0 = Math.floor(sourceY);
+        const sx1 = Math.min(sourceW - 1, sx0 + 1);
+        const sy1 = Math.min(sourceH - 1, sy0 + 1);
+        const fx = sourceX - sx0;
+        const fy = sourceY - sy0;
+        const i00 = (sy0 * sourceW + sx0) * 4;
+        const i10 = (sy0 * sourceW + sx1) * 4;
+        const i01 = (sy1 * sourceW + sx0) * 4;
+        const i11 = (sy1 * sourceW + sx1) * 4;
+
+        for (let channel = 0; channel < 3; channel++){
+          const top = sourceData[i00 + channel] * (1 - fx) + sourceData[i10 + channel] * fx;
+          const bottom = sourceData[i01 + channel] * (1 - fx) + sourceData[i11 + channel] * fx;
+          outputData[destinationIndex + channel] = top * (1 - fy) + bottom * fy;
+        }
         outputData[destinationIndex + 3] = 255;
       }
       else {
@@ -7060,11 +7112,16 @@ function getBubbleFillMetrics(ctx, cx, cy, r){
   const canvasW = ctx.canvas.width;
   const canvasH = ctx.canvas.height;
 
-  // Inner area of bubble.
-  // Avoid printed circular border as much as possible.
+  // Read two concentric areas. The smaller centre disc is the strongest
+  // signal because a blank printed ring never reaches it.
   const innerR = Math.max(
-    1.5,
-    r * 0.48
+    1.75,
+    r * 0.56
+  );
+
+  const centerR = Math.max(
+    1.25,
+    r * 0.30
   );
 
   // Background ring OUTSIDE bubble outline
@@ -7103,8 +7160,11 @@ function getBubbleFillMetrics(ctx, cx, cy, r){
 
     return {
       fillRatio:0,
+      centerFillRatio:0,
       contrast:0,
+      centerContrast:0,
       innerAvg:255,
+      centerAvg:255,
       backgroundAvg:255,
       confidence:0
     };
@@ -7125,10 +7185,9 @@ function getBubbleFillMetrics(ctx, cx, cy, r){
   let innerSum = 0;
   let innerCount = 0;
 
-  let bgSum = 0;
-  let bgCount = 0;
-
   const innerPixels = [];
+  const centerPixels = [];
+  const backgroundPixels = [];
 
 
   for (
@@ -7182,6 +7241,10 @@ function getBubbleFillMetrics(ctx, cx, cy, r){
 
         innerPixels.push(lum);
 
+        if (dist <= centerR){
+          centerPixels.push(lum);
+        }
+
       }
 
       // Paper around bubble
@@ -7190,8 +7253,7 @@ function getBubbleFillMetrics(ctx, cx, cy, r){
         dist <= bgOuterR
       ){
 
-        bgSum += lum;
-        bgCount++;
+        backgroundPixels.push(lum);
 
       }
     }
@@ -7200,13 +7262,17 @@ function getBubbleFillMetrics(ctx, cx, cy, r){
 
   if (
     !innerCount ||
-    !bgCount
+    !centerPixels.length ||
+    !backgroundPixels.length
   ){
 
     return {
       fillRatio:0,
+      centerFillRatio:0,
       contrast:0,
+      centerContrast:0,
       innerAvg:255,
+      centerAvg:255,
       backgroundAvg:255,
       confidence:0
     };
@@ -7216,8 +7282,14 @@ function getBubbleFillMetrics(ctx, cx, cy, r){
   const innerAvg =
     innerSum / innerCount;
 
+  const centerAvg =
+    centerPixels.reduce((sum, value) => sum + value, 0) /
+    centerPixels.length;
+
+  // Prefer clean paper pixels; nearby text or a shadow must not lower the
+  // reference enough to make a blank circle look filled.
   const backgroundAvg =
-    bgSum / bgCount;
+    percentileNumber(backgroundPixels, 0.70);
 
 
   // Difference between paper and inside bubble.
@@ -7225,6 +7297,10 @@ function getBubbleFillMetrics(ctx, cx, cy, r){
   const contrast =
     backgroundAvg -
     innerAvg;
+
+  const centerContrast =
+    backgroundAvg -
+    centerAvg;
 
 
   // Dynamic darkness threshold based on
@@ -7242,11 +7318,12 @@ function getBubbleFillMetrics(ctx, cx, cy, r){
   const darknessThreshold =
     Math.max(
       70,
-      backgroundAvg - 35
+      backgroundAvg - 42
     );
 
 
   let darkPixels = 0;
+  let centerDarkPixels = 0;
 
   innerPixels.forEach(lum => {
 
@@ -7259,10 +7336,25 @@ function getBubbleFillMetrics(ctx, cx, cy, r){
 
   });
 
+  centerPixels.forEach(lum => {
+
+    if (
+      lum <
+      darknessThreshold
+    ){
+      centerDarkPixels++;
+    }
+
+  });
+
 
   const fillRatio =
     darkPixels /
     innerPixels.length;
+
+  const centerFillRatio =
+    centerDarkPixels /
+    centerPixels.length;
 
 
   // Confidence combines:
@@ -7274,6 +7366,12 @@ function getBubbleFillMetrics(ctx, cx, cy, r){
       fillRatio / 0.55
     );
 
+  const centerFillPart =
+    Math.min(
+      1,
+      centerFillRatio / 0.62
+    );
+
   const contrastPart =
     Math.min(
       1,
@@ -7283,10 +7381,21 @@ function getBubbleFillMetrics(ctx, cx, cy, r){
       )
     );
 
+  const centerContrastPart =
+    Math.min(
+      1,
+      Math.max(
+        0,
+        centerContrast / 60
+      )
+    );
+
   const confidence =
     (
-      fillPart * 0.65 +
-      contrastPart * 0.35
+      centerFillPart * 0.50 +
+      fillPart * 0.20 +
+      centerContrastPart * 0.20 +
+      contrastPart * 0.10
     );
 
 
@@ -7294,9 +7403,15 @@ function getBubbleFillMetrics(ctx, cx, cy, r){
 
     fillRatio,
 
+    centerFillRatio,
+
     contrast,
 
+    centerContrast,
+
     innerAvg,
+
+    centerAvg,
 
     backgroundAvg,
 
@@ -7323,26 +7438,36 @@ function isBubbleFilled(
     );
 
 
-  // Clearly filled
-  if (
-    m.fillRatio >= 0.50 &&
-    m.contrast >= 28
-  ){
-    return true;
-  }
+  return (
+    (
+      m.centerFillRatio >= 0.54 &&
+      m.fillRatio >= 0.38 &&
+      m.centerContrast >= 26 &&
+      m.contrast >= 18
+    )
+    ||
+    (
+      m.centerFillRatio >= 0.42 &&
+      m.fillRatio >= 0.32 &&
+      m.centerContrast >= 48 &&
+      m.contrast >= 32
+    )
+  );
+}
 
-
-  // Strong contrast can accept a slightly
-  // less completely shaded bubble
-  if (
-    m.fillRatio >= 0.38 &&
-    m.contrast >= 45
-  ){
-    return true;
-  }
-
-
-  return false;
+function percentileNumber(values, percentile){
+  const rows = values
+    .map(Number)
+    .filter(Number.isFinite)
+    .sort((a,b) => a-b);
+  if (!rows.length) return 0;
+  const bounded = Math.max(0, Math.min(1, Number(percentile) || 0));
+  const index = (rows.length - 1) * bounded;
+  const lower = Math.floor(index);
+  const upper = Math.ceil(index);
+  if (lower === upper) return rows[lower];
+  const fraction = index - lower;
+  return rows[lower] * (1 - fraction) + rows[upper] * fraction;
 }
 
 function medianNumber(values){
@@ -7365,25 +7490,45 @@ function classifyQuestionBubbles(rows){
   const metrics = Array.isArray(rows) ? rows : [];
   const medianFill = medianNumber(metrics.map(row => row.fillRatio));
   const medianContrast = medianNumber(metrics.map(row => row.contrast));
+  const medianCenterFill = medianNumber(metrics.map(row => row.centerFillRatio));
+  const medianCenterContrast = medianNumber(metrics.map(row => row.centerContrast));
 
   return metrics.map(row => {
     const fill = Number(row.fillRatio) || 0;
     const contrast = Number(row.contrast) || 0;
+    const centerFill = Number(row.centerFillRatio) || 0;
+    const centerContrast = Number(row.centerContrast) || 0;
     const absolute =
-      (fill >= 0.50 && contrast >= 28) ||
-      (fill >= 0.38 && contrast >= 45);
+      (
+        centerFill >= 0.54 &&
+        fill >= 0.38 &&
+        centerContrast >= 26 &&
+        contrast >= 18
+      )
+      ||
+      (
+        centerFill >= 0.42 &&
+        fill >= 0.32 &&
+        centerContrast >= 48 &&
+        contrast >= 32
+      );
     const relative =
-      fill >= 0.40 &&
-      contrast >= 32 &&
-      fill - medianFill >= 0.18 &&
-      contrast - medianContrast >= 18;
+      centerFill >= 0.44 &&
+      fill >= 0.30 &&
+      centerContrast >= 30 &&
+      contrast >= 22 &&
+      centerFill - medianCenterFill >= 0.20 &&
+      centerContrast - medianCenterContrast >= 16 &&
+      fill - medianFill >= 0.12 &&
+      contrast - medianContrast >= 10;
     const filled = absolute || relative;
     const uncertain = !filled && (
-      (fill >= 0.30 && contrast >= 22) ||
-      (fill >= 0.24 && contrast >= 38)
+      (centerFill >= 0.32 && centerContrast >= 22) ||
+      (centerFill >= 0.26 && fill >= 0.28 && contrast >= 34)
     );
     return {...row, filled, uncertain};
   });
+
 }
 // Average brightness in a patch – used by roll decoder
 function sampleBubbleBrightness(ctx, cx, cy, r) {
@@ -7542,13 +7687,17 @@ async function decodeRoll(
       // printed ring from being mistaken for a shaded digit.
       const filled =
         (
-          metrics.fillRatio >= 0.50 &&
-          metrics.contrast >= 28
+          metrics.centerFillRatio >= 0.54 &&
+          metrics.fillRatio >= 0.38 &&
+          metrics.centerContrast >= 26 &&
+          metrics.contrast >= 18
         )
         ||
         (
-          metrics.fillRatio >= 0.38 &&
-          metrics.contrast >= 45
+          metrics.centerFillRatio >= 0.42 &&
+          metrics.fillRatio >= 0.32 &&
+          metrics.centerContrast >= 48 &&
+          metrics.contrast >= 32
         );
 
 
@@ -7561,8 +7710,14 @@ async function decodeRoll(
         fillRatio:
           metrics.fillRatio,
 
+        centerFillRatio:
+          metrics.centerFillRatio,
+
         contrast:
           metrics.contrast,
+
+        centerContrast:
+          metrics.centerContrast,
 
         confidence:
           metrics.confidence,
@@ -7641,11 +7796,16 @@ async function decodeRoll(
         best.fillRatio -
         second.fillRatio;
 
+      const centerFillGap =
+        best.centerFillRatio -
+        second.centerFillRatio;
+
 
       if (
         best.confidence >= 0.72 &&
         confidenceGap >= 0.22 &&
-        fillGap >= 0.16
+        fillGap >= 0.14 &&
+        centerFillGap >= 0.18
       ){
 
         digits.push(
@@ -7697,15 +7857,22 @@ async function decodeRoll(
         best.fillRatio -
         second.fillRatio;
 
+      const centerFillGap =
+        best.centerFillRatio -
+        second.centerFillRatio;
+
 
       // Accept a light mark only when it is
       // clearly unique.
       if (
-        best.fillRatio >= 0.36 &&
-        best.contrast >= 36 &&
+        best.centerFillRatio >= 0.40 &&
+        best.fillRatio >= 0.30 &&
+        best.centerContrast >= 40 &&
+        best.contrast >= 28 &&
         best.confidence >= 0.62 &&
         confidenceGap >= 0.24 &&
-        fillGap >= 0.18
+        fillGap >= 0.14 &&
+        centerFillGap >= 0.20
       ){
 
         digits.push(
@@ -7893,7 +8060,9 @@ function decodeAnswersFromFrame(
         measured.push({
           opt:b.opt,
           fillRatio:metrics.fillRatio,
+          centerFillRatio:metrics.centerFillRatio,
           contrast:metrics.contrast,
+          centerContrast:metrics.centerContrast,
           confidence:metrics.confidence
         });
       }
@@ -7908,7 +8077,9 @@ function decodeAnswersFromFrame(
             question:Number(qNo),
             option:String(result.opt),
             fillRatio:Number(result.fillRatio.toFixed(3)),
-            contrast:Number(result.contrast.toFixed(1))
+            centerFillRatio:Number(result.centerFillRatio.toFixed(3)),
+            contrast:Number(result.contrast.toFixed(1)),
+            centerContrast:Number(result.centerContrast.toFixed(1))
           });
         }
       });
@@ -7985,13 +8156,13 @@ function drawAnswerOverlayFromROIs(
   const pageScale = getPageScaleFromAnchors(anchors);
 
   const colors = {
-    green:{stroke:'#16a34a', fill:'rgba(22,163,74,.22)'},
-    red:{stroke:'#dc2626', fill:'rgba(220,38,38,.22)'},
-    blue:{stroke:'#2563eb', fill:'rgba(37,99,235,.18)'}
+    green:{stroke:'#16a34a', fill:'rgba(22,163,74,.12)'},
+    red:{stroke:'#dc2626', fill:'rgba(220,38,38,.12)'},
+    blue:{stroke:'#2563eb', fill:'rgba(37,99,235,.10)'}
   };
 
   ctx.save();
-  ctx.lineWidth = Math.max(2.5, pageScale.scaleAvg * 0.78);
+  ctx.lineWidth = Math.max(1.8, pageScale.scaleAvg * 0.42);
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
 
@@ -8048,7 +8219,9 @@ function drawAnswerOverlayFromROIs(
       if (xMm == null || yMm == null) continue;
 
       const point = mapPageMmToPixel(xMm, yMm, anchors);
-      const radius = rMm * pageScale.scaleAvg * 1.38;
+      // Keep the review ring close to the printed bubble. Oversized rings
+      // overlapped adjacent options and made a correct read look inaccurate.
+      const radius = rMm * pageScale.scaleAvg * 1.02;
 
       ctx.beginPath();
       ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
@@ -8519,10 +8692,16 @@ ctx.drawImage(
 }
 
 
-// Four verified targets are enough to trigger one immediate full-page read.
-// Do not add a hidden stability gate here: on some phone cameras the detected
-// centres move by a few pixels even while all four boxes remain green.
+// Verify the same four targets on two consecutive frames. This adds only about
+// 100 ms, but avoids reading a blurred frame while the phone or paper is still
+// moving into position.
 sheetMissingSince = null;
+
+if (!registerAlignedMarkerFrame(anchors, now)){
+  el('cameraHint').textContent =
+    '4/4 aligned — hold steady for a moment…';
+  return;
+}
 
 if (now - lastFullReadTime < FULL_READ_RETRY_MS){
   return;
@@ -9383,6 +9562,7 @@ function showScanReview(out, previewDataUrl) {
   const warningEl = el('scanReviewWarning');
   const studentTextEl = el('scanReviewStudentText');
   const cameraDlg = el('dlgCamera');
+  const reviewContentEl = dlg && dlg.querySelector('.content');
 
   if (
     !dlg ||
@@ -9628,6 +9808,12 @@ function showScanReview(out, previewDataUrl) {
     cameraDlg.close();
   }
 
+  // Android keeps a dialog's previous scroll position. Always reopen at the
+  // Roll Number, Total Marks and subject totals instead of midway down the
+  // scanned image.
+  dlg.scrollTop = 0;
+  if (reviewContentEl) reviewContentEl.scrollTop = 0;
+
   try {
     dlg.showModal();
   }
@@ -9635,6 +9821,11 @@ function showScanReview(out, previewDataUrl) {
     console.warn('Modal review fallback used:', err);
     dlg.setAttribute('open', '');
   }
+
+  requestAnimationFrame(() => {
+    dlg.scrollTop = 0;
+    if (reviewContentEl) reviewContentEl.scrollTop = 0;
+  });
 }
 
 async function finalizeScanSave(out) {
