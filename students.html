@@ -2884,6 +2884,45 @@ const badge =
   </div>
 </div>
 
+<!-- Discipline (computed from Attendance + Discipline Register) -->
+<div style="display:flex; align-items:center; gap:8px; margin:10px 0 8px 0;">
+  <input type="checkbox" id="useDisciplineToggle" style="margin:0;" />
+  <label for="useDisciplineToggle" style="font-weight:600; margin:0;">Use Discipline</label>
+</div>
+
+<div id="disciplineConfig" style="display:none; margin:6px 0 12px 0; padding:10px; border:1px solid #e0ecfb; border-radius:8px; background:#f9fcff;">
+
+  <div style="display:flex; align-items:center; gap:10px; margin-bottom:9px;">
+    <label for="disciplineMax" style="min-width:140px;">Discipline Max</label>
+    <input id="disciplineMax"
+           type="number"
+           min="0.5"
+           max="200"
+           step="0.5"
+           placeholder="e.g., 10 or 5"
+           style="width:120px; padding:8px; border-radius:6px; border:1px solid #c7d7ea; background:#fff;" />
+  </div>
+
+  <div style="display:flex; align-items:center; gap:10px; margin-bottom:9px;">
+    <label for="disciplineFromDate" style="min-width:140px;">From Date</label>
+    <input id="disciplineFromDate"
+           type="date"
+           style="width:160px; padding:8px; border-radius:6px; border:1px solid #c7d7ea; background:#fff;" />
+  </div>
+
+  <div style="display:flex; align-items:center; gap:10px;">
+    <label for="disciplineToDate" style="min-width:140px;">To Date</label>
+    <input id="disciplineToDate"
+           type="date"
+           style="width:160px; padding:8px; border-radius:6px; border:1px solid #c7d7ea; background:#fff;" />
+  </div>
+
+  <div style="font-size:0.85em; color:#666; margin-top:8px; line-height:1.45;">
+    Auto-calculated from Attendance, Homework, Late, No Uniform and No Sign
+    only for the selected date range.
+  </div>
+</div>
+
 <!-- Manual subtopics -->
 <div id="subtopicsContainer"></div>
 <div style="display:flex; gap:10px; margin-top:6px; margin-bottom:14px;">
@@ -3059,13 +3098,74 @@ let srcIds = [];
       return;
     }
 
-    // push computed Internal subtopic
+       // push computed Internal subtopic
     subtopics.push({
       name: 'Internal',
       max: intMax,
       computed: true,
-      computeRule: 'avg_normalized_x_max',  // average(score/max) * internalMax
+      computeRule: 'avg_normalized_x_max',
       sources: srcIds
+    });
+  }
+
+  // Discipline (computed)
+  const useDiscipline =
+    popupContent.querySelector('#useDisciplineToggle')?.checked;
+
+  if (useDiscipline) {
+    const disciplineMax =
+      parseFloat(popupContent.querySelector('#disciplineMax')?.value);
+
+    const fromDate =
+      (popupContent.querySelector('#disciplineFromDate')?.value || '').trim();
+
+    const toDate =
+      (popupContent.querySelector('#disciplineToDate')?.value || '').trim();
+
+    if (!disciplineMax || isNaN(disciplineMax) || disciplineMax <= 0) {
+      alert('Please enter a valid Discipline Max.');
+      return;
+    }
+
+    if (!fromDate || !toDate) {
+      alert('Please select From Date and To Date for Discipline.');
+      return;
+    }
+
+    if (fromDate > toDate) {
+      alert('Discipline From Date cannot be after To Date.');
+      return;
+    }
+
+    // Remove old/manual Student Response or Discipline
+    subtopics = subtopics.filter(st => {
+      const n = String(st?.name || '').trim().toLowerCase();
+      return n !== 'student response' && n !== 'discipline';
+    });
+
+    subtopics.push({
+      name: 'Discipline',
+      max: disciplineMax,
+      computed: true,
+      computeRule: 'discipline_date_range_v1',
+      fromDate: fromDate,
+      toDate: toDate,
+
+      weights: {
+        attendance: 40,
+        homework: 30,
+        regularity: 30
+      },
+
+      rules: {
+        homeworkDefaultsForZero: 12,
+        lateDeduction: 0.25,
+        lateOverThresholdDeduction: 0.50,
+        lateThresholdMinutes: 15,
+        noUniformDeduction: 0.50,
+        noSignDeduction: 0.25,
+        regularityBase: 3
+      }
     });
   }
 
@@ -3253,6 +3353,17 @@ if (internalDD && internalDDSel && internalDDList) {
 if (useInternalToggle) {
   useInternalToggle.onchange = () => {
     internalConfigBox.style.display = useInternalToggle.checked ? 'block' : 'none';
+  };
+}
+
+// Discipline UI
+const useDisciplineToggle = popupContent.querySelector('#useDisciplineToggle');
+const disciplineConfigBox = popupContent.querySelector('#disciplineConfig');
+
+if (useDisciplineToggle && disciplineConfigBox) {
+  useDisciplineToggle.onchange = () => {
+    disciplineConfigBox.style.display =
+      useDisciplineToggle.checked ? 'block' : 'none';
   };
 }
 
@@ -3600,6 +3711,45 @@ const exam = docSnap.data();
   </div>
 </div>
 
+<!-- Discipline (computed from Attendance + Discipline Register) -->
+<div style="display:flex; align-items:center; gap:8px; margin:10px 0 8px 0;">
+  <input type="checkbox" id="editUseDisciplineToggle" style="margin:0;" />
+  <label for="editUseDisciplineToggle" style="font-weight:600; margin:0;">Use Discipline</label>
+</div>
+
+<div id="editDisciplineConfig" style="display:none; margin:6px 0 12px 0; padding:10px; border:1px solid #e0ecfb; border-radius:8px; background:#f9fcff;">
+
+  <div style="display:flex; align-items:center; gap:10px; margin-bottom:9px;">
+    <label for="editDisciplineMax" style="min-width:140px;">Discipline Max</label>
+    <input id="editDisciplineMax"
+           type="number"
+           min="0.5"
+           max="200"
+           step="0.5"
+           placeholder="e.g., 10 or 5"
+           style="width:120px; padding:8px; border-radius:6px; border:1px solid #c7d7ea; background:#fff;" />
+  </div>
+
+  <div style="display:flex; align-items:center; gap:10px; margin-bottom:9px;">
+    <label for="editDisciplineFromDate" style="min-width:140px;">From Date</label>
+    <input id="editDisciplineFromDate"
+           type="date"
+           style="width:160px; padding:8px; border-radius:6px; border:1px solid #c7d7ea; background:#fff;" />
+  </div>
+
+  <div style="display:flex; align-items:center; gap:10px;">
+    <label for="editDisciplineToDate" style="min-width:140px;">To Date</label>
+    <input id="editDisciplineToDate"
+           type="date"
+           style="width:160px; padding:8px; border-radius:6px; border:1px solid #c7d7ea; background:#fff;" />
+  </div>
+
+  <div style="font-size:0.85em; color:#666; margin-top:8px; line-height:1.45;">
+    Auto-calculated from Attendance, Homework, Late, No Uniform and No Sign
+    only for the selected date range.
+  </div>
+</div>
+
 <!-- Manual subtopics -->
 <div id="editSubtopicsContainer"></div>
 <div style="display:flex; gap:10px; margin-top:6px; margin-bottom:14px;">
@@ -3786,7 +3936,70 @@ let srcIds = [];
   }
 }
 
-// 3) quiet dedupe by name (case-insensitive, trimmed); keep first
+// 3) Discipline (computed)
+{
+  const useDiscipline =
+    popupContent.querySelector('#editUseDisciplineToggle')?.checked;
+
+  if (useDiscipline) {
+    const disciplineMax =
+      parseFloat(popupContent.querySelector('#editDisciplineMax')?.value);
+
+    const fromDate =
+      (popupContent.querySelector('#editDisciplineFromDate')?.value || '').trim();
+
+    const toDate =
+      (popupContent.querySelector('#editDisciplineToDate')?.value || '').trim();
+
+    if (!disciplineMax || isNaN(disciplineMax) || disciplineMax <= 0) {
+      alert('Please enter a valid Discipline Max.');
+      return;
+    }
+
+    if (!fromDate || !toDate) {
+      alert('Please select From Date and To Date for Discipline.');
+      return;
+    }
+
+    if (fromDate > toDate) {
+      alert('Discipline From Date cannot be after To Date.');
+      return;
+    }
+
+    // Replace old Student Response/manual Discipline
+    subtopics = subtopics.filter(st => {
+      const n = String(st?.name || '').trim().toLowerCase();
+      return n !== 'student response' && n !== 'discipline';
+    });
+
+    subtopics.push({
+      name: 'Discipline',
+      max: disciplineMax,
+      computed: true,
+      computeRule: 'discipline_date_range_v1',
+      fromDate: fromDate,
+      toDate: toDate,
+
+      weights: {
+        attendance: 40,
+        homework: 30,
+        regularity: 30
+      },
+
+      rules: {
+        homeworkDefaultsForZero: 12,
+        lateDeduction: 0.25,
+        lateOverThresholdDeduction: 0.50,
+        lateThresholdMinutes: 15,
+        noUniformDeduction: 0.50,
+        noSignDeduction: 0.25,
+        regularityBase: 3
+      }
+    });
+  }
+}
+
+// 4) quiet dedupe by name (case-insensitive, trimmed); keep first
 {
   const seen = new Set();
   subtopics = subtopics.filter(st => {
@@ -4344,18 +4557,89 @@ if (editDD && editDDSel && editDDList) {
     });
 })();
 
-// Toggle show/hide
+// Toggle show/hide Internal
 if (editUseInternalToggle) {
   editUseInternalToggle.onchange = () => {
-    editInternalConfigBox.style.display = editUseInternalToggle.checked ? 'block' : 'none';
+    editInternalConfigBox.style.display =
+      editUseInternalToggle.checked ? 'block' : 'none';
   };
 }
 
-// Prefill manual subtopics ONLY (skip computed internal)
+// Discipline UI (Edit)
+const editUseDisciplineToggle =
+  popupContent.querySelector('#editUseDisciplineToggle');
+
+const editDisciplineConfigBox =
+  popupContent.querySelector('#editDisciplineConfig');
+
+const editDisciplineMaxInput =
+  popupContent.querySelector('#editDisciplineMax');
+
+const editDisciplineFromInput =
+  popupContent.querySelector('#editDisciplineFromDate');
+
+const editDisciplineToInput =
+  popupContent.querySelector('#editDisciplineToDate');
+
+const existingDiscipline = Array.isArray(exam.subtopics)
+  ? exam.subtopics.find(st =>
+      st &&
+      st.computed === true &&
+      String(st.name || '').trim().toLowerCase() === 'discipline'
+    )
+  : null;
+
+if (existingDiscipline) {
+  if (editUseDisciplineToggle) {
+    editUseDisciplineToggle.checked = true;
+  }
+
+  if (editDisciplineConfigBox) {
+    editDisciplineConfigBox.style.display = 'block';
+  }
+
+  if (
+    editDisciplineMaxInput &&
+    typeof existingDiscipline.max !== 'undefined'
+  ) {
+    editDisciplineMaxInput.value = existingDiscipline.max;
+  }
+
+  if (editDisciplineFromInput) {
+    editDisciplineFromInput.value =
+      existingDiscipline.fromDate || '';
+  }
+
+  if (editDisciplineToInput) {
+    editDisciplineToInput.value =
+      existingDiscipline.toDate || '';
+  }
+}
+
+if (editUseDisciplineToggle && editDisciplineConfigBox) {
+  editUseDisciplineToggle.onchange = () => {
+    editDisciplineConfigBox.style.display =
+      editUseDisciplineToggle.checked ? 'block' : 'none';
+  };
+}
+
+// Prefill manual subtopics ONLY
+// Skip computed Internal and computed Discipline
 if (exam.subtopics && Array.isArray(exam.subtopics) && exam.subtopics.length) {
   exam.subtopics
-    .filter(st => !(st && st.computed === true && (st.name || '').toLowerCase() === 'internal'))
-    .forEach(st => editAddSubtopicField(st?.name || '', (st?.max ?? '').toString()));
+    .filter(st => {
+      if (!(st && st.computed === true)) return true;
+
+      const n = String(st.name || '').trim().toLowerCase();
+
+      return n !== 'internal' && n !== 'discipline';
+    })
+    .forEach(st =>
+      editAddSubtopicField(
+        st?.name || '',
+        (st?.max ?? '').toString()
+      )
+    );
 }
 
 // Add manual subtopic button
@@ -4565,8 +4849,273 @@ function _computeInternalFromArray(sourceItems, internalMax) {
           items.push({ obtained: 0, max: src.sMax });
         }
       }
-      internalPrefill[stu.id] = _computeInternalFromArray(items, Number(internalSt.max));
+            internalPrefill[stu.id] = _computeInternalFromArray(items, Number(internalSt.max));
     }));
+  }
+
+  // ==========================================================
+  // DISCIPLINE AUTO CALCULATION
+  // Attendance 40%
+  // Homework 30%
+  // Regularity 30% = Late + No Uniform + No Sign
+  // Only records between From Date and To Date are considered.
+  // ==========================================================
+
+  const disciplineSt = Array.isArray(subtopics)
+    ? subtopics.find(st =>
+        st &&
+        st.computed === true &&
+        String(st.name || '').trim().toLowerCase() === 'discipline'
+      )
+    : null;
+
+  const disciplinePrefill = {};
+
+  function _disciplineSubjectKey(name) {
+    const k = String(name || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, '');
+
+    if (k.startsWith('math')) return 'math';
+    if (k.startsWith('english')) return 'english';
+    if (k.startsWith('telugu')) return 'telugu';
+    if (k.startsWith('hindi')) return 'hindi';
+    if (k.startsWith('physics')) return 'physics';
+    if (k.startsWith('chemistry')) return 'chemistry';
+    if (k.startsWith('biology')) return 'biology';
+    if (k.startsWith('social')) return 'social';
+
+    return k;
+  }
+
+  function _roundDisciplineMark(value, maxValue) {
+    const safeMax = Number(maxValue) || 0;
+
+    if (safeMax <= 0) return 0;
+
+    const bounded = Math.max(
+      0,
+      Math.min(safeMax, Number(value) || 0)
+    );
+
+    // nearest 0.5 mark
+    return Math.round(bounded * 2) / 2;
+  }
+
+  if (
+    disciplineSt &&
+    Number(disciplineSt.max) > 0 &&
+    disciplineSt.fromDate &&
+    disciplineSt.toDate
+  ) {
+    try {
+      const fromDate = String(disciplineSt.fromDate);
+      const toDate = String(disciplineSt.toDate);
+      const disciplineMax = Number(disciplineSt.max);
+
+      const weights = disciplineSt.weights || {};
+      const attendanceWeight = Number(weights.attendance) || 40;
+      const homeworkWeight = Number(weights.homework) || 30;
+      const regularityWeight = Number(weights.regularity) || 30;
+
+      const totalWeight =
+        attendanceWeight +
+        homeworkWeight +
+        regularityWeight;
+
+      const rules = disciplineSt.rules || {};
+
+      const homeworkDefaultsForZero =
+        Number(rules.homeworkDefaultsForZero) || 12;
+
+      const lateDeduction =
+        Number(rules.lateDeduction) || 0.25;
+
+      const lateOverThresholdDeduction =
+        Number(rules.lateOverThresholdDeduction) || 0.50;
+
+      const lateThresholdMinutes =
+        Number(rules.lateThresholdMinutes) || 15;
+
+      const noUniformDeduction =
+        Number(rules.noUniformDeduction) || 0.50;
+
+      const noSignDeduction =
+        Number(rules.noSignDeduction) || 0.25;
+
+      const regularityBase =
+        Number(rules.regularityBase) || 3;
+
+      const documentId =
+        firebase.firestore.FieldPath.documentId();
+
+      const attendanceQuery =
+        db.collection('years').doc(academicYear)
+          .collection('classes').doc(currentClassId)
+          .collection('sections').doc(currentSectionId)
+          .collection('attendance')
+          .where(documentId, '>=', fromDate)
+          .where(documentId, '<=', toDate);
+
+      const disciplineQuery =
+        db.collection('years').doc(academicYear)
+          .collection('classes').doc(currentClassId)
+          .collection('sections').doc(currentSectionId)
+          .collection('disciplineRegister')
+          .where(documentId, '>=', fromDate)
+          .where(documentId, '<=', toDate);
+
+      const [
+        attendanceSnapshot,
+        disciplineSnapshot
+      ] = await Promise.all([
+        attendanceQuery.get(),
+        disciplineQuery.get()
+      ]);
+
+      const wantedHomeworkSubject =
+        _disciplineSubjectKey(subjectName);
+
+      students.forEach(stu => {
+
+        // --------------------------
+        // 1. ATTENDANCE
+        // --------------------------
+        let totalSessions = 0;
+        let presentSessions = 0;
+
+        attendanceSnapshot.forEach(attDoc => {
+          const allStudents = attDoc.data() || {};
+          const attendance = allStudents[stu.id];
+
+          // Do not penalise when this student has no record on that date
+          if (!attendance) return;
+
+          totalSessions += 2;
+
+          if (
+            String(attendance.M || 'present').toLowerCase() !== 'absent'
+          ) {
+            presentSessions += 1;
+          }
+
+          if (
+            String(attendance.A || 'present').toLowerCase() !== 'absent'
+          ) {
+            presentSessions += 1;
+          }
+        });
+
+        // If attendance was not recorded during the range,
+        // do not penalise the student.
+        const attendanceRatio =
+          totalSessions > 0
+            ? presentSessions / totalSessions
+            : 1;
+
+        // --------------------------
+        // 2. HOMEWORK
+        // --------------------------
+        let homeworkDefaults = 0;
+
+        // --------------------------
+        // 3. REGULARITY
+        // --------------------------
+        let regularityPenalty = 0;
+
+        disciplineSnapshot.forEach(disDoc => {
+          const allStudents = disDoc.data() || {};
+          const entry = allStudents[stu.id];
+
+          if (!entry) return;
+
+          // Homework is SUBJECT-WISE
+          const hwSubjects =
+            Array.isArray(entry.homeworkSubjects)
+              ? entry.homeworkSubjects
+              : [];
+
+          const homeworkMissedForThisSubject =
+            hwSubjects.some(hw =>
+              _disciplineSubjectKey(hw) === wantedHomeworkSubject
+            );
+
+          if (homeworkMissedForThisSubject) {
+            homeworkDefaults += 1;
+          }
+
+          // Late
+          if (entry.late === true) {
+            const mins = Number(entry.lateMinutes) || 0;
+
+            regularityPenalty +=
+              mins > lateThresholdMinutes
+                ? lateOverThresholdDeduction
+                : lateDeduction;
+          }
+
+          // No Uniform
+          if (entry.noUniform === true) {
+            regularityPenalty += noUniformDeduction;
+          }
+
+          // No Sign
+          if (entry.noSign === true) {
+            regularityPenalty += noSignDeduction;
+          }
+        });
+
+        const homeworkRatio =
+          Math.max(
+            0,
+            1 -
+            (
+              homeworkDefaults /
+              homeworkDefaultsForZero
+            )
+          );
+
+        const regularityRatio =
+          Math.max(
+            0,
+            1 -
+            (
+              regularityPenalty /
+              regularityBase
+            )
+          );
+
+        const overallRatio =
+          totalWeight > 0
+            ? (
+                (attendanceRatio * attendanceWeight) +
+                (homeworkRatio * homeworkWeight) +
+                (regularityRatio * regularityWeight)
+              ) / totalWeight
+            : 0;
+
+        const rawDisciplineMark =
+          overallRatio * disciplineMax;
+
+        disciplinePrefill[stu.id] =
+          _roundDisciplineMark(
+            rawDisciplineMark,
+            disciplineMax
+          );
+      });
+
+    } catch (disciplineError) {
+      console.error(
+        'Discipline calculation failed:',
+        disciplineError
+      );
+
+      // Leave blank if data could not be read.
+      students.forEach(stu => {
+        disciplinePrefill[stu.id] = '';
+      });
+    }
   }
 
                          // Resolve grading scale once for this popup (exam → school default → legacy)
@@ -4603,62 +5152,131 @@ function _computeInternalFromArray(sourceItems, internalMax) {
                               
                                     ${
                                       (subtopics || []).slice().sort((a,b)=>{
-  const aInt = a && a.computed === true && String(a.name||'').toLowerCase()==='internal';
-  const bInt = b && b.computed === true && String(b.name||'').toLowerCase()==='internal';
-  return (bInt?1:0) - (aInt?1:0); // put "Internal" (computed) first
-}).map(st => {
-  const isInternal = (st && st.computed === true && String(st.name || '').toLowerCase() === 'internal');
 
-  // Prefill value:
-  // - Internal: from internalPrefill map (integer; only the number)
-  // - Manual: from saved breakdown (if any)
+  function computedRank(st) {
+    if (!(st && st.computed === true)) return 3;
+
+    const n =
+      String(st.name || '').trim().toLowerCase();
+
+    if (n === 'internal') return 1;
+    if (n === 'discipline') return 2;
+
+    return 3;
+  }
+
+  return computedRank(a) - computedRank(b);
+
+}).map(st => {
+
+  const subNameLower =
+    String(st?.name || '').trim().toLowerCase();
+
+  const isInternal =
+    st &&
+    st.computed === true &&
+    subNameLower === 'internal';
+
+  const isDiscipline =
+    st &&
+    st.computed === true &&
+    subNameLower === 'discipline';
+
+  const isComputed =
+    isInternal || isDiscipline;
+
   let pre = '';
+
   if (isInternal) {
-    pre = internalPrefill[stu.id] != null ? internalPrefill[stu.id] : '';
+    pre =
+      internalPrefill[stu.id] != null
+        ? internalPrefill[stu.id]
+        : '';
+
+  } else if (isDiscipline) {
+    pre =
+      disciplinePrefill[stu.id] != null
+        ? disciplinePrefill[stu.id]
+        : '';
+
   } else {
     const bd = breakdownData[stu.id] || {};
-    if (Object.prototype.hasOwnProperty.call(bd, st.name) && bd[st.name] != null) {
+
+    if (
+      Object.prototype.hasOwnProperty.call(bd, st.name) &&
+      bd[st.name] != null
+    ) {
       pre = bd[st.name];
+
     } else {
-      const k = _resolveSubKeyExact(bd, st.name);
-      if (k && bd[k] != null) pre = bd[k];
+      const k =
+        _resolveSubKeyExact(bd, st.name);
+
+      if (k && bd[k] != null) {
+        pre = bd[k];
+      }
     }
   }
 
-  // Render: Internal is read-only; manual is editable
+  const labelColor =
+    isDiscipline
+      ? '#7a3db8'
+      : isInternal
+        ? '#2e7d32'
+        : '#2e7d32';
+
   const common = `
     <div style="grid-column:1;">&nbsp;</div>
+
     <div class="sub-label"
-         style="grid-column:2; color:#2e7d32; font-weight:600;">
+         style="grid-column:2; color:${labelColor}; font-weight:600;">
       ${st.name}
     </div>
   `;
 
-  if (isInternal) {
+  if (isComputed) {
     return `
       ${common}
+
       <input type="number"
              class="marks-input sub-input"
              data-stu="${stu.id}"
              data-subname="${encodeURIComponent(st.name)}"
-             step="1" min="0"
+             step="${isDiscipline ? '0.5' : '1'}"
+             min="0"
+             max="${st.max}"
              value="${pre}"
-             readonly tabindex="-1"
-             style="grid-column:3; width:96px; text-align:right; background:#f5f5f5; color:#333;" />
+             readonly
+             tabindex="-1"
+             style="
+               grid-column:3;
+               width:96px;
+               text-align:right;
+               background:#f5f5f5;
+               color:#333;
+             " />
     `;
+
   } else {
     return `
       ${common}
+
       <input type="number"
              class="marks-input sub-input"
              data-stu="${stu.id}"
              data-subname="${encodeURIComponent(st.name)}"
-             step="0.01" min="0"
+             step="0.01"
+             min="0"
+             max="${st.max}"
              value="${pre}"
-             style="grid-column:3; width:96px; text-align:right;" />
-
+             style="
+               grid-column:3;
+               width:96px;
+               text-align:right;
+             " />
     `;
   }
+
 }).join('')
                                     }
                               
