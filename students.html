@@ -2999,10 +2999,14 @@ const badge =
       `;
       showPopup(html, 'addExamForm', function (e) {
         e.preventDefault();
-        const name = e.target.examName.value.trim();
-        const nameKey = normalizeExamName(name); // Normalize for comparison
+               const name = e.target.examName.value.trim();
+        const nameKey = normalizeExamName(name);
+
         let subjects = [];
-        const container = popupContent.querySelector('#subjectsContainer');
+        let subjectConfigError = '';
+
+        const container =
+          popupContent.querySelector('#editSubjectsContainer');
         if (container) {
           const subjectDivs = container.querySelectorAll('div[data-subject-row]');
           subjectDivs.forEach(div => {
@@ -3048,18 +3052,122 @@ if (subtopicsMode === 'custom' && wrap) {
   });
 }
 
-  if (subjName && maxMarks) {
-    const payload = { name: subjName, max: maxMarks, excludeFromTotal: exclude, subtopicsMode };
-   if (subtopicsMode === 'custom' && subjSubs.length) {
-  const idx = subjSubs.findIndex(st => st && st.computed === true && String(st.name||'').toLowerCase() === 'internal');
-  if (idx > 0) { const [it] = subjSubs.splice(idx, 1); subjSubs.unshift(it); }
-  payload.subtopics = subjSubs;
-}
+ if (subjName && maxMarks) {
+
+    const isSpokenEnglish =
+      String(subjName || '')
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, ' ') === 'spoken english';
+
+
+    const effectiveSubtopicsMode =
+      isSpokenEnglish
+        ? 'none'
+        : subtopicsMode;
+
+
+    const payload = {
+
+      name: subjName,
+
+      max: maxMarks,
+
+      excludeFromTotal: exclude,
+
+      subtopicsMode:
+        effectiveSubtopicsMode
+    };
+
+
+    if (isSpokenEnglish) {
+
+      const fromDate =
+        (
+          div.querySelector('.spoken-from')
+            ?.value || ''
+        ).trim();
+
+      const toDate =
+        (
+          div.querySelector('.spoken-to')
+            ?.value || ''
+        ).trim();
+
+
+      if (!fromDate || !toDate) {
+
+        subjectConfigError =
+          'Please select Coins From and Coins To dates for Spoken English.';
+
+        return;
+      }
+
+
+      if (fromDate > toDate) {
+
+        subjectConfigError =
+          'Spoken English Coins From date cannot be after Coins To date.';
+
+        return;
+      }
+
+
+      payload.computed = true;
+
+      payload.computeRule =
+        'spoken_english_v1';
+
+      payload.sourceSubject =
+        'English 1';
+
+      payload.fromDate =
+        fromDate;
+
+      payload.toDate =
+        toDate;
+
+    }
+
+    else if (
+      effectiveSubtopicsMode === 'custom' &&
+      subjSubs.length
+    ) {
+
+      const idx =
+        subjSubs.findIndex(st =>
+          st &&
+          st.computed === true &&
+          String(st.name || '')
+            .toLowerCase() === 'internal'
+        );
+
+
+      if (idx > 0) {
+
+        const [it] =
+          subjSubs.splice(idx, 1);
+
+        subjSubs.unshift(it);
+      }
+
+
+      payload.subtopics =
+        subjSubs;
+    }
+
+
     subjects.push(payload);
   }
 });
         }
-        if (!name || !subjects.length) {
+
+        if (subjectConfigError) {
+          alert(subjectConfigError);
+          return;
+        }
+
+       if (!name || !subjects.length) {
   alert("Please enter exam name and at least one subject!");
   return;
 }
@@ -3392,10 +3500,21 @@ if (addSubtopicBtn) {
 }
 
             // --- Subject Fields Logic (name + integer max) ---
-      const subjectsContainer = popupContent.querySelector('#subjectsContainer');
+           const subjectsContainer = popupContent.querySelector('#subjectsContainer');
       const addSubjectBtn = popupContent.querySelector('#addSubjectBtn');
 
-    function addSubjectField(name = '', max = '', exclude = false, subtopics = [], subtopicsMode = 'common') {
+    function addSubjectField(name = '', max = '', exclude = false, subtopics = [], subtopicsMode = 'common', spokenConfig = null) {
+
+  const initialIsSpoken =
+    String(name || '')
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, ' ') === 'spoken english';
+
+  if (initialIsSpoken) {
+    subtopicsMode = 'none';
+  }
+
   const div = document.createElement('div');
   div.setAttribute('data-subject-row', '');
   div.style = 'display:flex;flex-direction:column;gap:6px;margin-bottom:12px;border-bottom:1px solid #f1f1f1;padding-bottom:10px;';
@@ -3506,9 +3625,53 @@ if (addSubtopicBtn) {
     <div style="font-size:.85em;color:#666; margin-top:4px;">If subtopics are added, this subject’s total is derived from their sum.</div>
   `;
 
+   // Spoken English special configuration
+  const spokenBox = document.createElement('div');
+
+  spokenBox.className = 'spoken-english-config';
+
+  spokenBox.style =
+    'display:none; background:#fffaf0; border:1px solid #ead49e; border-radius:8px; padding:10px; margin-top:2px;';
+
+  spokenBox.innerHTML = `
+    <div style="font-weight:700;color:#8a5a00;margin-bottom:8px;">
+      Spoken English Auto Calculation
+    </div>
+
+    <div style="font-size:0.9em;color:#666;margin-bottom:9px;">
+      Source Subject: <strong>English 1</strong><br>
+      Final Mark = Spoken English Max − (English 1 marks lost + coins received)
+    </div>
+
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+
+      <label style="flex:1 1 150px;margin:0;">
+        Coins From
+        <input
+          type="date"
+          class="spoken-from"
+          value="${spokenConfig?.fromDate || ''}"
+          style="width:100%;margin-top:4px;padding:8px;border-radius:6px;border:1px solid #c7d7ea;background:#fff;"
+        />
+      </label>
+
+      <label style="flex:1 1 150px;margin:0;">
+        Coins To
+        <input
+          type="date"
+          class="spoken-to"
+          value="${spokenConfig?.toDate || ''}"
+          style="width:100%;margin-top:4px;padding:8px;border-radius:6px;border:1px solid #c7d7ea;background:#fff;"
+        />
+      </label>
+
+    </div>
+  `;
+
   // Assemble
   div.appendChild(row1);
   div.appendChild(row2);
+  div.appendChild(spokenBox);
   div.appendChild(row3);
   div.appendChild(panel);
   subjectsContainer.appendChild(div);
@@ -3518,6 +3681,70 @@ if (addSubtopicBtn) {
 const wrap   = panel.querySelector('[data-subtopics-wrap]');
 const btnTgl = row3.querySelector('.toggle-subtopics');
 const btnAdd = panel.querySelector('.add-subtopic');
+
+const subjectNameInput =
+  row1.querySelector('input[type="text"]');
+
+
+function syncSpokenEnglishRow() {
+
+  const isSpoken =
+    String(subjectNameInput?.value || '')
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, ' ') === 'spoken english';
+
+  spokenBox.style.display =
+    isSpoken ? 'block' : 'none';
+
+  const modeDD =
+    row2.querySelector('.subject-mode-dd');
+
+  const modeSel =
+    row2.querySelector(
+      '.subject-mode-dd .dropdown-selected'
+    );
+
+  if (isSpoken) {
+
+    // Spoken English must never use subtopics
+    if (modeSel) {
+      modeSel.dataset.mode = 'none';
+      modeSel.textContent = 'None';
+    }
+
+    if (modeDD) {
+      modeDD.style.pointerEvents = 'none';
+      modeDD.style.opacity = '0.65';
+    }
+
+    panel.style.display = 'none';
+
+    btnTgl.disabled = true;
+    btnTgl.style.opacity = '0.45';
+
+  } else {
+
+    if (modeDD) {
+      modeDD.style.pointerEvents = '';
+      modeDD.style.opacity = '';
+    }
+
+    btnTgl.disabled = false;
+    btnTgl.style.opacity = '';
+  }
+}
+
+
+if (subjectNameInput) {
+
+  subjectNameInput.addEventListener(
+    'input',
+    syncSpokenEnglishRow
+  );
+}
+
+syncSpokenEnglishRow();
 
 // Subject-level Internal wiring
 const subIntToggle = panel.querySelector('.sub-int-toggle');
@@ -3819,10 +4046,14 @@ const exam = docSnap.data();
         </form>
       `, 'editExamForm', function (e) {
         e.preventDefault();
-        const name = e.target.examName.value.trim();
-        const nameKey = normalizeExamName(name);
+               const name = e.target.examName.value.trim();
+        const nameKey = normalizeExamName(name); // Normalize for comparison
+
         let subjects = [];
-        const container = popupContent.querySelector('#editSubjectsContainer');
+        let subjectConfigError = '';
+
+        const container =
+          popupContent.querySelector('#subjectsContainer');
         if (container) {
           const subjectDivs = container.querySelectorAll('div[data-subject-row]');
           subjectDivs.forEach(div => {
@@ -3869,17 +4100,125 @@ if (subtopicsMode === 'custom' && wrap) {
 }
 
   if (subjName && maxMarks) {
-    const payload = { name: subjName, max: maxMarks, excludeFromTotal: exclude, subtopicsMode };
-    if (subtopicsMode === 'custom' && subjSubs.length) {
-  const idx = subjSubs.findIndex(st => st && st.computed === true && String(st.name||'').toLowerCase() === 'internal');
-  if (idx > 0) { const [it] = subjSubs.splice(idx, 1); subjSubs.unshift(it); }
-  payload.subtopics = subjSubs;
-}
+
+    const isSpokenEnglish =
+      String(subjName || '')
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, ' ') === 'spoken english';
+
+
+    const effectiveSubtopicsMode =
+      isSpokenEnglish
+        ? 'none'
+        : subtopicsMode;
+
+
+    const payload = {
+
+      name: subjName,
+
+      max: maxMarks,
+
+      excludeFromTotal: exclude,
+
+      subtopicsMode:
+        effectiveSubtopicsMode
+    };
+
+
+    // ==========================================
+    // SPOKEN ENGLISH MAIN SUBJECT
+    // ==========================================
+    if (isSpokenEnglish) {
+
+      const fromDate =
+        (
+          div.querySelector('.spoken-from')
+            ?.value || ''
+        ).trim();
+
+      const toDate =
+        (
+          div.querySelector('.spoken-to')
+            ?.value || ''
+        ).trim();
+
+
+      if (!fromDate || !toDate) {
+
+        subjectConfigError =
+          'Please select Coins From and Coins To dates for Spoken English.';
+
+        return;
+      }
+
+
+      if (fromDate > toDate) {
+
+        subjectConfigError =
+          'Spoken English Coins From date cannot be after Coins To date.';
+
+        return;
+      }
+
+
+      payload.computed = true;
+
+      payload.computeRule =
+        'spoken_english_v1';
+
+      payload.sourceSubject =
+        'English 1';
+
+      payload.fromDate =
+        fromDate;
+
+      payload.toDate =
+        toDate;
+
+    }
+
+    // Normal subjects remain exactly as before
+    else if (
+      effectiveSubtopicsMode === 'custom' &&
+      subjSubs.length
+    ) {
+
+      const idx =
+        subjSubs.findIndex(st =>
+          st &&
+          st.computed === true &&
+          String(st.name || '')
+            .toLowerCase() === 'internal'
+        );
+
+
+      if (idx > 0) {
+
+        const [it] =
+          subjSubs.splice(idx, 1);
+
+        subjSubs.unshift(it);
+      }
+
+
+      payload.subtopics =
+        subjSubs;
+    }
+
+
     subjects.push(payload);
   }
 });
         }
-       if (!name || !subjects.length) {
+
+        if (subjectConfigError) {
+          alert(subjectConfigError);
+          return;
+        }
+
+        if (!name || !subjects.length) {
   alert("Please enter exam name and at least one subject!");
   return;
 }
@@ -4239,12 +4578,27 @@ fetchEffectiveExams(currentClassId, currentClassName, { forceRefresh: true }).th
           });
       });
 
-      // --- Subject Fields Logic for Edit ---
+           // --- Subject Fields Logic for Edit ---
       const subjectsContainer = popupContent.querySelector('#editSubjectsContainer');
       const addSubjectBtn = popupContent.querySelector('#editAddSubjectBtn');
-     function addSubjectField(name = '', max = '', exclude = false, subtopics = [], subtopicsMode = 'common') {
-  const idx = subjectsContainer.children.length;
-  const div = document.createElement('div');
+
+     function addSubjectField(name = '', max = '', exclude = false, subtopics = [], subtopicsMode = 'common', spokenConfig = null) {
+
+  const initialIsSpoken =
+    String(name || '')
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, ' ') === 'spoken english';
+
+  if (initialIsSpoken) {
+    subtopicsMode = 'none';
+  }
+
+  const idx =
+    subjectsContainer.children.length;
+
+  const div =
+    document.createElement('div');
   div.setAttribute('data-subject-row', '');
   div.style = 'display:flex;flex-direction:column;gap:6px;margin-bottom:12px;border-bottom:1px solid #f1f1f1;padding-bottom:10px;';
 
@@ -4356,15 +4710,162 @@ fetchEffectiveExams(currentClassId, currentClassName, { forceRefresh: true }).th
     <div style="font-size:.85em;color:#666; margin-top:4px;">If subtopics are added, this subject’s total is derived from their sum.</div>
   `;
 
+   const spokenBox =
+    document.createElement('div');
+
+  spokenBox.className =
+    'spoken-english-config';
+
+  spokenBox.style =
+    'display:none; background:#fffaf0; border:1px solid #ead49e; border-radius:8px; padding:10px; margin-top:2px;';
+
+  spokenBox.innerHTML = `
+    <div style="font-weight:700;color:#8a5a00;margin-bottom:8px;">
+      Spoken English Auto Calculation
+    </div>
+
+    <div style="font-size:0.9em;color:#666;margin-bottom:9px;">
+      Source Subject: <strong>English 1</strong><br>
+      Final Mark = Spoken English Max − (English 1 marks lost + coins received)
+    </div>
+
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+
+      <label style="flex:1 1 150px;margin:0;">
+        Coins From
+        <input
+          type="date"
+          class="spoken-from"
+          value="${spokenConfig?.fromDate || ''}"
+          style="width:100%;margin-top:4px;padding:8px;border-radius:6px;border:1px solid #c7d7ea;background:#fff;"
+        />
+      </label>
+
+      <label style="flex:1 1 150px;margin:0;">
+        Coins To
+        <input
+          type="date"
+          class="spoken-to"
+          value="${spokenConfig?.toDate || ''}"
+          style="width:100%;margin-top:4px;padding:8px;border-radius:6px;border:1px solid #c7d7ea;background:#fff;"
+        />
+      </label>
+
+    </div>
+  `;
+
+
   div.appendChild(row1);
   div.appendChild(row2);
+  div.appendChild(spokenBox);
   div.appendChild(row3);
   div.appendChild(panel);
+
   subjectsContainer.appendChild(div);
 
-  const wrap   = panel.querySelector('[data-subtopics-wrap]');
-const btnTgl = row3.querySelector('.toggle-subtopics');
-const btnAdd = panel.querySelector('.add-subtopic');
+
+  const wrap =
+    panel.querySelector(
+      '[data-subtopics-wrap]'
+    );
+
+const btnTgl =
+  row3.querySelector('.toggle-subtopics');
+
+const btnAdd =
+  panel.querySelector('.add-subtopic');
+
+const subjectNameInput =
+  row1.querySelector('input[type="text"]');
+
+
+function syncSpokenEnglishRow() {
+
+  const isSpoken =
+    String(subjectNameInput?.value || '')
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, ' ') === 'spoken english';
+
+
+  spokenBox.style.display =
+    isSpoken
+      ? 'block'
+      : 'none';
+
+
+  const modeDD =
+    row2.querySelector('.subject-mode-dd');
+
+  const modeSel =
+    row2.querySelector(
+      '.subject-mode-dd .dropdown-selected'
+    );
+
+
+  if (isSpoken) {
+
+    if (modeSel) {
+
+      modeSel.dataset.mode =
+        'none';
+
+      modeSel.textContent =
+        'None';
+    }
+
+
+    if (modeDD) {
+
+      modeDD.style.pointerEvents =
+        'none';
+
+      modeDD.style.opacity =
+        '0.65';
+    }
+
+
+    panel.style.display =
+      'none';
+
+
+    btnTgl.disabled =
+      true;
+
+    btnTgl.style.opacity =
+      '0.45';
+
+  } else {
+
+    if (modeDD) {
+
+      modeDD.style.pointerEvents =
+        '';
+
+      modeDD.style.opacity =
+        '';
+    }
+
+
+    btnTgl.disabled =
+      false;
+
+    btnTgl.style.opacity =
+      '';
+  }
+}
+
+
+if (subjectNameInput) {
+
+  subjectNameInput.addEventListener(
+    'input',
+    syncSpokenEnglishRow
+  );
+}
+
+
+syncSpokenEnglishRow();
 
 // Subject-level Internal wiring (Edit)
 const subIntToggle = panel.querySelector('.sub-int-toggle');
@@ -4422,12 +4923,27 @@ if (subIntDD && subIntSel && subIntList){
   }
 }
      if (exam.subjects && Array.isArray(exam.subjects)) {
-  exam.subjects.forEach(subj => addSubjectField(
+   exam.subjects.forEach(subj => addSubjectField(
+
     subj.name,
+
     subj.max,
+
     !!subj.excludeFromTotal,
-    Array.isArray(subj.subtopics) ? subj.subtopics : [],
-    subj.subtopicsMode || (Array.isArray(subj.subtopics) && subj.subtopics.length ? 'custom' : 'common')
+
+    Array.isArray(subj.subtopics)
+      ? subj.subtopics
+      : [],
+
+    subj.subtopicsMode ||
+      (
+        Array.isArray(subj.subtopics) &&
+        subj.subtopics.length
+          ? 'custom'
+          : 'common'
+      ),
+
+    subj
   ));
 }
       addSubjectBtn.onclick = () => addSubjectField();
@@ -4706,10 +5222,47 @@ if (!exam) {
   alert('Selected exam is unavailable. Please pick another.');
   return;
 }
-const subj = Array.isArray(exam.subjects) ? exam.subjects.find(s => s.name === subjectName) : null;
-const max = subj ? subj.max : 100;
+const subj =
+  Array.isArray(exam.subjects)
+    ? exam.subjects.find(
+        s => s.name === subjectName
+      )
+    : null;
 
-// honor subject-level subtopics mode: 'custom' | 'common' | 'none'
+
+const max =
+  subj
+    ? subj.max
+    : 100;
+
+
+// IMPORTANT:
+// Special calculation runs ONLY for a Spoken English
+// subject configured in Exam Settings.
+const isSpokenEnglishComputed =
+  !!(
+    subj &&
+    subj.computed === true &&
+    String(subj.computeRule || '') ===
+      'spoken_english_v1' &&
+    String(subjectName || '')
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, ' ') ===
+      'spoken english'
+  );
+
+
+const spokenEnglishSourceSubject =
+  (
+    subj &&
+    subj.sourceSubject
+  )
+    ? String(subj.sourceSubject)
+    : 'English 1';
+
+
+// honor subject-level subtopics mode
 let subtopics = [];
 const mode =
   (subj && typeof subj.subtopicsMode === 'string') ? subj.subtopicsMode :
@@ -4731,6 +5284,10 @@ console.log('Subject:', subjectName, 'mode:', mode, 'Subtopics count:', subtopic
 const hasSubs = (subtopics.length > 0) && (mode === 'custom' || mode === 'common');
 let marksData = {};       // overall total per student (number)
 let breakdownData = {};   // per-subtopic map per student (object)
+
+// Used ONLY when selected subject is configured Spoken English
+let spokenEnglishSourceMarks = {};
+let spokenEnglishPrefill = {};
 
 function _normKey(s) {
   return (s || '')
@@ -4773,8 +5330,63 @@ function _computeInternalFromArray(sourceItems, internalMax) {
                 .collection('marks').doc(examId)
                 .get().then(doc => {
                   if (!doc.exists) return;
-                  const d = doc.data() || {};
-                  console.log('DBG', stu.name, 'keys:', Object.keys(d), 'subsKeys:', d.__subs ? Object.keys(d.__subs) : []);
+                                  const d = doc.data() || {};
+
+                  console.log(
+                    'DBG',
+                    stu.name,
+                    'keys:',
+                    Object.keys(d),
+                    'subsKeys:',
+                    d.__subs
+                      ? Object.keys(d.__subs)
+                      : []
+                  );
+
+
+                  // ------------------------------------------
+                  // SPOKEN ENGLISH SOURCE MARK
+                  // Reads English 1 TOTAL from this same exam.
+                  // Other subjects never enter this block.
+                  // ------------------------------------------
+                  if (isSpokenEnglishComputed) {
+
+                    const sourceKey =
+                      Object.keys(d).find(k =>
+
+                        k !== '__subs' &&
+
+                        _normKey(k) ===
+                          _normKey(
+                            spokenEnglishSourceSubject
+                          )
+                      );
+
+
+                    if (
+                      sourceKey &&
+                      d[sourceKey] !== undefined &&
+                      d[sourceKey] !== null
+                    ) {
+
+                      const sourceValue =
+                        Number(d[sourceKey]);
+
+
+                      if (
+                        Number.isFinite(
+                          sourceValue
+                        )
+                      ) {
+
+                        spokenEnglishSourceMarks[
+                          stu.id
+                        ] = sourceValue;
+                      }
+                    }
+                  }
+
+
                   const totKey = Object.keys(d).find(k =>
                   k !== '__subs' && _normKey(k) === _normKey(subjectName)
                 );
@@ -4802,7 +5414,290 @@ function _computeInternalFromArray(sourceItems, internalMax) {
               }
                 })
             );
-            Promise.all(marksPromises).then(async () => {
+                       Promise.all(marksPromises).then(async () => {
+
+  // ==========================================================
+  // SPOKEN ENGLISH AUTO CALCULATION
+  //
+  // Runs ONLY when Spoken English was configured in
+  // Exam Settings with:
+  //
+  // computeRule = spoken_english_v1
+  //
+  // Final =
+  // Spoken English Max
+  // -
+  // [(English 1 Max - English 1 Obtained) + Coins]
+  //
+  // Minimum final mark = 0
+  // ==========================================================
+
+  if (isSpokenEnglishComputed) {
+
+    const sourceDef =
+      Array.isArray(exam.subjects)
+
+        ? exam.subjects.find(s =>
+
+            s &&
+
+            _normKey(s.name) ===
+              _normKey(
+                spokenEnglishSourceSubject
+              )
+          )
+
+        : null;
+
+
+    const sourceMax =
+      Number(sourceDef?.max);
+
+
+    const spokenMax =
+      Number(max);
+
+
+    const fromDate =
+      String(
+        subj?.fromDate || ''
+      ).trim();
+
+
+    const toDate =
+      String(
+        subj?.toDate || ''
+      ).trim();
+
+
+    if (
+      sourceMax > 0 &&
+      spokenMax > 0 &&
+      fromDate &&
+      toDate &&
+      fromDate <= toDate
+    ) {
+
+      try {
+
+        const documentId =
+          firebase.firestore
+            .FieldPath
+            .documentId();
+
+
+        const coinSnapshot =
+          await db
+            .collection('years')
+            .doc(academicYear)
+
+            .collection('classes')
+            .doc(currentClassId)
+
+            .collection('sections')
+            .doc(currentSectionId)
+
+            .collection(
+              'spokenEnglishRegister'
+            )
+
+            .where(
+              documentId,
+              '>=',
+              fromDate
+            )
+
+            .where(
+              documentId,
+              '<=',
+              toDate
+            )
+
+            .get();
+
+
+        const coinTotals = {};
+
+
+        coinSnapshot.forEach(
+          coinDoc => {
+
+            const data =
+              coinDoc.data() || {};
+
+
+            Object.keys(data)
+              .forEach(studentId => {
+
+                if (
+                  studentId === '__meta'
+                ) {
+                  return;
+                }
+
+
+                const raw =
+                  data[studentId];
+
+
+                const coins =
+                  typeof raw === 'number'
+
+                    ? Number(raw)
+
+                    : (
+                        raw &&
+                        typeof raw ===
+                          'object' &&
+                        raw.coins !==
+                          undefined
+                      )
+
+                        ? Number(
+                            raw.coins
+                          )
+
+                        : 0;
+
+
+                if (
+                  !Number.isFinite(coins) ||
+                  coins <= 0
+                ) {
+                  return;
+                }
+
+
+                coinTotals[studentId] =
+                  (
+                    Number(
+                      coinTotals[
+                        studentId
+                      ]
+                    ) || 0
+                  ) + coins;
+              });
+          }
+        );
+
+
+        students.forEach(stu => {
+
+          const englishObtained =
+            spokenEnglishSourceMarks[
+              stu.id
+            ];
+
+
+          // English 1 must already have a numeric total.
+          // If not entered, Spoken English stays blank.
+          if (
+            !Number.isFinite(
+              englishObtained
+            )
+          ) {
+
+            spokenEnglishPrefill[
+              stu.id
+            ] = '';
+
+            return;
+          }
+
+
+          const englishLost =
+            Math.max(
+              0,
+              sourceMax -
+                englishObtained
+            );
+
+
+          const coins =
+            Math.max(
+              0,
+              Number(
+                coinTotals[stu.id]
+              ) || 0
+            );
+
+
+          const penalty =
+            englishLost +
+            coins;
+
+
+          const finalMark =
+            Math.max(
+
+              0,
+
+              Math.min(
+
+                spokenMax,
+
+                spokenMax -
+                  penalty
+              )
+            );
+
+
+          spokenEnglishPrefill[
+            stu.id
+          ] =
+            Number(
+              finalMark.toFixed(2)
+            );
+        });
+
+
+      } catch (
+        spokenEnglishError
+      ) {
+
+        console.error(
+          'Spoken English calculation failed:',
+          spokenEnglishError
+        );
+
+
+        students.forEach(stu => {
+
+          spokenEnglishPrefill[
+            stu.id
+          ] = '';
+        });
+      }
+
+
+    } else {
+
+      console.warn(
+        'Spoken English configuration is incomplete.',
+        {
+          sourceSubject:
+            spokenEnglishSourceSubject,
+
+          sourceMax,
+
+          spokenMax,
+
+          fromDate,
+
+          toDate
+        }
+      );
+
+
+      students.forEach(stu => {
+
+        spokenEnglishPrefill[
+          stu.id
+        ] = '';
+      });
+    }
+  }
+
 
   // ---- Build Internal prefill map (studentId -> integer) if Internal is configured ----
   // Detect "Internal" subtopic (computed:true) on this subject/exam
@@ -5304,19 +6199,72 @@ function _computeInternalFromArray(sourceItems, internalMax) {
                                   </div>
                                 `;
                               }
-                             // fallback: no subtopics → single total input (original flow)
-                                                       const soloPre = (marksData[stu.id] != null) ? marksData[stu.id] : '';
+                                                         // fallback: no subtopics → single total input
+
+                            const soloPre =
+
+                              isSpokenEnglishComputed
+
+                                ? (
+                                    spokenEnglishPrefill[
+                                      stu.id
+                                    ] != null
+
+                                      ? spokenEnglishPrefill[
+                                          stu.id
+                                        ]
+
+                                      : ''
+                                  )
+
+                                : (
+                                    marksData[
+                                      stu.id
+                                    ] != null
+
+                                      ? marksData[
+                                          stu.id
+                                        ]
+
+                                      : ''
+                                  );
+
+
                             return `
                               <div class="marks-row">
-                                <span class="roll-name">${stu.roll ? stu.roll + '. ' : ''}${stu.name}</span>
+
+                                <span class="roll-name">
+                                  ${stu.roll ? stu.roll + '. ' : ''}${stu.name}
+                                </span>
+
                                 <input
                                   type="number"
                                   name="marks_${stu.id}"
                                   value="${soloPre}"
-                                  min="0" max="${max}" step="1"
+                                  min="0"
+                                  max="${max}"
+                                  step="${isSpokenEnglishComputed ? '0.01' : '1'}"
                                   class="marks-input"
+
+                                  ${
+                                    isSpokenEnglishComputed
+                                      ? 'readonly tabindex="-1"'
+                                      : ''
+                                  }
+
+                                  ${
+                                    isSpokenEnglishComputed
+                                      ? 'style="background:#f5f5f5;color:#333;"'
+                                      : ''
+                                  }
                                 />
-                                <small class="grade-pill" data-stu="${stu.id}" style="margin-left:10px;color:#1762a7;font-weight:700;"></small>
+
+                                <small
+                                  class="grade-pill"
+                                  data-stu="${stu.id}"
+                                  style="margin-left:10px;color:#1762a7;font-weight:700;"
+                                ></small>
+
                               </div>
                             `;
                           }).join('')
