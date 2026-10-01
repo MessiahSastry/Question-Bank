@@ -3265,10 +3265,10 @@ subtopics = subtopics.filter(st => {
       fromDate: fromDate,
       toDate: toDate,
 
-      weights: {
-        attendance: 40,
-        homework: 30,
-        regularity: 30
+     weights: {
+        attendance: 50,
+        homework: 25,
+        regularity: 25
       },
 
       rules: {
@@ -5816,15 +5816,16 @@ return Math.round(bounded);
       const toDate = String(disciplineSt.toDate);
       const disciplineMax = Number(disciplineSt.max);
 
-      const weights = disciplineSt.weights || {};
-      const attendanceWeight = Number(weights.attendance) || 40;
-      const homeworkWeight = Number(weights.homework) || 30;
-      const regularityWeight = Number(weights.regularity) || 30;
+     // Fixed Discipline weightage:
+// Attendance 50% + Homework 25% + Regularity 25%
+const attendanceWeight = 50;
+const homeworkWeight = 25;
+const regularityWeight = 25;
 
-      const totalWeight =
-        attendanceWeight +
-        homeworkWeight +
-        regularityWeight;
+const totalWeight =
+  attendanceWeight +
+  homeworkWeight +
+  regularityWeight;
 
       const rules = disciplineSt.rules || {};
 
@@ -5881,41 +5882,52 @@ return Math.round(bounded);
 
       students.forEach(stu => {
 
-        // --------------------------
-        // 1. ATTENDANCE
-        // --------------------------
-        let totalSessions = 0;
-        let presentSessions = 0;
+       // --------------------------
+// 1. ATTENDANCE
+// --------------------------
+// Attendance = 50% of Discipline.
+//
+// Full-day absence = 0.30 mark deduction
+// Half-day absence = 0.15 mark deduction
+// when Discipline Max = 10.
+//
+// Therefore:
+// 1 full absent day reduces the attendance ratio by 0.06.
+// 0.5 absent day reduces the attendance ratio by 0.03.
 
-        attendanceSnapshot.forEach(attDoc => {
-          const allStudents = attDoc.data() || {};
-          const attendance = allStudents[stu.id];
+let attendanceRecordedDays = 0;
+let absentDays = 0;
 
-          // Do not penalise when this student has no record on that date
-          if (!attendance) return;
+attendanceSnapshot.forEach(attDoc => {
+  const allStudents = attDoc.data() || {};
+  const attendance = allStudents[stu.id];
 
-          totalSessions += 2;
+  // Do not penalise if this student has no attendance record
+  // for this date.
+  if (!attendance) return;
 
-          if (
-            String(attendance.M || 'present').toLowerCase() !== 'absent'
-          ) {
-            presentSessions += 1;
-          }
+  attendanceRecordedDays += 1;
 
-          if (
-            String(attendance.A || 'present').toLowerCase() !== 'absent'
-          ) {
-            presentSessions += 1;
-          }
-        });
+  const absentM =
+    String(attendance.M || 'present').toLowerCase() === 'absent';
 
-        // If attendance was not recorded during the range,
-        // do not penalise the student.
-        const attendanceRatio =
-          totalSessions > 0
-            ? presentSessions / totalSessions
-            : 1;
+  const absentA =
+    String(attendance.A || 'present').toLowerCase() === 'absent';
 
+  if (absentM && absentA) {
+    absentDays += 1;
+  } else if (absentM || absentA) {
+    absentDays += 0.5;
+  }
+});
+
+// 1 full day absent = 6% reduction from Attendance component.
+// Since Attendance carries 5 marks out of 10,
+// 6% of 5 = 0.30 mark.
+const attendanceRatio =
+  attendanceRecordedDays > 0
+    ? Math.max(0, 1 - (absentDays * 0.06))
+    : 1;
         // --------------------------
         // 2. HOMEWORK
         // --------------------------
@@ -5951,9 +5963,10 @@ return Math.round(bounded);
 if (entry.late === true) {
   const mins = Math.max(0, Number(entry.lateMinutes) || 0);
 
-  // 0.025 penalty per minute.
-  // Maximum penalty for one late entry = 0.50.
-  regularityPenalty += Math.min(mins * 0.025, 0.50);
+  // 0.01 penalty per minute.
+  // Maximum penalty for one late entry = 0.15.
+  // Absence therefore has a stronger effect than one late entry.
+  regularityPenalty += Math.min(mins * 0.01, 0.15);
 }
 
           // No Uniform
