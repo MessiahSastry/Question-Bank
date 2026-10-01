@@ -2473,7 +2473,7 @@ document.getElementById('viewDisciplineBtn').onclick = function () {
   window.location.href = "view-discipline.html?v=1";
 };
 
-document.getElementById('viewAttendanceBtn').onclick = showAttendanceHistoryPopup;
+document.getElementById('viewAttendanceBtn').onclick = showAttendanceViewChoicePopup;
   document.getElementById('postMarksBtn').onclick = function(){ window.location.href = "post-marks.html"; };
   document.getElementById('downloadMemosBtn').onclick = function() {
     window.location.href = "memos.html";
@@ -6957,7 +6957,560 @@ if (subjectName) {
           }, 400);
     });
 }
-    function showAttendanceHistoryPopup() {
+   // ================= VIEW ATTENDANCE - YEAR / MONTH =================
+
+function showAttendanceViewChoicePopup() {
+  showPopup(`
+    <div class="popup-title">View Attendance</div>
+
+    <div style="
+      display:flex;
+      gap:14px;
+      margin:18px 0 12px 0;
+    ">
+      <button
+        type="button"
+        class="popup-action-btn"
+        id="attendanceYearViewBtn"
+        style="flex:1;padding:18px 10px;font-size:1.08em;">
+        YEAR
+      </button>
+
+      <button
+        type="button"
+        class="popup-action-btn"
+        id="attendanceMonthViewBtn"
+        style="flex:1;padding:18px 10px;font-size:1.08em;">
+        MONTH
+      </button>
+    </div>
+
+    <div class="popup-btn-row">
+      <button class="popup-cancel-btn">Close</button>
+    </div>
+  `);
+
+  document.getElementById('attendanceYearViewBtn').onclick = function () {
+    showAttendanceYearSummary();
+  };
+
+  document.getElementById('attendanceMonthViewBtn').onclick = function () {
+    showAttendanceMonthSelector();
+  };
+}
+
+
+// ---------------------------------------------------------
+// LOAD STUDENTS + ATTENDANCE
+// ---------------------------------------------------------
+async function loadAttendanceSummaryData() {
+
+  const stuSnap = await db.collection('years').doc(academicYear)
+    .collection('classes').doc(currentClassId)
+    .collection('sections').doc(currentSectionId)
+    .collection('students')
+    .orderBy('roll')
+    .get();
+
+  let students = [];
+
+  stuSnap.forEach(doc => {
+    const data = doc.data();
+
+    if (!data.isDeleted) {
+      students.push({
+        id: doc.id,
+        ...data
+      });
+    }
+  });
+
+
+  const attSnap = await db.collection('years').doc(academicYear)
+    .collection('classes').doc(currentClassId)
+    .collection('sections').doc(currentSectionId)
+    .collection('attendance')
+    .orderBy(firebase.firestore.FieldPath.documentId())
+    .get();
+
+  let attendanceDocs = [];
+
+  attSnap.forEach(doc => {
+    attendanceDocs.push({
+      date: doc.id,
+      data: doc.data() || {}
+    });
+  });
+
+  return {
+    students,
+    attendanceDocs
+  };
+}
+
+
+// ---------------------------------------------------------
+// FORMAT 2.0 -> 2
+// FORMAT 2.5 -> 2.5
+// ---------------------------------------------------------
+function formatAttendanceValue(value) {
+  return Number.isInteger(value)
+    ? value.toString()
+    : value.toFixed(1);
+}
+
+
+// ---------------------------------------------------------
+// CALCULATE ONE STUDENT ATTENDANCE
+// ---------------------------------------------------------
+function calculateStudentAttendance(studentId, attendanceDocs) {
+
+  let absentDays = 0;
+
+  attendanceDocs.forEach(day => {
+
+    const stat = day.data[studentId] || {};
+
+    const absentM = stat.M === 'absent';
+    const absentA = stat.A === 'absent';
+
+    if (absentM && absentA) {
+      absentDays += 1;
+    }
+    else if (absentM || absentA) {
+      absentDays += 0.5;
+    }
+
+  });
+
+  const workingDays = attendanceDocs.length;
+  const presentDays = workingDays - absentDays;
+
+  return {
+    workingDays,
+    presentDays,
+    absentDays
+  };
+}
+
+
+// ---------------------------------------------------------
+// COMMON SUMMARY SCREEN
+// ---------------------------------------------------------
+function showAttendanceSummaryScreen(
+  title,
+  students,
+  attendanceDocs,
+  backFunction
+) {
+
+  const workingDays = attendanceDocs.length;
+
+  let html = `
+    <div class="popup-title">${title}</div>
+
+    <div style="
+      text-align:center;
+      background:#eef5fb;
+      color:#0f3d6b;
+      border-radius:8px;
+      padding:8px 10px;
+      margin-bottom:10px;
+      font-weight:600;
+    ">
+      Working Days: ${workingDays}
+    </div>
+  `;
+
+  if (workingDays === 0) {
+
+    html += `
+      <div style="
+        color:#888;
+        text-align:center;
+        padding:20px 5px;
+      ">
+        No attendance records found.
+      </div>
+    `;
+
+  }
+  else {
+
+    html += `
+      <div style="max-height:340px;overflow-y:auto;">
+    `;
+
+    students.forEach(stu => {
+
+      const summary = calculateStudentAttendance(
+        stu.id,
+        attendanceDocs
+      );
+
+      const present = formatAttendanceValue(summary.presentDays);
+      const absent = formatAttendanceValue(summary.absentDays);
+
+      html += `
+        <div class="att-row">
+
+          <div class="att-main">
+
+            <span class="att-name">
+              ${stu.roll ? stu.roll + '. ' : ''}${stu.name}
+            </span>
+
+            <div class="att-badges">
+
+              <span class="att-badge att-m-present">
+                Present: ${present}
+              </span>
+
+              <span class="att-badge att-m-absent">
+                Absent: ${absent}
+              </span>
+
+            </div>
+
+          </div>
+
+          <span
+            class="att-total-box"
+            title="Absent Days / Working Days">
+            ${absent} / ${summary.workingDays}
+          </span>
+
+        </div>
+      `;
+
+    });
+
+    html += `</div>`;
+  }
+
+
+  html += `
+    <div style="
+      display:flex;
+      gap:10px;
+      margin-top:14px;
+    ">
+
+      <button
+        type="button"
+        class="popup-action-btn"
+        id="attendanceSummaryBackBtn"
+        style="
+          flex:1;
+          background:#eef3f8;
+          color:#0f3d6b;
+        ">
+        Back
+      </button>
+
+      <button
+        type="button"
+        class="popup-cancel-btn"
+        style="flex:1;">
+        Close
+      </button>
+
+    </div>
+  `;
+
+  showPopup(html);
+
+  document.getElementById('attendanceSummaryBackBtn').onclick = function () {
+    backFunction();
+  };
+}
+
+
+// ---------------------------------------------------------
+// YEAR ATTENDANCE
+// ---------------------------------------------------------
+async function showAttendanceYearSummary() {
+
+  showPopup(`
+    <div class="popup-title">Year Attendance</div>
+
+    <div style="
+      padding:20px;
+      text-align:center;
+      color:#666;
+    ">
+      Loading attendance...
+    </div>
+  `);
+
+  try {
+
+    const {
+      students,
+      attendanceDocs
+    } = await loadAttendanceSummaryData();
+
+    showAttendanceSummaryScreen(
+      `Year Attendance - ${academicYear}`,
+      students,
+      attendanceDocs,
+      showAttendanceViewChoicePopup
+    );
+
+  }
+  catch (error) {
+
+    console.error(error);
+
+    showPopup(`
+      <div class="popup-title">Year Attendance</div>
+
+      <div style="color:#d43f3a;">
+        Unable to load attendance.
+      </div>
+
+      <div class="popup-btn-row">
+        <button class="popup-cancel-btn">Close</button>
+      </div>
+    `);
+
+  }
+}
+
+
+// ---------------------------------------------------------
+// MONTH NAME
+// ---------------------------------------------------------
+function attendanceMonthName(monthNumber) {
+
+  const names = [
+    'January',
+    'February',
+    'March',
+    'April',
+    'May',
+    'June',
+    'July',
+    'August',
+    'September',
+    'October',
+    'November',
+    'December'
+  ];
+
+  return names[parseInt(monthNumber, 10) - 1] || '';
+}
+
+
+// ---------------------------------------------------------
+// MONTH SELECTOR
+// ---------------------------------------------------------
+async function showAttendanceMonthSelector() {
+
+  showPopup(`
+    <div class="popup-title">Month Attendance</div>
+
+    <div style="
+      padding:20px;
+      text-align:center;
+      color:#666;
+    ">
+      Loading months...
+    </div>
+  `);
+
+  try {
+
+    const {
+      students,
+      attendanceDocs
+    } = await loadAttendanceSummaryData();
+
+
+    if (attendanceDocs.length === 0) {
+
+      showPopup(`
+        <div class="popup-title">Month Attendance</div>
+
+        <div style="
+          color:#888;
+          text-align:center;
+          padding:18px 0;
+        ">
+          No attendance records found.
+        </div>
+
+        <div style="
+          display:flex;
+          gap:10px;
+          margin-top:10px;
+        ">
+
+          <button
+            type="button"
+            class="popup-action-btn"
+            id="attendanceMonthBackBtn"
+            style="
+              flex:1;
+              background:#eef3f8;
+              color:#0f3d6b;
+            ">
+            Back
+          </button>
+
+          <button
+            type="button"
+            class="popup-cancel-btn"
+            style="flex:1;">
+            Close
+          </button>
+
+        </div>
+      `);
+
+      document.getElementById('attendanceMonthBackBtn').onclick =
+        showAttendanceViewChoicePopup;
+
+      return;
+    }
+
+
+    // Unique YYYY-MM values
+    const monthKeys = [
+      ...new Set(
+        attendanceDocs.map(item => item.date.slice(0, 7))
+      )
+    ].sort();
+
+
+    let html = `
+      <div class="popup-title">Select Month</div>
+
+      <div style="
+        display:grid;
+        grid-template-columns:1fr 1fr;
+        gap:10px;
+        max-height:330px;
+        overflow-y:auto;
+        margin-top:10px;
+      ">
+    `;
+
+
+    monthKeys.forEach(key => {
+
+      const parts = key.split('-');
+
+      const year = parts[0];
+      const month = parts[1];
+
+      html += `
+        <button
+          type="button"
+          class="popup-action-btn attendance-month-choice"
+          data-month="${key}"
+          style="
+            padding:14px 8px;
+            font-size:1em;
+          ">
+          ${attendanceMonthName(month)} ${year}
+        </button>
+      `;
+
+    });
+
+
+    html += `
+      </div>
+
+      <div style="
+        display:flex;
+        gap:10px;
+        margin-top:14px;
+      ">
+
+        <button
+          type="button"
+          class="popup-action-btn"
+          id="attendanceMonthBackBtn"
+          style="
+            flex:1;
+            background:#eef3f8;
+            color:#0f3d6b;
+          ">
+          Back
+        </button>
+
+        <button
+          type="button"
+          class="popup-cancel-btn"
+          style="flex:1;">
+          Close
+        </button>
+
+      </div>
+    `;
+
+
+    showPopup(html);
+
+
+    document.getElementById('attendanceMonthBackBtn').onclick =
+      showAttendanceViewChoicePopup;
+
+
+    document
+      .querySelectorAll('.attendance-month-choice')
+      .forEach(btn => {
+
+        btn.onclick = function () {
+
+          const selectedMonthKey = this.dataset.month;
+
+          const filteredDocs = attendanceDocs.filter(
+            item => item.date.startsWith(selectedMonthKey)
+          );
+
+          const parts = selectedMonthKey.split('-');
+
+          const year = parts[0];
+          const month = parts[1];
+
+          showAttendanceSummaryScreen(
+            `${attendanceMonthName(month)} ${year} Attendance`,
+            students,
+            filteredDocs,
+            showAttendanceMonthSelector
+          );
+
+        };
+
+      });
+
+  }
+  catch (error) {
+
+    console.error(error);
+
+    showPopup(`
+      <div class="popup-title">Month Attendance</div>
+
+      <div style="color:#d43f3a;">
+        Unable to load attendance.
+      </div>
+
+      <div class="popup-btn-row">
+        <button class="popup-cancel-btn">Close</button>
+      </div>
+    `);
+
+  }
+}
+
+
+// ================= EXISTING ATTENDANCE HISTORY =================
+
+function showAttendanceHistoryPopup() {
   // Get attendance docs for this section
   db.collection('years').doc(academicYear)
     .collection('classes').doc(currentClassId)
