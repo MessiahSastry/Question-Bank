@@ -4326,10 +4326,10 @@ subtopics = subtopics.filter(st => {
       fromDate: fromDate,
       toDate: toDate,
 
-      weights: {
-        attendance: 40,
-        homework: 30,
-        regularity: 30
+     weights: {
+        attendance: 50,
+        homework: 25,
+        regularity: 25
       },
 
       rules: {
@@ -5882,18 +5882,26 @@ const totalWeight =
 
       students.forEach(stu => {
 
-       // --------------------------
+      // --------------------------
 // 1. ATTENDANCE
 // --------------------------
-// Attendance = 50% of Discipline.
+// Attendance = 5 marks out of Discipline 10.
 //
-// Full-day absence = 0.30 mark deduction
-// Half-day absence = 0.15 mark deduction
-// when Discipline Max = 10.
+// ABSENCE RULE:
+// 0 to 1 day absent  = no deduction
+// 1.5 days absent    = 0.5 mark deduction
+// 2 days absent      = 1 mark deduction
+// 2.5 days absent    = 1.5 marks deduction
+// 3 days absent      = 2 marks deduction
+// 3.5 days absent    = 2.5 marks deduction
+// 4 days absent      = 3 marks deduction
+// 4.5 days absent    = 3.5 marks deduction
+// 5 days absent      = 4 marks deduction
+// 5.5 days absent    = 4.5 marks deduction
+// 6 days or more     = 5 marks deduction
 //
-// Therefore:
-// 1 full absent day reduces the attendance ratio by 0.06.
-// 0.5 absent day reduces the attendance ratio by 0.03.
+// Morning OR Afternoon absent = 0.5 day
+// Morning AND Afternoon absent = 1 full day
 
 let attendanceRecordedDays = 0;
 let absentDays = 0;
@@ -5902,8 +5910,8 @@ attendanceSnapshot.forEach(attDoc => {
   const allStudents = attDoc.data() || {};
   const attendance = allStudents[stu.id];
 
-  // Do not penalise if this student has no attendance record
-  // for this date.
+  // No attendance record for this student on this date:
+  // do not count or penalise.
   if (!attendance) return;
 
   attendanceRecordedDays += 1;
@@ -5921,12 +5929,24 @@ attendanceSnapshot.forEach(attDoc => {
   }
 });
 
-// 1 full day absent = 6% reduction from Attendance component.
-// Since Attendance carries 5 marks out of 10,
-// 6% of 5 = 0.30 mark.
+// First 1 absent day is allowed without deduction.
+// After 1 day, every additional 0.5 day deducts 0.5 mark.
+// Maximum Attendance deduction = 5 marks.
+const attendanceDeduction =
+  Math.min(
+    5,
+    Math.max(0, absentDays - 1)
+  );
+
+// Attendance component is 5 marks.
+// Convert remaining Attendance marks into a 0-to-1 ratio
+// for the existing Discipline formula.
+const attendanceMarks =
+  Math.max(0, 5 - attendanceDeduction);
+
 const attendanceRatio =
   attendanceRecordedDays > 0
-    ? Math.max(0, 1 - (absentDays * 0.06))
+    ? attendanceMarks / 5
     : 1;
         // --------------------------
         // 2. HOMEWORK
