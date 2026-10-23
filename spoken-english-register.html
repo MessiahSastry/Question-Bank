@@ -1711,7 +1711,209 @@ async function confirmCoinSave() {
 
     ]);
 
+    
+    ]);
+
+    // Update Spoken English marks automatically after coin changes.
+    // Exam precedence: section > class > class group.
+
+    let spokenSyncError = null;
+
+    try {
+      const classGroups = {
+        'Nursery': 'nursery-lkg-ukg',
+        'LKG': 'nursery-lkg-ukg',
+        'UKG': 'nursery-lkg-ukg',
+        '1st Class': 'class-1-2',
+        '2nd Class': 'class-1-2',
+        '3rd Class': 'class-3-5',
+        '4th Class': 'class-3-5',
+        '5th Class': 'class-3-5',
+        '6th Class': 'class-6-9',
+        '7th Class': 'class-6-9',
+        '8th Class': 'class-6-9',
+        '9th Class': 'class-6-9',
+        '10th Class': 'class-10'
+      };
+
+      const yearRef = db.collection('years').doc(academicYear);
+      const classRef = yearRef.collection('classes').doc(currentClassId);
+      const sectionRef = classRef.collection('sections').doc(currentSectionId);
+
+      const [groupSnap, classSnap, sectionSnap] = await Promise.all([
+        yearRef.collection('exams').doc('classGroups')
+          .collection(classGroups[currentClassName] || 'default').get(),
+        classRef.collection('examOverrides').get(),
+        sectionRef.collection('examOverrides').get()
+      ]);
+
+      const examsById = new Map();
+
+      groupSnap.forEach(d =>
+        examsById.set(d.id, { id: d.id, ...d.data() })
+      );
+
+      function applyOverrides(snapshot, scope) {
+        snapshot.forEach(doc => {
+          const o = doc.data() || {};
+
+          if (o.origin === scope + '-only') {
+            examsById.set(doc.id, { id: doc.id, ...o });
+          } else if (o.hidden === true) {
+            examsById.delete(doc.id);
+          } else if (examsById.has(doc.id)) {
+            const base = examsById.get(doc.id);
+
+            examsById.set(doc.id, {
+              ...base,
+              name: o.name ?? base.name,
+              subjects: Array.isArray(o.subjects) && o.subjects.length
+                ? o.subjects
+                : base.subjects
+            });
+          } else {
+            examsById.set(doc.id, { id: doc.id, ...o });
+          }
+        });
+      }
+
+      applyOverrides(classSnap, 'class');
+      applyOverrides(sectionSnap, 'section');
+
+      const norm = str => String(str || '')
+        .normalize('NFKC')
+        .trim()
+        .replace(/\s+/g, ' ')
+        .toLowerCase();
+
+      for (const exam of examsById.values()) {
+        const spoken = (exam.subjects || []).find(s =>
+          norm(s?.name) === 'spoken english' &&
+          s.computed === true &&
+          s.computeRule === 'spoken_english_v1'
+        );
+
+        if (!spoken) continue;
+
+        const from = String(spoken.fromDate || '');
+        const to = String(spoken.toDate || '');
+
+        if (!from || !to || date < from || date > to) continue;
+
+        const source = (exam.subjects || []).find(s =>
+          norm(s?.name) === norm(spoken.sourceSubject || 'English 1')
+        );
+
+        const sourceMax = Number(source?.max);
+        const spokenMax = Number(spoken.max);
+
+        if (!(sourceMax > 0 && spokenMax > 0 && from <= to)) {
+          throw new Error(
+            'Invalid Spoken English settings in ' + (exam.name || exam.id)
+          );
+        }
+
+        const docId = firebase.firestore.FieldPath.documentId();
+
+        const days = await sectionRef.collection('spokenEnglishRegister')
+          .where(docId, '>=', from)
+          .where(docId, '<=', to)
+          .get();
+
+        const totalCoins = {};
+
+        days.forEach(day => {
+          Object.entries(day.data() || {}).forEach(([id, entry]) => {
+            if (id === '__meta') return;
+
+            const n = Number(
+              typeof entry === 'object' && entry !== null
+                ? entry.coins
+                : entry
+            );
+
+            if (Number.isFinite(n) && n > 0) {
+              totalCoins[id] = (totalCoins[id] || 0) + n;
+            }
+          });
+        });
+
+        const marks = await Promise.all(students.map(async student => {
+          const ref = sectionRef.collection('students').doc(student.id)
+            .collection('marks').doc(exam.id);
+
+          return { student, ref, snap: await ref.get() };
+        }));
+
+        const updateBatch = db.batch();
+        let changes = 0;
+
+        for (const { student, ref, snap } of marks) {
+          if (!snap.exists) continue;
+
+          const saved = snap.data() || {};
+          const keys = Object.keys(saved);
+
+          const sourceKey = keys.find(k =>
+            k !== '__subs' && norm(k) === norm(source.name)
+          );
+
+          const oldKey = keys.find(k =>
+            k !== '__subs' && norm(k) === 'spoken english'
+          );
+
+          const sourceValue = sourceKey
+            ? saved[sourceKey]
+            : undefined;
+
+          if (sourceValue === undefined ||
+              sourceValue === null ||
+              String(sourceValue).trim() === '' ||
+              !Number.isFinite(Number(sourceValue))) {
+            if (oldKey) {
+              updateBatch.update(ref, {
+                [oldKey]: firebase.firestore.FieldValue.delete()
+              });
+              changes++;
+            }
+            continue;
+          }
+
+          const lost = Math.max(0, sourceMax - Number(sourceValue));
+
+          const result = Number(
+            Math.max(0, Math.min(
+              spokenMax,
+              spokenMax - lost - (totalCoins[student.id] || 0)
+            )).toFixed(2)
+          );
+
+          if (oldKey === spoken.name &&
+              Number(saved[oldKey]) === result) continue;
+
+          const payload = { [spoken.name]: result };
+
+          if (oldKey && oldKey !== spoken.name) {
+            payload[oldKey] = firebase.firestore.FieldValue.delete();
+          }
+
+          updateBatch.update(ref, payload);
+          changes++;
+        }
+
+        if (changes) await updateBatch.commit();
+      }
+
+    } catch (error) {
+      spokenSyncError = error;
+      console.error(
+        'Coins saved, but Spoken English marks sync failed:',
+        error
+      );
+    }
+
     closeCoinSaveConfirmation();
+
 
     statusNote.textContent =
       `Saved: ${summary.total} of ${summary.limit} coins entered.`;
@@ -1720,9 +1922,14 @@ async function confirmCoinSave() {
 
     statusNote.style.color = "";
 
-    showToast(
-      "Spoken English coins saved successfully."
-    );
+    
+showToast(
+  spokenSyncError
+    ? "Coins saved, but Spoken English auto-update failed. Please retry."
+    : "Coins saved; Spoken English marks updated where applicable.",
+  spokenSyncError ? "error" : "success"
+);
+
 
     pendingCoinSave = null;
 
