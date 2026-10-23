@@ -6504,10 +6504,141 @@ if (subjectName) {
 }
 }
           });
-                 batch.commit().then(() => {
-                  alert("Marks saved successfully!");
-                  closePopup();
-                }).catch(error => alert("Error saving marks: " + error.message));
+                
+batch.commit().then(async () => {
+  // Automatically recalculate and save Spoken English
+  // whenever English 1 marks are saved.
+
+  const spoken = (exam.subjects || []).find(s =>
+    _normKey(s?.name) === 'spoken english' &&
+    s.computed === true &&
+    s.computeRule === 'spoken_english_v1'
+  );
+
+  const source = spoken && (exam.subjects || []).find(s =>
+    _normKey(s?.name) === _normKey(spoken.sourceSubject || 'English 1')
+  );
+
+  let syncError = null;
+
+  if (spoken && source &&
+      _normKey(subjectName) === _normKey(source.name)) {
+    try {
+      const sourceMax = Number(source.max);
+      const spokenMax = Number(spoken.max);
+      const from = String(spoken.fromDate || '');
+      const to = String(spoken.toDate || '');
+
+      if (!(sourceMax > 0 && spokenMax > 0 &&
+            from && to && from <= to)) {
+        throw new Error('Invalid Spoken English exam settings.');
+      }
+
+      const sectionRef = db.collection('years').doc(academicYear)
+        .collection('classes').doc(currentClassId)
+        .collection('sections').doc(currentSectionId);
+
+      const dayField = firebase.firestore.FieldPath.documentId();
+
+      const coinSnap = await sectionRef.collection('spokenEnglishRegister')
+        .where(dayField, '>=', from)
+        .where(dayField, '<=', to)
+        .get();
+
+      const coinTotals = {};
+
+      coinSnap.forEach(day => {
+        Object.entries(day.data() || {}).forEach(([studentId, entry]) => {
+          if (studentId === '__meta') return;
+
+          const value = Number(
+            typeof entry === 'object' && entry !== null
+              ? entry.coins
+              : entry
+          );
+
+          if (Number.isFinite(value) && value > 0) {
+            coinTotals[studentId] = (coinTotals[studentId] || 0) + value;
+          }
+        });
+      });
+
+      const reads = await Promise.all(students.map(async stu => {
+        const ref = sectionRef.collection('students').doc(stu.id)
+          .collection('marks').doc(examId);
+
+        return { stu, ref, snap: await ref.get() };
+      }));
+
+      const autoBatch = db.batch();
+      let changes = 0;
+
+      for (const { stu, ref, snap } of reads) {
+        if (!snap.exists) continue;
+
+        const record = snap.data() || {};
+        const keys = Object.keys(record);
+
+        const sourceKey = keys.find(k =>
+          k !== '__subs' && _normKey(k) === _normKey(source.name)
+        );
+
+        const oldKey = keys.find(k =>
+          k !== '__subs' && _normKey(k) === 'spoken english'
+        );
+
+        const original = sourceKey ? record[sourceKey] : undefined;
+
+        if (original === undefined ||
+            original === null ||
+            String(original).trim() === '' ||
+            !Number.isFinite(Number(original))) {
+          if (oldKey) {
+            autoBatch.update(ref, {
+              [oldKey]: firebase.firestore.FieldValue.delete()
+            });
+            changes++;
+          }
+          continue;
+        }
+
+        const lost = Math.max(0, sourceMax - Number(original));
+        const penalty = lost + (coinTotals[stu.id] || 0);
+
+        const value = Number(
+          Math.max(0, Math.min(spokenMax, spokenMax - penalty)).toFixed(2)
+        );
+
+        if (oldKey &&
+            Number(record[oldKey]) === value &&
+            oldKey === spoken.name) continue;
+
+        const update = { [spoken.name]: value };
+
+        if (oldKey && oldKey !== spoken.name) {
+          update[oldKey] = firebase.firestore.FieldValue.delete();
+        }
+
+        autoBatch.update(ref, update);
+        changes++;
+      }
+
+      if (changes) await autoBatch.commit();
+
+    } catch (error) {
+      console.error('Spoken English automatic update failed:', error);
+      syncError = error;
+    }
+  }
+
+  alert(syncError
+    ? 'English 1 marks saved, but Spoken English could not update automatically: ' + syncError.message
+    : 'Marks saved successfully!');
+
+  closePopup();
+
+}).catch(error => alert('Error saving marks: ' + error.message));
+
               });
               // Auto-sum per student (robust, with event delegation)
               {
