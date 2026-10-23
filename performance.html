@@ -249,10 +249,59 @@ function averageRows(s,subjects=s.subjects){
 }
 function movementRows(s){return s.subjects.map(subject=>{const m=movement(s,subject);return[subject,m.n,m.up,m.down,m.same,m.newPass,m.newBelow];});}
 const MOVEMENT_HEADERS=['Subject','Compared','Improved','Declined','Unchanged','Newly passed','Newly below pass'];
+function failureGroups(s){
+ return s.subjects.flatMap(subject=>s.exams.map(exam=>{
+  const def=definition(s,exam,subject);
+  const a=stats(s,exam,subject);
+
+  const rows=s.students.flatMap(student=>{
+   const r=record(s,exam,student,subject);
+
+   return r.kind==='score'&&r.percent<PASS
+    ? [[student.roll??'',nameOf(student),r.label,fmt(r.percent)+'%']]
+    : [];
+  });
+
+  const known=def.kind==='mapped'&&
+   (a.n>0||a.invalid+a.unavailable===0);
+
+  const title=subject+' — '+exam.name+
+   ' — Failed: '+(known?rows.length:'N/A');
+
+  const empty=def.kind!=='mapped'
+   ? def.label+'.'
+   : !a.n
+    ? 'No valid marks available. Absent: '+a.absent+
+      '. Other issues: '+(a.invalid+a.unavailable)+'.'
+    : 'No failed students among the assessed results.';
+
+  return{subject,exam,title,rows,empty};
+ }));
+}
+
 function failureRows(s){
- return s.exams.flatMap(exam=>s.subjects.flatMap(subject=>s.students.flatMap(student=>{
-  const r=record(s,exam,student,subject);return r.kind==='score'&&r.percent<PASS?[[student.roll??'',nameOf(student),subject,exam.name,r.label,fmt(r.percent)+'%']]:[];
- })));
+ return failureGroups(s).flatMap(group=>group.rows.map(row=>[
+  row[0],
+  row[1],
+  group.subject,
+  group.exam.name,
+  row[2],
+  row[3]
+ ]));
+}
+
+function groupedFailuresHTML(s){
+ return failureGroups(s).map(group=>
+  '<section class="section-gap">'+
+  '<h3 style="break-after:avoid">'+esc(group.title)+'</h3>'+
+  (group.rows.length
+   ? plainTable(
+      ['Roll','Student','Marks','Percentage'],
+      group.rows
+     )
+   : '<p class="small">'+esc(group.empty)+'</p>')+
+  '</section>'
+ ).join('');
 }
 function scoreCell(s,student,subject){
  const r=record(s,s.exams.at(-1),student,subject);if(r.kind!=='score')return'<span class="score missing">'+esc(r.label)+'</span>';
@@ -399,7 +448,7 @@ function reportHTML(original,print=false){
  html+='<div class="panel print-break"><h2>3. Comparison of examinations</h2>'+['total','written'].map(metric=>'<div class="section-gap">'+comparisonSection(asMetric(original,metric))+'</div>').join('')+'</div>';
  ['total','written'].forEach(metric=>{
   const s=asMetric(original,metric);for(const subjects of chunks(s.subjects,4))html+='<div class="panel'+(print?' print-break':'')+'"><h2>'+esc(metricName(s))+' — student results</h2><p class="small">Latest selected exam: '+esc(s.exams.at(-1).name)+'. Change from '+esc(s.exams[0].name)+'. AB includes not-entered marks.</p>'+studentTable(s,subjects,false)+'</div>';
-  html+='<div class="panel'+(print?' print-break':'')+'"><h2>'+esc(metricName(s))+' — failed-student list</h2>'+plainTable(['Roll','Student','Subject','Exam','Marks','Percentage'],failureRows(s))+'</div>';
+  html+='<div class="panel'+(print?' print-break':'')+'"><h2>'+esc(metricName(s))+' — failed-student list</h2>'+groupedFailuresHTML(s)+'</div>';
  });
  html+='<div class="panel print-break"><h2>Students requiring attention — overall total</h2>'+plainTable(['Roll','Student','Below pass in','Declined in','Absent in','Other issues'],attentionRows(original))+'</div>';
  return html;
@@ -421,12 +470,12 @@ function renderView(){
   table(['Roll','Student',...s.exams.map(exam=>exam.name),'Change','Other selected subjects'],ownRows(s))+'</div>';
  }else if(state.tab==='subjects'){
   html=graphPanel(s,'subjectChart','Overall total — selected subjects')+'<div class="panel"><h2>Present, absent and failed counts</h2>'+plainTable(DETAIL_HEADERS,detailRows(s))+'</div>'+
-  '<div class="panel"><h2>Failed students — overall total</h2>'+plainTable(['Roll','Student','Subject','Exam','Marks','Percentage'],failureRows(s))+'</div>';
+  '<div class="panel"><h2>Failed students — overall total</h2>'+groupedFailuresHTML(s)+'</div>';
  }else if(state.tab==='written'){
   const written=asMetric(s,'written');
   html='<div class="panel"><h2>Written exam only</h2><p class="small">Written Exam marks are used where configured. Otherwise, Written Test marks are used. Percentages use the selected component’s maximum marks.</p>'+writtenNotice(written)+'</div>'+
   graphPanel(written,'writtenChart','Written exam — selected subjects')+'<div class="panel"><h2>Written exam — present, absent and failed counts</h2>'+plainTable(DETAIL_HEADERS,detailRows(written))+'</div>'+
-  '<div class="panel"><h2>Failed students — written exam</h2>'+plainTable(['Roll','Student','Subject','Exam','Marks','Percentage'],failureRows(written))+'</div>';
+  '<div class="panel"><h2>Failed students — written exam</h2>'+groupedFailuresHTML(written)+'</div>';
  }else if(state.tab==='exams'){
   html='<div class="panel">'+comparisonSection(s)+'</div><div class="panel">'+comparisonSection(asMetric(s,'written'))+'</div>';
  }else if(state.tab==='students'){
@@ -722,10 +771,23 @@ function pngPages(s){
  }
  heading('Present, absent and failed counts — whole class');
  drawTable(DETAIL_HEADERS,detailRows(s),[270,285,170,135,130,130,130,142]);
- heading('Failed-student list');
- const failures=failureRows(s);
- if(!failures.length){ensure(80);line('No assessed result is below the pass mark in this selection.',23);}
- else drawTable(['Roll','Student','Subject','Exam','Marks','Percentage'],failures,[95,355,250,310,180,172]);
+  ensure(350);
+ heading('Failed-student lists by subject');
+
+ failureGroups(s).forEach(group=>{
+  ensure(260);
+  heading(group.title);
+
+  if(group.rows.length){
+   drawTable(
+    ['Roll','Student','Marks','Percentage'],
+    group.rows,
+    [110,870,270,262]
+   );
+  }else{
+   line(group.empty,23);
+  }
+ });
  finish();
  return pages.map((page,index)=>svg(width,page.height,page.body+svgText(width-margin,page.height-23,'Page '+(index+1)+' of '+pages.length,'text-anchor="end"',17),metricName(s)+' report — page '+(index+1)));
 }
@@ -780,13 +842,62 @@ async function exportPDF(){
    const lines=doc.splitTextToSize(pdfText(value),usable);if(y+lines.length*3.5+5>193)newPage();
    doc.text(lines,margin,y+3);y+=lines.length*3.5+5;
   }
-  function pdfTable(headers,rows){
+  function pdfTable(headers,rows,sectionTitle=''){
    if(y>172)newPage();
-   doc.autoTable({head:[headers.map(pdfText)],body:(rows.length?rows:[headers.map((_,index)=>index===0?'No results in this selection.':'')]).map(row=>row.map(pdfText)),startY:y,margin:{top:contentTop,bottom:15,left:margin,right:margin},
-    styles:{font:'helvetica',fontSize:8,cellPadding:2.1,overflow:'linebreak',textColor:[32,54,78],lineColor:[217,228,239],lineWidth:.1},
-    headStyles:{fillColor:[15,61,107],textColor:255},alternateRowStyles:{fillColor:[246,249,252]},rowPageBreak:'avoid',
-    willDrawPage(data){if(data.pageNumber>1)header();}
-   });y=doc.lastAutoTable.finalY+7;
+
+   doc.autoTable({
+    head:[headers.map(pdfText)],
+
+    body:(
+     rows.length
+      ? rows
+      : [headers.map((_,index)=>
+         index===0?'No results in this selection.':''
+        )]
+    ).map(row=>row.map(pdfText)),
+
+    startY:y,
+
+    margin:{
+     top:contentTop+(sectionTitle?12:0),
+     bottom:15,
+     left:margin,
+     right:margin
+    },
+
+    styles:{
+     font:'helvetica',
+     fontSize:8,
+     cellPadding:2.1,
+     overflow:'linebreak',
+     textColor:[32,54,78],
+     lineColor:[217,228,239],
+     lineWidth:.1
+    },
+
+    headStyles:{
+     fillColor:[15,61,107],
+     textColor:255
+    },
+
+    alternateRowStyles:{
+     fillColor:[246,249,252]
+    },
+
+    rowPageBreak:'avoid',
+
+    willDrawPage(data){
+     if(data.pageNumber>1){
+      header();
+
+      if(sectionTitle){
+       heading(sectionTitle+' — continued');
+      }
+     }
+    }
+   });
+
+   y=doc.lastAutoTable.finalY+7;
   }
   async function chart(source){
    const image=await svgPNG(source,1.6);let height=usable*image.height/image.width;
@@ -803,7 +914,21 @@ async function exportPDF(){
     note(exams.map(exam=>examCode(exam,s.exams.indexOf(exam))+' = '+exam.name).join(' | '));await chart(verticalSVG(s,subjects,1200,exams));
    }
    heading('Present, absent and failed counts');pdfTable(DETAIL_HEADERS,detailRows(s));
-   heading('Failed-student list - '+metricName(s));pdfTable(['Roll','Student','Subject','Exam','Marks','Percentage'],failureRows(s));
+   for(const group of failureGroups(s)){
+    const title=metricName(s)+' | '+group.title;
+
+    heading(title);
+
+    if(group.rows.length){
+     pdfTable(
+      ['Roll','Student','Marks','Percentage'],
+      group.rows,
+      title
+     );
+    }else{
+     note(group.empty);
+    }
+   }
   }
   newPage();heading('3. Comparison of examinations');
   for(const metric of['total','written']){
