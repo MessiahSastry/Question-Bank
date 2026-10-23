@@ -145,12 +145,76 @@ function renderChoices(){
 async function loadExam(id){if(state.cache.has(id))return;if(state.pending.has(id))return state.pending.get(id);const task=(async()=>{const result=new Map();await Promise.all(state.students.map(student=>limitRead(async()=>{try{const doc=await studentRef.doc(student.id).collection('marks').doc(id).get();result.set(student.id,{data:doc.exists?doc.data():{}});}catch(error){result.set(student.id,{error:String(error.message||error)});}})));state.cache.set(id,result);})();state.pending.set(id,task);try{await task;}finally{state.pending.delete(id);}}
 async function analyse(){const token=++state.generation;setBusy(true);status('Loading selected examination marks...');try{await Promise.all(state.examIds.map(loadExam));if(token!==state.generation)return;setBusy(false);renderView();const s=snapshot(),problems=[];let readErrors=0,invalid=0;for(const map of s.records.values())for(const entry of map.values())if(entry.error)readErrors++;s.exams.forEach(exam=>s.subjects.forEach(subject=>{invalid+=stats(s,exam,subject).invalid;}));if(readErrors)problems.push(`${readErrors} marks document(s) could not be loaded. They are shown as Unavailable. Refresh to retry.`);if(invalid)problems.push(`${invalid} result(s) have invalid marks or missing/duplicate subject maximum configuration. They are excluded from calculations.`);if(!s.subjects.length)problems.push('No subjects are configured for the selected examination(s).');status(problems.join('\n'),problems.length?'warning':'');}catch(error){if(token!==state.generation)return;setBusy(true);status('Could not load analysis: '+error.message,'error');}}
 function initialControls(busy){document.querySelectorAll('fieldset').forEach(field=>field.disabled=busy);$('basis').disabled=busy;$('audience').disabled=busy;$('refreshBtn').disabled=busy;}
+async function getEffectiveExamSnapshot() {
+  const yearRef = db.collection('years').doc(context.year);
+  const classRef = yearRef.collection('classes').doc(context.classId);
+
+  const [groupSnap, classSnap, sectionSnap] = await Promise.all([
+    yearRef.collection('exams').doc('classGroups')
+      .collection(CLASS_GROUP_MAP[context.className] || 'default').get(),
+
+    classRef.collection('examOverrides').get(),
+
+    classRef.collection('sections').doc(context.sectionId)
+      .collection('examOverrides').get()
+  ]);
+
+  const exams = new Map();
+
+  groupSnap.forEach(doc => {
+    exams.set(doc.id, doc.data() || {});
+  });
+
+  function applyOverrides(snap, onlyOrigin) {
+    snap.forEach(doc => {
+      const override = doc.data() || {};
+      const base = exams.get(doc.id);
+
+      if (override.origin === onlyOrigin) {
+        exams.set(doc.id, override);
+      } else if (override.hidden === true) {
+        exams.delete(doc.id);
+      } else if (!base) {
+        exams.set(doc.id, override);
+      } else {
+        exams.set(doc.id, {
+          ...base,
+          name: override.name ?? base.name,
+
+          subjects:
+            Array.isArray(override.subjects) && override.subjects.length
+              ? override.subjects
+              : base.subjects,
+
+          subtopics:
+            Array.isArray(override.subtopics) && override.subtopics.length
+              ? override.subtopics
+              : base.subtopics,
+
+          grading: override.grading || base.grading
+        });
+      }
+    });
+  }
+
+  applyOverrides(classSnap, 'class-only');
+  applyOverrides(sectionSnap, 'section-only');
+
+  return {
+    forEach(callback) {
+      exams.forEach((data, id) => {
+        callback({ id, data: () => data });
+      });
+    }
+  };
+}
+
 async function initialise(){
  if(state.initialising||state.exporting)return;state.initialising=true;++state.generation;
  if(!context.year||!context.classId||!context.sectionId){state.initialising=false;status('Select the academic year, class and section in the app, then open this page.','error');return;}
  initialControls(true);
  $('classSec').textContent=`${context.className} - ${context.sectionName} (${context.year})`;
- try{if(!window.firebase)throw new Error('Firebase could not be loaded. Check the internet connection.');firebase.apps.length||firebase.initializeApp(CONFIG);if(typeof firebase.auth==='function'){const auth=firebase.auth();await new Promise((resolve,reject)=>{let stop;const done=()=>{if(stop)stop();resolve();};stop=auth.onAuthStateChanged(done,reject);});}db=firebase.firestore();studentRef=db.collection('years').doc(context.year).collection('classes').doc(context.classId).collection('sections').doc(context.sectionId).collection('students');setBusy(true);status('Loading students and examinations...');await Promise.allSettled([...state.pending.values()]);const[studentDocs,examDocs]=await Promise.all([studentRef.get(),db.collection('years').doc(context.year).collection('exams').doc('classGroups').collection(CLASS_GROUP_MAP[context.className]||'default').get()]);state.students=[];studentDocs.forEach(doc=>{const data=doc.data();if(!data.isDeleted)state.students.push({...data,id:doc.id});});state.students.sort((a,b)=>String(a.roll??'zzzz').localeCompare(String(b.roll??'zzzz'),undefined,{numeric:true}));state.exams=[];examDocs.forEach(doc=>state.exams.push({...doc.data(),id:doc.id}));state.exams.sort((a,b)=>String(a.name||a.id).localeCompare(String(b.name||b.id),undefined,{numeric:true}));state.exams.forEach(exam=>exam.name=String(exam.name||exam.id));if(!state.students.length)throw new Error('No active students found in this section.');if(!state.exams.length)throw new Error('No examinations found for this class group.');state.cache.clear();state.pending.clear();state.examIds=state.examIds.filter(id=>state.exams.some(exam=>exam.id===id));if(!state.examIds.length){const fa1=state.exams.find(e=>/^FA[\s_-]*0?1\b/i.test(e.name)),fa2=state.exams.find(e=>/^FA[\s_-]*0?2\b/i.test(e.name));state.examIds=[fa1,fa2].filter(Boolean).map(e=>e.id);if(!state.examIds.length)state.examIds=[state.exams[0].id];}updateSubjects();await analyse();}catch(error){status(error.message,'error');setBusy(true);}finally{state.initialising=false;initialControls(false);}
+ try{if(!window.firebase)throw new Error('Firebase could not be loaded. Check the internet connection.');firebase.apps.length||firebase.initializeApp(CONFIG);if(typeof firebase.auth==='function'){const auth=firebase.auth();await new Promise((resolve,reject)=>{let stop;const done=()=>{if(stop)stop();resolve();};stop=auth.onAuthStateChanged(done,reject);});}db=firebase.firestore();studentRef=db.collection('years').doc(context.year).collection('classes').doc(context.classId).collection('sections').doc(context.sectionId).collection('students');setBusy(true);status('Loading students and examinations...');await Promise.allSettled([...state.pending.values()]);const[studentDocs,examDocs]=await Promise.all([studentRef.get(),getEffectiveExamSnapshot()]);state.students=[];studentDocs.forEach(doc=>{const data=doc.data();if(!data.isDeleted)state.students.push({...data,id:doc.id});});state.students.sort((a,b)=>String(a.roll??'zzzz').localeCompare(String(b.roll??'zzzz'),undefined,{numeric:true}));state.exams=[];examDocs.forEach(doc=>state.exams.push({...doc.data(),id:doc.id}));state.exams.sort((a,b)=>String(a.name||a.id).localeCompare(String(b.name||b.id),undefined,{numeric:true}));state.exams.forEach(exam=>exam.name=String(exam.name||exam.id));if(!state.students.length)throw new Error('No active students found in this section.');if(!state.exams.length)throw new Error('No examinations found for this class group.');state.cache.clear();state.pending.clear();state.examIds=state.examIds.filter(id=>state.exams.some(exam=>exam.id===id));if(!state.examIds.length){const fa1=state.exams.find(e=>/^FA[\s_-]*0?1\b/i.test(e.name)),fa2=state.exams.find(e=>/^FA[\s_-]*0?2\b/i.test(e.name));state.examIds=[fa1,fa2].filter(Boolean).map(e=>e.id);if(!state.examIds.length)state.examIds=[state.exams[0].id];}updateSubjects();await analyse();}catch(error){status(error.message,'error');setBusy(true);}finally{state.initialising=false;initialControls(false);}
 }
 async function svgPNG(source,scale=2){const match=source.match(/viewBox="0 0 ([\d.]+) ([\d.]+)"/);if(!match)throw new Error('Chart dimensions are missing.');const width=Number(match[1]),height=Number(match[2]),url=URL.createObjectURL(new Blob([source],{type:'image/svg+xml;charset=utf-8'}));try{return await new Promise((resolve,reject)=>{const image=new Image();image.onload=()=>{try{const canvas=document.createElement('canvas');canvas.width=Math.ceil(width*scale);canvas.height=Math.ceil(height*scale);const ctx=canvas.getContext('2d');ctx.fillStyle='white';ctx.fillRect(0,0,canvas.width,canvas.height);ctx.drawImage(image,0,0,canvas.width,canvas.height);resolve({data:canvas.toDataURL('image/png'),width,height});}catch(error){reject(error);}};image.onerror=()=>reject(new Error('Could not render the chart image.'));image.src=url;});}finally{URL.revokeObjectURL(url);}}
 function filename(s,extension){return('St_Patricks_Analysis_'+s.context.className+'_'+s.context.sectionName+'_'+s.exams.map(e=>e.name).join('_')).replace(/[^a-zA-Z0-9_-]/g,'_').slice(0,160)+'.'+extension;}
