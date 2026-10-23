@@ -99,10 +99,28 @@ function effectiveSubtopics(exam,subject){
  return Array.isArray(items)?items.filter(item=>item&&typeof item.name==='string'&&item.name.trim()):[];
 }
 function writtenComponents(exam,subject){
- return effectiveSubtopics(exam,subject).filter(item=>{
-  const name=key(item.name).replace(/[_–—-]+/g,' ').replace(/\s+/g,' ');
-  return /^written\s*(?:exam|examination)(?:\s*[:(]?\s*\d+(?:\.\d+)?\s*(?:marks?)?\s*\)?)?$/.test(name);
- });
+ const topics=effectiveSubtopics(exam,subject);
+
+ function type(item){
+  const name=key(item.name)
+   .replace(/[_–—-]+/g,' ')
+   .replace(/\s+/g,' ')
+   .trim();
+
+  const match=name.match(
+   /^written\s*(examination|exam|test)(?:\s*[:(]?\s*\d+(?:\.\d+)?\s*(?:marks?)?\s*\)?)?$/
+  );
+
+  return match
+   ? (match[1]==='test'?'test':'exam')
+   : '';
+ }
+
+ const exams=topics.filter(item=>type(item)==='exam');
+
+ return exams.length
+  ? exams
+  : topics.filter(item=>type(item)==='test');
 }
 function definition(s,exam,subject){
  if(!examSubjects(exam).some(item=>key(item.name)===key(subject)))return{kind:'na',label:'Not offered'};
@@ -406,7 +424,7 @@ function renderView(){
   '<div class="panel"><h2>Failed students — overall total</h2>'+plainTable(['Roll','Student','Subject','Exam','Marks','Percentage'],failureRows(s))+'</div>';
  }else if(state.tab==='written'){
   const written=asMetric(s,'written');
-  html='<div class="panel"><h2>Written exam only</h2><p class="small">Only Written Exam marks are used. Percentages are calculated from the Written Exam maximum marks.</p>'+writtenNotice(written)+'</div>'+
+  html='<div class="panel"><h2>Written exam only</h2><p class="small">Written Exam marks are used where configured. Otherwise, Written Test marks are used. Percentages use the selected component’s maximum marks.</p>'+writtenNotice(written)+'</div>'+
   graphPanel(written,'writtenChart','Written exam — selected subjects')+'<div class="panel"><h2>Written exam — present, absent and failed counts</h2>'+plainTable(DETAIL_HEADERS,detailRows(written))+'</div>'+
   '<div class="panel"><h2>Failed students — written exam</h2>'+plainTable(['Roll','Student','Subject','Exam','Marks','Percentage'],failureRows(written))+'</div>';
  }else if(state.tab==='exams'){
