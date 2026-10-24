@@ -25,7 +25,21 @@
 <body>
 <main class="shell">
  <header class="header"><div><h1>St. Patrick's School</h1><div>Academic Performance Analysis</div><div id="classSec" class="subtitle"></div></div><div class="actions"><button id="refreshBtn" class="btn" type="button">Refresh data</button><button id="pdfBtn" class="btn" type="button" disabled>Download PDF</button></div></header>
- <section class="panel no-print" aria-label="Report selections">
+  <section class="panel no-print" aria-label="Report selections">
+  <div class="settings" style="margin-top:0;margin-bottom:18px">
+   <div class="field" style="min-width:190px">
+    <label id="classPickerLabel" for="classPicker">Class</label>
+    <select id="classPicker" aria-labelledby="classPickerLabel" disabled>
+     <option value="">Loading classes...</option>
+    </select>
+   </div>
+   <div class="field" style="min-width:190px">
+    <label id="sectionPickerLabel" for="sectionPicker">Section</label>
+    <select id="sectionPicker" aria-labelledby="sectionPickerLabel" disabled>
+     <option value="">Select a class first</option>
+    </select>
+   </div>
+  </div>
   <div class="filters">
    <fieldset><legend>Select examinations</legend><div id="examChoices" class="choices">Loading examinations...</div><div id="examOrder" class="order"></div><p class="small">Earlier → later. Use the arrows to set the comparison order.</p></fieldset>
    <fieldset><legend>Select subjects</legend><div class="row" style="margin-bottom:10px"><button id="allSubjectsBtn" class="btn" type="button">Select all subjects</button></div><div id="subjectChoices" class="choices"></div></fieldset>
@@ -76,6 +90,10 @@ function syncControls(){
  const blocked=state.initialising||state.exporting;
  document.querySelectorAll('fieldset').forEach(field=>field.disabled=blocked);
  ['basis','audience'].forEach(id=>$(id).disabled=blocked);
+ ['classPicker','sectionPicker'].forEach(id=>{
+  const select=$(id);
+  select.disabled=blocked||select.options.length<2;
+ });
  $('refreshBtn').disabled=blocked;
  $('pdfBtn').disabled=!state.ready||blocked||!state.selectedSubjects.length;
  document.querySelectorAll('[data-action]').forEach(button=>button.disabled=!state.ready||state.exporting);
@@ -684,15 +702,193 @@ function examDate(exam){
  if(typeof raw==='number')return raw<100000000000?raw*1000:raw;
  return Date.parse(String(raw));
 }
+function contextItems(snapshot){
+ const items=[];
+
+ snapshot.forEach(doc=>{
+  const data=doc.data()||{};
+
+  if(![true,'true',1].includes(data.isDeleted)){
+   items.push({
+    id:doc.id,
+    name:String(data.name||doc.id)
+   });
+  }
+ });
+
+ return items.sort((a,b)=>
+  a.name.localeCompare(b.name,undefined,{numeric:true})
+ );
+}
+
+function fillContextSelect(id,items,placeholder,value=''){
+ const select=$(id);
+
+ select.replaceChildren(new Option(placeholder,''));
+
+ items.forEach(item=>
+  select.add(new Option(item.name,item.id))
+ );
+
+ select.value=value;
+ syncSelects();
+}
+
+function saveAnalysisContext(){
+ for(const [storageKey,value] of [
+  ['sp_selectedClassId',context.classId],
+  ['sp_selectedClassName',context.className],
+  ['sp_selectedSectionId',context.sectionId],
+  ['sp_selectedSectionName',context.sectionName]
+ ]){
+  localStorage.setItem(storageKey,value);
+ }
+
+ $('classSec').textContent=
+  [context.className,context.sectionName]
+   .filter(Boolean)
+   .join(' - ')+
+  (context.year?' ('+context.year+')':'');
+}
+
+async function loadContextChoices(){
+ const yearRef=db.collection('years').doc(context.year);
+
+ status('Loading classes...');
+
+ const classes=contextItems(
+  await yearRef.collection('classes').get()
+ );
+
+ const order=Object.keys(CLASS_GROUP_MAP);
+
+ const rank=name=>{
+  const index=order.indexOf(name);
+  return index<0?999:index;
+ };
+
+ classes.sort((a,b)=>
+  rank(a.name)-rank(b.name)||
+  a.name.localeCompare(b.name,undefined,{numeric:true})
+ );
+
+ const selectedClass=classes.find(
+  item=>item.id===context.classId
+ );
+
+ context.classId=selectedClass?.id||'';
+ context.className=selectedClass?.name||'';
+
+ fillContextSelect(
+  'classPicker',
+  classes,
+  'Select class',
+  context.classId
+ );
+
+ fillContextSelect(
+  'sectionPicker',
+  [],
+  'Select a class first'
+ );
+
+ if(!selectedClass){
+  context.sectionId='';
+  context.sectionName='';
+  saveAnalysisContext();
+
+  if(!classes.length){
+   throw new Error('No classes found for this academic year.');
+  }
+
+  status('Select a class above.');
+  return false;
+ }
+
+ status('Loading sections...');
+
+ const sections=contextItems(
+  await yearRef.collection('classes')
+   .doc(context.classId)
+   .collection('sections')
+   .get()
+ );
+
+ const selectedSection=sections.find(
+  item=>item.id===context.sectionId
+ )||(sections.length===1?sections[0]:null);
+
+ context.sectionId=selectedSection?.id||'';
+ context.sectionName=selectedSection?.name||'';
+
+ fillContextSelect(
+  'sectionPicker',
+  sections,
+  'Select section',
+  context.sectionId
+ );
+
+ saveAnalysisContext();
+
+ if(!selectedSection){
+  if(!sections.length){
+   throw new Error('No sections found in this class.');
+  }
+
+  status('Select a section above to load analysis.');
+  return false;
+ }
+
+ return true;
+}
+
 async function initialise(){
- if(state.initialising||state.exporting)return;state.initialising=true;++state.generation;setBusy(true);closeSelectMenu();
- if(!context.year||!context.classId||!context.sectionId){state.initialising=false;syncControls();status('Select the academic year, class and section in the app, then open this page.','error');return;}
- $('classSec').textContent=context.className+' - '+context.sectionName+' ('+context.year+')';
+  if(state.initialising||state.exporting)return;
+
+ state.initialising=true;
+ ++state.generation;
+ setBusy(true);
+ closeSelectMenu();
+
+ $('view').innerHTML=
+  '<div class="panel empty">Select a class and section above to load analysis.</div>';
+
+ $('examChoices').textContent='Select a class and section.';
+ $('examOrder').textContent='';
+ $('subjectChoices').textContent='';
+ $('selectionSummary').textContent='';
+
  try{
+  if(!context.year){
+   throw new Error(
+    'Select the academic year in the app, then reopen this page.'
+   );
+  }
   if(!window.firebase)throw new Error('Firebase could not be loaded. Check the internet connection.');
   firebase.apps.length||firebase.initializeApp(CONFIG);
   if(typeof firebase.auth==='function')await new Promise((resolve,reject)=>{let stop;stop=firebase.auth().onAuthStateChanged(()=>{if(stop)stop();resolve();},reject);});
-  db=firebase.firestore();studentRef=db.collection('years').doc(context.year).collection('classes').doc(context.classId).collection('sections').doc(context.sectionId).collection('students');
+   db=firebase.firestore();
+
+  await Promise.allSettled([...state.pending.values()]);
+
+  state.cache.clear();
+  state.pending.clear();
+  state.students=[];
+  state.exams=[];
+  state.subjects=[];
+  state.colourSubjects=[];
+  state.studentId=null;
+  state.filter='all';
+
+  if(!await loadContextChoices())return;
+
+  studentRef=db.collection('years')
+   .doc(context.year)
+   .collection('classes')
+   .doc(context.classId)
+   .collection('sections')
+   .doc(context.sectionId)
+   .collection('students');
   status('Loading students and examinations...');await Promise.allSettled([...state.pending.values()]);
   const[studentDocs,examDocs]=await Promise.all([studentRef.get(),getEffectiveExamSnapshot()]);
   state.students=[];studentDocs.forEach(doc=>{const data=doc.data()||{};if(![true,'true',1].includes(data.isDeleted))state.students.push({...data,id:doc.id});});
@@ -969,7 +1165,44 @@ function printReport(s=snapshot()){
  win.document.open();win.document.write('<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Academic Analysis Report</title><style>'+document.querySelector('style').textContent+'</style></head><body><main class="shell"><div class="panel no-print"><button class="btn primary" type="button" onclick="window.print()">Print / Save PDF</button><p class="small">Select Save as PDF and A4 landscape.</p></div>'+body+'</main></body></html>');win.document.close();
 }
 document.addEventListener('change',event=>{
- const target=event.target;if(state.initialising||state.exporting)return;
+ const target=event.target;
+ if(state.initialising||state.exporting)return;
+
+ if(target.id==='classPicker'){
+  if(target.value===context.classId)return;
+
+  context.classId=target.value;
+  context.className=target.value
+   ? target.selectedOptions[0].textContent
+   : '';
+
+  context.sectionId='';
+  context.sectionName='';
+
+  fillContextSelect(
+   'sectionPicker',
+   [],
+   'Loading sections...'
+  );
+
+  saveAnalysisContext();
+  initialise();
+  return;
+ }
+
+ if(target.id==='sectionPicker'){
+  if(target.value===context.sectionId)return;
+
+  context.sectionId=target.value;
+  context.sectionName=target.value
+   ? target.selectedOptions[0].textContent
+   : '';
+
+  saveAnalysisContext();
+  initialise();
+  return;
+ }
+
  if(target.dataset.examIndex!==undefined){
   const exam=state.exams[Number(target.dataset.examIndex)];if(!exam)return;
   if(!target.checked&&state.examIds.length===1){target.checked=true;status('Keep at least one examination selected.','warning');return;}
