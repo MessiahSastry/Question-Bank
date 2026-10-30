@@ -126,19 +126,9 @@
       <i class="fa-solid fa-file-excel"></i> Excel for LEAP
     </button>
     
-    <button class="download-btn" id="leapPdfBtn" disabled>
-      <i class="fa-solid fa-file-pdf"></i> PDF for LEAP
+        <button class="download-btn" id="sendToLeapBtn" disabled>
+      <i class="fa-solid fa-paper-plane"></i> Send to LEAP
     </button>
-         
-
-<button class="download-btn" id="copyCSEBtn" disabled>
-  <i class="fa-solid fa-copy"></i> Copy for CSE (Student)
-</button>
-
-<button class="download-btn" id="compactViewBtn" disabled>
-  <i class="fa-solid fa-mobile-screen-button"></i> Compact Phone View
-</button>
-
         <div class="status" id="status"></div>
       </div>
       <!-- Modal (reused for both features) -->
@@ -470,17 +460,7 @@ const examList = document.getElementById('examList');
 const excelBtn = document.getElementById('excelBtn');
 const pdfBtn = document.getElementById('pdfBtn');
 const leapBtn = document.getElementById('leapBtn');
-const leapPdfBtn = document.getElementById('leapPdfBtn');
-const copyCSEBtn  = document.getElementById('copyCSEBtn');
-  // Mobile tap fallback to ensure the click path fires on touch devices
-copyCSEBtn.addEventListener('touchend', (ev) => {
-  ev.preventDefault();
-  // guard: avoid double-trigger if the browser also fires click
-  if (Date.now() - __modalOpenedAt < 50) return;
-  copyCSEBtn.click();
-}, { passive: false });
-
-const compactViewBtn = document.getElementById('compactViewBtn');
+const sendToLeapBtn = document.getElementById('sendToLeapBtn');
 const statusDiv = document.getElementById('status');
 const headerYear = document.getElementById('header-year');
 
@@ -506,12 +486,17 @@ function setLoading(on){
   if (on){
     statusDiv.classList.add('loading');
     statusDiv.innerHTML = `<span>Loading data…</span><span class="dot"></span><span class="dot"></span><span class="dot"></span>`;
-    excelBtn.disabled = pdfBtn.disabled = leapBtn.disabled = leapPdfBtn.disabled = copyCSEBtn.disabled = compactViewBtn.disabled = true;
+    excelBtn.disabled = pdfBtn.disabled = leapBtn.disabled = sendToLeapBtn.disabled = true;
     examSelected.classList.add('disabled');
   } else {
     statusDiv.classList.remove('loading');
     statusDiv.textContent = "";
-    excelBtn.disabled = pdfBtn.disabled = leapBtn.disabled = leapPdfBtn.disabled = copyCSEBtn.disabled = compactViewBtn.disabled = false;
+    excelBtn.disabled = pdfBtn.disabled = leapBtn.disabled = false;
+sendToLeapBtn.disabled = !selectedExamObj ||
+  !students.length ||
+  !students.every(stu =>
+    Object.hasOwn(marksMap[stu.id] || {}, selectedExamObj.id)
+  );
     examSelected.classList.remove('disabled');
   }
 }
@@ -520,7 +505,7 @@ function setLoading(on){
     auth.onAuthStateChanged(function(user){
       if (!user){
         statusDiv.textContent = "Please login.";
-pdfBtn.disabled = excelBtn.disabled = leapBtn.disabled = leapPdfBtn.disabled = copyCSEBtn.disabled = compactViewBtn.disabled = true;
+pdfBtn.disabled = excelBtn.disabled = leapBtn.disabled = sendToLeapBtn.disabled = true;
 return;
       }
       loadExams();
@@ -538,7 +523,7 @@ setLoading(true);
         statusDiv.textContent = "Class or section not selected.";
 examSelected.textContent = "--Select--";
 examSelected.classList.add('disabled');
-excelBtn.disabled = pdfBtn.disabled = leapBtn.disabled = leapPdfBtn.disabled = copyCSEBtn.disabled = compactViewBtn.disabled = true;
+excelBtn.disabled = pdfBtn.disabled = leapBtn.disabled = sendToLeapBtn.disabled = true;
 return;
       }
 
@@ -597,7 +582,7 @@ setLoading(false);
       setLoading(false); // removes spinner
       // keep actions disabled on error
       excelBtn.disabled = pdfBtn.disabled = true;
-      leapBtn.disabled = leapPdfBtn.disabled = copyCSEBtn.disabled = compactViewBtn.disabled = true;
+      leapBtn.disabled = sendToLeapBtn.disabled = true;
       }
     }
 
@@ -619,7 +604,7 @@ selectedExamObj = examMap[selectedExam];
 // Load marks only for the chosen exam (parallel)
 statusDiv.classList.add('loading');
 statusDiv.innerHTML = `<span>Loading marks…</span><span class="dot"></span><span class="dot"></span><span class="dot"></span>`;
-excelBtn.disabled = pdfBtn.disabled = leapBtn.disabled = leapPdfBtn.disabled = copyCSEBtn.disabled = compactViewBtn.disabled = true;
+excelBtn.disabled = pdfBtn.disabled = leapBtn.disabled = sendToLeapBtn.disabled = true;
 
 const secRef = db.collection('years').doc(academicYear)
   .collection('classes').doc(classId)
@@ -638,7 +623,12 @@ await Promise.all(
 // UI ready
 statusDiv.classList.remove('loading');
 statusDiv.textContent = '';
-excelBtn.disabled = pdfBtn.disabled = leapBtn.disabled = leapPdfBtn.disabled = copyCSEBtn.disabled = compactViewBtn.disabled = false;
+excelBtn.disabled = pdfBtn.disabled = leapBtn.disabled = false;
+sendToLeapBtn.disabled = !selectedExamObj ||
+  !students.length ||
+  !students.every(stu =>
+    Object.hasOwn(marksMap[stu.id] || {}, selectedExamObj.id)
+  );
     };
     // -------- LEAP helpers (mapping + splitting) --------
 function classBand6to7(name){
@@ -857,6 +847,422 @@ utilModal.addEventListener('click', (e)=>{
 });
     // ------------- EXCEL EXPORT -------------
     // ------------- EXCEL for LEAP EXPORT -------------
+// ---------- Send to LEAP ----------
+
+// ---------- Previous FA Marks Estimator ----------
+
+function leapFANumber(name) {
+  const clean = String(name || '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
+
+  const match = clean.match(
+    /^(?:FA|FORMATIVEASSESSMENT)(IV|III|II|I|[1-4])$/
+  );
+
+  if (!match) return 0;
+
+  return ({
+    I: 1, II: 2, III: 3, IV: 4
+  })[match[1]] || Number(match[1]);
+}
+
+async function prepareLeapPreviousMarks() {
+  const targetNum = leapFANumber(selectedExamObj.name);
+
+  if (!targetNum)
+    throw Error('Select FA-1, FA-2, FA-3 or FA-4.');
+
+  const priorExams = exams
+    .filter(ex => {
+      const n = leapFANumber(ex.name);
+      return n > 0 && n < targetNum;
+    })
+    .sort((a, b) =>
+      leapFANumber(b.name) - leapFANumber(a.name)
+    )
+    .slice(0, 2);
+
+  const sectionRef = db.collection('years')
+    .doc(academicYear)
+    .collection('classes').doc(classId)
+    .collection('sections').doc(sectionId);
+
+  const history = await Promise.all(
+    priorExams.map(async ex => {
+      const docs = await Promise.all(
+        students.map(stu =>
+          sectionRef.collection('students')
+            .doc(stu.id)
+            .collection('marks')
+            .doc(ex.id).get()
+        )
+      );
+
+      return {
+        exam: ex,
+        marks: new Map(students.map((stu, i) => [
+          stu.id,
+          docs[i].exists ? docs[i].data() : {}
+        ]))
+      };
+    })
+  );
+
+  const aliases = {
+    MATH: 'MATHEMATICS',
+    MATHEMATICS: 'MATHEMATICS',
+    SOCIAL: 'SOCIAL',
+    SOCIALSTUDIES: 'SOCIAL',
+    SOCIALSCIENCE: 'SOCIAL',
+    BIOLOGY: 'BIOLOGY',
+    BIOLOGICALSCIENCE: 'BIOLOGY',
+    PHYSICS: 'PHYSICALSCIENCE',
+    PHYSICALSCIENCE: 'PHYSICALSCIENCE',
+    SCIENCE: 'GENERALSCIENCE',
+    GENERALSCIENCE: 'GENERALSCIENCE',
+    EVS: 'EVS',
+    ENVIRONMENTALSTUDIES: 'EVS',
+    ENVIRONMENTALSCIENCE: 'EVS'
+  };
+
+  const subjectKey = name => {
+    const key = String(name || '')
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, '');
+
+    return aliases[key] || key;
+  };
+
+  const config = selectedExamObj.subjects || [];
+
+  if (!config.length)
+    throw Error('Subject configuration is missing.');
+
+  const result = {};
+
+  for (const stu of students) {
+    const raw = {
+      ...(marksMap[stu.id]?.[selectedExamObj.id] || {})
+    };
+
+    const estimatedSubjects = {};
+    const noHistorySubjects = [];
+
+    for (const subject of config) {
+      if (
+        typeof raw[subject.name] === 'number' &&
+        Number.isFinite(raw[subject.name])
+      ) continue;
+
+      const targetMax = Number(subject.max) || 50;
+      const values = [];
+
+      for (const entry of history) {
+        const oldSubject = (
+          entry.exam.subjects || []
+        ).find(s =>
+          subjectKey(s.name) ===
+          subjectKey(subject.name)
+        );
+
+        if (!oldSubject) continue;
+
+        const previous =
+          entry.marks.get(stu.id)?.[oldSubject.name];
+
+        const previousMax =
+          Number(oldSubject.max) || 50;
+
+        if (
+          typeof previous === 'number' &&
+          Number.isFinite(previous) &&
+          previousMax > 0
+        ) {
+          values.push({
+            value:
+              (previous / previousMax) * targetMax,
+            exam: entry.exam.name
+          });
+        }
+      }
+
+      if (values.length) {
+        raw[subject.name] = Math.round(
+          values.reduce(
+            (sum, v) => sum + v.value, 0
+          ) / values.length
+        );
+
+        estimatedSubjects[subject.name] =
+          values.map(v => v.exam);
+
+      } else {
+        noHistorySubjects.push(subject.name);
+      }
+    }
+
+    result[stu.id] = {
+      raw,
+      estimatedSubjects,
+      noHistorySubjects
+    };
+  }
+
+  return result;
+}
+
+// ---------- Send to LEAP ----------
+
+sendToLeapBtn.onclick = async () => {
+  try {
+    if (!selectedExamObj || !students.length)
+      throw Error('Select a class, section and exam first.');
+
+       const examNumber =
+      leapFANumber(selectedExamObj.name);
+
+    if (!examNumber)
+      throw Error('Currently supports FA-1 to FA-4 only.');
+
+    const exam = `FA${examNumber}`;
+
+    const grade = Number(String(className).match(/\d+/)?.[0]);
+
+    if (!(grade >= 1 && grade <= 10))
+      throw Error('Invalid class.');
+
+    if (!students.every(s =>
+      Object.hasOwn(marksMap[s.id] || {}, selectedExamObj.id)
+    ))
+      throw Error('Marks have not finished loading.');
+
+       statusDiv.textContent =
+      'Preparing marks from current and previous FA exams...';
+
+       // Always fetch the latest actual examination marks.
+    const secRef = db.collection('years')
+      .doc(academicYear)
+      .collection('classes').doc(classId)
+      .collection('sections').doc(sectionId);
+
+    const latest = await Promise.all(
+      students.map(stu =>
+        secRef.collection('students')
+          .doc(stu.id)
+          .collection('marks')
+          .doc(selectedExamObj.id)
+          .get({ source: 'server' })
+      )
+    );
+
+    students.forEach((stu, i) => {
+      marksMap[stu.id] ||= {};
+
+      marksMap[stu.id][selectedExamObj.id] =
+        latest[i].exists ? latest[i].data() : {};
+    });
+
+    // Actual marks take priority.
+    // Estimate only subjects without actual marks.
+    const prepared =
+      await prepareLeapPreviousMarks();
+
+    const records = students.map(stu => {
+      const childId = getLeapChildId(stu);
+
+      if (!/^\d{10}$/.test(childId))
+        throw Error('Invalid Child ID for roll ' + stu.roll);
+
+           const {
+        raw,
+        estimatedSubjects,
+        noHistorySubjects
+      } = prepared[stu.id];
+
+      const existing = mapToLeapTotals(
+        selectedExamObj, className, raw
+      );
+
+      const fromMap = key =>
+        existing.find(x => x.name === key)?.total50 ?? null;
+
+      const norm = name =>
+        normTo50(selectedExamObj, name, raw[name]);
+
+      const first = (...names) =>
+        names.map(norm).find(v =>
+          v !== null && Number.isFinite(v)
+        ) ?? null;
+
+      const avg = (...names) =>
+        avgAvailable(names.map(norm));
+
+      const math = fromMap('Math') ??
+        avg('Math 1', 'Math 2') ??
+        first('Mathematics', 'Math');
+
+      const tel = fromMap('Telugu') ??
+        first('Telugu', 'Composite Telugu');
+
+      const hin = fromMap('Hindi') ?? first('Hindi');
+      const eng = fromMap('English') ?? first('English');
+
+      const soc = fromMap('Social') ??
+        first('Social', 'Social Studies');
+
+      let specs;
+
+      if (grade <= 2) {
+        specs = [
+          ['Mathematics', math],
+          ['Telugu', tel],
+          ['English', eng]
+        ];
+
+      } else if (grade <= 5) {
+        specs = [
+          ['Mathematics', math],
+          ['EVS', first(
+            'EVS',
+            'Environmental Studies',
+            'Environmental Science'
+          )],
+          ['Telugu', tel],
+          ['English', eng]
+        ];
+
+      } else if (grade <= 7) {
+        specs = [
+          ['Mathematics', math],
+          ['General Science',
+            first('General Science') ?? fromMap('Science')],
+          ['Social Studies', soc],
+          ['Telugu', tel],
+          ['Hindi', hin],
+          ['English', eng]
+        ];
+
+      } else {
+        specs = [
+          ['Mathematics', math],
+          ['Physical Science',
+            fromMap('Physics') ??
+            first('Physical Science', 'Physics')],
+          ['Biological Science',
+            fromMap('Biology') ??
+            first('Biological Science', 'Biology')],
+          ['Social Studies', soc],
+          ['Composite Telugu', tel],
+          ['Hindi', hin],
+          ['English', eng]
+        ];
+      }
+
+      const subjects = specs.map(([name, score]) => {
+        const total = Math.round(passFloor50(score));
+
+        const language =
+          name === 'Composite Telugu' ? 'NA' :
+          name === 'Telugu' ? 'Telugu' :
+          name === 'Hindi' ? 'Hindi' : 'English';
+
+        return {
+          name,
+          language,
+          total,
+          parts: splitToTools(
+            total, Number(stu.roll)
+          ).slice(0, 4)
+        };
+      });
+
+           return {
+        childId,
+        roll: stu.roll,
+        name: stu.name,
+        subjects,
+        estimation: {
+          derivedSubjects: estimatedSubjects,
+          noHistorySubjects
+        }
+      };
+    });
+
+    if (new Set(records.map(r => r.childId)).size !== records.length)
+      throw Error('Duplicate Child IDs. Transfer cancelled.');
+
+    const packet = {
+      schema: 1,
+      nonce: crypto.randomUUID(),
+      createdAt: Date.now(),
+      year: String(academicYear || ''),
+      exam,
+      grade,
+      className,
+      sectionName,
+      records
+    };
+
+    document.getElementById('sp-leap-outgoing')?.remove();
+
+    const payload = document.createElement('script');
+    payload.type = 'application/json';
+    payload.id = 'sp-leap-outgoing';
+    payload.textContent = JSON.stringify(packet);
+
+    document.body.appendChild(payload);
+
+    statusDiv.textContent = 'Connecting to LEAP helper…';
+
+    let finished = false;
+
+    const cleanup = () => {
+      document.removeEventListener(
+        'sp-leap-outgoing-received', received
+      );
+      payload.remove();
+    };
+
+    const received = () => {
+      if (payload.dataset.received !== packet.nonce)
+        return;
+
+      finished = true;
+      cleanup();
+
+      statusDiv.textContent =
+        records.length + ' student records transferred. Opening LEAP…';
+
+      window.location.assign(
+        'https://cse.ap.gov.in/loadccemarksentry'
+      );
+    };
+
+    document.addEventListener(
+      'sp-leap-outgoing-received', received
+    );
+
+    document.dispatchEvent(
+      new Event('sp-leap-outgoing-ready')
+    );
+
+    setTimeout(() => {
+      if (!finished) {
+        cleanup();
+        statusDiv.textContent =
+          'LEAP receiver not connected. No marks were sent or changed.';
+      }
+    }, 5000);
+
+  } catch (error) {
+    statusDiv.textContent =
+      'Send to LEAP: ' + error.message;
+  }
+};
+
+// ---------- Existing Excel for LEAP ----------
+
 leapBtn.onclick = function(){
   if (!selectedExamObj){
     selectedExam = examSelected.dataset.value;
@@ -1105,7 +1511,7 @@ XlsxPopulate.fromBlankAsync().then(workbook => {
 });
 }; // end of leapBtn.onclick
 // ------------- PDF for LEAP (uses same mapping/splitting as Excel for LEAP) -------------
-leapPdfBtn.onclick = async function(){
+if (false) { leapPdfBtn.onclick = async function(){
   if (!selectedExamObj){
     selectedExam = examSelected.dataset.value;
     selectedExamObj = examMap[selectedExam];
@@ -1591,7 +1997,8 @@ compactViewBtn.onclick = function(){
   // initial render
   renderCards(0);
 };
-    excelBtn.onclick = function(){
+    } // End of unused functions
+excelBtn.onclick = function(){
       if (!selectedExamObj){
         selectedExam = examSelected.dataset.value;
         selectedExamObj = examMap[selectedExam];
