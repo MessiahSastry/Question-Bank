@@ -382,7 +382,7 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
 .key-flags{
   margin-top:4px;
   display:flex;
-  flex-wrap:nowrap;
+  flex-wrap:wrap;
   gap:6px;
 }
 
@@ -513,7 +513,7 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
   color:#0f3d6b;
 }
 
-/* Scanner v5: scanned subtopics, Firestore reports and downloadable keys */
+/* Scanner v5: Test Types, Firestore reports and downloadable keys */
 .part-map-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
 .part-map-card{border:1px solid #dbe7f3;border-radius:12px;padding:10px;background:#f8fbff}
 .part-map-card .part-subject{font-weight:800;color:#0f3d6b;margin-bottom:6px}
@@ -619,14 +619,14 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
 
     <!-- OMR part (only when the selected subject has configured parts) -->
   <div id="subtopicRow" style="display:none;">
-    <div class="label">Scanned Subtopic</div>
+    <div class="label">Test Type</div>
     <select id="subtopicSel" class="select native-select-hidden" disabled></select>
     <div id="cdrop-subtopic" class="cdrop" data-select="subtopicSel"></div>
   </div>
 
   <!-- Multi-subject OMR part mapping -->
   <div id="scanPartMapRow" style="display:none;grid-column:1/-1;">
-    <div class="label">Scanned subtopic for each selected subject</div>
+    <div class="label">Test Type for each selected subject</div>
     <div id="scanPartMap" class="part-map-grid"></div>
   </div>
 </div>
@@ -637,7 +637,7 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
   <button class="btn" id="btnKey" disabled><i class="fa fa-key"></i> Set Answer Key</button>
   <button class="btn primary" id="btnScan" disabled><i class="fa fa-camera"></i> Scan &amp; Save</button>
   <button class="btn" id="btnViewReports" disabled><i class="fa fa-list"></i> View Reports</button>
-  <button class="btn" id="btnDownloadExcel" disabled><i class="fa fa-file-excel"></i> Download Excel</button>
+  <button class="btn" id="btnDownloadExcel" disabled style="display:none;"><i class="fa fa-file-excel"></i> Download Excel</button>
 </div>
       <div class="hr"></div>
       <div class="status" id="pickStatus">Select to load template / save path.</div>
@@ -871,7 +871,7 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
       </div>
       <div class="toolbar" style="justify-content:space-between;align-items:center;margin-bottom:10px;">
         <input id="reportSearch" class="select" placeholder="Search roll or student name" style="max-width:360px;" />
-        <button class="btn" id="btnReportExcel" type="button"><i class="fa fa-file-excel"></i> Download XLSX</button>
+        <button class="btn" id="btnReportExcel" type="button"><i class="fa fa-file-excel"></i> Download Excel</button>
       </div>
       <div id="reportStatus" class="status">Loading reports…</div>
       <div class="report-table-wrap" id="reportTableWrap" style="display:none;">
@@ -962,6 +962,33 @@ const storage = firebase.storage();
 
   // Override native alert
   window.alert = show;
+})();
+
+// Adjust page spacing whenever the school banner changes height.
+(function(){
+  const header = document.getElementById('header');
+  const main = document.querySelector('main.wrap');
+  if (!header || !main) return;
+
+  header.style.padding = '12px 14px 10px';
+
+  const syncHeaderGap = () => {
+    main.style.marginTop =
+      Math.ceil(header.getBoundingClientRect().height) + 'px';
+  };
+
+  syncHeaderGap();
+  window.addEventListener('resize', syncHeaderGap);
+
+  if ('ResizeObserver' in window){
+    new ResizeObserver(syncHeaderGap).observe(header);
+  } else {
+    new MutationObserver(syncHeaderGap).observe(header, {
+      childList:true,
+      subtree:true,
+      characterData:true
+    });
+  }
 })();
 
 // --- Header: set Academic Year line dynamically ---
@@ -1786,7 +1813,7 @@ async function loadSubjectsFromExam(examId){
   if (subtopicSel){
 
     subtopicSel.innerHTML =
-      '<option value="">Select Subtopic</option>';
+      '<option value="">Select Test Type</option>';
 
     subtopicSel.disabled = true;
 
@@ -2100,7 +2127,7 @@ async function loadSubjectsFromExam(examId){
     if (mapHost) mapHost.replaceChildren();
 
     if (subSel){
-      subSel.innerHTML = '<option value="">Select Subtopic</option>';
+      subSel.innerHTML = '<option value="">Select Test Type</option>';
       subSel.disabled = true;
       refreshCdrop('subtopicSel','cdrop-subtopic');
     }
@@ -2136,9 +2163,9 @@ async function loadSubjectsFromExam(examId){
 
       if (parts.length){
         subSel.innerHTML =
-          '<option value="">Select Subtopic</option>' +
+          '<option value="">Select Test Type</option>' +
           candidates.map(part =>
-            `<option value="${escapeHtml(part.name)}">${escapeHtml(part.name)} (Max: ${Number(part.max) || 0})</option>`
+            `<option value="${escapeHtml(part.name)}">${escapeHtml(String(part.name || '').trim().replace(/^(objective|descriptive)$/i, '$& Test'))} (${Number(part.max) || 0} marks)</option>`
           ).join('');
         subSel.disabled = false;
         subSel.value = current.partBySubject[subjectName] || '';
@@ -2163,9 +2190,9 @@ async function loadSubjectsFromExam(examId){
         card.innerHTML = `
           <div class="part-subject">${escapeHtml(subjectName)}</div>
           <select id="${selectId}" class="select native-select-hidden omr-part-select" data-subject="${escapeHtml(subjectName)}">
-            <option value="">Select Subtopic</option>
+            <option value="">Select Test Type</option>
             ${candidates.map(part =>
-              `<option value="${escapeHtml(part.name)}">${escapeHtml(part.name)} (Max: ${Number(part.max) || 0})</option>`
+              `<option value="${escapeHtml(part.name)}">${escapeHtml(String(part.name || '').trim().replace(/^(objective|descriptive)$/i, '$& Test'))} (${Number(part.max) || 0} marks)</option>`
             ).join('')}
           </select>
           <div id="${dropId}" class="cdrop" data-select="${selectId}"></div>
@@ -2296,7 +2323,7 @@ el('examSel').addEventListener('change', async (e)=>{
   const subSel = el('subtopicSel');
   const subRow = document.getElementById('subtopicRow');
   if (subSel){
-    subSel.innerHTML = '<option value="">Select Subtopic</option>';
+    subSel.innerHTML = '<option value="">Select Test Type</option>';
     subSel.disabled  = true;
     refreshCdrop('subtopicSel','cdrop-subtopic');
   }
@@ -2583,6 +2610,11 @@ function ensureKeyEntry(secName, q){
     entry.either = !!entry.either;
     entry.addScore = !!entry.addScore;
   }
+    entry.multiple = !entry.either && (
+    typeof entry.multiple === 'boolean'
+      ? entry.multiple
+      : entry.options.length > 1
+  );
   answerKey[secName][q] = entry;
   return entry;
 }
@@ -2656,6 +2688,10 @@ async function buildKeyUI(){
             <input type="checkbox" class="flag-either" data-sec="${sec.name}" data-q="${q}" ${either ? 'checked' : ''}/>
             Either
           </label>
+                    <label class="flag-toggle ${entry.multiple ? 'on' : ''}">
+            <input type="checkbox" class="flag-multiple" data-sec="${sec.name}" data-q="${q}" ${entry.multiple ? 'checked' : ''}/>
+            Multiple Correct
+          </label>
           <label class="flag-toggle ${addScore ? 'on' : ''}">
             <input type="checkbox" class="flag-addscore" data-sec="${sec.name}" data-q="${q}" ${addScore ? 'checked' : ''}/>
             Add score
@@ -2685,23 +2721,42 @@ async function buildKeyUI(){
       const v = e.target.value;
       const entry = ensureKeyEntry(sec, q);
 
-      if(e.target.checked){
-        if(!entry.options.includes(v)) entry.options.push(v);
+            if(e.target.checked){
+        if (!entry.either && !entry.multiple){
+          entry.options = [v];
+          e.target.closest('tr').querySelectorAll('input.key-opt')
+            .forEach(input => { input.checked = input === e.target; });
+        } else if (!entry.options.includes(v)){
+          entry.options.push(v);
+        }
       } else {
         entry.options = entry.options.filter(x=>x !== v);
       }
     });
   });
 
-  // Either toggle
-  kc.querySelectorAll('input.flag-either').forEach(inp=>{
+   // Either and Multiple Correct are mutually exclusive.
+  kc.querySelectorAll('input.flag-either, input.flag-multiple').forEach(inp=>{
     inp.addEventListener('change', (e)=>{
-      const sec = e.target.dataset.sec;
-      const q = Number(e.target.dataset.q);
-      const entry = ensureKeyEntry(sec, q);
-      entry.either = e.target.checked;
-      const label = e.target.closest('.flag-toggle');
-      if(label) label.classList.toggle('on', e.target.checked);
+      const row = e.target.closest('tr');
+      const entry = ensureKeyEntry(e.target.dataset.sec, Number(e.target.dataset.q));
+      const isEither = e.target.classList.contains('flag-either');
+
+      entry.either = isEither && e.target.checked;
+      entry.multiple = !isEither && e.target.checked;
+
+      if (!entry.either && !entry.multiple){
+        entry.options = entry.options.slice(0, 1);
+        row.querySelectorAll('input.key-opt').forEach(input=>{
+          input.checked = entry.options.includes(input.value);
+        });
+      }
+
+      row.querySelectorAll('input.flag-either, input.flag-multiple').forEach(input=>{
+        input.checked = input.classList.contains('flag-either')
+          ? entry.either : entry.multiple;
+        input.closest('.flag-toggle').classList.toggle('on', input.checked);
+      });
     });
   });
 
@@ -2725,7 +2780,7 @@ function getKeySummaryText(){
   let totalQ = 0;
   let setCount = 0;
   let emptyCount = 0;
-  let eitherCount = 0;
+    let eitherCount = 0, multipleCount = 0;
   let addScoreCount = 0;
 
   for (const sec of tpl.sections){
@@ -2753,7 +2808,8 @@ function getKeySummaryText(){
       if (optsLen > 0) setCount++;
       else emptyCount++;
 
-      if (entry.either)    eitherCount++;
+            if (entry.either) eitherCount++;
+      else if (optsLen > 1) multipleCount++;
       if (entry.addScore)  addScoreCount++;
     }
   }
@@ -2762,7 +2818,8 @@ function getKeySummaryText(){
     `Total questions       : ${totalQ}`,
     `With answers set      : ${setCount}`,
     `Without answers       : ${emptyCount}`,
-    `Either toggled        : ${eitherCount}`,
+        `Either toggled        : ${eitherCount}`,
+    `Multiple correct      : ${multipleCount}`,
     `Add-score (grace) set : ${addScoreCount}`
   ].join('\n');
 }
@@ -2874,7 +2931,7 @@ function downloadAnswerKeyPdf(){
         : (details.options.length ? details.options.join(', ') : 'NOT SET');
       const rule = details.addScore
         ? 'Add score'
-        : (details.either ? 'Either option' : (details.options.length > 1 ? 'All selected' : 'Single'));
+        : (details.either ? 'Either option' : (details.options.length > 1 ? 'Multiple correct' : 'Single'));
       doc.setFontSize(8.5);
       doc.setTextColor(answer === 'NOT SET' ? 190 : 30, answer === 'NOT SET' ? 35 : 30, answer === 'NOT SET' ? 35 : 30);
       doc.text(String(question), margin + 4, y);
@@ -2905,6 +2962,19 @@ el('btnKeyDownload').onclick = downloadAnswerKeyPdf;
 
 el('btnKeySave').onclick = async ()=>{
   if(!current.examId) return alert('Pick Class/Section/Exam first');
+
+  for (const section of tpl.sections){
+    for (let q = 1; q <= section.count; q++){
+      const entry = ensureKeyEntry(section.name, q);
+
+      if (entry.addScore && entry.options.length === 0) continue;
+
+      if ((entry.either || entry.multiple) && entry.options.length < 2){
+        alert(`${section.name}, Q${q}: select at least two answer options for Either or Multiple Correct.`);
+        return;
+      }
+    }
+  }
   const savedResults = await currentExamRef().collection('results')
     .where('classId', '==', current.classId)
     .get();
@@ -3314,7 +3384,7 @@ async function loadImageAsDataURL(src){
         '3. For each question, darken only one bubble (A/B/C/D) unless it is a multiple-answer question.',
         '4. Fill bubbles completely – no ticks, crosses or half-shading.',
         '5. Do not overwrite or try to erase answers.',
-        '6. More than one bubble for a question will be treated as wrong.',
+        '6. Multiple-correct: mark every correct option and no extra options.',
         '7. Avoid stray marks; do not fold, tear or damage the sheet.',
         '8. Do not write over the black square markers or page margins.',
         '9. Mark answers only on this OMR sheet, not on the question paper.',
