@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         St Patricks LEAP Automation
 // @namespace    stpatricks-leap
-// @version      1.1.1
+// @version      1.1.2
 // @description  Transfers FA marks from St Patricks School app to LEAP and assists teacher-verified entry
 // @match        https://messiahsastry.github.io/Question-Bank/excel.html*
 // @match        https://cse.ap.gov.in/loadccemarksentry*
@@ -96,15 +96,16 @@
     'bottom:12px!important;' +
     'left:8px!important;right:8px!important;' +
     'z-index:2147483647!important;' +
-    'padding:12px;background:#fff;' +
-    'border:2px solid #086a42;border-radius:10px;' +
-    'box-shadow:0 2px 12px #0004;' +
-    'color:#18352a;font:14px Arial;' +
+    'padding:14px;background:#f9fbfd;' +
+    'border:2px solid #086a42;border-radius:16px;' +
+    'box-shadow:0 10px 32px rgba(15,23,42,.23);' +
+    'color:#18352a;font:15px/1.4 system-ui,Arial,sans-serif;' +
     'max-height:55vh;overflow-y:auto;' +
     'box-sizing:border-box;';
 
   const title = document.createElement('b');
   title.textContent = 'School marks received';
+  title.style.cssText = 'display:block;font-size:18px;line-height:1.3;';
 
   const info = document.createElement('p');
 
@@ -227,7 +228,8 @@ fillBtn.style.cssText =
 
 const fillStatus = document.createElement('div');
 fillStatus.style.cssText =
-  'margin-top:8px;font:13px Arial;white-space:pre-wrap';
+  'margin-top:12px;font:15px/1.4 system-ui,Arial,sans-serif;' +
+  'white-space:pre-wrap';
 
 const normal = x => String(x || '')
   .toUpperCase().replace(/[^A-Z0-9]/g, '');
@@ -487,7 +489,7 @@ box.append(title, info, fillBtn, clear, fillStatus);
 
 const autoStatus = document.createElement('div');
 autoStatus.style.cssText =
-  'margin-top:8px;font-size:13px;color:#087c47';
+  'margin-top:10px;font-size:15px;color:#087c47';
 
 box.appendChild(autoStatus);
 
@@ -670,17 +672,20 @@ box.insertBefore(backToAppBtn, clear);
 const actionGrid = document.createElement('div');
 actionGrid.style.cssText =
   'display:grid;grid-template-columns:repeat(2,minmax(0,1fr));' +
-  'gap:10px;margin:12px 0 5px;';
+  'gap:13px;margin:14px 0 7px;';
 
 function styleLargeAction(button, background, foreground = '#fff') {
   button.style.cssText =
-    'width:100%;min-height:60px;padding:12px 8px;margin:0;' +
+    'width:100%;min-height:86px;padding:18px 12px;margin:0;' +
     'display:flex;align-items:center;justify-content:center;' +
-    'box-sizing:border-box;border:0;border-radius:11px;' +
+    'box-sizing:border-box;border:1px solid rgba(0,0,0,.06);' +
+    'border-radius:16px;' +
     'background:' + background + ';color:' + foreground + ';' +
-    'font:700 16px/1.3 Arial,sans-serif;' +
+    'font:800 20px/1.25 system-ui,-apple-system,Arial,sans-serif;' +
+    'letter-spacing:.1px;' +
+    'box-shadow:0 5px 12px rgba(15,23,42,.15);' +
     'white-space:normal;text-align:center;overflow-wrap:anywhere;' +
-    'touch-action:manipulation;';
+    'touch-action:manipulation;cursor:pointer;';
 }
 
 styleLargeAction(detailsBtn, '#145b91');
