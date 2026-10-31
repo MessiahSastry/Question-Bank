@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         St Patricks LEAP Automation
 // @namespace    stpatricks-leap
-// @version      1.1.0
+// @version      1.1.1
 // @description  Transfers FA marks from St Patricks School app to LEAP and assists teacher-verified entry
 // @match        https://messiahsastry.github.io/Question-Bank/excel.html*
 // @match        https://cse.ap.gov.in/loadccemarksentry*
@@ -100,7 +100,7 @@
     'border:2px solid #086a42;border-radius:10px;' +
     'box-shadow:0 2px 12px #0004;' +
     'color:#18352a;font:14px Arial;' +
-    'max-height:45vh;overflow-y:auto;' +
+    'max-height:55vh;overflow-y:auto;' +
     'box-sizing:border-box;';
 
   const title = document.createElement('b');
@@ -665,6 +665,31 @@ backToAppBtn.onclick = () => {
 };
 
 box.insertBefore(backToAppBtn, clear);
+
+// Large, floating, two-column controls for mobile screens.
+const actionGrid = document.createElement('div');
+actionGrid.style.cssText =
+  'display:grid;grid-template-columns:repeat(2,minmax(0,1fr));' +
+  'gap:10px;margin:12px 0 5px;';
+
+function styleLargeAction(button, background, foreground = '#fff') {
+  button.style.cssText =
+    'width:100%;min-height:60px;padding:12px 8px;margin:0;' +
+    'display:flex;align-items:center;justify-content:center;' +
+    'box-sizing:border-box;border:0;border-radius:11px;' +
+    'background:' + background + ';color:' + foreground + ';' +
+    'font:700 16px/1.3 Arial,sans-serif;' +
+    'white-space:normal;text-align:center;overflow-wrap:anywhere;' +
+    'touch-action:manipulation;';
+}
+
+styleLargeAction(detailsBtn, '#145b91');
+styleLargeAction(fillBtn, '#087c47');
+styleLargeAction(backToAppBtn, '#374151');
+styleLargeAction(clear, '#e5e7eb', '#111827');
+
+actionGrid.append(detailsBtn, fillBtn, backToAppBtn, clear);
+box.insertBefore(actionGrid, fillStatus);
 
 function getLEAPFields() {
   return Array.from(
