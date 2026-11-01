@@ -1253,16 +1253,53 @@ function refreshScannerReadiness(){
 }
 
 function syncExamModeUi(){
-  const generate = el('btnGenerate');
-  const createCustom = el('btnCreateCustomExam');
+
+  const generate =
+    el('btnGenerate');
+
+  const createCustom =
+    el('btnCreateCustomExam');
+
   if (createCustom){
-    createCustom.disabled = !(current.classId && current.sectionId);
+
+    createCustom.disabled =
+      !(current.classId && current.sectionId);
   }
-  if (generate){
-    generate.innerHTML = current.isCustomExam
-      ? '<i class="fa fa-file-export"></i> Generate Custom OMR (PDF)'
-      : '<i class="fa fa-file-export"></i> Generate Common OMR (PDF)';
+
+  if (!generate) return;
+
+  // Every teacher may generate an OMR
+  // for his/her own Custom Exam.
+  if (current.isCustomExam){
+
+    generate.disabled = false;
+
+    generate.innerHTML =
+      '<i class="fa fa-file-export"></i> Generate Custom OMR (PDF)';
+
+    generate.title =
+      'Generate an OMR for your Custom Exam';
+
+    return;
   }
+
+  // Common School OMR can be created/replaced
+  // only by the Academic / Exam Coordinator.
+  const allowed =
+    canManageCommonOmr();
+
+  generate.disabled =
+    !allowed;
+
+  generate.innerHTML =
+    allowed
+      ? '<i class="fa fa-file-export"></i> Generate Common OMR (PDF)'
+      : '<i class="fa fa-lock"></i> Common OMR – Coordinator Only';
+
+  generate.title =
+    allowed
+      ? 'Create or replace the Common School OMR'
+      : 'Only the Exam Coordinator can create or replace the Common OMR';
 }
 
 function getPartMaximum(subjectName, partName){
@@ -1304,8 +1341,20 @@ function getResultDocumentId(roll){
 
 // ===== CAMPUSCONNECT / TEACHER CONTEXT =====
 let currentTeacherId = null;
+let currentTeacherEmail = '';
+
+const COMMON_OMR_MANAGER_EMAIL =
+  'messiah.sastry@stpatricksschool.com';
+
 let currentSchoolId = 'stpatricks-school';
 let currentSchoolName = "St. Patrick's School";
+
+function canManageCommonOmr(){
+  return String(currentTeacherEmail || '')
+    .trim()
+    .toLowerCase() ===
+    COMMON_OMR_MANAGER_EMAIL.toLowerCase();
+}
 
 async function resolveUserContext(){
 
@@ -1327,6 +1376,11 @@ async function resolveUserContext(){
 
   currentTeacherId = user.uid;
 
+currentTeacherEmail =
+  String(user.email || '')
+    .trim()
+    .toLowerCase();
+
   // Current CampusConnect version does not require
   // a schoolId inside the teacher profile.
   try {
@@ -1338,7 +1392,14 @@ async function resolveUserContext(){
 
     if (userDoc.exists){
 
-      const userData = userDoc.data() || {};
+     const userData = userDoc.data() || {};
+
+if (!currentTeacherEmail && userData.email){
+  currentTeacherEmail =
+    String(userData.email)
+      .trim()
+      .toLowerCase();
+}
 
       if (userData.schoolId){
         currentSchoolId = userData.schoolId;
@@ -1493,6 +1554,125 @@ const el = id => document.getElementById(id);
   // Override native alert
   window.alert = show;
 })();
+
+function appConfirm({
+  title = 'CampusConnect',
+  subtitle = 'Confirmation',
+  message = '',
+  confirmText = 'Continue',
+  cancelText = 'Cancel'
+} = {}){
+
+  return new Promise(resolve => {
+
+    let dialog =
+      document.getElementById('dlgAppConfirm');
+
+    if (!dialog){
+
+      const wrapper =
+        document.createElement('div');
+
+      wrapper.innerHTML = `
+        <dialog id="dlgAppConfirm" class="modal"
+                style="width:min(430px,92vw);">
+          <header>
+            <div class="title">
+              <div class="h1" id="appConfirmTitle">
+                CampusConnect
+              </div>
+              <div class="sub" id="appConfirmSubtitle">
+                Confirmation
+              </div>
+            </div>
+          </header>
+
+          <div class="content">
+            <div id="appConfirmText"
+                 style="
+                   font-size:14px;
+                   line-height:1.6;
+                   color:#374151;
+                   white-space:pre-line;
+                 ">
+            </div>
+
+            <div class="toolbar"
+                 style="
+                   justify-content:flex-end;
+                   gap:8px;
+                   margin-top:18px;
+                 ">
+              <button class="btn"
+                      type="button"
+                      id="btnAppConfirmCancel">
+                Cancel
+              </button>
+
+              <button class="btn primary"
+                      type="button"
+                      id="btnAppConfirmContinue">
+                Continue
+              </button>
+            </div>
+          </div>
+        </dialog>
+      `;
+
+      dialog = wrapper.firstElementChild;
+      document.body.appendChild(dialog);
+    }
+
+    const titleEl =
+      dialog.querySelector('#appConfirmTitle');
+
+    const subtitleEl =
+      dialog.querySelector('#appConfirmSubtitle');
+
+    const textEl =
+      dialog.querySelector('#appConfirmText');
+
+    const cancelBtn =
+      dialog.querySelector('#btnAppConfirmCancel');
+
+    const continueBtn =
+      dialog.querySelector('#btnAppConfirmContinue');
+
+    titleEl.textContent = title;
+    subtitleEl.textContent = subtitle;
+    textEl.textContent = message;
+    cancelBtn.textContent = cancelText;
+    continueBtn.textContent = confirmText;
+
+    let finished = false;
+
+    const finish = result => {
+
+      if (finished) return;
+
+      finished = true;
+
+      if (dialog.open){
+        dialog.close();
+      }
+
+      resolve(result);
+    };
+
+    cancelBtn.onclick =
+      () => finish(false);
+
+    continueBtn.onclick =
+      () => finish(true);
+
+    dialog.oncancel = event => {
+      event.preventDefault();
+      finish(false);
+    };
+
+    dialog.showModal();
+  });
+}
 
 /* ---------- Custom dropdown binders ---------- */
 function mountCdrop(selectId, hostId){
@@ -3402,13 +3582,43 @@ async function loadImageAsDataURL(src){
       }
 
       if (!current.isCustomExam){
-        const replaceCommon = window.confirm(
-          'This will create or replace the Common OMR for this school exam and class.\n\n' +
-          'All subject teachers will scan using this same physical OMR layout. Continue?'
-        );
-        if (!replaceCommon) return;
-      }
 
+  if (!canManageCommonOmr()){
+
+    alert(
+      'Only the Exam Coordinator can create or replace the Common School OMR.'
+    );
+
+    return;
+  }
+
+  const examName =
+    el('examSel')?.selectedOptions?.[0]
+      ?.textContent?.trim() ||
+    'this school examination';
+
+  const replaceCommon =
+    await appConfirm({
+
+      title:
+        'CampusConnect',
+
+      subtitle:
+        'Common OMR',
+
+      message:
+        `This will create or replace the Common OMR for ${examName}.\n\n` +
+        `The same physical OMR sheet will be used by all subject teachers for scanning.`,
+
+      cancelText:
+        'Cancel',
+
+      confirmText:
+        'Continue'
+    });
+
+  if (!replaceCommon) return;
+}
            const { jsPDF } = window.jspdf;
       const doc = new jsPDF({ unit: 'mm', format: 'a4' });
       const W = 210, H = 297;
