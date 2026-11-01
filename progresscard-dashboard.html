@@ -224,12 +224,27 @@
 };
     firebase.initializeApp(firebaseConfig);
     const auth = firebase.auth();
-    const db = firebase.firestore();
-    // Require login before showing anything
-    auth.onAuthStateChanged(function(user) {
+const db = firebase.firestore();
+
+const ACADEMIC_YEAR_ADMIN_EMAIL =
+  'messiah.sastry@stpatricksschool.com';
+
+let currentUser = null;
+
+function canAddAcademicYear() {
+  return !!currentUser &&
+    String(currentUser.email || '').trim().toLowerCase() ===
+    ACADEMIC_YEAR_ADMIN_EMAIL.toLowerCase();
+}
+
+// Require login before showing anything
+auth.onAuthStateChanged(function(user) {
   if (!user) {
     window.location.replace("index.html");
+    return;
   }
+
+  currentUser = user;
 });
     // Academic Year logic
     let academicYear = localStorage.getItem('sp_selectedYear') || '2024-25';
@@ -328,48 +343,164 @@
         let years = [];
         snap.forEach(doc=>years.push(doc.id));
         console.log("Years from Firestore:", years); 
-        let html = `
-      <form id="yearForm">
-        <div class="popup-title">Academic Year</div>
-        <label>Select Academic Year</label>
-        <div id="custom-year-dropdown" class="custom-dropdown" tabindex="0">
-          <span id="custom-year-selected">${academicYear || 'Select Academic Year'}</span>
-          <i class="fa fa-chevron-down"></i>
-        </div>
-        <div id="custom-year-options" class="custom-options"></div>
-        <label>Add New Academic Year</label>
-        <input name="yearName" maxlength="10" placeholder="e.g., 2024-25" />
-        <div class="popup-btn-row">
-          <button type="button" class="popup-cancel-btn">Cancel</button>
-          <button type="submit" class="popup-action-btn">Save</button>
-        </div>
-      </form>
-      <button id="logout-btn" style="margin:16px auto 0 auto;display:block;padding:11px 0;width:100%;background:#e74c3c;color:#fff;border:none;border-radius:8px;font-size:1em;font-weight:bold;cursor:pointer;">Logout</button>
-      `;
-       showPopup(html,'yearForm',function(e){
-        e.preventDefault();
-        const sel = document.getElementById('custom-year-selected').textContent;
-        const newYear = e.target.yearName.value.trim();
-      
-        if(newYear){
-          db.collection('years').doc(newYear).set({name:newYear}).then(()=>{
-            localStorage.setItem('sp_selectedYear', newYear);
-            academicYear = newYear;
-            document.getElementById('header-exam').textContent = academicYear;
-            closePopup();
-            renderClassList();
-          });
-        } else if(sel){
-          localStorage.setItem('sp_selectedYear', sel);
-          academicYear = sel;
-          document.getElementById('header-exam').textContent = academicYear;
-          closePopup();
-          renderClassList();
-        } else {
-          alert("Please select an academic year or enter a new one.");
-          return;
-        }
-      });
+        const addYearControls = canAddAcademicYear()
+  ? `
+      <label>Add New Academic Year</label>
+      <input
+        name="yearName"
+        maxlength="10"
+        placeholder="e.g., 2026-27"
+      />
+    `
+  : '';
+
+let html = `
+  <form id="yearForm">
+    <div class="popup-title">Academic Year</div>
+
+    <label>Select Academic Year</label>
+
+    <div
+      id="custom-year-dropdown"
+      class="custom-dropdown"
+      tabindex="0"
+    >
+      <span id="custom-year-selected">
+        ${academicYear || 'Select Academic Year'}
+      </span>
+
+      <i class="fa fa-chevron-down"></i>
+    </div>
+
+    <div
+      id="custom-year-options"
+      class="custom-options">
+    </div>
+
+    ${addYearControls}
+
+    <div class="popup-btn-row">
+      <button
+        type="button"
+        class="popup-cancel-btn">
+        Cancel
+      </button>
+
+      <button
+        type="submit"
+        class="popup-action-btn">
+        Save
+      </button>
+    </div>
+  </form>
+
+  <button
+    id="logout-btn"
+    style="
+      margin:16px auto 0 auto;
+      display:block;
+      padding:11px 0;
+      width:100%;
+      background:#e74c3c;
+      color:#fff;
+      border:none;
+      border-radius:8px;
+      font-size:1em;
+      font-weight:bold;
+      cursor:pointer;
+    ">
+    Logout
+  </button>
+`;
+      showPopup(html, 'yearForm', async function(e) {
+  e.preventDefault();
+
+  const selectedEl =
+    document.getElementById('custom-year-selected');
+
+  const selectedYear =
+    String(selectedEl?.textContent || '').trim();
+
+  const yearInput =
+    e.target.querySelector('[name="yearName"]');
+
+  const newYear =
+    yearInput
+      ? String(yearInput.value || '').trim()
+      : '';
+
+  // Only the authorised account may CREATE a new Academic Year.
+  if (newYear) {
+
+    if (!canAddAcademicYear()) {
+      alert(
+        'You do not have permission to add a new Academic Year.'
+      );
+      return;
+    }
+
+    try {
+
+      await db
+        .collection('years')
+        .doc(newYear)
+        .set({
+          name: newYear
+        });
+
+      localStorage.setItem(
+        'sp_selectedYear',
+        newYear
+      );
+
+      academicYear = newYear;
+
+      document.getElementById(
+        'header-exam'
+      ).textContent = academicYear;
+
+      closePopup();
+      renderClassList();
+
+    } catch (error) {
+
+      console.error(
+        'Error adding Academic Year:',
+        error
+      );
+
+      alert(
+        'Could not add the Academic Year. Please try again.'
+      );
+    }
+
+    return;
+  }
+
+  // Every teacher may SELECT an existing Academic Year.
+  if (selectedYear) {
+
+    localStorage.setItem(
+      'sp_selectedYear',
+      selectedYear
+    );
+
+    academicYear = selectedYear;
+
+    document.getElementById(
+      'header-exam'
+    ).textContent = academicYear;
+
+    closePopup();
+    renderClassList();
+
+    return;
+  }
+
+  alert(
+    'Please select an Academic Year.'
+  );
+});
       
       // --------- ADD THIS IMMEDIATELY AFTER showPopup (and OUTSIDE the handler!) ----------
       setTimeout(() => {
