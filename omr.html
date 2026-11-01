@@ -633,6 +633,7 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
 
 <!-- Place these UNDER the Exam dropdown -->
 <div class="toolbar" style="margin-top:10px">
+  <button class="btn" id="btnCreateCustomExam" disabled><i class="fa fa-circle-plus"></i> Create Custom Exam</button>
   <button class="btn" id="btnExamSettings" disabled><i class="fa fa-sliders"></i> Exam Settings</button>
   <button class="btn" id="btnKey" disabled><i class="fa fa-key"></i> Set Answer Key</button>
   <button class="btn primary" id="btnScan" disabled><i class="fa fa-camera"></i> Scan &amp; Save</button>
@@ -644,7 +645,7 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
     </section>
 
     <section class="card">
-      <div class="sectionTitle"><i class="fa fa-file-pdf"></i> Template Preview & Download</div>
+      <div class="sectionTitle"><i class="fa fa-file-pdf"></i> OMR Sheet Preview & Download</div>
       <div class="toolbar">
         <button class="btn" id="btnGenerate"><i class="fa fa-file-export"></i> Generate OMR (PDF)</button>
         <span class="status" id="tplStatus">No template yet.</span>
@@ -653,6 +654,34 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
       <div id="pdfPreview" class="status">(Preview image will show after generation)</div>
     </section>
   </main>
+
+  <!-- Teacher Custom Exam Modal -->
+  <dialog id="dlgCustomExam" class="modal">
+    <header>
+      <div class="title">
+        <div class="h1">Create Custom Exam</div>
+        <div class="sub">For a teacher's own class test / practice test only</div>
+      </div>
+      <button class="icon-btn modal-close" type="button"
+              onclick="document.getElementById('dlgCustomExam').close()" aria-label="Close">
+        <i class="fa fa-xmark"></i>
+      </button>
+    </header>
+    <div class="content">
+      <div class="label">Exam Name</div>
+      <input id="inpCustomExamName" class="select" type="text" maxlength="80"
+             placeholder="Example: Physics Weekly Test 1" />
+      <div class="status" style="margin-top:8px;">
+        The normal Exam dropdown remains for common school exams. Your custom exam is visible only to you.
+      </div>
+      <div class="toolbar" style="justify-content:flex-end;margin-top:14px;">
+        <button class="btn" type="button" onclick="document.getElementById('dlgCustomExam').close()">Cancel</button>
+        <button class="btn primary" type="button" id="btnCreateCustomExamSave">
+          <i class="fa fa-plus"></i> Create Exam
+        </button>
+      </div>
+    </div>
+  </dialog>
 
   <!-- Exam Settings Modal -->
     <dialog id="dlgExam" class="modal">
@@ -1028,6 +1057,9 @@ const storage = firebase.storage();
 
     examId:null,
 
+    // false = centrally configured school exam; true = teacher-owned custom exam
+    isCustomExam:false,
+
     isSubtopic:false,
     parentExamId:null
   };
@@ -1037,9 +1069,15 @@ let tpl = {
       bubbleSizeMm:5.5,
             markerMode:'black-square-v3',
       sections:[ /* {name, count, options:4|5, mark, negative} */ ],
+      // Persistent per-subject settings. School-exam teachers can configure
+      // their own subject without overwriting another subject's settings.
+      sectionConfigs:{},
       omrPartBySubject:{},
-      // computed ROIs saved after generation for deterministic scan
+      // Active ROIs used by the scanner. For common school exams these are
+      // derived from commonMasterRois and renamed to the selected subject.
       rois:null,
+      // One physical OMR layout shared by all subjects of a common school exam.
+      commonMasterRois:null,
     };
 let examSubjects = [];   // subjects for the currently selected exam
 let examCommonSubtopics = []; // exam-level subtopics shared by "common" subjects
@@ -1160,6 +1198,73 @@ function areOmrPartsReady(){
   });
 }
 
+function cloneOmrData(value){
+  return value == null ? value : JSON.parse(JSON.stringify(value));
+}
+
+// Convert the one common physical answer grid into the currently selected
+// subject. The coordinates stay identical; only the logical section name and
+// unused questions/options are changed for scoring.
+function buildActiveRoisFromCommon(){
+  const master = tpl.commonMasterRois;
+  if (!master || !Array.isArray(master.sections) || !master.sections.length) return null;
+  if (!Array.isArray(current.selectedSubjects) || current.selectedSubjects.length !== 1) return null;
+  if (!Array.isArray(tpl.sections) || tpl.sections.length !== 1) return null;
+
+  const target = tpl.sections[0];
+  const base = master.sections[0];
+  if (!base || !Array.isArray(base.bubbles)) return null;
+
+  const wantedCount = Math.max(0, Number(target.count) || 0);
+  const wantedOptions = Math.max(2, Math.min(6, Number(target.options) || 4));
+  const masterQuestions = new Set(base.bubbles.map(b => Number(b.q)).filter(Number.isFinite));
+  const masterMaxQuestion = masterQuestions.size ? Math.max(...masterQuestions) : 0;
+  const masterOptions = Math.max(2, Math.min(6, Number(base.options) || 4));
+
+  if (wantedCount > masterMaxQuestion || wantedOptions > masterOptions) return null;
+
+  const allowed = new Set(['A','B','C','D','E','F'].slice(0, wantedOptions));
+  const active = cloneOmrData(master);
+  active.sections = [{
+    ...cloneOmrData(base),
+    name: target.name,
+    options: wantedOptions,
+    bubbles: base.bubbles.filter(b =>
+      Number(b.q) <= wantedCount && allowed.has(String(b.opt))
+    ).map(cloneOmrData)
+  }];
+  active.sourceMode = 'common-school-omr';
+  return active;
+}
+
+function refreshScannerReadiness(){
+  if (!current.examId){
+    el('btnScan').disabled = true;
+    return false;
+  }
+
+  if (!current.isCustomExam){
+    tpl.rois = buildActiveRoisFromCommon();
+  }
+
+  const ready = !!tpl.rois && areOmrPartsReady();
+  el('btnScan').disabled = !ready;
+  return ready;
+}
+
+function syncExamModeUi(){
+  const generate = el('btnGenerate');
+  const createCustom = el('btnCreateCustomExam');
+  if (createCustom){
+    createCustom.disabled = !(current.classId && current.sectionId);
+  }
+  if (generate){
+    generate.innerHTML = current.isCustomExam
+      ? '<i class="fa fa-file-export"></i> Generate Custom OMR (PDF)'
+      : '<i class="fa fa-file-export"></i> Generate Common OMR (PDF)';
+  }
+}
+
 function getPartMaximum(subjectName, partName){
   const part = getSubjectParts(subjectName)
     .find(row => omrNorm(row && row.name) === omrNorm(partName));
@@ -1276,24 +1381,47 @@ function schoolYearRef(){
 }
 
 
-// OMR-specific exams.
-// Keep them separate from normal CampusConnect exams.
+// OMR-specific storage.
 function schoolExamsRef(){
-
-  return db
-    .collection('omrExams');
+  return db.collection('omrExams');
 }
 
+// Teacher-created custom exams are kept under the teacher account so they do
+// not pollute the centrally configured school-exam list.
+function teacherCustomExamsRef(){
+  if (!currentTeacherId) throw new Error('Teacher context is not available.');
+  return db.collection('users').doc(currentTeacherId).collection('omrCustomExams');
+}
 
-// Current OMR exam
+function currentSelectedExamRecord(){
+  const rows = Array.isArray(window.__omrEffectiveExams) ? window.__omrEffectiveExams : [];
+  return rows.find(row => String(row.id) === String(current.examId)) || null;
+}
+
+// Current OMR exam storage. Common school exams keep their scan records in the
+// existing omrExams collection; custom exams live under the teacher account.
 function currentExamRef(){
-
-  if (!current.examId){
-    throw new Error('No exam selected.');
+  if (!current.examId) throw new Error('No exam selected.');
+  if (current.isCustomExam){
+    const row = currentSelectedExamRecord();
+    const docId = row && row.__docId
+      ? row.__docId
+      : String(current.examId).replace(/^custom__/, '');
+    return teacherCustomExamsRef().doc(docId);
   }
+  return schoolExamsRef().doc(current.examId);
+}
 
-  return schoolExamsRef()
-    .doc(current.examId);
+// One common physical OMR template per school + academic year + class + school exam.
+// Section and subject are intentionally NOT part of the key.
+function commonOmrTemplateRef(){
+  if (!current.examId || !current.classId){
+    throw new Error('Class and exam are required for the common OMR template.');
+  }
+  const id = [currentSchoolId, academicYear, current.classId, current.examId]
+    .map(safeResultIdPart)
+    .join('__');
+  return db.collection('omrCommonTemplates').doc(id);
 }
 
 // Keep the scanner-owned Subject -> Subtopic mapping available to the
@@ -1685,26 +1813,43 @@ async function fetchEffectiveExamsWrapper(
 
 
   // =========================================
-  // RETURN EFFECTIVE EXAMS
+  // 4. TEACHER-OWNED CUSTOM OMR EXAMS
   // =========================================
-  const list =
-    Array.from(
-      map.values()
-    );
+  const schoolList = Array.from(map.values()).map(row => ({...row, __custom:false}));
+  window.__omrSchoolExams = schoolList.map(row => ({...row}));
 
-  list.sort(
-    (a,b) =>
-      String(a.name || '')
-        .localeCompare(
-          String(b.name || '')
-        )
-  );
+  const customRows = [];
+  if (currentTeacherId){
+    try {
+      const customSnap = await teacherCustomExamsRef().get();
+      customSnap.forEach(doc => {
+        const data = doc.data() || {};
+        if (String(data.academicYear || '') !== String(academicYear)) return;
+        if (String(data.classId || '') !== String(classId)) return;
+        if (String(data.sectionId || '') !== String(current.sectionId)) return;
+        if (data.isDeleted === true) return;
+        customRows.push({
+          id:`custom__${doc.id}`,
+          __docId:doc.id,
+          ...data,
+          __custom:true,
+          __origin:'teacher-custom'
+        });
+      });
+    }
+    catch (error){
+      console.warn('Could not load teacher custom OMR exams:', error);
+    }
+  }
 
-  // Keep copy so Subject dropdown can use
-  // the SAME effective exam structure.
-  window.__omrEffectiveExams =
-    list;
+  const list = [...schoolList, ...customRows];
+  list.sort((a,b) => {
+    if (!!a.__custom !== !!b.__custom) return a.__custom ? 1 : -1;
+    return String(a.name || '').localeCompare(String(b.name || ''));
+  });
 
+  // Keep copy so Subject dropdown can use the SAME effective exam structure.
+  window.__omrEffectiveExams = list;
   return list;
 }
 // Loaders
@@ -1765,6 +1910,8 @@ async function loadExamsEffective(){
   el('btnDownloadExcel').disabled = true;
   btnES = el('btnExamSettings');
   if (btnES) btnES.disabled = true;
+  const btnCustom = el('btnCreateCustomExam');
+  if (btnCustom) btnCustom.disabled = !(current.classId && current.sectionId);
 
   if (!current.classId || !current.sectionId) {
     examSel.innerHTML = '<option value="">Select Exam</option>';
@@ -1786,7 +1933,10 @@ async function loadExamsEffective(){
   // show names, value = id; keep scope hints in data-attrs
   examSel.innerHTML =
     '<option value="">Select Exam</option>' +
-    exams.map(e => `<option value="${e.id}" data-scope="${e.__scope||''}">${e.name||e.id}</option>`).join('');
+    exams.map(e => {
+      const prefix = e.__custom ? 'My Test — ' : '';
+      return `<option value="${e.id}" data-scope="${e.__scope||''}" data-custom="${e.__custom ? '1' : '0'}">${prefix}${escapeHtml(e.name||e.id)}</option>`;
+    }).join('');
 
   examSel.disabled = false;
   refreshCdrop('examSel','cdrop-exam');
@@ -1794,6 +1944,75 @@ async function loadExamsEffective(){
   btnES = el('btnExamSettings');
   if (btnES) btnES.disabled = false;
 }
+
+function buildCustomSubjectCatalog(){
+  const source = Array.isArray(window.__omrSchoolExams) ? window.__omrSchoolExams : [];
+  const byName = new Map();
+  source.forEach(exam => {
+    (Array.isArray(exam.subjects) ? exam.subjects : []).forEach(subject => {
+      const row = typeof subject === 'string'
+        ? {name:subject, subtopicsMode:'none'}
+        : {...subject};
+      if (!row || !row.name) return;
+      const key = omrNorm(row.name);
+      const existing = byName.get(key);
+      if (!existing || (Array.isArray(row.subtopics) && row.subtopics.length)){
+        byName.set(key, row);
+      }
+    });
+  });
+  return Array.from(byName.values()).sort((a,b) => String(a.name).localeCompare(String(b.name)));
+}
+
+el('btnCreateCustomExam').onclick = () => {
+  if (!current.classId || !current.sectionId){
+    alert('Select Class and Section first.');
+    return;
+  }
+  const input = el('inpCustomExamName');
+  input.value = '';
+  el('dlgCustomExam').showModal();
+  setTimeout(() => input.focus(), 0);
+};
+
+el('btnCreateCustomExamSave').onclick = async () => {
+  const name = String(el('inpCustomExamName').value || '').trim();
+  if (!name){
+    alert('Enter the custom exam name.');
+    return;
+  }
+  const subjects = buildCustomSubjectCatalog();
+  if (!subjects.length){
+    alert('No class subjects were found from the school exam setup. Configure the school subjects first.');
+    return;
+  }
+
+  const ref = teacherCustomExamsRef().doc();
+  await ref.set({
+    name,
+    customExam:true,
+    ownerTeacherId:currentTeacherId,
+    academicYear,
+    classId:current.classId,
+    className:current.className || '',
+    sectionId:current.sectionId,
+    sectionName:current.sectionName || '',
+    subjects,
+    subtopics:[],
+    sectionConfigs:{},
+    selectedSubjects:[],
+    markerMode:'black-square-v3',
+    createdAt:firebase.firestore.FieldValue.serverTimestamp(),
+    updatedAt:firebase.firestore.FieldValue.serverTimestamp()
+  });
+
+  el('dlgCustomExam').close();
+  await loadExamsEffective();
+  const customId = `custom__${ref.id}`;
+  el('examSel').value = customId;
+  refreshCdrop('examSel','cdrop-exam');
+  el('examSel').dispatchEvent(new Event('change', {bubbles:true}));
+};
 
 async function loadSubjectsFromExam(examId){
 
@@ -2059,7 +2278,9 @@ async function loadSubjectsFromExam(examId){
           subjectName => {
 
             const old =
-              oldByName.get(subjectName);
+              oldByName.get(subjectName) ||
+              (tpl.sectionConfigs && tpl.sectionConfigs[subjectName]) ||
+              null;
 
                       if (old){
 
@@ -2099,10 +2320,19 @@ async function loadSubjectsFromExam(examId){
         );
 
       if (subjectLayoutChanged){
-        // Different subjects = different OMR layout.
-        tpl.rois = null;
-        el('tplStatus').textContent =
-          'Subjects selected. Check Exam Settings, then generate the OMR.';
+        if (current.isCustomExam){
+          // A custom exam owns its physical sheet, so a subject/layout change
+          // invalidates that custom sheet until it is regenerated.
+          tpl.rois = null;
+          el('tplStatus').textContent =
+            'Custom exam changed. Check Exam Settings, then generate the Custom OMR.';
+        }
+        else {
+          // Common school exams keep the physical master sheet unchanged.
+          el('tplStatus').textContent = tpl.commonMasterRois
+            ? 'Common OMR loaded. Configure this subject and scan.'
+            : 'Common OMR has not been generated for this school exam yet.';
+        }
       }
 
     }
@@ -2207,7 +2437,7 @@ async function loadSubjectsFromExam(examId){
             delete current.partBySubject[subjectName];
           }
           tpl.omrPartBySubject = {...current.partBySubject};
-          el('btnScan').disabled = !(tpl.rois && areOmrPartsReady());
+          refreshScannerReadiness();
           void persistOmrPartMapping();
         });
         mapHost.appendChild(card);
@@ -2220,7 +2450,7 @@ async function loadSubjectsFromExam(examId){
     }
 
     tpl.omrPartBySubject = {...current.partBySubject};
-    el('btnScan').disabled = !(tpl.rois && areOmrPartsReady());
+    refreshScannerReadiness();
     void persistOmrPartMapping();
 
   }
@@ -2264,10 +2494,17 @@ async function loadSubjectsFromExam(examId){
 
     multiList.appendChild(label);
 
-    cb.addEventListener(
-      'change',
-      updateSubjectSelection
-    );
+    cb.addEventListener('change', () => {
+      // A common school OMR is one physical answer grid reused by every subject,
+      // so teachers scan one subject at a time. Custom exams keep multi-subject
+      // capability if the teacher deliberately needs it.
+      if (!current.isCustomExam && cb.checked){
+        multiList.querySelectorAll('.subject-check').forEach(other => {
+          if (other !== cb) other.checked = false;
+        });
+      }
+      updateSubjectSelection();
+    });
 
   });
 
@@ -2290,7 +2527,8 @@ el('classSel').addEventListener('change', async (e)=>{
   current.classId = e.target.value || null;
   current.className = e.target.selectedOptions[0]?.dataset.name || null;
   current.sectionId = null; current.sectionName=null;
-  current.subjectName=null; current.subtopicName=null; current.examId=null;
+  current.subjectName=null; current.subtopicName=null; current.examId=null; current.isCustomExam=false;
+  syncExamModeUi();
   examSubjects = [];
 
   await loadSections(current.classId);
@@ -2301,7 +2539,8 @@ el('classSel').addEventListener('change', async (e)=>{
 el('sectionSel').addEventListener('change', async (e)=>{
   current.sectionId = e.target.value || null;
   current.sectionName = e.target.selectedOptions[0]?.dataset.name || null;
-  current.subjectName=null; current.subtopicName=null; current.examId=null;
+  current.subjectName=null; current.subtopicName=null; current.examId=null; current.isCustomExam=false;
+  syncExamModeUi();
   examSubjects = [];
 
   // disable settings until we load the list for this section
@@ -2314,6 +2553,9 @@ el('sectionSel').addEventListener('change', async (e)=>{
 
 el('examSel').addEventListener('change', async (e)=>{
   current.examId       = e.target.value || null;
+  const chosenExam = currentSelectedExamRecord();
+  current.isCustomExam = !!(chosenExam && chosenExam.__custom);
+  syncExamModeUi();
   current.subjectName  = null;
   current.subtopicName = null;
   current.selectedSubjects = [];
@@ -2339,6 +2581,7 @@ el('pickStatus').innerHTML =
     await loadSubjectsFromExam(current.examId);
     await loadTemplate();
     if (btnES) btnES.disabled = false;
+    syncExamModeUi();
     } else {
     el('header-exam').textContent = '';
     el('subjectSel').innerHTML=''; el('subjectSel').disabled=true;
@@ -2346,6 +2589,8 @@ el('pickStatus').innerHTML =
     el('btnScan').disabled = true;
     el('btnViewReports').disabled = true;
     el('btnDownloadExcel').disabled = true;
+    current.isCustomExam = false;
+    syncExamModeUi();
     if (btnES) btnES.disabled = false; // still allow opening settings for this class/section
   }
 
@@ -2366,7 +2611,7 @@ el('subtopicSel').addEventListener('change', (e)=>{
       delete current.partBySubject[subjectName];
     }
     tpl.omrPartBySubject = {...current.partBySubject};
-    el('btnScan').disabled = !(tpl.rois && areOmrPartsReady());
+    refreshScannerReadiness();
     void persistOmrPartMapping();
   }
 });
@@ -2513,88 +2758,162 @@ el('subtopicSel').addEventListener('change', (e)=>{
         }
       }
 
-           tpl.markerMode = 'black-square-v3';
+      tpl.markerMode = 'black-square-v3';
 
+      // Save each subject independently. This prevents one teacher's subject
+      // settings from erasing another subject's question/mark configuration.
+      if (!tpl.sectionConfigs || typeof tpl.sectionConfigs !== 'object') tpl.sectionConfigs = {};
+      tpl.sections.forEach(section => {
+        tpl.sectionConfigs[section.name] = cloneOmrData(section);
+      });
 
-      // Settings/layout changed.
-      // Old ROIs must not be used.
-      tpl.rois = null;
-
-      // Scanner remains disabled until
-      // Generate OMR creates fresh ROIs.
-      el('btnScan').disabled = true;
+      if (current.isCustomExam){
+        // A custom exam owns its own printed sheet. Any layout-setting change
+        // requires that custom sheet to be generated again.
+        tpl.rois = null;
+        el('btnScan').disabled = true;
+      }
+      else {
+        // A common school exam uses the Academic In-charge's permanent common
+        // sheet. Subject settings never delete that physical template.
+        refreshScannerReadiness();
+      }
 
       await saveTemplate();
-
       el('dlgExam').close();
-
       await buildKeyUI();
 
-      el('tplStatus').textContent =
-        'Settings saved. Generate PDF to compute ROIs.';
+      if (current.isCustomExam){
+        el('tplStatus').textContent =
+          'Settings saved. Generate the Custom OMR before scanning.';
+      }
+      else if (tpl.commonMasterRois){
+        if (tpl.rois){
+          el('tplStatus').textContent =
+            'Subject settings saved. Common OMR is ready to scan.';
+        }
+        else {
+          el('tplStatus').textContent =
+            'Subject settings exceed the current Common OMR layout. Generate a new Common OMR with enough questions/options.';
+        }
+      }
+      else {
+        el('tplStatus').textContent =
+          'Subject settings saved. Common OMR has not been generated for this school exam yet.';
+      }
     }
 
     async function saveTemplate(){
       if(!current.examId) return alert('Pick Class/Section/Exam first');
-     const docRef = currentExamRef();
-      await docRef.set({
+      const docRef = currentExamRef();
+      const payload = {
         classId: current.classId,
         sectionId: current.sectionId,
-               examId: current.examId,
-
+        examId: current.examId,
         selectedSubjects:
           Array.isArray(current.selectedSubjects)
             ? current.selectedSubjects.slice()
             : [],
-
         rollDigits: tpl.rollDigits,
         bubbleSizeMm: tpl.bubbleSizeMm,
         omrPartBySubject: {...current.partBySubject},
         markerMode: 'black-square-v3',
         sections: tpl.sections,
-        rois: tpl.rois||null,
+        sectionConfigs: cloneOmrData(tpl.sectionConfigs || {}),
         updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-      }, {merge:true});
+      };
+
+      // Common school exams do NOT store their active remapped ROI here.
+      // Their permanent physical ROI lives in omrCommonTemplates.
+      if (current.isCustomExam){
+        payload.rois = tpl.rois || null;
+      }
+
+      await docRef.set(payload, {merge:true});
     }
 
     async function loadTemplate(){
       const doc = await currentExamRef().get();
-      if(doc.exists){
-        const d = doc.data();
-                tpl.rollDigits = d.rollDigits || 4;
-        tpl.bubbleSizeMm = d.bubbleSizeMm || 5.5;
-        tpl.omrPartBySubject = (
-          d.omrPartBySubject && typeof d.omrPartBySubject === 'object'
-        ) ? {...d.omrPartBySubject} : {};
-        current.partBySubject = {...tpl.omrPartBySubject};
-        tpl.markerMode = 'black-square-v3';
-        tpl.sections = Array.isArray(d.sections) ? d.sections : [];
+      const d = doc.exists ? (doc.data() || {}) : {};
 
-        // Older marker layouts must never be reused with this scanner.
+      tpl.rollDigits = d.rollDigits || 4;
+      tpl.bubbleSizeMm = d.bubbleSizeMm || 5.5;
+      tpl.omrPartBySubject = (
+        d.omrPartBySubject && typeof d.omrPartBySubject === 'object'
+      ) ? {...d.omrPartBySubject} : {};
+      current.partBySubject = {...tpl.omrPartBySubject};
+      tpl.markerMode = 'black-square-v3';
+      tpl.sectionConfigs = (
+        d.sectionConfigs && typeof d.sectionConfigs === 'object'
+      ) ? cloneOmrData(d.sectionConfigs) : {};
+
+      // Backward compatibility: preserve older section settings as per-subject configs.
+      const legacySections = Array.isArray(d.sections) ? d.sections : [];
+      legacySections.forEach(section => {
+        if (section && section.name && !tpl.sectionConfigs[section.name]){
+          tpl.sectionConfigs[section.name] = cloneOmrData(section);
+        }
+      });
+
+      answerKey = d.answerKey || {};
+      tpl.commonMasterRois = null;
+      tpl.rois = null;
+
+      if (current.isCustomExam){
+        tpl.sections = legacySections;
         tpl.rois = (
-          d.rois &&
-          d.rois.markerMode === 'black-square-v3'
+          d.rois && d.rois.markerMode === 'black-square-v3'
         ) ? d.rois : null;
-        answerKey = d.answerKey||{};
 
-        const savedSubjects = Array.isArray(d.selectedSubjects) && d.selectedSubjects.length
-          ? d.selectedSubjects
-          : tpl.sections.map(section => section && section.name).filter(Boolean);
-        document.querySelectorAll('#subjectMultiList .subject-check')
-          .forEach(box => {
-            box.checked = savedSubjects.includes(box.value);
-          });
+        // A teacher's own custom exam can conveniently restore its last subject selection.
+        const savedSubjects = Array.isArray(d.selectedSubjects) ? d.selectedSubjects : [];
+        document.querySelectorAll('#subjectMultiList .subject-check').forEach(box => {
+          box.checked = savedSubjects.includes(box.value);
+        });
+        if (savedSubjects.length && typeof window.refreshOmrSubjectSelection === 'function'){
+          window.refreshOmrSubjectSelection();
+        }
+
+        el('tplStatus').textContent = tpl.rois
+          ? 'Custom OMR template loaded. Ready to scan.'
+          : 'Custom exam loaded. Configure it and generate the Custom OMR.';
+      }
+      else {
+        // For common school exams teachers deliberately choose their own subject;
+        // never auto-select the previous teacher's subject.
+        tpl.sections = [];
+        document.querySelectorAll('#subjectMultiList .subject-check').forEach(box => {
+          box.checked = false;
+        });
         if (typeof window.refreshOmrSubjectSelection === 'function'){
           window.refreshOmrSubjectSelection();
         }
 
-        el('tplStatus').textContent = tpl.rois? 'Template & ROIs loaded.' : 'Template loaded (no ROIs yet).';
-        await buildKeyUI();
-      } else {
-        tpl.sections = []; tpl.rois=null; tpl.omrPartBySubject={}; answerKey={};
-        el('tplStatus').textContent = 'No template saved for this exam yet.';
-        el('keyContent').textContent = '(Key grid appears after template is saved)';
+        try {
+          const commonDoc = await commonOmrTemplateRef().get();
+          if (commonDoc.exists){
+            const commonData = commonDoc.data() || {};
+            tpl.commonMasterRois = (
+              commonData.rois && commonData.rois.markerMode === 'black-square-v3'
+            ) ? commonData.rois : null;
+            if (Number(commonData.rollDigits)) tpl.rollDigits = Number(commonData.rollDigits);
+            if (Number(commonData.bubbleSizeMm)) tpl.bubbleSizeMm = Number(commonData.bubbleSizeMm);
+          }
+        }
+        catch (error){
+          console.warn('Could not load common OMR template:', error);
+        }
+
+        refreshScannerReadiness();
+        el('tplStatus').textContent = tpl.commonMasterRois
+          ? 'Common OMR loaded. Select your Subject, set the Answer Key, then Scan.'
+          : 'No Common OMR saved for this school exam yet. Generate it once for all subjects.';
       }
+
+      if (!doc.exists && !current.isCustomExam){
+        el('keyContent').textContent = '(Select a subject and save its Exam Settings first)';
+      }
+      await buildKeyUI();
     }
 
     // ===== ANSWER KEY UI =====
@@ -3077,7 +3396,17 @@ async function loadImageAsDataURL(src){
       }
 
       if (!tpl.sections.length) {
-        return alert('Open Exam Settings and configure the selected subjects first');
+        return alert(current.isCustomExam
+          ? 'Open Exam Settings and configure your Custom Exam first'
+          : 'Select one subject and configure the Common OMR layout first');
+      }
+
+      if (!current.isCustomExam){
+        const replaceCommon = window.confirm(
+          'This will create or replace the Common OMR for this school exam and class.\n\n' +
+          'All subject teachers will scan using this same physical OMR layout. Continue?'
+        );
+        if (!replaceCommon) return;
       }
 
            const { jsPDF } = window.jspdf;
@@ -4052,17 +4381,13 @@ async function loadImageAsDataURL(src){
           );
 
 
-        const printName =
-          Object.prototype.hasOwnProperty.call(
-            sec,
-            'displayName'
-          )
-            ? String(
-                sec.displayName ?? ''
-              ).trim()
-            : String(
-                sec.name || ''
-              ).trim();
+        const printName = current.isCustomExam
+          ? (
+              Object.prototype.hasOwnProperty.call(sec, 'displayName')
+                ? String(sec.displayName ?? '').trim()
+                : String(sec.name || '').trim()
+            )
+          : ''; // Common school OMR is intentionally subject-neutral.
 
 
         const titleSpace =
@@ -4665,8 +4990,15 @@ async function loadImageAsDataURL(src){
         );
       }
 
-           // Save ROIs locally first
-      tpl.rois = rois;
+      // Save ROIs locally first. A common school exam keeps this as the
+      // permanent master grid and derives a subject-specific logical view.
+      if (current.isCustomExam){
+        tpl.rois = rois;
+      }
+      else {
+        tpl.commonMasterRois = rois;
+        tpl.rois = buildActiveRoisFromCommon();
+      }
 
            // ---------- CREATE PDF BLOB ----------
       const pdfBlob = doc.output('blob');
@@ -4718,55 +5050,49 @@ async function loadImageAsDataURL(src){
         downloadLink
       );
 
-      // Scanner can use generated ROIs immediately.
-      el('btnScan').disabled = false;
+      refreshScannerReadiness();
 
-      document.getElementById(
-        'tplStatus'
-      ).textContent =
-        'OMR PDF generated.';
-
-      // Do NOT revoke pdfUrl immediately because
-      // the preview iframe is using the same URL.
-      document.getElementById(
-        'tplStatus'
-      ).textContent =
-        'OMR PDF generated. Saving scanner data…';
+      document.getElementById('tplStatus').textContent = current.isCustomExam
+        ? 'Custom OMR generated. Saving scanner data…'
+        : 'Common OMR generated. Saving it for all subjects…';
 
       // ---------- SAVE ROIs TO FIRESTORE ----------
       // A Firestore error must never stop the PDF download.
       try {
+        if (current.isCustomExam){
+          await currentExamRef().set({
+            rois: rois,
+            markerMode:'black-square-v3',
+            updatedAt:firebase.firestore.FieldValue.serverTimestamp()
+          }, {merge:true});
+        }
+        else {
+          const firstSection = Array.isArray(tpl.sections) && tpl.sections[0] ? tpl.sections[0] : null;
+          await commonOmrTemplateRef().set({
+            schoolId:currentSchoolId,
+            academicYear,
+            classId:current.classId,
+            examId:current.examId,
+            markerMode:'black-square-v3',
+            rollDigits:tpl.rollDigits,
+            bubbleSizeMm:tpl.bubbleSizeMm,
+            questionCapacity:firstSection ? Number(firstSection.count || 0) : 0,
+            optionCapacity:firstSection ? Number(firstSection.options || 4) : 4,
+            rois,
+            generatedBy:currentTeacherId,
+            updatedAt:firebase.firestore.FieldValue.serverTimestamp()
+          }, {merge:true});
+        }
 
-        await currentExamRef().set({
-
-          rois: rois,
-
-          updatedAt:
-            firebase.firestore
-              .FieldValue
-              .serverTimestamp()
-
-        }, {
-          merge: true
-        });
-
-        document.getElementById(
-          'tplStatus'
-        ).textContent =
-          'PDF generated & ROIs saved. Ready to scan.';
-
+        refreshScannerReadiness();
+        document.getElementById('tplStatus').textContent = current.isCustomExam
+          ? 'Custom OMR generated & saved. Ready to scan.'
+          : 'Common OMR generated & saved for all subjects. Ready to scan.';
       }
       catch (err) {
-
-        console.error(
-          'Could not save OMR ROIs:',
-          err
-        );
-
-        document.getElementById(
-          'tplStatus'
-        ).textContent =
-          'PDF downloaded. Scanner data could not be saved.';
+        console.error('Could not save OMR ROIs:', err);
+        document.getElementById('tplStatus').textContent =
+          'PDF downloaded, but scanner data could not be saved.';
       }
 
       }
@@ -9079,7 +9405,9 @@ async function scanAndSaveOnce() {
   }
 
   if (!tpl.rois) {
-    alert('Generate OMR to compute ROIs first');
+    alert(current.isCustomExam
+      ? 'Generate the Custom OMR before scanning.'
+      : 'The Common OMR template is not available for this school exam. Ask the Academic In-charge to generate it once.');
     return;
   }
 
@@ -10296,6 +10624,7 @@ el('reportSearch').oninput = event => {
   try{
 
     await resolveUserContext();
+    syncExamModeUi();
 
     refreshCdrop(
       'subtopicSel',
@@ -10425,6 +10754,5 @@ el('reportSearch').oninput = event => {
   </script>
 </body>
 </html>
-
 
 
