@@ -912,9 +912,14 @@ async function findAndRenderStudentsByPhone(phoneDigits) {
   }
 
   try {
-    matchedStudents =
+       const results =
       await findStudentsByRegisteredPhone(phoneDigits);
 
+    if (getEnteredPhone() !== phoneDigits) {
+      return;
+    }
+
+    matchedStudents = results;
     renderMatchedStudents(matchedStudents);
 
   } catch (error) {
@@ -1110,11 +1115,85 @@ async function selectMatchedStudent(index) {
   const matchArea =
     document.getElementById('student-match-area');
 
-  if (matchedStudents.length === 1 && matchArea) {
-    matchArea.innerHTML = buildStudentIdentityCard(selectedStudent);
+   window.__studentAccessGranted = false;
+
+  // Hide OTP, PIN and login panels.
+  [
+    'activate-pane',
+    'login-pane',
+    'otp-entry-area',
+    'set-pin-area',
+    'start-quiz-btn'
+  ].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = 'none';
+  });
+
+  document.getElementById(
+    'student-confirmation-card'
+  )?.remove();
+
+  if (
+    !matchArea ||
+    selectedStudent.parentPhone !== getEnteredPhone()
+  ) {
+    setAccessMessage('Phone number does not match.');
+    return;
   }
 
-  await prepareSelectedStudentAccess();
+  if (matchedStudents.length === 1) {
+    matchArea.innerHTML = '';
+  }
+
+  const card = document.createElement('div');
+  card.id = 'student-confirmation-card';
+
+  card.innerHTML =
+    buildStudentIdentityCard(selectedStudent);
+
+  const confirmButton = document.createElement('button');
+  confirmButton.type = 'button';
+  confirmButton.textContent = 'Confirm My Name';
+
+  const studentId = selectedStudent.studentId;
+  const parentPhone = selectedStudent.parentPhone;
+
+  confirmButton.onclick = function() {
+    if (
+      !selectedStudent ||
+      selectedStudent.studentId !== studentId ||
+      getEnteredPhone() !== parentPhone
+    ) {
+      setAccessMessage('Please select your name again.');
+      return;
+    }
+
+    window.studentName = selectedStudent.name;
+    window.__studentAccessGranted = true;
+
+    const startButton =
+      document.getElementById('start-quiz-btn');
+
+    if (startButton) {
+      startButton.style.display = '';
+    }
+
+    confirmButton.disabled = true;
+    confirmButton.textContent = 'Name Confirmed';
+
+    setAccessMessage(
+      'Name confirmed. You can now start the quiz.',
+      'success'
+    );
+  };
+
+  card.appendChild(confirmButton);
+  matchArea.appendChild(card);
+
+  setAccessMessage(
+    'Check your details and confirm your name.',
+    'info'
+  );
 }
 
 function buildStudentIdentityCard(student) {
