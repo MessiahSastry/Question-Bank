@@ -788,6 +788,11 @@
 const db = firebase.firestore();
 const auth = firebase.auth();
 
+const lookupQuizStudentsCallable =
+  firebase.app()
+    .functions('asia-south1')
+    .httpsCallable('lookupQuizStudents');
+
 auth.useDeviceLanguage();
         function getAcademicYear(startMonthIndex = 5) { // default: starts June
   const now = new Date();
@@ -934,94 +939,41 @@ async function findAndRenderStudentsByPhone(phoneDigits) {
 async function findStudentsByRegisteredPhone(phoneDigits) {
   const year = getActiveAcademicYear();
 
-  const snapshot = await db
-    .collectionGroup('students')
-    .where('parentPhone', '==', phoneDigits)
-    .get();
-
-  const students = [];
-
-  for (const studentDoc of snapshot.docs) {
-    const pathParts = studentDoc.ref.path.split('/');
-
-    if (
-      pathParts.length !== 8 ||
-      pathParts[0] !== 'years' ||
-      pathParts[1] !== year ||
-      pathParts[2] !== 'classes' ||
-      pathParts[4] !== 'sections' ||
-      pathParts[6] !== 'students'
-    ) {
-      continue;
-    }
-
-    const studentData = studentDoc.data() || {};
-
-    if (studentData.isDeleted === true) {
-      continue;
-    }
-
-    const classId = pathParts[3];
-    const sectionId = pathParts[5];
-    const studentId = pathParts[7];
-
-    const classRef = db
-      .collection('years')
-      .doc(year)
-      .collection('classes')
-      .doc(classId);
-
-    const sectionRef = classRef
-      .collection('sections')
-      .doc(sectionId);
-
-    const documents = await Promise.all([
-      classRef.get(),
-      sectionRef.get()
-    ]);
-
-    const classDocument = documents[0];
-    const sectionDocument = documents[1];
-
-    if (!classDocument.exists || !sectionDocument.exists) {
-      continue;
-    }
-
-    students.push({
-      academicYear: year,
-      classId,
-      sectionId,
-      studentId,
-
-      name: String(studentData.name || '').trim(),
-
-      className: String(
-        classDocument.data()?.name || ''
-      ).trim(),
-
-      sectionName: String(
-        sectionDocument.data()?.name || ''
-      ).trim(),
-
-      roll: Number(studentData.roll || 0),
-
-      parentPhone: onlyDigits(
-        studentData.parentPhone || ''
-      ),
-
-      registered: studentData.registered === true
-    });
+  if (!/^\d{10}$/.test(phoneDigits)) {
+    throw new Error(
+      'Enter a valid 10-digit registered phone number.'
+    );
   }
 
-  students.sort(function(a, b) {
-    return (
-      String(a.className).localeCompare(String(b.className)) ||
-      String(a.sectionName).localeCompare(String(b.sectionName)) ||
-      Number(a.roll) - Number(b.roll)
-    );
-  });
+  try {
+    const result = await lookupQuizStudentsCallable({
+      phone: phoneDigits,
+      year: year
+    });
 
-  return students;
+    const students = result.data?.students;
+
+    if (!Array.isArray(students)) {
+      throw new Error(
+        'Student details could not be retrieved.'
+      );
+    }
+
+    return students;
+
+  } catch (error) {
+    console.error('Student lookup failed:', error);
+
+    if (error.code === 'functions/resource-exhausted') {
+      throw new Error(
+        'Too many searches. Please try again later.'
+      );
+    }
+
+    throw new Error(
+      'Unable to find student details. Please try again.'
+    );
+  }
 }
 
 function renderMatchedStudents(students) {
