@@ -22,7 +22,89 @@
     @media(max-width:740px){main{margin:12px auto;padding:0 10px 28px}.card{padding:16px}.filters{grid-template-columns:1fr 1fr;gap:10px}.filters .wide{grid-column:span 2}.metrics{grid-template-columns:repeat(2,1fr)}.actions .btn{flex:1 1 150px}.metric strong{font-size:23px}}
     @media(max-width:430px){.filters{grid-template-columns:1fr}.filters .wide{grid-column:span 1}}
     @media print{body{background:#fff}header{color:#000;background:#fff;box-shadow:none}.actions,.filters,.status,.foot,.note,#gate{display:none!important}.card{box-shadow:none;border:0;padding:0}.scroll{overflow:visible;border:0}table{min-width:0}}
-  </style>
+  <style>
+    .modern-chapter {
+  position: relative;
+  width: 100%;
+}
+
+#chapterFilter {
+  display: none !important;
+}
+
+.modern-chapter-toggle {
+  width: 100%;
+  padding: 11px 38px 11px 13px;
+  min-height: 46px;
+  border: 1.5px solid #bfd5ec;
+  border-radius: 11px;
+  background: #f8fbff;
+  color: #174976;
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  position: relative;
+}
+
+.modern-chapter-toggle::after {
+  content: "▾";
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #1762a7;
+}
+
+.modern-chapter-toggle:disabled {
+  opacity: .55;
+  cursor: not-allowed;
+}
+
+.modern-chapter-menu {
+  position: absolute;
+  top: calc(100% + 5px);
+  left: 0;
+  right: 0;
+  z-index: 100;
+  max-height: 260px;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid #c5daee;
+  border-radius: 12px;
+  box-shadow: 0 12px 28px #10365525;
+  padding: 5px;
+}
+
+.modern-chapter-menu[hidden] {
+  display: none;
+}
+
+.modern-chapter-option {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 11px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #174976;
+  font: inherit;
+  cursor: pointer;
+}
+
+.modern-chapter-option:hover,
+.modern-chapter-option[aria-selected="true"] {
+  background: #e9f3ff;
+  color: #0f3d6b;
+}
+
+.modern-chapter-toggle:focus-visible,
+.modern-chapter-option:focus-visible {
+  outline: 2px solid #1762a7;
+  outline-offset: 2px;
+}
+</style>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
@@ -37,9 +119,32 @@
       <p class="sub">Choose the academic year and the quiz. Results are read from your existing Firebase records.</p>
       <div class="filters">
         <div><label for="year">Academic Year</label><input type="text" id="year" pattern="[0-9]{4}-[0-9]{2}" placeholder="2026-27" maxlength="7"></div>
-        <div><label for="classFilter">Class</label><select id="classFilter" disabled><option>Loading…</option></select></div>
-        <div><label for="subjectFilter">Subject</label><select id="subjectFilter" disabled><option>Select class</option></select></div>
-        <div><label for="chapterFilter">Chapter</label><select id="chapterFilter" disabled><option>Select subject</option></select></div>
+       <div><label for="classFilter">Class</label><select id="classFilter" disabled><option>Loading…</option></select></div>
+
+<div>
+  <label for="sectionFilter">Section</label>
+  <select id="sectionFilter" disabled>
+    <option value="">All sections</option>
+  </select>
+</div>
+
+<div><label for="subjectFilter">Subject</label><select id="subjectFilter" disabled><option>Select class</option></select></div>
+
+<div>
+  <label for="chapterButton">Chapter</label>
+  <div class="modern-chapter" id="modernChapter">
+    <button type="button" id="chapterButton"
+            class="modern-chapter-toggle"
+            aria-haspopup="listbox"
+            aria-expanded="false"
+            disabled>Select subject</button>
+    <div id="chapterMenu" class="modern-chapter-menu"
+         role="listbox" hidden></div>
+    <select id="chapterFilter" disabled hidden>
+      <option>Select subject</option>
+    </select>
+  </div>
+</div>
         <div class="wide"><label for="quizFilter">Quiz</label><select id="quizFilter" disabled><option>Select chapter</option></select></div>
       </div>
       <div class="actions">
@@ -104,13 +209,177 @@ function setSelect(id, options, placeholder, selected = '') {
   select.add(new Option(placeholder, ''));
   options.forEach(x => select.add(new Option(x.label, x.value)));
   select.disabled = options.length === 0;
-  if (selected && options.some(x => x.value === selected)) select.value = selected;
-  else if (options.length === 1) select.value = options[0].value;
+
+  if (selected && options.some(x => x.value === selected)) {
+    select.value = selected;
+  } else if (options.length === 1 && id !== 'sectionFilter') {
+    select.value = options[0].value;
+  }
+
+  if (id === 'chapterFilter') syncModernChapter();
   return select.value;
 }
 function uniqOpts(strings) {
   return [...new Set(strings.filter(Boolean))].sort((a,b)=>a.localeCompare(b)).map(x=>({label:x,value:x}));
 }
+async function loadSectionOptions() {
+  const token = app.sectionToken = (app.sectionToken || 0) + 1;
+  const year = $('year').value.trim();
+  const cls = $('classFilter').value;
+
+  setSelect('sectionFilter', [], 'All sections');
+
+  if (!cls || !/^\d{4}-\d{2}$/.test(year)) return;
+
+  try {
+    const classes = await db.collection('years')
+      .doc(year).collection('classes').get();
+
+    const classDoc = classes.docs.find(d =>
+      String(d.data().name || '').trim().toLowerCase() ===
+      cls.trim().toLowerCase()
+    );
+
+    if (!classDoc) return;
+
+    const sections = await classDoc.ref.collection('sections').get();
+
+    if (token !== app.sectionToken ||
+        $('classFilter').value !== cls) return;
+
+    const names = sections.docs.map(d =>
+      String(d.data().name || '').trim()
+    );
+
+    setSelect('sectionFilter', uniqOpts(names), 'All sections');
+
+  } catch (err) {
+    console.error('Section loading failed:', err);
+    status('Unable to load sections: ' + err.message, 'error');
+  }
+}
+
+function visibleRows() {
+  const section = String($('sectionFilter').value || '')
+    .trim().toLowerCase();
+
+  return app.rows.filter(r =>
+    !section ||
+    String(r.section || '').trim().toLowerCase() === section
+  );
+}
+
+function syncModernChapter() {
+  const select = $('chapterFilter');
+  const button = $('chapterButton');
+  const menu = $('chapterMenu');
+
+  button.disabled = select.disabled;
+  button.textContent =
+    select.selectedOptions[0]?.textContent || 'Select chapter';
+
+  menu.replaceChildren();
+  menu.hidden = true;
+  button.setAttribute('aria-expanded', 'false');
+
+  Array.from(select.options).filter(o => o.value).forEach(o => {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'modern-chapter-option';
+    item.setAttribute('role', 'option');
+    item.setAttribute('aria-selected', String(o.value === select.value));
+    item.textContent = o.textContent;
+
+    item.onclick = () => {
+      select.value = o.value;
+      menu.hidden = true;
+      button.setAttribute('aria-expanded', 'false');
+      select.dispatchEvent(new Event('change', {bubbles:true}));
+    };
+
+    menu.append(item);
+  });
+}
+
+async function loadSectionOptions() {
+  const token = app.sectionToken = (app.sectionToken || 0) + 1;
+  const year = $('year').value.trim();
+  const cls = $('classFilter').value;
+
+  setSelect('sectionFilter', [], 'All sections');
+
+  if (!cls || !/^\d{4}-\d{2}$/.test(year)) return;
+
+  try {
+    const classes = await db.collection('years')
+      .doc(year).collection('classes').get();
+
+    const classDoc = classes.docs.find(d =>
+      String(d.data().name || '').trim().toLowerCase() ===
+      cls.trim().toLowerCase()
+    );
+
+    if (!classDoc) return;
+
+    const sections = await classDoc.ref.collection('sections').get();
+
+    if (token !== app.sectionToken ||
+        $('classFilter').value !== cls) return;
+
+    const names = sections.docs.map(d =>
+      String(d.data().name || '').trim()
+    );
+
+    setSelect('sectionFilter', uniqOpts(names), 'All sections');
+
+  } catch (err) {
+    console.error('Section loading failed:', err);
+    status('Unable to load sections: ' + err.message, 'error');
+  }
+}
+
+function visibleRows() {
+  const section = String($('sectionFilter').value || '')
+    .trim().toLowerCase();
+
+  return app.rows.filter(r =>
+    !section ||
+    String(r.section || '').trim().toLowerCase() === section
+  );
+}
+
+function syncModernChapter() {
+  const select = $('chapterFilter');
+  const button = $('chapterButton');
+  const menu = $('chapterMenu');
+
+  button.disabled = select.disabled;
+  button.textContent =
+    select.selectedOptions[0]?.textContent || 'Select chapter';
+
+  menu.replaceChildren();
+  menu.hidden = true;
+  button.setAttribute('aria-expanded', 'false');
+
+  Array.from(select.options).filter(o => o.value).forEach(o => {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'modern-chapter-option';
+    item.setAttribute('role', 'option');
+    item.setAttribute('aria-selected', String(o.value === select.value));
+    item.textContent = o.textContent;
+
+    item.onclick = () => {
+      select.value = o.value;
+      menu.hidden = true;
+      button.setAttribute('aria-expanded', 'false');
+      select.dispatchEvent(new Event('change', {bubbles:true}));
+    };
+
+    menu.append(item);
+  });
+}
+
 function optQuizLabel(q) {
   const d = q.createdAt?.toDate?.();
   const when = d ? ` · ${d.toLocaleDateString('en-IN')}` : '';
@@ -147,7 +416,8 @@ async function loadQuizzes() {
       setSelect('subjectFilter',uniqOpts(app.allQuizzes.filter(x=>x.class===cl).map(x=>x.subject)),'Select subject',initial.subject);
       setSelect('chapterFilter',uniqOpts(app.allQuizzes.filter(x=>x.class===cl&&x.subject===initial.subject).map(x=>x.chapter)),'Select chapter',initial.chapter);
       rebuildFilters('quiz');
-    } else rebuildFilters('year');
+        } else rebuildFilters('year');
+    await loadSectionOptions();
     status(snap.empty ? 'No quizzes found for this academic year.' : `${snap.size} quiz(es) available. Select class, subject, chapter and quiz.`, snap.empty ? '' : 'success');
   } catch (err) { console.error(err); status(`Unable to read quiz list: ${err.message}. Check teacher access and Firestore rules.`, 'error'); }
 }
@@ -217,26 +487,63 @@ function seconds(n) {
   return `${Math.floor(n/60)}m ${String(Math.floor(n%60)).padStart(2,'0')}s`;
 }
 function renderRows() {
-  const tbody=$('resultsBody');tbody.replaceChildren();
-  if(!app.rows.length){let tr=document.createElement('tr');let td=cell(tr,'No results have been recorded for this quiz.');td.colSpan=9;td.className='muted';tbody.append(tr);return;}
-  for(const r of app.rows){
-    const tr=document.createElement('tr');
-    cell(tr,r.section);cell(tr,r.roll,'num');cell(tr,r.name);cell(tr,r.completed?r.rank:'—','num');
-    cell(tr,r.completed ? `${r.score}/${app.currentQuiz.totalQuestions||app.currentQuiz.questions?.length||'?'}` : '—','num');
-    cell(tr,r.completed ? `${r.percent.toFixed(1)}%` : '—','num');
-    cell(tr,r.completed ? r.attempts : 0,'num');cell(tr,r.completed ? seconds(r.time) : '—','num');
-    const s=cell(tr,'');const span=document.createElement('span');span.textContent=r.completed?'Attempted':'Not Attempted';span.className=r.completed?'pill':'pill missing';s.append(span);tbody.append(tr);
+  const tbody = $('resultsBody');
+  tbody.replaceChildren();
+  const rows = visibleRows();
+
+  if (!rows.length) {
+    const tr = document.createElement('tr');
+    const td = cell(tr, 'No students found in the selected section.');
+    td.colSpan = 9;
+    td.className = 'muted';
+    tbody.append(tr);
+    return;
+  }
+
+  for (const r of rows) {
+    const tr = document.createElement('tr');
+    cell(tr, r.section);
+    cell(tr, r.roll, 'num');
+    cell(tr, r.name);
+    cell(tr, r.completed ? r.rank : '—', 'num');
+    cell(tr, r.completed ?
+      `${r.score}/${app.currentQuiz.totalQuestions || app.currentQuiz.questions?.length || '?'}` :
+      '—', 'num');
+    cell(tr, r.completed ? `${r.percent.toFixed(1)}%` : '—', 'num');
+    cell(tr, r.completed ? r.attempts : 0, 'num');
+    cell(tr, r.completed ? seconds(r.time) : '—', 'num');
+
+    const s = cell(tr, '');
+    const span = document.createElement('span');
+    span.textContent = r.completed ? 'Attempted' : 'Not Attempted';
+    span.className = r.completed ? 'pill' : 'pill missing';
+    s.append(span);
+    tbody.append(tr);
   }
 }
-function renderSummary(){
-  const completed=app.rows.filter(x=>x.completed);
-  $('participants').textContent=completed.length;
-  $('attempts').textContent=app.allAttempts.length;
-  $('average').textContent=completed.length ? `${(completed.reduce((s,x)=>s+x.percent,0)/completed.length).toFixed(1)}%` : '—';
-  $('missing').textContent=app.rosterChecked ? app.rows.filter(x=>!x.completed).length : '—';
-  $('reportTitle').textContent=`${app.currentQuiz.class||''} · ${app.currentQuiz.subject||''}`;
-  $('reportInfo').textContent=`${app.currentQuiz.chapter||''} · Academic Year ${$('year').value.trim()} · ${app.currentQuiz.totalQuestions||app.currentQuiz.questions?.length||'?'} questions · ${app.rosterChecked?'Roster compared':'Recorded attempts only'}`;
-  $('export').disabled=!app.rows.length;
+
+function renderSummary() {
+  const rows = visibleRows();
+  const completed = rows.filter(x => x.completed);
+  const section = $('sectionFilter').value || 'All Sections';
+
+  $('participants').textContent = completed.length;
+  $('attempts').textContent = rows.reduce((n,r) => n + r.attempts, 0);
+  $('average').textContent = completed.length ?
+    `${(completed.reduce((s,x) => s + x.percent, 0) / completed.length).toFixed(1)}%` :
+    '—';
+  $('missing').textContent = app.rosterChecked ?
+    rows.filter(x => !x.completed).length : '—';
+
+  $('reportTitle').textContent =
+    `${app.currentQuiz.class || ''} · ${section} · ${app.currentQuiz.subject || ''}`;
+
+  $('reportInfo').textContent =
+    `${app.currentQuiz.chapter || ''} · Academic Year ${$('year').value.trim()} · ` +
+    `${app.currentQuiz.totalQuestions || app.currentQuiz.questions?.length || '?'} questions · ` +
+    `${app.rosterChecked ? 'Roster compared' : 'Recorded attempts only'}`;
+
+  $('export').disabled = !rows.length;
 }
 async function showResults() {
   const id=$('quizFilter').value;
@@ -294,10 +601,10 @@ function safeCsv(value){
   return `"${s.replace(/"/g,'""')}"`;
 }
 function exportCsv(){
-  if(!app.currentQuiz||!app.rows.length)return;
+   if(!app.currentQuiz||!visibleRows().length)return;
   const total=app.currentQuiz.totalQuestions||app.currentQuiz.questions?.length||'';
   const headers=['Section','Roll','Student Name','Rank','Best Score','Percentage','Attempts','Time','Status','Academic Year','Class','Subject','Chapter','Quiz ID'];
-  const lines=[headers,...app.rows.map(r=>[
+    const lines=[headers,...visibleRows().map(r=>[
     r.section,r.roll,r.name,r.completed?r.rank:'—',r.completed?`${r.score}/${total}`:'—',
     r.completed?`${r.percent.toFixed(1)}%`:'—',r.completed?r.attempts:0,
     r.completed?seconds(r.time):'—',r.completed?'Attempted':'Not Attempted',
@@ -309,9 +616,39 @@ function exportCsv(){
   document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
 $('year').addEventListener('change',()=>{app.selectedUrlQuiz='';loadQuizzes()});
-$('classFilter').addEventListener('change',()=>{app.selectedUrlQuiz='';rebuildFilters('class')});
+$('classFilter').addEventListener('change', async () => {
+  app.selectedUrlQuiz = '';
+  rebuildFilters('class');
+  await loadSectionOptions();
+});
+
+$('sectionFilter').addEventListener('change', () => {
+  if (!app.currentQuiz) return;
+  renderRows();
+  renderSummary();
+});
 $('subjectFilter').addEventListener('change',()=>rebuildFilters('subject'));
-$('chapterFilter').addEventListener('change',()=>rebuildFilters('chapter'));
+$('chapterFilter').addEventListener('change', () => rebuildFilters('chapter'));
+
+$('chapterButton').addEventListener('click', () => {
+  const menu = $('chapterMenu');
+  menu.hidden = !menu.hidden;
+  $('chapterButton').setAttribute('aria-expanded', String(!menu.hidden));
+});
+
+document.addEventListener('click', e => {
+  if (!$('modernChapter').contains(e.target)) {
+    $('chapterMenu').hidden = true;
+    $('chapterButton').setAttribute('aria-expanded', 'false');
+  }
+});
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    $('chapterMenu').hidden = true;
+    $('chapterButton').setAttribute('aria-expanded', 'false');
+  }
+});
 $('quizFilter').addEventListener('change',showResults);
 $('refresh').addEventListener('click',()=>{$('quizFilter').value?showResults():loadQuizzes()});
 $('participation').addEventListener('click',compareRoster);
