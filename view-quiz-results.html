@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0f3d6b">
+  <title>Quick Quiz Results | St. Patrick's School</title>
+  <style>
+    :root{--navy:#0f3d6b;--blue:#1762a7;--bg:#f2f6fc;--line:#d8e3ef;--ink:#203449;--muted:#5e7183;--good:#11743d;--bad:#b82a35}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);font:15px/1.5 system-ui,-apple-system,'Segoe UI',Arial,sans-serif;color:var(--ink)}
+    header{padding:22px 18px;background:linear-gradient(115deg,var(--blue),var(--navy));color:#fff;text-align:center;box-shadow:0 5px 17px #0f3d6b20}
+    header h1{font-size:clamp(22px,4vw,32px);margin:0}header p{margin:2px 0 0;color:#d8eaff;letter-spacing:.025em}
+    main{max-width:1150px;margin:24px auto;padding:0 18px 30px}.card{background:#fff;border:1px solid var(--line);border-radius:16px;box-shadow:0 5px 18px #1036550b;padding:22px;margin-bottom:18px}
+    h2{font-size:20px;color:var(--navy);margin:0 0 15px}.sub{color:var(--muted);font-size:13px;margin:-8px 0 16px}
+    label{display:block;color:var(--navy);font-weight:650;margin-bottom:5px}select,input,button{font:inherit}select,input{width:100%;padding:11px 10px;border:1px solid #bccfe2;border-radius:9px;background:white;color:var(--ink);min-width:0}
+    select:disabled{background:#f1f4f8;color:#8c9ca9}.filters{display:grid;grid-template-columns:1fr 1fr 1fr;gap:15px}.filters .wide{grid-column:span 2}
+    .actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:17px}.btn{border:0;border-radius:10px;background:var(--blue);color:#fff;font-weight:650;padding:12px 18px;cursor:pointer}.btn.secondary{background:#e8f1fc;color:var(--navy)}.btn:disabled{opacity:.45;cursor:not-allowed}
+    .status{padding:12px 14px;border-radius:10px;background:#eef5ff;color:#214f7d;margin:14px 0 0;white-space:pre-wrap}.status.error{background:#fff1f1;color:var(--bad)}.status.success{background:#edf9f0;color:var(--good)}
+    .metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.metric{background:#fff;border:1px solid var(--line);border-radius:13px;padding:16px}.metric strong{display:block;color:var(--navy);font-size:26px;line-height:1.2}.metric span{color:var(--muted);font-size:13px}
+    .scroll{overflow-x:auto;border:1px solid var(--line);border-radius:12px}table{border-collapse:collapse;width:100%;min-width:770px;font-size:14px}th,td{border-bottom:1px solid #e6edf4;padding:11px 12px;text-align:left;vertical-align:top}th{background:#eaf2fa;color:var(--navy);white-space:nowrap;position:sticky;top:0}tr:last-child td{border-bottom:0}tbody tr:nth-child(even){background:#fbfdff}.num{text-align:right;font-variant-numeric:tabular-nums}.muted{color:var(--muted)}.pill{border-radius:7px;padding:4px 8px;background:#e7f5eb;color:var(--good);font-size:12px;display:inline-block}.pill.missing{background:#fff3e8;color:#a05a14}
+    #gate{display:none}#dashboard{display:none}.foot{margin:20px auto;text-align:center;color:var(--muted);font-size:12px}.note{font-size:13px;color:var(--muted);margin:11px 0 0}a{color:var(--blue)}
+    @media(max-width:740px){main{margin:12px auto;padding:0 10px 28px}.card{padding:16px}.filters{grid-template-columns:1fr 1fr;gap:10px}.filters .wide{grid-column:span 2}.metrics{grid-template-columns:repeat(2,1fr)}.actions .btn{flex:1 1 150px}.metric strong{font-size:23px}}
+    @media(max-width:430px){.filters{grid-template-columns:1fr}.filters .wide{grid-column:span 1}}
+    @media print{body{background:#fff}header{color:#000;background:#fff;box-shadow:none}.actions,.filters,.status,.foot,.note,#gate{display:none!important}.card{box-shadow:none;border:0;padding:0}.scroll{overflow:visible;border:0}table{min-width:0}}
+  </style>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+</head>
+<body>
+<header><h1>St. Patrick's School</h1><p>QUICK QUIZ · TEACHER RESULTS</p></header>
+<main>
+  <section id="gate" class="card" aria-live="polite"><h2>Teacher sign-in required</h2><p>Please sign in using your existing school teacher account to view quiz results.</p><a class="btn" style="display:inline-block;text-decoration:none" href="index.html">Open Teacher Login</a></section>
+  <section id="dashboard">
+    <section class="card">
+      <h2>Find Quiz Results</h2>
+      <p class="sub">Choose the academic year and the quiz. Results are read from your existing Firebase records.</p>
+      <div class="filters">
+        <div><label for="year">Academic Year</label><input type="text" id="year" pattern="[0-9]{4}-[0-9]{2}" placeholder="2026-27" maxlength="7"></div>
+        <div><label for="classFilter">Class</label><select id="classFilter" disabled><option>Loading…</option></select></div>
+        <div><label for="subjectFilter">Subject</label><select id="subjectFilter" disabled><option>Select class</option></select></div>
+        <div><label for="chapterFilter">Chapter</label><select id="chapterFilter" disabled><option>Select subject</option></select></div>
+        <div class="wide"><label for="quizFilter">Quiz</label><select id="quizFilter" disabled><option>Select chapter</option></select></div>
+      </div>
+      <div class="actions">
+        <button class="btn" id="refresh" type="button">Refresh Results</button>
+        <button class="btn secondary" id="participation" type="button">Check Not Attempted</button>
+        <button class="btn secondary" id="export" type="button" disabled>Download Excel (CSV)</button>
+        <button class="btn secondary" id="print" type="button">Print</button>
+        <button class="btn secondary" id="return" type="button">Back to Quick Quiz</button>
+      </div>
+      <div id="status" class="status" role="status" aria-live="polite">Checking teacher sign-in…</div>
+    </section>
+    <section class="metrics" aria-label="Summary statistics">
+      <div class="metric"><strong id="participants">—</strong><span>Students with results</span></div>
+      <div class="metric"><strong id="attempts">—</strong><span>Recorded attempts</span></div>
+      <div class="metric"><strong id="average">—</strong><span>Average best score</span></div>
+      <div class="metric"><strong id="missing">—</strong><span>Not attempted (roster check)</span></div>
+    </section>
+    <section class="card" style="margin-top:18px">
+      <h2 id="reportTitle">Student Performance</h2>
+      <p class="sub" id="reportInfo">Select a quiz to view its results. Only recorded scores are displayed.</p>
+      <div class="scroll"><table><thead><tr><th>Rank</th><th>Student Name</th><th>Class</th><th>Section</th><th class="num">Roll No.</th><th class="num">Best Score</th><th class="num">Percentage</th><th class="num">Attempts</th><th class="num">Time</th><th>Status</th></tr></thead><tbody id="resultsBody"><tr><td colspan="10" class="muted">No quiz selected.</td></tr></tbody></table></div>
+      <p class="note">Ranking uses each student's best recorded score; ties are sorted by time. The roster comparison is optional and may require teacher read permission for student records.</p>
+    </section>
+  </section>
+  <p class="foot">Results are for authorised school staff. Student phone numbers are not shown in this report.</p>
+</main>
+<script>
+'use strict';
+const firebaseConfig = {
+  apiKey: "AIzaSyAszVhWXUUOYLQ7VimKmPKf1yEu_CI9RCE",
+  authDomain: "stpatricks-questionbank.firebaseapp.com",
+  projectId: "stpatricks-questionbank",
+  storageBucket: "stpatricks-questionbank.firebasestorage.app",
+  messagingSenderId: "917615322861",
+  appId: "1:917615322861:web:c6c890aa2184dd395b8ee4"
+};
+if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+const auth = firebase.auth();
+const $ = id => document.getElementById(id);
+const qs = new URLSearchParams(location.search);
+const app = {
+  allQuizzes: [], currentQuiz: null, allAttempts: [], rows: [],
+  rosterChecked: false, selectedUrlQuiz: qs.get('quiz') || '',
+  authReady: false
+};
+
+function academicYear() {
+  const now = new Date();
+  const start = now.getMonth() >= 5 ? now.getFullYear() : now.getFullYear() - 1;
+  return `${start}-${String((start + 1) % 100).padStart(2, '0')}`;
+}
+$('year').value = qs.get('year') || localStorage.getItem('sp_selectedYear') || academicYear();
+function status(text, kind='') {
+  const box = $('status');
+  box.textContent = text;
+  box.className = 'status' + (kind ? ` ${kind}` : '');
+}
+function setSelect(id, options, placeholder, selected = '') {
+  const select = $(id);
+  select.replaceChildren();
+  select.add(new Option(placeholder, ''));
+  options.forEach(x => select.add(new Option(x.label, x.value)));
+  select.disabled = options.length === 0;
+  if (selected && options.some(x => x.value === selected)) select.value = selected;
+  else if (options.length === 1) select.value = options[0].value;
+  return select.value;
+}
+function uniqOpts(strings) {
+  return [...new Set(strings.filter(Boolean))].sort((a,b)=>a.localeCompare(b)).map(x=>({label:x,value:x}));
+}
+function optQuizLabel(q) {
+  const d = q.createdAt?.toDate?.();
+  const when = d ? ` · ${d.toLocaleDateString('en-IN')}` : '';
+  return `${q.chapter || q.title || q.id} (${q.totalQuestions || q.questions?.length || '?'} Q)${when} · ${q.id}`;
+}
+function rebuildFilters(changed = 'year') {
+  const q = app.allQuizzes;
+  let cls = changed === 'year' ? '' : $('classFilter').value;
+  cls = setSelect('classFilter', uniqOpts(q.map(x=>x.class)), 'All classes — select', cls);
+  let sub = ['year','class'].includes(changed) ? '' : $('subjectFilter').value;
+  sub = setSelect('subjectFilter', uniqOpts(q.filter(x=>x.class===cls).map(x=>x.subject)), 'Select subject', sub);
+  let chapter = ['year','class','subject'].includes(changed) ? '' : $('chapterFilter').value;
+  chapter = setSelect('chapterFilter', uniqOpts(q.filter(x=>x.class===cls && x.subject===sub).map(x=>x.chapter)), 'Select chapter', chapter);
+  const matching = q.filter(x=>x.class===cls && x.subject===sub && x.chapter===chapter);
+  let quizId = app.selectedUrlQuiz || (changed==='quiz' ? $('quizFilter').value : '');
+  quizId = setSelect('quizFilter', matching.map(x=>({label:optQuizLabel(x),value:x.id})), 'Select quiz', quizId);
+  app.selectedUrlQuiz = '';
+  if (quizId) showResults();
+  else clearReport();
+}
+async function loadQuizzes() {
+  const year = $('year').value.trim();
+  if (!/^\d{4}-\d{2}$/.test(year)) { status('Enter an academic year such as 2026-27.', 'error'); return; }
+  localStorage.setItem('sp_selectedYear', year);
+  status('Loading quizzes…');
+  try {
+    const snap = await db.collection('quizzes').where('academicYear','==',year).get();
+    app.allQuizzes = snap.docs.map(d=>({id:d.id,...d.data()}));
+    app.allQuizzes.sort((a,b)=>(b.createdAt?.toMillis?.()||0)-(a.createdAt?.toMillis?.()||0));
+    const initial = app.allQuizzes.find(x=>x.id===app.selectedUrlQuiz);
+    if (initial) {
+      setSelect('classFilter',uniqOpts(app.allQuizzes.map(x=>x.class)), 'Select class',initial.class);
+      const cl = initial.class;
+      setSelect('subjectFilter',uniqOpts(app.allQuizzes.filter(x=>x.class===cl).map(x=>x.subject)),'Select subject',initial.subject);
+      setSelect('chapterFilter',uniqOpts(app.allQuizzes.filter(x=>x.class===cl&&x.subject===initial.subject).map(x=>x.chapter)),'Select chapter',initial.chapter);
+      rebuildFilters('quiz');
+    } else rebuildFilters('year');
+    status(snap.empty ? 'No quizzes found for this academic year.' : `${snap.size} quiz(es) available. Select class, subject, chapter and quiz.`, snap.empty ? '' : 'success');
+  } catch (err) { console.error(err); status(`Unable to read quiz list: ${err.message}. Check teacher access and Firestore rules.`, 'error'); }
+}
+function clearReport() {
+  app.currentQuiz=null;app.rows=[];app.allAttempts=[];app.rosterChecked=false;
+  for(const id of ['participants','attempts','average','missing']) $(id).textContent='—';
+  $('reportTitle').textContent='Student Performance';
+  $('reportInfo').textContent='Select a quiz to view its results.';
+  $('resultsBody').replaceChildren();
+  const tr=document.createElement('tr'), td=document.createElement('td');td.colSpan=10;td.textContent='No quiz selected.';td.className='muted';tr.append(td);$('resultsBody').append(tr);
+  $('export').disabled=true;
+}
+function recordKey(r) {
+  if(r.studentId) return `id:${r.studentId}`;
+  return `legacy:${r.class||''}|${r.section||''}|${r.roll||''}|${r.name||''}`;
+}
+function bestAttempt(rows) {
+  return [...rows].sort((a,b)=> (Number(b.score||0)-Number(a.score||0)) || (Number(a.time||0)-Number(b.time||0)) || (ts(a)-ts(b)))[0];
+}
+function ts(v){return v.timestamp?.toMillis?.()||0;}
+function buildRows(attempts) {
+  const map=new Map();
+  attempts.forEach(x=>{const key=recordKey(x);if(!map.has(key))map.set(key,[]);map.get(key).push(x)});
+  const max=Math.max(0,Number(app.currentQuiz?.totalQuestions||app.currentQuiz?.questions?.length||0));
+  const rows=[...map.entries()].map(([key,items])=>{
+    const best=bestAttempt(items);
+    return {key,studentId:best.studentId||'',name:best.name||'Student',cls:best.class||app.currentQuiz?.class||'',section:best.section||'',roll:best.roll??'',score:Number(best.score||0),percent:max?Number(best.score||0)/max*100:0,attempts:items.length,time:Number(best.time||0),completed:true};
+  });
+  rows.sort((a,b)=>(b.score-a.score)||(a.time-b.time)||a.name.localeCompare(b.name));
+  return rows.map((r,i)=>({...r,rank:i+1}));
+}
+function cell(tr,value,cls='') {
+  const td=document.createElement('td'); td.textContent=String(value);if(cls)td.className=cls;tr.append(td);return td;
+}
+function seconds(n) {
+  if(!Number.isFinite(n)||n<0)return '—';
+  return `${Math.floor(n/60)}m ${String(Math.floor(n%60)).padStart(2,'0')}s`;
+}
+function renderRows() {
+  const tbody=$('resultsBody');tbody.replaceChildren();
+  if(!app.rows.length){let tr=document.createElement('tr');let td=cell(tr,'No results have been recorded for this quiz.');td.colSpan=10;td.className='muted';tbody.append(tr);return;}
+  for(const r of app.rows){
+    const tr=document.createElement('tr');
+    cell(tr,r.rank||'—');cell(tr,r.name);cell(tr,r.cls);cell(tr,r.section);cell(tr,r.roll,'num');
+    cell(tr,r.completed ? `${r.score}/${app.currentQuiz.totalQuestions||app.currentQuiz.questions?.length||'?'}` : '—','num');
+    cell(tr,r.completed ? `${r.percent.toFixed(1)}%` : '—','num');
+    cell(tr,r.completed ? r.attempts : '—','num');cell(tr,r.completed ? seconds(r.time) : '—','num');
+    const s=cell(tr,r.completed?'Attempted':'Not attempted');s.className='';s.innerHTML='';let span=document.createElement('span');span.textContent=r.completed?'Attempted':'Not attempted';span.className=r.completed?'pill':'pill missing';s.append(span);tbody.append(tr);
+  }
+}
+function renderSummary(){
+  const completed=app.rows.filter(x=>x.completed);
+  $('participants').textContent=completed.length;
+  $('attempts').textContent=app.allAttempts.length;
+  $('average').textContent=completed.length ? `${(completed.reduce((s,x)=>s+x.percent,0)/completed.length).toFixed(1)}%` : '—';
+  $('missing').textContent=app.rosterChecked ? app.rows.filter(x=>!x.completed).length : '—';
+  $('reportTitle').textContent=`${app.currentQuiz.class||''} · ${app.currentQuiz.subject||''}`;
+  $('reportInfo').textContent=`${app.currentQuiz.chapter||''} · Academic Year ${$('year').value.trim()} · ${app.currentQuiz.totalQuestions||app.currentQuiz.questions?.length||'?'} questions · ${app.rosterChecked?'Roster compared':'Recorded attempts only'}`;
+  $('export').disabled=!app.rows.length;
+}
+async function showResults() {
+  const id=$('quizFilter').value;
+  if(!id){clearReport();return;}
+  const selected=app.allQuizzes.find(q=>q.id===id);
+  if(!selected){status('Quiz not found in the selected year.','error');return;}
+  app.currentQuiz=selected;app.rosterChecked=false;
+  $('missing').textContent='—';status('Loading recorded results…');
+  try {
+    const snap=await db.collection('quizResults').where('quizId','==',id).get();
+    // Quiz ID is unique; the academic-year check rejects unrelated legacy records when present.
+    app.allAttempts=snap.docs.map(d=>({recordId:d.id,...d.data()})).filter(x=>!x.academicYear||x.academicYear===$('year').value.trim());
+    app.rows=buildRows(app.allAttempts);
+    renderSummary();renderRows();
+    status(`${app.rows.length} student(s) with results; ${app.allAttempts.length} recorded attempt(s).`, 'success');
+  }catch(err){console.error(err);clearReport();status(`Unable to read quiz results: ${err.message}. Check teacher access and Firestore rules.`, 'error');}
+}
+async function compareRoster() {
+  if(!app.currentQuiz){status('Select a quiz first.','error');return;}
+  const button=$('participation');button.disabled=true;status('Comparing the selected class against its school roster…');
+  try {
+    const year=$('year').value.trim();const className=app.currentQuiz.class;
+    const clsSnap=await db.collection('years').doc(year).collection('classes').get();
+    const classDoc=clsSnap.docs.find(d=>String(d.data().name||'').trim().toLowerCase()===String(className||'').trim().toLowerCase());
+    if(!classDoc)throw new Error(`Class ${className} was not found in the ${year} student roster.`);
+    const sections=await classDoc.ref.collection('sections').get();
+    const roster=[];
+    for(const sec of sections.docs){
+      const kids=await sec.ref.collection('students').get();
+      kids.docs.forEach(doc=>{const d=doc.data()||{};if(d.isDeleted===true)return;roster.push({studentId:doc.id,name:String(d.name||'').trim(),cls:className,section:String(sec.data().name||'').trim(),roll:d.roll??''});});
+    }
+    const matching=new Map(app.rows.map(x=>[x.studentId,x]));
+    for(const s of roster){if(!matching.has(s.studentId))app.rows.push({...s,key:`id:${s.studentId}`,rank:'—',score:0,percent:0,attempts:0,time:0,completed:false});}
+    app.rosterChecked=true;
+    app.rows.sort((a,b)=>Number(b.completed)-Number(a.completed)||((a.rank||99999)-(b.rank||99999))||a.cls.localeCompare(b.cls)||a.section.localeCompare(b.section)||Number(a.roll||0)-Number(b.roll||0));
+    renderRows();renderSummary();
+    status(`Roster checked: ${roster.length} active students; ${app.rows.filter(x=>!x.completed).length} without a recorded attempt.`, 'success');
+  }catch(err){console.error(err);status(`Could not compare the school roster: ${err.message}. Existing quiz scores are still available.`, 'error');}
+  finally{button.disabled=false;}
+}
+function safeCsv(value){
+  let s=String(value??'');if(/^\s*[=+\-@]/.test(s))s="'"+s;
+  return `"${s.replace(/"/g,'""')}"`;
+}
+function exportCsv(){
+  if(!app.currentQuiz||!app.rows.length)return;
+  const total=app.currentQuiz.totalQuestions||app.currentQuiz.questions?.length||'';
+  const headers=['Academic Year','Quiz ID','Class','Subject','Chapter','Rank','Student Name','Section','Roll Number','Score','Maximum Score','Percentage','Attempts','Time (seconds)','Status'];
+  const lines=[headers,...app.rows.map(r=>[$('year').value.trim(),app.currentQuiz.id,r.cls,app.currentQuiz.subject,app.currentQuiz.chapter,r.rank,r.name,r.section,r.roll,r.completed?r.score:'',total,r.completed?r.percent.toFixed(1):'',r.completed?r.attempts:'',r.completed?r.time:'',r.completed?'Attempted':'Not attempted'])];
+  const csv='\ufeff'+lines.map(row=>row.map(safeCsv).join(',')).join('\r\n');
+  const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
+  const a=document.createElement('a');a.href=url;a.download=`Quick_Quiz_Results_${String(app.currentQuiz.class||'').replace(/[^a-z0-9]+/gi,'_')}_${String(app.currentQuiz.subject||'').replace(/[^a-z0-9]+/gi,'_')}_${app.currentQuiz.id}.csv`;
+  document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+$('year').addEventListener('change',()=>{app.selectedUrlQuiz='';loadQuizzes()});
+$('classFilter').addEventListener('change',()=>{app.selectedUrlQuiz='';rebuildFilters('class')});
+$('subjectFilter').addEventListener('change',()=>rebuildFilters('subject'));
+$('chapterFilter').addEventListener('change',()=>rebuildFilters('chapter'));
+$('quizFilter').addEventListener('change',showResults);
+$('refresh').addEventListener('click',()=>{$('quizFilter').value?showResults():loadQuizzes()});
+$('participation').addEventListener('click',compareRoster);
+$('export').addEventListener('click',exportCsv);
+$('print').addEventListener('click',()=>window.print());
+$('return').addEventListener('click',()=>location.href='quick-quiz.html');
+auth.onAuthStateChanged(user=>{
+  $('gate').style.display=user?'none':'block';
+  $('dashboard').style.display=user?'block':'none';
+  if(user&&!app.authReady){app.authReady=true;loadQuizzes();}
+  if(!user)app.authReady=false;
+});
+</script>
+</body>
+</html>
