@@ -1438,12 +1438,23 @@ When the teacher says "Give final JSON":
 7. Each question must have exactly one correct answer.
 8. Answers must be represented by A, B, C or D.
 9. Do not include option letters inside option text.
-10. Return one valid JSON object only.
-11. Do not include explanations outside the JSON.
-12. Do not use markdown code fences.
-13. Do not write anything before or after the JSON.
-14. Check JSON syntax, question counts and answer keys
-    before returning the final result.
+10. Return the final quiz inside ONE JSON code block.
+11. The code block must contain a valid JSON object.
+12. Use normal JSON formatting with proper indentation.
+13. Never output HTML entities such as &#x20; or &nbsp;.
+14. Never add unnecessary backslashes at line endings.
+15. Never escape the entire JSON object as a string.
+16. Use standard double quotation marks for JSON strings.
+17. Do not include explanations outside the JSON code block.
+18. Validate the complete JSON syntax before returning it.
+19. Ensure every opening bracket and quotation mark is closed.
+20. Ensure there are no trailing commas.
+21. Preserve the exact question count and difficulty levels.
+22. Preserve the teacher-approved questions and correct answers.
+23. Do not omit or truncate any question.
+24. The JSON must be directly compatible with JavaScript JSON.parse().
+25. The teacher must be able to copy the JSON using
+    the code block's Copy code button.
 
 15. Count the correct answers under A, B, C and D.
 16. Ensure the final JSON maintains a natural,
@@ -1499,35 +1510,44 @@ Do not omit any questions from the final JSON.
 }
 
 function parseGeminiQuizJson(rawText) {
-  let text =
-    String(rawText || '').trim();
+  let text = String(rawText || '')
+    .trim()
+    .replace(/^\uFEFF/, '');
 
+  // Remove Markdown code fences.
   text = text
-    .replace(/^```json\s*/i, '')
-    .replace(/^```\s*/i, '')
-    .replace(/\s*```$/i, '')
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```\s*$/i, '')
     .trim();
 
-  const firstBrace =
-    text.indexOf('{');
+  // Extract the JSON object.
+  const firstBrace = text.indexOf('{');
+  const lastBrace = text.lastIndexOf('}');
 
-  const lastBrace =
-    text.lastIndexOf('}');
-
-  if (
-    firstBrace !== -1 &&
-    lastBrace > firstBrace
-  ) {
-    text =
-      text.slice(firstBrace, lastBrace + 1);
+  if (firstBrace !== -1 && lastBrace > firstBrace) {
+    text = text.slice(firstBrace, lastBrace + 1);
   }
 
+  // First attempt: parse the original JSON.
   try {
     return JSON.parse(text);
-  } catch (error) {
-    throw new Error(
-      'The pasted Gemini content is not valid JSON. Copy only the complete JSON object.'
-    );
+  } catch (firstError) {
+
+    // Retry after correcting specific copying artifacts.
+    const cleaned = text
+      .replace(/&#(?:x20|32);|&nbsp;/gi, ' ')
+      .replace(/\\[ \t]*(?=\r?\n)/g, '');
+
+    try {
+      return JSON.parse(cleaned);
+    } catch (error) {
+      throw new Error(
+        'ChatGPT generated invalid JSON. ' +
+        'Please copy the complete final JSON using ' +
+        'the Copy code button. Details: ' +
+        error.message
+      );
+    }
   }
 }
 
