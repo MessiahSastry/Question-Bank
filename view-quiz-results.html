@@ -44,7 +44,7 @@
       </div>
       <div class="actions">
         <button class="btn" id="refresh" type="button">Refresh Results</button>
-        <button class="btn secondary" id="participation" type="button">Check Not Attempted</button>
+        <button class="btn secondary" id="participation" type="button">Recheck Not Attempted</button>
         <button class="btn secondary" id="export" type="button" disabled>Download Excel (CSV)</button>
         <button class="btn secondary" id="print" type="button">Print</button>
         <button class="btn secondary" id="return" type="button">Back to Quick Quiz</button>
@@ -60,8 +60,8 @@
     <section class="card" style="margin-top:18px">
       <h2 id="reportTitle">Student Performance</h2>
       <p class="sub" id="reportInfo">Select a quiz to view its results. Only recorded scores are displayed.</p>
-      <div class="scroll"><table><thead><tr><th>Rank</th><th>Student Name</th><th>Class</th><th>Section</th><th class="num">Roll No.</th><th class="num">Best Score</th><th class="num">Percentage</th><th class="num">Attempts</th><th class="num">Time</th><th>Status</th></tr></thead><tbody id="resultsBody"><tr><td colspan="10" class="muted">No quiz selected.</td></tr></tbody></table></div>
-      <p class="note">Ranking uses each student's best recorded score; ties are sorted by time. The roster comparison is optional and may require teacher read permission for student records.</p>
+      <div class="scroll"><table><thead><tr><th>Section</th><th class="num">Roll</th><th>Student Name</th><th class="num">Rank</th><th class="num">Best Score</th><th class="num">Percentage</th><th class="num">Attempts</th><th class="num">Time</th><th>Status</th></tr></thead><tbody id="resultsBody"><tr><td colspan="9" class="muted">No quiz selected.</td></tr></tbody></table></div>
+      <p class="note">Students are displayed by section and roll number; ranking is calculated across the selected class from each student's best recorded score (faster time breaks score ties). The app checks the school roster for students who have not attempted. If roster access is restricted, only students with recorded results can be shown.</p>
     </section>
   </section>
   <p class="foot">Results are for authorised school staff. Student phone numbers are not shown in this report.</p>
@@ -157,45 +157,75 @@ function clearReport() {
   $('reportTitle').textContent='Student Performance';
   $('reportInfo').textContent='Select a quiz to view its results.';
   $('resultsBody').replaceChildren();
-  const tr=document.createElement('tr'), td=document.createElement('td');td.colSpan=10;td.textContent='No quiz selected.';td.className='muted';tr.append(td);$('resultsBody').append(tr);
+  const tr=document.createElement('tr'), td=document.createElement('td');td.colSpan=9;td.textContent='No quiz selected.';td.className='muted';tr.append(td);$('resultsBody').append(tr);
   $('export').disabled=true;
 }
 function recordKey(r) {
   if(r.studentId) return `id:${r.studentId}`;
   return `legacy:${r.class||''}|${r.section||''}|${r.roll||''}|${r.name||''}`;
 }
+function getAttemptTime(x) {
+  const t = Number(x.time ?? x.timeTaken ?? x.timer);
+  return Number.isFinite(t) && t >= 0 ? t : null;
+}
+function timeForSort(x) {
+  const t = getAttemptTime(x);
+  return t === null ? Number.POSITIVE_INFINITY : t;
+}
 function bestAttempt(rows) {
-  return [...rows].sort((a,b)=> (Number(b.score||0)-Number(a.score||0)) || (Number(a.time||0)-Number(b.time||0)) || (ts(a)-ts(b)))[0];
+  return [...rows].sort((a,b)=>
+    (Number(b.score||0)-Number(a.score||0)) ||
+    (timeForSort(a)-timeForSort(b)) ||
+    (ts(a)-ts(b))
+  )[0];
 }
 function ts(v){return v.timestamp?.toMillis?.()||0;}
+function sectionRollSort(a,b) {
+  const s=String(a.section||'').localeCompare(String(b.section||''), undefined, {numeric:true});
+  if(s)return s;
+  const ar=Number(a.roll),br=Number(b.roll);
+  const av=String(a.roll??'').trim(),bv=String(b.roll??'').trim();
+  if(av&&bv&&Number.isFinite(ar)&&Number.isFinite(br)&&ar!==br)return ar-br;
+  if(!av&&bv)return 1;
+  if(av&&!bv)return -1;
+  return av.localeCompare(bv,undefined,{numeric:true})||
+    String(a.name||'').localeCompare(String(b.name||''));
+}
 function buildRows(attempts) {
   const map=new Map();
   attempts.forEach(x=>{const key=recordKey(x);if(!map.has(key))map.set(key,[]);map.get(key).push(x)});
   const max=Math.max(0,Number(app.currentQuiz?.totalQuestions||app.currentQuiz?.questions?.length||0));
   const rows=[...map.entries()].map(([key,items])=>{
     const best=bestAttempt(items);
-    return {key,studentId:best.studentId||'',name:best.name||'Student',cls:best.class||app.currentQuiz?.class||'',section:best.section||'',roll:best.roll??'',score:Number(best.score||0),percent:max?Number(best.score||0)/max*100:0,attempts:items.length,time:Number(best.time||0),completed:true};
+    const score=Number(best.score||0);
+    return {key,studentId:best.studentId||'',name:best.name||'Student',cls:best.class||app.currentQuiz?.class||'',section:best.section||'',roll:best.roll??'',score,percent:max?score/max*100:0,attempts:items.length,time:getAttemptTime(best),completed:true};
   });
-  rows.sort((a,b)=>(b.score-a.score)||(a.time-b.time)||a.name.localeCompare(b.name));
-  return rows.map((r,i)=>({...r,rank:i+1}));
+  const byRank=[...rows].sort((a,b)=>(b.score-a.score)||
+    ((a.time??Infinity)-(b.time??Infinity))||a.name.localeCompare(b.name));
+  byRank.forEach((row,i)=>{
+    const prev=byRank[i-1];
+    row.rank=prev&&prev.score===row.score&&prev.time===row.time?prev.rank:i+1;
+  });
+  rows.sort(sectionRollSort);
+  return rows;
 }
 function cell(tr,value,cls='') {
   const td=document.createElement('td'); td.textContent=String(value);if(cls)td.className=cls;tr.append(td);return td;
 }
 function seconds(n) {
-  if(!Number.isFinite(n)||n<0)return '—';
+  if(n===null||n===undefined||!Number.isFinite(n)||n<0)return '—';
   return `${Math.floor(n/60)}m ${String(Math.floor(n%60)).padStart(2,'0')}s`;
 }
 function renderRows() {
   const tbody=$('resultsBody');tbody.replaceChildren();
-  if(!app.rows.length){let tr=document.createElement('tr');let td=cell(tr,'No results have been recorded for this quiz.');td.colSpan=10;td.className='muted';tbody.append(tr);return;}
+  if(!app.rows.length){let tr=document.createElement('tr');let td=cell(tr,'No results have been recorded for this quiz.');td.colSpan=9;td.className='muted';tbody.append(tr);return;}
   for(const r of app.rows){
     const tr=document.createElement('tr');
-    cell(tr,r.rank||'—');cell(tr,r.name);cell(tr,r.cls);cell(tr,r.section);cell(tr,r.roll,'num');
+    cell(tr,r.section);cell(tr,r.roll,'num');cell(tr,r.name);cell(tr,r.completed?r.rank:'—','num');
     cell(tr,r.completed ? `${r.score}/${app.currentQuiz.totalQuestions||app.currentQuiz.questions?.length||'?'}` : '—','num');
     cell(tr,r.completed ? `${r.percent.toFixed(1)}%` : '—','num');
-    cell(tr,r.completed ? r.attempts : '—','num');cell(tr,r.completed ? seconds(r.time) : '—','num');
-    const s=cell(tr,r.completed?'Attempted':'Not attempted');s.className='';s.innerHTML='';let span=document.createElement('span');span.textContent=r.completed?'Attempted':'Not attempted';span.className=r.completed?'pill':'pill missing';s.append(span);tbody.append(tr);
+    cell(tr,r.completed ? r.attempts : 0,'num');cell(tr,r.completed ? seconds(r.time) : '—','num');
+    const s=cell(tr,'');const span=document.createElement('span');span.textContent=r.completed?'Attempted':'Not Attempted';span.className=r.completed?'pill':'pill missing';s.append(span);tbody.append(tr);
   }
 }
 function renderSummary(){
@@ -221,12 +251,14 @@ async function showResults() {
     app.allAttempts=snap.docs.map(d=>({recordId:d.id,...d.data()})).filter(x=>!x.academicYear||x.academicYear===$('year').value.trim());
     app.rows=buildRows(app.allAttempts);
     renderSummary();renderRows();
-    status(`${app.rows.length} student(s) with results; ${app.allAttempts.length} recorded attempt(s).`, 'success');
+    status(`${app.rows.length} student(s) with results; ${app.allAttempts.length} recorded attempt(s). Checking roster…`, 'success');
+    await compareRoster(true);
   }catch(err){console.error(err);clearReport();status(`Unable to read quiz results: ${err.message}. Check teacher access and Firestore rules.`, 'error');}
 }
-async function compareRoster() {
+async function compareRoster(silent=false) {
   if(!app.currentQuiz){status('Select a quiz first.','error');return;}
-  const button=$('participation');button.disabled=true;status('Comparing the selected class against its school roster…');
+  const button=$('participation');button.disabled=true;
+  if(!silent)status('Comparing the selected class against its school roster…');
   try {
     const year=$('year').value.trim();const className=app.currentQuiz.class;
     const clsSnap=await db.collection('years').doc(year).collection('classes').get();
@@ -239,12 +271,22 @@ async function compareRoster() {
       kids.docs.forEach(doc=>{const d=doc.data()||{};if(d.isDeleted===true)return;roster.push({studentId:doc.id,name:String(d.name||'').trim(),cls:className,section:String(sec.data().name||'').trim(),roll:d.roll??''});});
     }
     const matching=new Map(app.rows.map(x=>[x.studentId,x]));
-    for(const s of roster){if(!matching.has(s.studentId))app.rows.push({...s,key:`id:${s.studentId}`,rank:'—',score:0,percent:0,attempts:0,time:0,completed:false});}
+    for(const student of roster){
+      const recorded=matching.get(student.studentId);
+      if(recorded){
+        // Use the roster's current section and roll when available.
+        recorded.name=student.name||recorded.name;
+        recorded.section=student.section||recorded.section;
+        recorded.roll=student.roll??recorded.roll;
+      }else{
+        app.rows.push({...student,key:`id:${student.studentId}`,rank:null,score:0,percent:0,attempts:0,time:null,completed:false});
+      }
+    }
     app.rosterChecked=true;
-    app.rows.sort((a,b)=>Number(b.completed)-Number(a.completed)||((a.rank||99999)-(b.rank||99999))||a.cls.localeCompare(b.cls)||a.section.localeCompare(b.section)||Number(a.roll||0)-Number(b.roll||0));
+    app.rows.sort(sectionRollSort);
     renderRows();renderSummary();
     status(`Roster checked: ${roster.length} active students; ${app.rows.filter(x=>!x.completed).length} without a recorded attempt.`, 'success');
-  }catch(err){console.error(err);status(`Could not compare the school roster: ${err.message}. Existing quiz scores are still available.`, 'error');}
+  }catch(err){console.error(err);status(`Roster unavailable: ${err.message}. Recorded results are still shown, but Not Attempted students cannot be identified.`, silent?'':'error');}
   finally{button.disabled=false;}
 }
 function safeCsv(value){
@@ -254,8 +296,13 @@ function safeCsv(value){
 function exportCsv(){
   if(!app.currentQuiz||!app.rows.length)return;
   const total=app.currentQuiz.totalQuestions||app.currentQuiz.questions?.length||'';
-  const headers=['Academic Year','Quiz ID','Class','Subject','Chapter','Rank','Student Name','Section','Roll Number','Score','Maximum Score','Percentage','Attempts','Time (seconds)','Status'];
-  const lines=[headers,...app.rows.map(r=>[$('year').value.trim(),app.currentQuiz.id,r.cls,app.currentQuiz.subject,app.currentQuiz.chapter,r.rank,r.name,r.section,r.roll,r.completed?r.score:'',total,r.completed?r.percent.toFixed(1):'',r.completed?r.attempts:'',r.completed?r.time:'',r.completed?'Attempted':'Not attempted'])];
+  const headers=['Section','Roll','Student Name','Rank','Best Score','Percentage','Attempts','Time','Status','Academic Year','Class','Subject','Chapter','Quiz ID'];
+  const lines=[headers,...app.rows.map(r=>[
+    r.section,r.roll,r.name,r.completed?r.rank:'—',r.completed?`${r.score}/${total}`:'—',
+    r.completed?`${r.percent.toFixed(1)}%`:'—',r.completed?r.attempts:0,
+    r.completed?seconds(r.time):'—',r.completed?'Attempted':'Not Attempted',
+    $('year').value.trim(),r.cls,app.currentQuiz.subject,app.currentQuiz.chapter,app.currentQuiz.id
+  ])];
   const csv='\ufeff'+lines.map(row=>row.map(safeCsv).join(',')).join('\r\n');
   const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
   const a=document.createElement('a');a.href=url;a.download=`Quick_Quiz_Results_${String(app.currentQuiz.class||'').replace(/[^a-z0-9]+/gi,'_')}_${String(app.currentQuiz.subject||'').replace(/[^a-z0-9]+/gi,'_')}_${app.currentQuiz.id}.csv`;
