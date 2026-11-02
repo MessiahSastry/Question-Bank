@@ -22,13 +22,16 @@
     @media(max-width:740px){main{margin:12px auto;padding:0 10px 28px}.card{padding:16px}.filters{grid-template-columns:1fr 1fr;gap:10px}.filters .wide{grid-column:span 2}.metrics{grid-template-columns:repeat(2,1fr)}.actions .btn{flex:1 1 150px}.metric strong{font-size:23px}}
     @media(max-width:430px){.filters{grid-template-columns:1fr}.filters .wide{grid-column:span 1}}
     @media print{body{background:#fff}header{color:#000;background:#fff;box-shadow:none}.actions,.filters,.status,.foot,.note,#gate{display:none!important}.card{box-shadow:none;border:0;padding:0}.scroll{overflow:visible;border:0}table{min-width:0}}
-  <style>
-    .modern-chapter {
+      .modern-chapter {
   position: relative;
   width: 100%;
 }
 
-#chapterFilter {
+#classFilter,
+#sectionFilter,
+#subjectFilter,
+#chapterFilter,
+#quizFilter {
   display: none !important;
 }
 
@@ -216,7 +219,12 @@ function setSelect(id, options, placeholder, selected = '') {
     select.value = options[0].value;
   }
 
-  if (id === 'chapterFilter') syncModernChapter();
+   if (id === 'chapterFilter') {
+    syncModernChapter();
+  } else {
+    syncModernFilter(id);
+  }
+
   return select.value;
 }
 function uniqOpts(strings) {
@@ -378,6 +386,140 @@ function syncModernChapter() {
 
     menu.append(item);
   });
+}
+
+function syncModernFilter(id) {
+  const select = $(id);
+  if (!select) return;
+
+  let wrapper = document.querySelector(
+    `[data-modern-for="${id}"]`
+  );
+
+  if (!wrapper) {
+    wrapper = document.createElement('div');
+    wrapper.className = 'modern-chapter';
+    wrapper.dataset.modernFor = id;
+
+    select.insertAdjacentElement('afterend', wrapper);
+
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.id = id + 'Button';
+    button.className = 'modern-chapter-toggle';
+    button.setAttribute('aria-haspopup', 'listbox');
+    button.setAttribute('aria-expanded', 'false');
+
+    const menu = document.createElement('div');
+    menu.className = 'modern-chapter-menu';
+    menu.setAttribute('role', 'listbox');
+    menu.hidden = true;
+
+    wrapper.append(button, menu);
+
+    const label = document.querySelector(
+      `label[for="${id}"]`
+    );
+
+    if (label) {
+      label.htmlFor = button.id;
+    }
+
+    button.addEventListener('click', (event) => {
+      event.stopPropagation();
+
+      if (button.disabled) return;
+
+      const opening = menu.hidden;
+
+      document
+        .querySelectorAll('.modern-chapter-menu')
+        .forEach(other => {
+          other.hidden = true;
+
+          other.parentElement
+            .querySelector('.modern-chapter-toggle')
+            ?.setAttribute('aria-expanded', 'false');
+        });
+
+      menu.hidden = !opening;
+
+      button.setAttribute(
+        'aria-expanded',
+        String(opening)
+      );
+
+      if (opening) {
+        menu
+          .querySelector('[aria-selected="true"]')
+          ?.focus();
+      }
+    });
+
+    document.addEventListener('click', (event) => {
+      if (!wrapper.contains(event.target)) {
+        menu.hidden = true;
+        button.setAttribute('aria-expanded', 'false');
+      }
+    });
+
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        menu.hidden = true;
+        button.setAttribute('aria-expanded', 'false');
+      }
+    });
+  }
+
+  const button = wrapper.querySelector(
+    '.modern-chapter-toggle'
+  );
+
+  const menu = wrapper.querySelector(
+    '.modern-chapter-menu'
+  );
+
+  button.disabled = select.disabled;
+
+  button.textContent =
+    select.selectedOptions[0]?.textContent || 'Select';
+
+  menu.replaceChildren();
+  menu.hidden = true;
+
+  button.setAttribute('aria-expanded', 'false');
+
+  Array.from(select.options)
+    .filter(option => option.value)
+    .forEach(option => {
+
+      const item = document.createElement('button');
+
+      item.type = 'button';
+      item.className = 'modern-chapter-option';
+      item.textContent = option.textContent;
+
+      item.setAttribute('role', 'option');
+
+      item.setAttribute(
+        'aria-selected',
+        String(option.value === select.value)
+      );
+
+      item.addEventListener('click', () => {
+        select.value = option.value;
+
+        syncModernFilter(id);
+
+        select.dispatchEvent(
+          new Event('change', { bubbles: true })
+        );
+
+        button.focus();
+      });
+
+      menu.appendChild(item);
+    });
 }
 
 function optQuizLabel(q) {
