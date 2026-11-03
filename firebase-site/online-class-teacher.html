@@ -52,16 +52,6 @@
 </header>
   <main>
     <div id="authNotice" class="notice" role="status" aria-live="polite">Checking your teacher sign-in…</div>
-    <section id="teacherLoginPanel" class="panel" aria-label="School teacher sign-in" hidden style="max-width:480px;margin:0 auto 20px">
-      <h2>Sign in with your school account</h2>
-      <p class="hint">Use your existing CampusConnect email address and password. No new account is required.</p>
-      <form id="teacherLoginForm" autocomplete="on">
-        <div class="field"><label for="teacherLoginEmail">School email</label><input id="teacherLoginEmail" type="email" autocomplete="username" required></div>
-        <div class="field"><label for="teacherLoginPassword">Password</label><input id="teacherLoginPassword" type="password" autocomplete="current-password" required></div>
-        <button id="teacherLoginSubmit" type="submit" class="btn">Sign In</button>
-      </form>
-      <div id="teacherLoginMessage" class="message" role="status" aria-live="polite"></div>
-    </section>
     <div class="grid">
       <section class="panel" aria-labelledby="editorTitle">
         <div class="panel-head"><div><h2 id="editorTitle">Create Online Class</h2><div class="muted small">Schedule each class or section separately.</div></div><span id="editorBadge" class="badge">New session</span></div>
@@ -376,46 +366,40 @@
   }
   async function connectMyZoomAccount(){
     if(!state.user||!auth||state.initializing||state.busy||state.zoomConnecting)return;
-    // Zoom account authorisation is independent of class scheduling:
-    // never validate a Zoom meeting link, submit the class form, or require a saved class.
-    // Warn before leaving any unrelated unsaved work, without forcing a class save.
+    // Connecting Zoom does not require a meeting link or saved class.
     if(hasUnsavedChanges()||state.attendance?.changes.size){
       if(!await ask('Connect your Zoom account?',
-        'No meeting link is needed to connect. Authorising Zoom will leave this page, and unsaved class or attendance changes will be lost. Continue?',
+        'Unsaved class or attendance changes will be lost when Zoom opens. Continue?',
         'Connect Zoom'))return;
-    }
-    // Firebase Hosting rewrites and the HttpOnly OAuth cookie must be same-origin.
-    if(location.origin!=='https://stpatricks-questionbank.web.app'){
-      // OAuth requires a same-origin HttpOnly cookie. Move from GitHub Pages to
-      // Firebase Hosting, then resume the click after any required school sign-in.
-      state.zoomLeaving=true;
-      location.assign('https://stpatricks-questionbank.web.app/online-class-teacher.html?connectZoom=1');
-      return;
     }
     const user=state.user;
     state.zoomConnecting=true;refreshControls();
-    message('zoomConnectStatus','Checking your school account and opening Zoom authorisation…');
+    message('zoomConnectStatus','Opening Zoom authorisation using your existing CampusConnect sign-in…');
+    let form=null;
     try{
       const token=await user.getIdToken();
-      if(state.user!==user)throw uiError('Your teacher sign-in changed. Please try again.');
-      const response=await fetch('/zoom/oauth/start',{
-        method:'POST',headers:{Authorization:'Bearer '+token,Accept:'application/json'},
-        credentials:'same-origin',cache:'no-store'
-      });
-      const data=await response.json().catch(()=>null);
-      if(!response.ok){
-        if(response.status===403)throw uiError('Sign in with your existing school teacher account to connect Zoom.');
-        throw uiError('Zoom authorisation is not ready. The secure Firebase backend and Hosting route must be deployed first.');
-      }
-      const target=new URL(String(data?.authorizationUrl||''));
-      if(target.protocol!=='https:'||target.hostname!=='zoom.us'||target.pathname!=='/oauth/authorize')throw uiError('The Zoom authorisation response was invalid.');
-      if(state.user!==user)throw uiError('Your teacher sign-in changed. Please try again.');
-      message('zoomConnectStatus','Redirecting securely to Zoom for account authorisation…');
+      if(state.user!==user)throw uiError('Your school sign-in changed. Please reopen Online Class.');
+      // A top-level HTTPS form POST crosses from GitHub Pages to Firebase
+      // Hosting without a second login or exposing the ID token in a URL.
+      // The trusted server independently verifies this Firebase ID token,
+      // sets a secure same-origin callback cookie, and redirects to Zoom.
+      form=document.createElement('form');
+      form.action='https://stpatricks-questionbank.web.app/zoom/oauth/start';
+      form.method='POST';
+      form.acceptCharset='UTF-8';
+      form.hidden=true;
+      const field=document.createElement('input');
+      field.type='hidden';
+      field.name='firebaseIdToken';
+      field.value=token;
+      form.appendChild(field);
+      document.body.appendChild(form);
       state.zoomLeaving=true;
-      location.assign(target.href);
+      HTMLFormElement.prototype.submit.call(form);
     }catch(error){
       state.zoomLeaving=false;
-      message('zoomConnectStatus',error?.userMessage||'Unable to connect to Zoom. Check the school website and try again.','error');
+      if(form){const field=form.querySelector('[name="firebaseIdToken"]');if(field)field.value='';form.remove();}
+      message('zoomConnectStatus',error?.userMessage||'Unable to open Zoom. Please reopen the school teacher page and try again.','error');
     }finally{
       state.zoomConnecting=false;refreshControls();
     }
@@ -584,13 +568,11 @@
     }
     state.meetings.clear();state.listReady=false;
     if(!state.user){
-      const sameOriginSchool=location.origin==='https://stpatricks-questionbank.web.app';
-      $('teacherLoginPanel').hidden=!sameOriginSchool;
-      $('authNotice').hidden=sameOriginSchool;
-      $('authNotice').className='notice warning';$('authNotice').textContent='Please sign in through your CampusConnect teacher account, then reopen this page.';
+      $('authNotice').hidden=false;
+      $('authNotice').className='notice warning';
+      $('authNotice').textContent='Open Online Class from your signed-in CampusConnect dashboard. No separate Zoom login is required.';
       $('meetingList').replaceChildren(make('div','Your classes are visible after teacher sign-in.','empty'));$('listSummary').textContent='Teacher sign-in required';refreshControls();return;
     }
-    $('teacherLoginPanel').hidden=true;
     $('authNotice').hidden=true;$('authNotice').textContent='';
     refreshControls();
     const profile=await Promise.allSettled([db.collection('users').doc(user.uid).get(),db.collection('users').doc(user.uid).collection('settings').doc('zoom').get()]);
@@ -600,15 +582,6 @@
     await loadClasses({classId:storageGet('sp_selectedClassId'),className:storageGet('sp_selectedClassName'),sectionId:storageGet('sp_selectedSectionId'),sectionName:storageGet('sp_selectedSectionName')});
     if(generation!==state.authGeneration)return;
     state.initializing=false;state.initialSignature=formSignature();watchMeetings();refreshControls();
-    // Resume the teacher-initiated Zoom connection once Firebase Auth is ready.
-    if(location.origin==='https://stpatricks-questionbank.web.app'){
-      const redirectUrl=new URL(location.href);
-      if(redirectUrl.searchParams.get('connectZoom')==='1'){
-        redirectUrl.searchParams.delete('connectZoom');
-        history.replaceState(null,'',redirectUrl.pathname+redirectUrl.search+redirectUrl.hash);
-        void connectMyZoomAccount();
-      }
-    }
   }
   // An accessible custom menu for every select, including attendance rows.
   // Native select elements remain the source of truth for existing app logic.
@@ -775,25 +748,6 @@
     $('sectionSel').addEventListener('change',refreshControls);
     $('newBtn').onclick=newClass;$('shareBtn').onclick=()=>shareClass(state.editingId);$('startBtn').onclick=()=>startClass(state.editingId);
     $('connectZoomBtn').onclick=connectMyZoomAccount;
-    $('teacherLoginForm').addEventListener('submit',async event=>{
-      event.preventDefault();
-      if(!auth||state.user)return;
-      const button=$('teacherLoginSubmit');
-      button.disabled=true;
-      message('teacherLoginMessage','Signing in to your school account…');
-      try{
-        await auth.signInWithEmailAndPassword(
-          $('teacherLoginEmail').value.trim(),
-          $('teacherLoginPassword').value
-        );
-        $('teacherLoginPassword').value='';
-        message('teacherLoginMessage','Signed in successfully.','success');
-      }catch(error){
-        message('teacherLoginMessage','Could not sign in. Check your school email and password.','error');
-      }finally{
-        button.disabled=false;
-      }
-    });
     $('refreshBtn').onclick=watchMeetings;$('listDate').addEventListener('change',renderMeetings);$('previousDayBtn').onclick=()=>stepDate(-1);$('nextDayBtn').onclick=()=>stepDate(1);$('todayBtn').onclick=()=>{$('listDate').value=dateParts().date;renderMeetings();};
     $('closeShareBtn').onclick=()=>$('shareDialog').close();$('copyBtn').onclick=copyMessage;
     $('closeAttendanceBtn').onclick=closeAttendance;$('attendanceDialog').addEventListener('cancel',e=>{e.preventDefault();closeAttendance();});$('saveAttendanceBtn').onclick=saveAttendance;$('downloadAttendanceBtn').onclick=downloadAttendance;
