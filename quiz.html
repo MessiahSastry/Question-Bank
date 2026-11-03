@@ -515,6 +515,71 @@
   font-size: 1.05em;
   font-weight: 700;
 }
+
+/* --- Quiz warning modal: reliable on mobile --- */
+#quiz-warning-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 5000;
+  background: rgba(0,0,0,.72);
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  box-sizing: border-box;
+}
+#quiz-warning-card {
+  width: min(92vw, 430px);
+  max-height: 88vh;
+  overflow-y: auto;
+  background: #fff;
+  border-radius: 18px;
+  box-shadow: 0 12px 38px rgba(0,0,0,.28);
+  padding: 24px 20px 20px;
+  box-sizing: border-box;
+  text-align: left;
+}
+#quiz-warning-title {
+  margin: 0 0 14px;
+  color: #1762a7;
+  font-size: 1.34rem;
+  line-height: 1.25;
+  text-align: center;
+}
+#quiz-warning-message {
+  white-space: pre-line;
+  color: #24384d;
+  font-size: 1.02rem;
+  line-height: 1.58;
+}
+#quiz-warning-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 20px;
+}
+#quiz-warning-actions button {
+  flex: 1;
+  border: 0;
+  border-radius: 9px;
+  padding: 13px 10px;
+  font-size: 1rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+#quiz-warning-confirm {
+  background: #1762a7;
+  color: #fff;
+}
+#quiz-warning-cancel {
+  background: #eef3f8;
+  color: #28445f;
+}
+#quiz-warning-card.danger {
+  border-top: 6px solid #c82333;
+}
+#quiz-warning-card.danger #quiz-warning-title {
+  color: #c82333;
+}
     </style>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
@@ -688,6 +753,18 @@
 </div>
 </div><!-- /#quiz-auth-modal-inner -->
 </div><!-- /#quiz-auth-modal -->
+
+<!-- Reliable in-page quiz warning modal -->
+<div id="quiz-warning-overlay" role="dialog" aria-modal="true" aria-labelledby="quiz-warning-title">
+  <div id="quiz-warning-card">
+    <h2 id="quiz-warning-title">Quiz Notice</h2>
+    <div id="quiz-warning-message"></div>
+    <div id="quiz-warning-actions">
+      <button id="quiz-warning-cancel" type="button" style="display:none;">Cancel</button>
+      <button id="quiz-warning-confirm" type="button">Continue Quiz</button>
+    </div>
+  </div>
+</div>
 
 
         <!-- LEADERBOARD POPUP -->
@@ -1454,6 +1531,48 @@ function attachPinToggle(inputId, buttonId) {
         let quizStart = null;
         let timerInterval = null;
 
+        // --- Reliable in-page warning / instruction modal ---
+        function showQuizModal({
+          title = 'Quiz Notice',
+          message = '',
+          confirmText = 'Continue Quiz',
+          cancelText = '',
+          danger = false
+        } = {}) {
+          return new Promise(resolve => {
+            const overlay = document.getElementById('quiz-warning-overlay');
+            const card = document.getElementById('quiz-warning-card');
+            const titleEl = document.getElementById('quiz-warning-title');
+            const messageEl = document.getElementById('quiz-warning-message');
+            const confirmBtn = document.getElementById('quiz-warning-confirm');
+            const cancelBtn = document.getElementById('quiz-warning-cancel');
+
+            if (!overlay || !card || !titleEl || !messageEl || !confirmBtn || !cancelBtn) {
+              resolve(window.confirm(message || title));
+              return;
+            }
+
+            titleEl.textContent = title;
+            messageEl.textContent = message;
+            confirmBtn.textContent = confirmText || 'Continue Quiz';
+            cancelBtn.textContent = cancelText || 'Cancel';
+
+            card.classList.toggle('danger', !!danger);
+            cancelBtn.style.display = cancelText ? '' : 'none';
+            overlay.style.display = 'flex';
+
+            const finish = value => {
+              overlay.style.display = 'none';
+              confirmBtn.onclick = null;
+              cancelBtn.onclick = null;
+              resolve(value);
+            };
+
+            confirmBtn.onclick = () => finish(true);
+            cancelBtn.onclick = () => finish(false);
+          });
+        }
+
         // --- Official Attempt Protection ---
         window.__quizPracticeOnly = false;
         window.__quizFinished = false;
@@ -1501,25 +1620,28 @@ function attachPinToggle(inputId, buttonId) {
         function showPendingQuizWarning() {
 
           if (window.__quizPendingWarning) {
-
-            const message =
-              window.__quizPendingWarning;
+            const message = window.__quizPendingWarning;
+            const count = Number(window.__quizViolationCount || 0);
 
             window.__quizPendingWarning = '';
 
-            window.alert(message);
+            showQuizModal({
+              title: count >= 2 ? 'FINAL WARNING' : 'WARNING 1 OF 2',
+              message,
+              confirmText: 'Continue Quiz',
+              danger: true
+            });
           }
 
-          if (
-            window.__quizAutoSubmitNoticePending
-          ) {
+          if (window.__quizAutoSubmitNoticePending) {
+            window.__quizAutoSubmitNoticePending = false;
 
-            window.__quizAutoSubmitNoticePending =
-              false;
-
-            window.alert(
-              'Your quiz has been submitted because you left the quiz screen three times.'
-            );
+            showQuizModal({
+              title: 'QUIZ SUBMITTED',
+              message: 'Your quiz has been submitted because you left the quiz screen three times.',
+              confirmText: 'View Result',
+              danger: true
+            });
           }
         }
 
@@ -1671,9 +1793,12 @@ function attachPinToggle(inputId, buttonId) {
 
             event.preventDefault();
 
-            window.alert(
-              'Copying quiz questions is not permitted. Please continue the quiz without copying.'
-            );
+            showQuizModal({
+              title: 'COPYING NOT PERMITTED',
+              message: 'Copying quiz questions is not permitted. Please continue the quiz without copying.',
+              confirmText: 'Continue Quiz',
+              danger: true
+            });
           }
         );
 
@@ -2366,27 +2491,23 @@ window.onload = function() {
         if (attempted) {
 
                     const continuePractice =
-            window.confirm(
-              'PRACTICE ATTEMPT\n\n' +
-
-              'You have already attempted this quiz.\n' +
-              'Your first attempt has been recorded.\n\n' +
-
-              'This attempt is ONLY FOR PRACTICE.\n' +
-              'Your score and rank will not change.\n\n' +
-
-              'QUIZ RULES\n\n' +
-
-              '• Do not answer phone calls during the quiz.\n' +
-              '• Do not open WhatsApp, Google, ChatGPT or other apps.\n' +
-              '• Do not change browser tabs or leave the quiz screen.\n' +
-              '• Copying quiz questions is not permitted.\n\n' +
-
-              'You will receive two warnings.\n' +
-              'On the third violation, this practice quiz will end automatically.\n\n' +
-
-              'Press OK to continue.'
-            );
+            await showQuizModal({
+              title: 'PRACTICE ATTEMPT',
+              message:
+                'You have already attempted this quiz.\n' +
+                'Your first attempt has been recorded.\n\n' +
+                'This attempt is ONLY FOR PRACTICE.\n' +
+                'Your score and rank will not change.\n\n' +
+                'QUIZ RULES\n\n' +
+                '• Do not answer phone calls during the quiz.\n' +
+                '• Do not open WhatsApp, Google, ChatGPT or other apps.\n' +
+                '• Do not change browser tabs or leave the quiz screen.\n' +
+                '• Copying quiz questions is not permitted.\n\n' +
+                'You will receive two warnings.\n' +
+                'On the third violation, this practice quiz will end automatically.',
+              confirmText: 'Continue Practice',
+              cancelText: 'Cancel'
+            });
 
           if (!continuePractice) {
             return;
@@ -2396,25 +2517,19 @@ window.onload = function() {
 
           // FIRST OFFICIAL ATTEMPT
           const ready =
-            window.confirm(
-              'IMPORTANT QUIZ INSTRUCTIONS\n\n' +
-
-              '1. Do not answer phone calls during the quiz.\n' +
-
-              '2. Do not reply to WhatsApp messages or open other apps.\n' +
-
-              '3. Do not open Google, ChatGPT or another browser tab.\n' +
-
-              '4. Do not leave the quiz screen or use the Back button.\n' +
-
-              '5. Copying quiz questions is not permitted.\n\n' +
-
-              'You will receive two warnings for leaving the quiz screen.\n' +
-
-              'On the third violation, your quiz will be submitted automatically.\n\n' +
-
-              'Press OK only when you are ready to start.'
-            );
+            await showQuizModal({
+              title: 'IMPORTANT QUIZ INSTRUCTIONS',
+              message:
+                '1. Do not answer phone calls during the quiz.\n' +
+                '2. Do not reply to WhatsApp messages or open other apps.\n' +
+                '3. Do not open Google, ChatGPT or another browser tab.\n' +
+                '4. Do not leave the quiz screen or use the Back button.\n' +
+                '5. Copying quiz questions is not permitted.\n\n' +
+                'You will receive two warnings for leaving the quiz screen.\n' +
+                'On the third violation, your quiz will be submitted automatically.',
+              confirmText: 'I Understand – Start Quiz',
+              cancelText: 'Cancel'
+            });
 
           if (!ready) {
             return;
