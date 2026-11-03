@@ -151,7 +151,7 @@
         <p class="hint" style="margin-top:17px">Your teacher will check your name before admitting you in Zoom.</p>
       </section>
       <section class="panel" aria-labelledby="joinTitle">
-        <h2 id="joinTitle">Join Your Class</h2><p id="sdkPilotLabel" class="notice warning" hidden><strong>Meeting SDK test:</strong> Zoom should open inside the school webpage. Switching apps or minimizing the page will attempt to disconnect Zoom and require a fresh join. This is a test, not verified attendance.</p><p id="joinHelp" class="muted small">Confirm your name first. Joining opens 10 minutes before class.</p>
+        <h2 id="joinTitle">Join Your Class</h2><p id="sdkPilotLabel" class="notice warning" hidden><strong>Meeting SDK test:</strong> Please allow microphone access when Chrome asks. After the class connects, switching apps or minimizing the browser will attempt to disconnect Zoom and require rejoining. This is a test, not verified attendance.</p><p id="joinHelp" class="muted small">Confirm your name first. Joining opens 10 minutes before class.</p>
         <button id="joinAppBtn" class="btn full" type="button" disabled>Join Online Class</button>
         <button id="copyNameBtn" class="btn quiet full" style="margin-top:13px" type="button" disabled>Copy My Zoom Name</button>
         <div id="joinStatus" class="message" role="status" aria-live="polite"></div>
@@ -188,7 +188,7 @@
   const state={user:null,signingIn:false,authAttempted:false,meeting:null,scope:null,scopeKey:'',contextRequest:0,stopMeeting:null,loading:true,cachedOnly:true,loadError:'',contextError:'',contextBusy:false,offline:navigator.onLine===false,lookupBusy:false,lookupRequest:0,lookupPhone:'',candidates:new Map(),selected:null,confirmed:false,identityVersion:0,confirmation:null,joinBusy:false,joinAction:0,cooldownUntil:0,launched:false};
   let db=null,auth=null;
   const serverOptions={source:'server'};
-  const sdkState={joining:false,inMeeting:false,leftForSwitch:false,loader:null};
+  const sdkState={joining:false,inMeeting:false,leftForSwitch:false,loader:null,guardEnabled:false,guardTimer:null};
   const sdkVersion='6.10.0';
   async function loadMeetingSdk(){
     if(window.ZoomMtg)return window.ZoomMtg;
@@ -220,18 +220,50 @@
     }
     return sdkState.loader;
   }
+  // Preflight Zoom audio using the browser's actual microphone permission.
+  // Do this BEFORE arming the switch-away detector: Android permission
+  // prompts can briefly hide the page and are not classroom app switching.
+  async function checkSdkMicrophone(){
+    if(!navigator.mediaDevices?.getUserMedia){
+      throw uiError('This browser cannot access the microphone. Open the school class link directly in the latest Google Chrome.');
+    }
+    message('joinStatus','Checking microphone access. Select Allow if Chrome asks for permission.');
+    let stream;
+    try{
+      stream=await navigator.mediaDevices.getUserMedia({audio:true,video:false});
+    }catch(e){
+      const name=String(e?.name||'');
+      if(['NotAllowedError','PermissionDeniedError','SecurityError'].includes(name)){
+        throw uiError('Microphone permission is blocked. In Android Settings → Apps → Chrome → Permissions, allow Microphone. In Chrome → Site settings → Microphone, allow this school website. Then return and press Join Online Class.');
+      }
+      if(['NotFoundError','DevicesNotFoundError'].includes(name)){
+        throw uiError('Chrome could not find a working microphone. Check the phone microphone, then try again.');
+      }
+      if(['NotReadableError','TrackStartError'].includes(name)){
+        throw uiError('Another app is using the microphone. Close that app, then try joining again.');
+      }
+      throw uiError('Microphone could not start ('+(name||'unknown reason')+'). Check Android microphone access and try again.');
+    }finally{
+      try{stream?.getTracks().forEach(track=>track.stop());}catch(_){}
+    }
+  }
   function leaveSdkOnSwitch(){
-    if(!sdkPilot||(!sdkState.joining&&!sdkState.inMeeting))return;
+    // Never leave during SDK loading, pre-join, or Android camera/mic prompts.
+    if(!sdkPilot||!sdkState.inMeeting||!sdkState.guardEnabled)return;
     sdkState.leftForSwitch=true;
-    sdkState.joining=false;
     sdkState.inMeeting=false;
+    sdkState.guardEnabled=false;
+    if(sdkState.guardTimer){clearTimeout(sdkState.guardTimer);sdkState.guardTimer=null;}
     try{window.ZoomMtg?.leaveMeeting({confirm:false});}catch(_){}
-    // Browser background restrictions can delay leaveMeeting; on return the
-    // entire school identity flow is restarted. This is not an OS-level lock.
+    // Mobile background execution can be delayed; disconnection is best effort.
   }
   async function openEmbeddedZoom(student,user,identityToken){
-    sdkState.joining=true;
     sdkState.leftForSwitch=false;
+    sdkState.guardEnabled=false;
+    // Browser permission prompts must not be mistaken for leaving the class.
+    await checkSdkMicrophone();
+    if(!identityMatches(identityToken))throw uiError('Please confirm your student name again.');
+    sdkState.joining=true;
     try{
       const credential=await user.getIdToken();
       if(!identityMatches(identityToken))throw uiError('Confirm your name again.');
@@ -279,8 +311,14 @@
         throw uiError('You moved away from the class. Return and rejoin.');
       }
       sdkState.inMeeting=true;
+      // Give Android a short window for SDK video/audio permission UI to settle.
+      if(sdkState.guardTimer)clearTimeout(sdkState.guardTimer);
+      sdkState.guardTimer=setTimeout(()=>{
+        sdkState.guardTimer=null;
+        if(sdkState.inMeeting&&!sdkState.leftForSwitch)sdkState.guardEnabled=true;
+      },12000);
       state.launched=true;
-      message('joinStatus','Connected to Zoom in CampusConnect. Stay on this class page.','success');
+      message('joinStatus','Zoom connected in CampusConnect. Keep this class page open.','success');
     }catch(e){
       if(sdkState.leftForSwitch){try{window.ZoomMtg?.leaveMeeting({confirm:false});}catch(_){}}
       throw e;
