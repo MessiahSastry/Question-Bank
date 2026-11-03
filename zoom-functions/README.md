@@ -5,9 +5,10 @@ import, change, or redeploy the existing quiz lookup and reminder functions.
 
 ## Functions
 
-- zoomOAuthStart: requires a valid Firebase teacher ID token and a school
-  administrator's explicit allowlist entry, then creates a short-lived
-  one-time OAuth state and secure same-site cookie.
+- zoomOAuthStart: requires the existing school Firebase account's signed-in,
+  non-anonymous ID token with an email address, then creates a short-lived,
+  HMAC-signed OAuth state and same-site cookie. School administrators provision
+  Firebase teacher accounts; no manual per-teacher UID allowlist is required.
 - zoomOAuthCallback: validates the state and cookie, exchanges the Zoom code
   on the server, encrypts access and refresh tokens, and saves them by
   Firebase teacher UID.
@@ -43,17 +44,20 @@ For the third secret, generate a unique random 32-byte key in base64:
 
 Back up the encryption key securely. Losing it makes stored tokens unreadable.
 
-## Teacher allowlist
+## School teacher authentication
 
-Grant access only to actual school teachers. Add a Firestore document using
-privileged administrator access:
+The school administrator provisions Firebase teacher accounts. The Zoom start
+function requires a valid, non-revoked Firebase ID token with an email and
+rejects anonymous accounts. There is no extra Firestore allowlist to maintain.
+The OAuth state contains a server-signed identity/expiry binding so clients
+cannot change the teacher UID or expiry by editing the pending record.
 
-    zoomTeacherAccess/{firebaseTeacherUid}
-      enabled: true
-
-The start handler verifies Firebase Auth and checks this allowlist. Firestore
-rules must deny client access to zoomTeacherCredentials, zoomOAuthPending,
-and restrict zoomTeacherAccess changes to authorised administrators.
+**Security limitation:** The school's existing broad Firestore rules are left
+unchanged at the owner's request. Other signed-in users can still read, alter,
+or delete Zoom Firestore documents, disrupting connections or changing metadata.
+Zoom access/refresh tokens are encrypted server-side, with the key held only
+in Google Secret Manager; no client receives plaintext tokens. Revisit rules
+before broader production rollout.
 
 ## Teacher webpage integration (prepared on this branch)
 
@@ -61,8 +65,8 @@ The root-level online-class-teacher.html now includes a
 "Connect My Zoom Account" button. It uses the signed-in teacher's Firebase
 ID token to make a same-origin POST to /zoom/oauth/start and redirects to
 Zoom only after the server returns an approved authorizationUrl. It stops
-if the teacher has unsaved edits and displays an error if the backend or
-school approval is missing.
+if the teacher has unsaved edits and displays an error if Firebase sign-in,
+the secure backend, or the Hosting route is unavailable.
 
 IMPORTANT: the repository's firebase-site/ Hosting public directory does
 not currently include this teacher page. The new button is **not live**.
@@ -92,7 +96,7 @@ from an incomplete firebase-site/ directory.
 - Actual embedded Meeting SDK, meeting event verification and attendance
 - The cumulative 5-minute missed-time allowance
 - Zoom cross-account review and production approval
-- Firestore rules validation and end-to-end testing
+- Firestore rules hardening (deferred at the school owner's request) and end-to-end testing
 
 Sources:
 https://firebase.google.com/docs/functions/organize-functions
