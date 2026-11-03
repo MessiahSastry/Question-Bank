@@ -153,7 +153,8 @@
       <div class="actions">
         <button class="btn" id="refresh" type="button">Refresh Results</button>
         <button class="btn secondary" id="participation" type="button">Recheck Not Attempted</button>
-<button class="btn" id="whatsappShare" type="button">Share Results via WhatsApp</button>
+<button class="btn" id="whatsappRanks" type="button">Share Top 3 Ranks</button>
+<button class="btn secondary" id="whatsappPending" type="button">Share Not Attempted</button>
         <button class="btn secondary" id="export" type="button" disabled>Download Excel (CSV)</button>
         <button class="btn secondary" id="print" type="button">Print</button>
         <button class="btn secondary" id="return" type="button">Back to Quick Quiz</button>
@@ -794,7 +795,8 @@ async function compareRoster(silent=false) {
   }catch(err){console.error(err);status(`Roster unavailable: ${err.message}. Recorded results are still shown, but Not Attempted students cannot be identified.`, silent?'':'error');}
   finally{button.disabled=false;}
 }
-async function shareWhatsAppReport() {
+async function shareWhatsAppReport(kind) {
+  const isPending = kind === 'pending';
   const quizId = $('quizFilter').value;
   const year = $('year').value.trim();
 
@@ -812,9 +814,10 @@ async function shareWhatsAppReport() {
       'Checking the latest quiz results and school roster...';
   }
 
-  const button = $('whatsappShare');
-  button.disabled = true;
-  button.textContent = 'Checking latest results...';
+    const ranksButton = $('whatsappRanks');
+  const pendingButton = $('whatsappPending');
+  ranksButton.disabled = true;
+  pendingButton.disabled = true;
 
   try {
 
@@ -825,13 +828,15 @@ async function shareWhatsAppReport() {
       !app.currentQuiz ||
       app.currentQuiz.id !== quizId ||
       $('quizFilter').value !== quizId ||
-      $('year').value.trim() !== year ||
-      !app.rosterChecked
+           $('year').value.trim() !== year ||
+      (isPending && !app.rosterChecked)
     ) {
       if (waTab && !waTab.closed) waTab.close();
 
       status(
-        'WhatsApp message not prepared: latest results and roster could not be verified.',
+               isPending
+          ? 'Cannot share pending students: latest results and roster could not be verified.'
+          : 'Cannot share ranks: latest quiz results could not be verified.',
         'error'
       );
       return;
@@ -866,7 +871,7 @@ async function shareWhatsAppReport() {
       3: '🥉'
     };
 
-       const leaderText = leaders.length
+          const leaderText = leaders.length
       ? leaders.map(r =>
           `${medals[r.rank] || '🏅'} Rank ${r.rank}: ${r.name} (${r.section || 'Section not set'})\n` +
           `Score: ${r.score}/${total} | Time: ${seconds(r.time)}\n` +
@@ -909,56 +914,43 @@ async function shareWhatsAppReport() {
       `?quiz=${encodeURIComponent(quizId)}` +
       `&year=${encodeURIComponent(year)}`;
 
-    // Complete WhatsApp message.
+        // Prepare two separate WhatsApp message formats.
     const message = [
-
-      "*ST. PATRICK'S SCHOOL*",
-      "*QUICK QUIZ – PARTICIPATION & RESULTS*",
-
-      "",
-
+      "*St. PATRICK'S SCHOOL*",
+      isPending
+        ? '*QUICK QUIZ – NOT ATTEMPTED*'
+        : '*QUICK QUIZ – TOP 3 RANKS*',
+      '',
       `Academic Year: ${year}`,
       `Class: ${quiz.class || '—'}`,
-      `Section (pending list): ${section}`,
+      isPending ? `Section: ${section}` : 'Ranking: Class-wide',
       `Subject: ${quiz.subject || '—'}`,
       `Chapter: ${quiz.chapter || '—'}`,
-
-      "",
-
-      "🏆 *TOP 3 RANKS SO FAR (CLASS-WIDE)*",
-
-      leaderText,
-
-      "",
-
-      "*STUDENTS YET TO ATTEMPT*",
-
-      pendingText,
-
-      "",
-
-      `*Total Not Attempted: ${pending.length}*`,
-
-      "",
-
-      ...(pending.length
+      '',
+      ...(isPending
         ? [
-            "The above students are requested to complete the quiz at the earliest.",
-            ""
+            '*STUDENTS YET TO ATTEMPT*',
+            '',
+            pendingText,
+            '',
+            `*Total Not Attempted: ${pending.length}*`,
+            '',
+            ...(pending.length
+              ? ['The above students are requested to complete the quiz at the earliest.', '']
+              : []),
+            `Quiz Link: ${quizUrl}`
           ]
-        : []),
-
-      "*Note: Rankings are provisional and may change as more students attempt the quiz.*",
-
-      "",
-
-      `Quiz Link: ${quizUrl}`,
-
-      "",
-
-      "*Academic Department*",
+        : [
+            '🏆 *TOP 3 RANKS SO FAR (CLASS-WIDE)*',
+            '',
+            leaderText,
+            '',
+            '*Ranking: 80% accuracy + 20% completion speed.*',
+            '*These ranks are provisional and may change as more students attempt the quiz.*'
+          ]),
+      '',
+      '*Academic Department*',
       "St. Patrick's School"
-
     ].join('\n');
 
     // Open WhatsApp with the prepared message.
@@ -982,8 +974,8 @@ async function shareWhatsAppReport() {
 
   } finally {
 
-    button.disabled = false;
-    button.textContent = 'Share Results via WhatsApp';
+        ranksButton.disabled = false;
+    pendingButton.disabled = false;
 
   }
 }
@@ -1044,7 +1036,8 @@ document.addEventListener('keydown', e => {
 $('quizFilter').addEventListener('change',showResults);
 $('refresh').addEventListener('click',()=>{$('quizFilter').value?showResults():loadQuizzes()});
 $('participation').addEventListener('click',compareRoster);
-$('whatsappShare').addEventListener('click',shareWhatsAppReport);
+$('whatsappRanks').addEventListener('click', () => shareWhatsAppReport('ranks'));
+$('whatsappPending').addEventListener('click', () => shareWhatsAppReport('pending'));
 $('export').addEventListener('click',exportCsv);
 $('print').addEventListener('click',()=>window.print());
 $('return').addEventListener('click',()=>location.href='quick-quiz.html');
