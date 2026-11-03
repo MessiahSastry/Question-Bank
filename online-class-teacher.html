@@ -76,7 +76,7 @@
               <div class="field"><label for="classDate">Date *</label><input id="classDate" type="date" required></div>
               <div class="field"><label for="classTime">Start time (IST) *</label><input id="classTime" type="time" required></div>
             </div>
-            <div class="field"><label for="zoomLink">Zoom meeting link *</label><input id="zoomLink" type="url" inputmode="url" spellcheck="false" autocomplete="off" maxlength="2048" placeholder="https://us06web.zoom.us/j/…" required><p class="hint">Paste the participant invitation link. Sign in to its Zoom host account when starting.</p><label class="check" for="saveDefault"><input id="saveDefault" type="checkbox" checked><span>Remember this Zoom link and subject for my next class.</span></label></div>
+            <p class="notice" id="autoZoomNotice">Saving a class automatically creates its Zoom meeting using your connected account. Schedule each class and section separately.</p>
             <div class="field"><label for="instructions">Preparation / materials <span class="muted small">(optional)</span></label><textarea id="instructions" rows="2" maxlength="1000" placeholder="e.g. Keep your textbook and notebook ready."></textarea></div>
             <div class="buttons editor-actions"><button id="saveBtn" class="btn" type="submit">Save Class</button><button id="newBtn" class="btn secondary" type="button">New Class</button></div>
           </fieldset>
@@ -125,11 +125,11 @@
     classes:new Map(), sections:new Map(), meetings:new Map(), unsubscribe:null,
     editingId:null, draftId:null, loadedRevision:0, originalStart:null,
     savedSignature:'', initialSignature:'', busy:false, initializing:true, listReady:false,
-    attendance:null, attendanceSaving:false, zoomConnecting:false, zoomLeaving:false
+    attendance:null, attendanceSaving:false, zoomConnecting:false, zoomLeaving:false, zoomInfo:null
   };
   let db = null, auth = null;
   const stamp = () => firebase.firestore.FieldValue.serverTimestamp();
-  const editableIds = ['yearSel','classSel','sectionSel','teacherName','subject','duration','topic','classDate','classTime','zoomLink','instructions','saveDefault'];
+  const editableIds = ['yearSel','classSel','sectionSel','teacherName','subject','duration','topic','classDate','classTime','instructions'];
   function storageGet(key){try{return localStorage.getItem(key)||'';}catch(_){return '';}}
   function validYear(s){return /^\d{4}-\d{2}$/.test(s)&&Number(s.slice(5))===(Number(s.slice(0,4))+1)%100;}
   function dateParts(value = Date.now()){
@@ -171,10 +171,11 @@
   function uiError(text){const e=new Error(text);e.userMessage=text;return e;}
   function formSignature(){return JSON.stringify(editableIds.map(id=>$(id).type==='checkbox'?$(id).checked:$(id).value));}
   function hasUnsavedChanges(){return formSignature()!==(state.editingId?state.savedSignature:state.initialSignature);}
+  function zoomReady(m){return !!m&&!!m.zoomJoinUrl&&(!m.zoomMeetingId||Number(m.zoomProvisionedRevision)===Number(m.revision));}
   function refreshControls(){
     $('editorFields').disabled=!state.user||state.busy||state.initializing;
     $('connectZoomBtn').disabled=!state.user||state.busy||state.initializing||state.zoomConnecting;
-    $('connectZoomBtn').textContent=state.zoomConnecting?'Connecting to Zoom…':'Connect My Zoom Account';
+    $('connectZoomBtn').textContent=state.zoomConnecting?'Connecting to Zoom…':state.zoomInfo?.connected?'Reconnect My Zoom Account':'Connect My Zoom Account';
     $('connectZoomBtn').setAttribute('aria-busy',String(state.zoomConnecting));
     Dropdowns.refresh();
     $('saveBtn').innerHTML=state.busy?'<span class="spinner" aria-hidden="true"></span> Saving…':state.editingId?'Save Changes':'Save Class';
@@ -182,8 +183,8 @@
     const m=state.meetings.get(state.editingId);
     const currentRevision=!!m&&(Number(m.revision)||0)===state.loadedRevision;
     const clean=currentRevision&&formSignature()===state.savedSignature;
-    $('shareBtn').disabled=!state.user||state.busy||state.initializing||!clean;
-    $('startBtn').disabled=!state.user||state.busy||state.initializing||!clean||!sessionStatus(m||{}).startable;
+    $('shareBtn').disabled=!state.user||state.busy||state.initializing||!clean||!zoomReady(m);
+    $('startBtn').disabled=!state.user||state.busy||state.initializing||!clean||!zoomReady(m)||!sessionStatus(m||{}).startable;
     $('refreshBtn').disabled=!state.user||state.busy||state.initializing;
     $('classForm').setAttribute('aria-busy',String(state.busy));
     $('editorBadge').textContent=state.editingId?(!currentRevision?'Refresh / reopen class':clean?'Saved session':'Unsaved changes'):'New session';
@@ -263,8 +264,9 @@
     const duration=Number($('duration').value);
     if(!Number.isInteger(duration)||duration<5||duration>240)throw uiError('Enter a duration from 5 to 240 minutes.');
     if(start.getTime()<Date.now()-60000&&(!state.editingId||start.getTime()!==state.originalStart))throw uiError('A new or rescheduled class must start in the future.');
-    const zoom=validateZoomLink($('zoomLink').value);
-    return {academicYear:year,classId,sectionId,class:state.classes.get(classId),section:state.sections.get(sectionId),teacherId:state.user.uid,teacherName,subject,topic,instructions,startAt:start,endAt:new Date(start.getTime()+duration*60000),durationMinutes:duration,zoomJoinUrl:zoom.joinUrl,zoomWebUrl:zoom.webUrl};
+    const oldMeeting=state.meetings.get(state.editingId);
+    const zoom=oldMeeting?.zoomJoinUrl?validateZoomLink(oldMeeting.zoomJoinUrl):null;
+    return {academicYear:year,classId,sectionId,class:state.classes.get(classId),section:state.sections.get(sectionId),teacherId:state.user.uid,teacherName,subject,topic,instructions,startAt:start,endAt:new Date(start.getTime()+duration*60000),durationMinutes:duration,...(zoom?{zoomJoinUrl:zoom.joinUrl,zoomWebUrl:zoom.webUrl}:{})};
   }
   function conflictsWith(m,d,id){
     if(id===state.editingId||m.status==='cancelled'||m.status==='completed'||meetingYear(m)!==d.academicYear)return false;
@@ -312,10 +314,17 @@
       const m={...state.meetings.get(id),...saved};state.meetings.set(id,m);
       state.editingId=id;state.draftId=null;state.loadedRevision=saved.revision;state.originalStart=ms(draft.startAt);
       state.savedSignature=formSignature();$('editorTitle').textContent='Manage Online Class';$('listDate').value=dateParts(draft.startAt).date;
-      renderMeetings();message('status','Class saved. Share its invitation, or choose New Class to schedule another session.','success');
-      if($('saveDefault').checked){
-        try{await db.collection('users').doc(user.uid).collection('settings').doc('zoom').set({link:draft.zoomJoinUrl,lastSubject:draft.subject},{merge:true});}
-        catch(_){message('status','Class saved. Your default Zoom link could not be remembered; the class invitation is ready to share.','warning');}
+      renderMeetings();
+      if(!zoomReady(m)){
+        message('status','Class saved. Creating its Zoom meeting…');
+        try{
+          await requestZoomMeeting(id,user);
+          message('status','Class saved and Zoom meeting ready. Share the invitation or choose New Class for another section.','success');
+        }catch(e){
+          message('status','Class saved, but Zoom is not ready: '+readableError(e,'Use Generate Zoom Meeting on the class card to retry.'),'warning');
+        }
+      }else{
+        message('status','Class saved. Share its invitation or choose New Class.','success');
       }
     }catch(e){console.error('Class save failed',e);message('status',readableError(e,'Could not complete the save or timetable check. Your draft is kept; try again.'),'error');}
     finally{state.busy=false;refreshControls();}
@@ -340,7 +349,7 @@
       ensureYearOption(meetingYear(m));$('yearSel').value=meetingYear(m);
       await loadClasses({classId:m.classId,className:m.class,sectionId:m.sectionId,sectionName:m.section});
       $('teacherName').value=m.teacherName||state.user.displayName||'';$('subject').value=m.subject||'';$('topic').value=m.topic||'';
-      $('classDate').value=p.date;$('classTime').value=p.time;$('duration').value=durationOf(m);$('zoomLink').value=m.zoomJoinUrl||m.zoomWebUrl||'';$('instructions').value=m.instructions||'';
+      $('classDate').value=p.date;$('classTime').value=p.time;$('duration').value=durationOf(m);$('instructions').value=m.instructions||'';
       state.editingId=id;state.draftId=null;state.loadedRevision=Number(m.revision)||0;state.originalStart=ms(m.startAt);state.savedSignature=formSignature();
       $('editorTitle').textContent='Manage Online Class';message('status','Edit the details and save your changes before sharing the updated invitation.');renderMeetings();$('editorTitle').scrollIntoView({block:'start',behavior:'smooth'});
     }catch(e){message('status',readableError(e,'Could not open this class for editing.'),'error');}
@@ -355,6 +364,7 @@
   }
   function shareClass(id){
     const m=state.meetings.get(id);if(!state.user||!m||m.teacherId!==state.user.uid)return;
+    if(m.status!=='cancelled'&&!zoomReady(m)){message('status','Generate or update the Zoom meeting before sharing this class.','warning');return;}
     $('shareTitle').textContent=m.status==='cancelled'?'Share cancellation notice':'Share class invitation';
     const text=invitation(id,m);$('shareText').value=text;$('whatsAppLink').href='https://wa.me/?text='+encodeURIComponent(text);message('shareStatus','');$('copyBtn').textContent='Copy Message';$('shareDialog').showModal();
   }
@@ -363,6 +373,51 @@
     try{if(navigator.clipboard&&window.isSecureContext){await navigator.clipboard.writeText(text);ok=true;}}catch(_){}
     if(!ok){$('shareText').focus();$('shareText').select();$('shareText').setSelectionRange(0,text.length);try{ok=document.execCommand('copy');}catch(_){}}
     message('shareStatus',ok?'Message copied.':'Select and copy the message, or use Open WhatsApp.',ok?'success':'warning');
+  }
+  const ZOOM_API = 'https://stpatricks-questionbank.web.app/zoom/api/';
+  async function zoomApi(path,method,user,payload){
+    const idToken=await user.getIdToken();
+    if(state.user!==user)throw uiError('Your school sign-in changed. Reopen Online Class.');
+    let response;
+    try{
+      response=await fetch(ZOOM_API+path,{
+        method,mode:'cors',cache:'no-store',
+        headers:{Authorization:'Bearer '+idToken,...(payload?{'Content-Type':'application/json'}:{})},
+        ...(payload?{body:JSON.stringify(payload)}:{})
+      });
+    }catch(_){throw uiError('Unable to reach the school Zoom service. Check your connection and retry.');}
+    let body={};try{body=await response.json();}catch(_){}
+    if(!response.ok)throw uiError(typeof body.message==='string'?body.message:'Zoom service error ('+response.status+').');
+    return body;
+  }
+  async function loadZoomConnectionStatus(user){
+    try{
+      const info=await zoomApi('status','GET',user);
+      if(state.user!==user)return;
+      state.zoomInfo=info;
+      if(!info.connected)message('zoomConnectStatus','Connect your Zoom account once to create meetings automatically.','warning');
+      else if(!info.canCreate||!info.canUpdate)message('zoomConnectStatus','Zoom connected. To enable automatic meetings, add meeting:write:meeting and meeting:update:meeting in Zoom Developer Scopes, then reconnect your Zoom account.','warning');
+      else message('zoomConnectStatus','Zoom connected and ready for automatic meeting scheduling.','success');
+      refreshControls();
+    }catch(e){if(state.user===user)message('zoomConnectStatus',readableError(e,'Unable to check Zoom connection.'),'warning');}
+  }
+  async function requestZoomMeeting(id,user){
+    await zoomApi('create-meeting','POST',user,{meetingId:id});
+    const doc=await db.collection('meetings').doc(id).get();
+    if(state.user===user&&doc.exists){state.meetings.set(id,doc.data());renderMeetings();refreshControls();}
+  }
+  async function retryZoomMeeting(id){
+    if(state.busy||!state.user)return;
+    const user=state.user,m=state.meetings.get(id);
+    if(!m||m.teacherId!==user.uid||m.status!=='scheduled')return;
+    state.busy=true;refreshControls();renderMeetings();
+    message('status','Generating Zoom meeting for '+m.class+' / '+m.section+'…');
+    try{
+      await requestZoomMeeting(id,user);
+      message('status','Zoom meeting is ready. Share the class invitation.','success');
+    }catch(e){
+      message('status',readableError(e,'Meeting generation failed. Try again.'),'error');
+    }finally{state.busy=false;refreshControls();renderMeetings();}
   }
   async function connectMyZoomAccount(){
     if(!state.user||!auth||state.initializing||state.busy||state.zoomConnecting)return;
@@ -406,6 +461,7 @@
   }
   function startClass(id){
     const m=state.meetings.get(id);if(!state.user||!m||m.teacherId!==state.user.uid||!sessionStatus(m).startable)return;
+    if(!zoomReady(m)){message('status','Generate this class Zoom meeting first.','warning');return;}
     try{
       const url=validateZoomLink(m.zoomJoinUrl||m.zoomWebUrl).joinUrl;
       window.open(url,'_blank','noopener,noreferrer');
@@ -447,7 +503,9 @@
       top.append(info,make('span',status.label,'badge '+status.css));
       const details=make('div',`${m.subject||'Subject'} · ${m.topic||'Topic'}\n${durationOf(m)} minutes${m.durationMinutes?'':' (default for older record)'}`,'card-detail');
       const buttons=make('div',null,'buttons');
-      buttons.append(action('Start',()=>startClass(m.id),'',!status.startable||state.busy),action(m.status==='cancelled'?'Share Notice':'Share',()=>shareClass(m.id),'whatsapp',state.busy),action('Edit / Reschedule',()=>editClass(m.id),'secondary',m.status==='cancelled'||state.busy),action('Attendance',()=>openAttendance(m.id),'secondary',state.busy));
+      const ready=zoomReady(m);
+      if(m.status==='scheduled'&&!ready)buttons.append(action(m.zoomMeetingId?'Update Zoom Meeting':'Generate Zoom Meeting',()=>retryZoomMeeting(m.id),'',state.busy));
+      buttons.append(action('Start',()=>startClass(m.id),'',!ready||!status.startable||state.busy),action(m.status==='cancelled'?'Share Notice':'Share',()=>shareClass(m.id),'whatsapp',(m.status!=='cancelled'&&!ready)||state.busy),action('Edit / Reschedule',()=>editClass(m.id),'secondary',m.status==='cancelled'||state.busy),action('Attendance',()=>openAttendance(m.id),'secondary',state.busy));
       if(m.status!=='cancelled')buttons.append(action('Cancel',()=>cancelClass(m.id),'danger',state.busy));
       card.append(top,details,buttons);list.append(card);
     }
@@ -561,8 +619,8 @@
     ++state.classRequest;++state.sectionRequest;
     state.user=user&&!user.isAnonymous?user:null;state.initializing=!!state.user;
     if(previousUid!==(state.user&&state.user.uid)){
-      state.editingId=null;state.draftId=null;state.loadedRevision=0;state.originalStart=null;state.savedSignature='';state.attendance=null;
-      for(const id of ['teacherName','subject','topic','classTime','zoomLink','instructions'])$(id).value='';
+      state.editingId=null;state.draftId=null;state.loadedRevision=0;state.originalStart=null;state.savedSignature='';state.attendance=null;state.zoomInfo=null;
+      for(const id of ['teacherName','subject','topic' ,'classTime','instructions'])$(id).value='';
       $('editorTitle').textContent='Create Online Class';message('status','');
       for(const id of ['shareDialog','attendanceDialog','appDialog'])if($(id).open)$(id).close();
     }
@@ -578,10 +636,10 @@
     const profile=await Promise.allSettled([db.collection('users').doc(user.uid).get(),db.collection('users').doc(user.uid).collection('settings').doc('zoom').get()]);
     if(generation!==state.authGeneration)return;
     const p=profile[0].status==='fulfilled'&&profile[0].value.exists?profile[0].value.data():{},pref=profile[1].status==='fulfilled'&&profile[1].value.exists?profile[1].value.data():{};
-    $('teacherName').value=p.displayName||user.displayName||user.email||'';$('zoomLink').value=pref.link||'';$('subject').value=pref.lastSubject||'';
+    $('teacherName').value=p.displayName||user.displayName||user.email||'';$('subject').value=pref.lastSubject||'';
     await loadClasses({classId:storageGet('sp_selectedClassId'),className:storageGet('sp_selectedClassName'),sectionId:storageGet('sp_selectedSectionId'),sectionName:storageGet('sp_selectedSectionName')});
     if(generation!==state.authGeneration)return;
-    state.initializing=false;state.initialSignature=formSignature();watchMeetings();refreshControls();
+    state.initializing=false;state.initialSignature=formSignature();watchMeetings();refreshControls();loadZoomConnectionStatus(user);
   }
   // An accessible custom menu for every select, including attendance rows.
   // Native select elements remain the source of truth for existing app logic.
