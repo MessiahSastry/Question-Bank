@@ -166,15 +166,38 @@ exports.zoomOAuthCallback = onRequest({
 
   const code = req.query.code;
   const state = req.query.state;
-  if (typeof code !== 'string' || code.length < 2 || code.length > 4096 ||
-      typeof state !== 'string' || !/^[A-Za-z0-9_-]{43}\.[A-Za-z0-9_-]{43}$/.test(state) ||
-      !timingEquals(state, cookieValue(req, '__session'))) {
+  // Distinguish the failure stage without exposing the Zoom code, signed
+  // state, cookie or encrypted tokens in the browser or Cloud Logging.
+  if (typeof req.query.error === 'string') {
+    console.warn('Zoom OAuth callback status', 'ZC01');
+    return finishPage(res, 400, 'Zoom authorisation was not approved',
+      'Zoom did not approve the request. Please try from your school teacher page. (ZC01)');
+  }
+  if (typeof code !== 'string' || code.length < 2 || code.length > 4096) {
+    console.warn('Zoom OAuth callback status', 'ZC02');
     return finishPage(res, 400, 'Zoom connection not completed',
-      'Return to the school teacher page and start the connection again.');
+      'Zoom did not return an authorisation code. Please reconnect from the teacher page. (ZC02)');
+  }
+  if (typeof state !== 'string' ||
+      !/^[A-Za-z0-9_-]{43}\.[A-Za-z0-9_-]{43}$/.test(state)) {
+    console.warn('Zoom OAuth callback status', 'ZC03');
+    return finishPage(res, 400, 'Zoom connection not completed',
+      'The Zoom authorisation response was incomplete. Please reconnect. (ZC03)');
+  }
+  const cookie = cookieValue(req, '__session');
+  if (!cookie) {
+    console.warn('Zoom OAuth callback status', 'ZC04');
+    return finishPage(res, 400, 'Zoom connection not completed',
+      'Your browser did not retain the secure connection session. Try opening CampusConnect in Chrome instead of an in-app browser. (ZC04)');
+  }
+  if (!timingEquals(state, cookie)) {
+    console.warn('Zoom OAuth callback status', 'ZC05');
+    return finishPage(res, 400, 'Zoom connection not completed',
+      'The Zoom connection session did not match. Start a fresh connection from CampusConnect. (ZC05)');
   }
 
   const pendingRef = db.collection('zoomOAuthPending').doc(sha256(state));
-  let uid;
+  let uid, stage = 'state';
   try {
     // A state may be used only once, even if callbacks arrive concurrently.
     uid = await db.runTransaction(async tx => {
@@ -196,6 +219,7 @@ exports.zoomOAuthCallback = onRequest({
       return snap.get('teacherUid');
     });
 
+    stage = 'token';
     const form = new URLSearchParams({
       grant_type: 'authorization_code', code,
       redirect_uri: REDIRECT_URI
@@ -211,7 +235,11 @@ exports.zoomOAuthCallback = onRequest({
       body: form.toString(),
       signal: AbortSignal.timeout(12000)
     });
-    if (!response.ok) throw new Error('Zoom token exchange was rejected');
+    if (!response.ok) {
+      // Do not print Zoom's response body, as it may include sensitive data.
+      console.error('Zoom OAuth token endpoint HTTP status:', response.status);
+      throw new Error('Zoom token exchange was rejected');
+    }
     const tokens = await response.json();
     if (!tokens.access_token || !tokens.refresh_token) {
       throw new Error('Zoom did not provide both required OAuth tokens');
@@ -225,6 +253,7 @@ exports.zoomOAuthCallback = onRequest({
       api_url: tokens.api_url || 'https://api.zoom.us'
     }, ENCRYPTION_KEY.value());
 
+    stage = 'storage';
     await db.collection('zoomTeacherCredentials').doc(uid).set({
       encryptedTokens: encrypted,
       connectedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -239,8 +268,16 @@ exports.zoomOAuthCallback = onRequest({
     return finishPage(res, 200, 'Zoom account connected',
       'Your Zoom authorisation was saved securely. Return to the school teacher page.');
   } catch (err) {
-    console.error('Zoom OAuth callback failed:', err?.code || err?.name || 'unknown');
+    const category = stage === 'state' ? 'ZC06' :
+      stage === 'token' ? 'ZC07' : 'ZC08';
+    console.error('Zoom OAuth callback failed', category,
+      err?.code || err?.name || 'unknown');
+    const detail = category === 'ZC06' ?
+      'The one-time Zoom connection request expired or was already used. (ZC06)' :
+      category === 'ZC07' ?
+      'Zoom did not issue the required account credentials. Verify the Zoom app is enabled for this test account. (ZC07)' :
+      'The school service could not save the Zoom connection. (ZC08)';
     return finishPage(res, 400, 'Zoom connection not completed',
-      'Please return to the school teacher page and try connecting again.');
+      detail + ' Return to your teacher page to retry.');
   }
 });
