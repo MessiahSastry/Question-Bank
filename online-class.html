@@ -132,7 +132,7 @@
     <div id="accessGrid" class="grid" hidden>
       <section class="panel" aria-labelledby="accessTitle">
         <h2 id="accessTitle">Student Access</h2>
-        <div class="steps" aria-label="Access steps"><span>1. Mobile & Child ID</span><span>2. Your name</span><span>3. Confirm twice</span></div>
+        <div class="steps" aria-label="Access steps"><span>1. Parent mobile</span><span>2. Your name</span><span>3. Confirm twice</span></div>
         <div id="lookupBox">
           <form id="lookupForm" novalidate><fieldset id="lookupFields" disabled><div class="field">
   <label for="parentPhone">Registered Parent Mobile Number *</label>
@@ -141,15 +141,6 @@
     required>
 </div>
 
-<div class="field">
-  <label for="childId">Student Child ID *</label>
-  <input id="childId" type="text" inputmode="numeric"
-    maxlength="10" pattern="[0-9]{10}"
-    autocomplete="off"
-    placeholder="Enter 10-digit Child ID"
-    required>
-  <p class="hint">Both details must match the student's school record.</p>
-</div>
           <button id="findBtn" class="btn full" type="submit">Find My Name</button>
           <div id="lookupStatus" class="message" role="status" aria-live="polite"></div>
           <div id="studentChoiceBox" class="divider" hidden><div class="field"><label for="studentSel">Select your own name</label><select id="studentSel"><option value="">Select student</option></select><p id="studentChoiceHint" class="hint"></p></div><button id="confirmBtn" class="btn full" type="button" disabled>Confirm My Name</button></div>
@@ -193,7 +184,7 @@
   };
   const $=id=>document.getElementById(id);
   const params=new URLSearchParams(location.search),meetingId=params.get('m')||'';
-  const state={user:null,signingIn:false,authAttempted:false,meeting:null,scope:null,scopeKey:'',contextRequest:0,stopMeeting:null,loading:true,cachedOnly:true,loadError:'',contextError:'',contextBusy:false,offline:navigator.onLine===false,lookupBusy:false,lookupRequest:0,lookupPhone:'',lookupChildId:'',candidates:new Map(),selected:null,confirmed:false,identityVersion:0,confirmation:null,joinBusy:false,joinAction:0,cooldownUntil:0,launched:false};
+  const state={user:null,signingIn:false,authAttempted:false,meeting:null,scope:null,scopeKey:'',contextRequest:0,stopMeeting:null,loading:true,cachedOnly:true,loadError:'',contextError:'',contextBusy:false,offline:navigator.onLine===false,lookupBusy:false,lookupRequest:0,lookupPhone:'',candidates:new Map(),selected:null,confirmed:false,identityVersion:0,confirmation:null,joinBusy:false,joinAction:0,cooldownUntil:0,launched:false};
   let db=null,auth=null;
   const serverOptions={source:'server'};
   function validDocId(s){return typeof s==='string'&&s.length>0&&s.length<=1500&&s!=='.'&&s!=='..'&&!/[\/\u0000-\u001f]/.test(s);}
@@ -211,11 +202,6 @@
   function formatDateTime(value){const n=ms(value);return Number.isFinite(n)?new Intl.DateTimeFormat('en-IN',{timeZone:'Asia/Kolkata',day:'2-digit',month:'short',year:'numeric',hour:'numeric',minute:'2-digit'}).format(new Date(n))+' IST':'Not available';}
   function countdownText(milliseconds){const total=Math.max(0,Math.ceil(milliseconds/1000)),days=Math.floor(total/86400),hours=Math.floor(total%86400/3600),minutes=Math.floor(total%3600/60),seconds=total%60;return [days?`${days}d`:'',hours?`${hours}h`:'',`${String(minutes).padStart(2,'0')}m`,`${String(seconds).padStart(2,'0')}s`].filter(Boolean).join(' ');}
   function normalizePhone(raw){let digits=String(raw??'').replace(/\D/g,'');if(digits.length===12&&digits.startsWith('91'))digits=digits.slice(2);else if(digits.length===11&&digits.startsWith('0'))digits=digits.slice(1);return digits.length===10?digits:'';}
-  function normalizeChildId(raw){
-  const value = String(raw ?? '').trim();
-  return /^\d{10}$/.test(value) ? value : '';
-}
-
 function uiError(text){const e=new Error(text);e.userMessage=text;return e;}
   function readableError(e,fallback){const code=String(e&&e.code||'');if(code.includes('permission-denied'))return 'The school app could not allow this action. Contact your teacher if trying again does not help.';if(code.includes('unavailable')||code.includes('network-request-failed'))return 'Connection unavailable. Check your internet and try again.';if(code.includes('operation-not-allowed'))return 'Student access is not enabled. Please contact your teacher.';return e&&e.userMessage||fallback;}
   function message(id,text,type=''){const el=$(id);el.textContent=text||'';el.className='message'+(type?' '+type:'');}
@@ -249,7 +235,6 @@ function uiError(text){const e=new Error(text);e.userMessage=text;return e;}
     state.scopeKey,
     state.selected&&state.selected.id,
     state.lookupPhone,
-    state.lookupChildId,
     state.identityVersion
   ]);
 }
@@ -259,7 +244,6 @@ function identityMatches(token){
     !!state.selected &&
     state.candidates.get(state.selected.id)===state.selected &&
     normalizePhone($('parentPhone').value)===state.lookupPhone &&
-    normalizeChildId($('childId').value)===state.lookupChildId &&
     captureIdentity()===token;
 }
   function canJoin(){return eligibleForLookup()&&!state.cachedOnly&&timeGate().open&&state.confirmed&&!!state.selected&&!state.lookupBusy&&!state.joinBusy&&Date.now()>=state.cooldownUntil;}
@@ -270,7 +254,6 @@ function identityMatches(token){
     if(clearCandidates){
   state.candidates.clear();
   state.lookupPhone='';
-  state.lookupChildId='';
   $('studentSel').replaceChildren(new Option('Select student',''));
   $('studentChoiceBox').hidden=true;
 }
@@ -312,7 +295,7 @@ StudentDropdown.refresh();
   ? (g.open
       ? 'Your name is confirmed. Tap Join Online Class.'
       : 'Your name is confirmed. Check the schedule above for joining availability.')
-  : 'Enter your registered parent mobile number and Child ID, select your name and confirm twice.';
+  : 'Enter your registered parent mobile number, select your name and confirm twice.';
   }
   async function resolveScope(m){
     const year=meetingYear(m);if(!validYear(year))throw uiError('The class academic year is unavailable. Please contact your teacher.');
@@ -373,20 +356,12 @@ StudentDropdown.refresh();
   async function lookupStudents(event){
     if(event)event.preventDefault();if(state.lookupBusy||state.joinBusy)return;
     const phone=normalizePhone($('parentPhone').value);
-const childId=normalizeChildId($('childId').value);
-
-if(!phone || !childId){
-  invalidateIdentity();
-  message(
-    'lookupStatus',
-    !phone
-      ? 'Enter the valid 10-digit registered parent mobile number.'
-      : 'Enter the valid 10-digit Child ID.',
-    'error'
-  );
-  render();
-  return;
-}
+    if(!phone){
+      invalidateIdentity();
+      message('lookupStatus','Enter a valid 10-digit registered parent mobile number.','error');
+      render();
+      return;
+    }
     if(!eligibleForLookup()){message('lookupStatus','Please check the class schedule and connection before selecting a student.','warning');return;}
     const request=++state.lookupRequest,user=state.user,scope=state.scope;
     invalidateIdentity();state.lookupBusy=true;render();message('lookupStatus','Looking for matching names in this class and section…');
@@ -396,8 +371,7 @@ if(!phone || !childId){
   request!==state.lookupRequest ||
   state.user!==user ||
   state.scope!==scope ||
-  normalizePhone($('parentPhone').value)!==phone ||
-  normalizeChildId($('childId').value)!==childId
+  normalizePhone($('parentPhone').value)!==phone
 ) return;
 
 const candidates=snap.docs.map(doc=>{
@@ -406,24 +380,20 @@ const candidates=snap.docs.map(doc=>{
     id:doc.id,
     ref:doc.ref,
     name:String(d.name||'').trim(),
-    roll:String(d.rollNo??d.rollNumber??d.roll??''),
-    childId:normalizeChildId(d.childId)
+    roll:String(d.rollNo??d.rollNumber??d.roll??'')
   };
-}).filter(s=>
-  s.name && s.childId===childId
-).sort((a,b)=>
+}).filter(s=>s.name).sort((a,b)=>
   a.name.localeCompare(b.name) ||
   a.roll.localeCompare(b.roll,undefined,{numeric:true})
 );
 
 state.lookupPhone=phone;
-state.lookupChildId=childId;
 state.candidates=new Map(candidates.map(s=>[s.id,s]));
 $('studentSel').replaceChildren(new Option('Select your own name',''));
       for(const student of candidates)$('studentSel').add(new Option(student.name+(student.roll?' · Roll '+student.roll:''),student.id));
       $('studentChoiceBox').hidden=!candidates.length;
       if(candidates.length){$('studentChoiceHint').textContent='Only matching students in '+state.meeting.class+' / '+state.meeting.section+' are shown.';message('lookupStatus',candidates.length===1?'One matching student found. Please select your own name.':`${candidates.length} matching students found. Select the correct student for this class.`,'success');$('studentSel').focus();}
-      else message('lookupStatus','No student matches both the registered parent mobile number and Child ID in this class and section. Check both details or contact your teacher.','error');
+      else message('lookupStatus','No student was found for this registered parent mobile number in this class and section. Check the number or contact your teacher.','error');
     }catch(e){if(request===state.lookupRequest)message('lookupStatus',readableError(e,'Could not find your name. Please try again.'),'error');}
     finally{if(request===state.lookupRequest){state.lookupBusy=false;render();}}
   }
@@ -440,8 +410,7 @@ $('studentSel').replaceChildren(new Option('Select your own name',''));
   !eligibleForLookup() ||
   !state.selected ||
   state.lookupBusy ||
-  normalizePhone($('parentPhone').value)!==state.lookupPhone ||
-  normalizeChildId($('childId').value)!==state.lookupChildId
+  normalizePhone($('parentPhone').value)!==state.lookupPhone
 ) return;
     state.confirmation={token:captureIdentity(),stage:1};renderConfirmation();$('identityDialog').showModal();
   }
@@ -452,8 +421,7 @@ $('studentSel').replaceChildren(new Option('Select your own name',''));
   `${state.meeting.class} · ${state.meeting.section}`+
   `${s.roll?' · Roll '+s.roll:''}\n`+
   `Academic year ${meetingYear(state.meeting)}\n`+
-  `Parent mobile ending ${state.lookupPhone.slice(-4)}\n`+
-  `Child ID ending ${state.lookupChildId.slice(-4)}`;
+  `Parent mobile ending ${state.lookupPhone.slice(-4)}`;
     $('confirmationNote').textContent=c.stage===1?'Select Yes only if the name and class shown above are yours.':'Your Join clicks will be recorded under this student’s name. Confirm only if all details are correct.';
     $('identityOKBtn').textContent=c.stage===1?'Yes, This Is Me':'Confirm and Continue';
   }
@@ -464,11 +432,10 @@ $('studentSel').replaceChildren(new Option('Select your own name',''));
   c.token!==captureIdentity() ||
   !eligibleForLookup() ||
   !state.selected ||
-  normalizePhone($('parentPhone').value)!==state.lookupPhone ||
-  normalizeChildId($('childId').value)!==state.lookupChildId
+  normalizePhone($('parentPhone').value)!==state.lookupPhone
 ){
   closeConfirmation();
-  message('lookupStatus','Your student details changed. Verify both the parent mobile number and Child ID again.','warning');
+  message('lookupStatus','Your student details changed. Enter your parent mobile number and confirm your name again.','warning');
   render();
   return;
 }
@@ -492,13 +459,12 @@ $('studentSel').replaceChildren(new Option('Select your own name',''));
       if(
   !data ||
   normalizePhone(data.parentPhone)!==state.lookupPhone ||
-  normalizeChildId(data.childId)!==state.lookupChildId ||
   String(data.name||'').trim()!==student.name ||
   String(data.rollNo??data.rollNumber??data.roll??'')!==student.roll
 ){
   invalidateIdentity();
   throw uiError(
-    'The parent mobile number or Child ID does not match the latest student record. Verify your details again or contact your teacher.'
+    'The parent mobile number does not match the latest student record. Verify your details again or contact your teacher.'
   );
 }
       const links=zoomLinks(state.meeting.zoomJoinUrl||state.meeting.zoomWebUrl,student.name);
@@ -875,8 +841,6 @@ $('studentSel').replaceChildren(new Option('Select your own name',''));
    $('lookupForm').addEventListener('submit',lookupStudents);
 $('parentPhone').addEventListener('input',credentialsChanged);
 $('parentPhone').addEventListener('change',credentialsChanged);
-$('childId').addEventListener('input',credentialsChanged);
-$('childId').addEventListener('change',credentialsChanged);
 $('studentSel').addEventListener('change',selectStudent);
 $('confirmBtn').onclick=beginConfirmation;
     $('identityOKBtn').onclick=confirmIdentity;$('identityBackBtn').onclick=rejectIdentity;$('identityDialog').addEventListener('cancel',e=>{e.preventDefault();rejectIdentity();});$('identityDialog').addEventListener('close',()=>{state.confirmation=null;});
