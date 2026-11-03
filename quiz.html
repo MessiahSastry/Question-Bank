@@ -1124,7 +1124,7 @@ async function selectMatchedStudent(index) {
     const startButton =
       document.getElementById('start-quiz-btn');
 
-    if (startButton) {
+      if (startButton) {
       startButton.style.display = '';
     }
 
@@ -1447,12 +1447,238 @@ function attachPinToggle(inputId, buttonId) {
 }
 
         // --- Quiz State ---
-        let quiz = null;
+                let quiz = null;
         let userAnswers = [];
         let revealed = [];
         let currentIdx = 0;
         let quizStart = null;
         let timerInterval = null;
+
+        // --- Official Attempt Protection ---
+        window.__quizPracticeOnly = false;
+        window.__quizFinished = false;
+        window.__quizSubmitting = false;
+        window.__officialAttemptActive = false;
+
+        window.__quizViolationCount = 0;
+        window.__quizViolationEvents = [];
+
+        window.__quizHiddenCycle = false;
+        window.__quizPendingWarning = '';
+        window.__quizAutoSubmitNoticePending = false;
+
+        function activateQuizGuard() {
+
+          if (
+            window.__quizPracticeOnly ||
+            window.__quizFinished
+          ) {
+            return;
+          }
+
+          window.__officialAttemptActive = true;
+
+          window.__quizViolationCount = 0;
+          window.__quizViolationEvents = [];
+
+          window.__quizHiddenCycle = false;
+          window.__quizPendingWarning = '';
+          window.__quizAutoSubmitNoticePending = false;
+
+          try {
+            history.pushState(
+              { quizGuard: true },
+              '',
+              location.href
+            );
+          } catch (e) {
+            console.warn(
+              'Quiz history guard unavailable:',
+              e
+            );
+          }
+        }
+
+        function showPendingQuizWarning() {
+
+          if (window.__quizPendingWarning) {
+
+            const message =
+              window.__quizPendingWarning;
+
+            window.__quizPendingWarning = '';
+
+            window.alert(message);
+          }
+
+          if (
+            window.__quizAutoSubmitNoticePending
+          ) {
+
+            window.__quizAutoSubmitNoticePending =
+              false;
+
+            window.alert(
+              'Your quiz has been submitted because you left the quiz screen three times.'
+            );
+          }
+        }
+
+        function registerQuizViolation(type) {
+
+          if (
+            !window.__officialAttemptActive ||
+            window.__quizPracticeOnly ||
+            window.__quizFinished
+          ) {
+            return;
+          }
+
+          window.__quizViolationCount += 1;
+
+          window.__quizViolationEvents.push({
+            number:
+              window.__quizViolationCount,
+
+            type:
+              type || 'screen-switch',
+
+            at:
+              new Date().toISOString()
+          });
+
+          if (
+            window.__quizViolationCount === 1
+          ) {
+
+            window.__quizPendingWarning =
+              'Warning 1 of 2: You left the quiz screen. ' +
+              'Please remain on the quiz page. ' +
+              'If this happens two more times, your quiz will be submitted automatically.';
+
+          } else if (
+            window.__quizViolationCount === 2
+          ) {
+
+            window.__quizPendingWarning =
+              'Final Warning: You have left the quiz screen twice. ' +
+              'If this happens again, your quiz will be submitted automatically.';
+
+          } else {
+
+            window.__officialAttemptActive =
+              false;
+
+            window.__quizAutoSubmitNoticePending =
+              true;
+
+            finishQuiz(
+              'screen-switch-limit'
+            );
+
+            return;
+          }
+
+          if (
+            document.visibilityState ===
+            'visible'
+          ) {
+            showPendingQuizWarning();
+          }
+        }
+
+        // Detect app switching, tab switching,
+        // minimising browser or answering calls.
+        document.addEventListener(
+          'visibilitychange',
+          function() {
+
+            if (
+              document.visibilityState ===
+              'visible'
+            ) {
+
+              window.__quizHiddenCycle =
+                false;
+
+              showPendingQuizWarning();
+
+              return;
+            }
+
+            if (
+              !window.__officialAttemptActive ||
+              window.__quizPracticeOnly ||
+              window.__quizFinished ||
+              window.__quizHiddenCycle
+            ) {
+              return;
+            }
+
+            window.__quizHiddenCycle = true;
+
+            registerQuizViolation(
+              'screen/app switch'
+            );
+          }
+        );
+
+        // Detect browser/mobile Back button.
+        window.addEventListener(
+          'popstate',
+          function() {
+
+            if (
+              !window.__officialAttemptActive ||
+              window.__quizPracticeOnly ||
+              window.__quizFinished
+            ) {
+              return;
+            }
+
+            try {
+
+              history.pushState(
+                { quizGuard: true },
+                '',
+                location.href
+              );
+
+            } catch (e) {
+
+              console.warn(
+                'Could not restore quiz page history:',
+                e
+              );
+            }
+
+            registerQuizViolation(
+              'back/navigation'
+            );
+          }
+        );
+
+        // Copying is blocked,
+        // but does NOT count as a screen violation.
+        document.addEventListener(
+          'copy',
+          function(event) {
+
+            if (
+              !window.__officialAttemptActive ||
+              window.__quizPracticeOnly ||
+              window.__quizFinished
+            ) {
+              return;
+            }
+
+            event.preventDefault();
+
+            window.alert(
+              'Copying quiz questions is not permitted. Please continue the quiz without copying.'
+            );
+          }
+        );
 
         // Helper: format timer
         function formatTime(s) {
@@ -1529,7 +1755,12 @@ if (levelEl) {
             currentIdx = 0;
             renderQuestionNumbers();
             renderQuestion();
-           startTimer();
+                      startTimer();
+
+           if (!window.__quizPracticeOnly) {
+             activateQuizGuard();
+           }
+
 console.log('quiz rendered');
         }
 
@@ -1633,67 +1864,330 @@ if (!main) { console.error("#quiz-main missing"); return; }
             let ch = matches[matches.length - 1].toUpperCase();
             return ch.charCodeAt(0) - 65;
         }
-        function finishQuiz() {
+              async function finishQuiz(
+         submissionReason = 'manual'
+       ) {
+
+    if (
+      window.__quizFinished ||
+      window.__quizSubmitting ||
+      !quiz
+    ) {
+      return;
+    }
+
+    window.__quizSubmitting = true;
+    window.__quizFinished = true;
+    window.__officialAttemptActive = false;
+
     stopTimer();
+
     renderQuestion(true);
-    document.getElementById("quiz-main").innerHTML += renderResult();
-    document.querySelectorAll(".nav-btn, #finish-btn").forEach(btn => btn.disabled = true);
+
+    document.getElementById(
+      "quiz-main"
+    ).innerHTML += renderResult();
+
+    document
+      .querySelectorAll(
+        ".nav-btn, #finish-btn"
+      )
+      .forEach(
+        btn => btn.disabled = true
+      );
+
     renderQuestionNumbers();
 
-    // --- Leaderboard: Save quiz result to Firestore ---
     try {
-       const {
-  cls: classVal,
-  sec: sectionVal,
-  ph: phoneVal,
-  studentId,
-  roll
-} = getShared();
 
-if (
-  phoneVal.length !== 10 ||
-  !studentId
-) {
-  console.warn(
-    'Skipping result write: verified student details are missing.'
-  );
-  return;
-}
-const quizId = new URLSearchParams(window.location.search).get("quiz");
-        const academicYear = getActiveAcademicYear();
-const timeTaken = Math.floor((Date.now() - quizStart) / 1000);
-        // Calculate score
-        let correct = 0;
-        quiz.questions.forEach((q, i) => {
-            let ansIdx = (typeof q.shuffledAnswerIdx === "number") ? q.shuffledAnswerIdx : letterToIdx(q.answer);
-            if (userAnswers[i] === ansIdx) correct++;
-        });
-       db.collection("quizResults").add({
-  quizId,
-  academicYear,
+      const {
+        cls: classVal,
+        sec: sectionVal,
+        ph: phoneVal,
+        studentId,
+        roll
+      } = getShared();
 
-  studentId,
-  roll,
+      if (
+        phoneVal.length !== 10 ||
+        !studentId
+      ) {
 
-  class: classVal,
-  section: sectionVal,
-  phone: phoneVal,
-  name: window.studentName,
+        throw new Error(
+          'Verified student details are missing.'
+        );
+      }
 
-  score: correct,
-  time: timeTaken,
+      const quizId =
+        new URLSearchParams(
+          window.location.search
+        ).get("quiz");
 
-  timestamp:
-    firebase.firestore.FieldValue.serverTimestamp(),
+      const academicYear =
+        getActiveAcademicYear();
 
-  leaderboardVisible: true
-});
+      const timeTaken =
+        Math.floor(
+          (Date.now() - quizStart) /
+          1000
+        );
 
-     } catch (e) {
-    // ignore, for first setup
-    console.error(e);
-  }
-  setTimeout(fetchAndShowLeaderboard, 400);
+      let correct = 0;
+
+      quiz.questions.forEach(
+        (q, i) => {
+
+          const ansIdx =
+            (
+              typeof q.shuffledAnswerIdx
+              === "number"
+            )
+              ? q.shuffledAnswerIdx
+              : letterToIdx(q.answer);
+
+          if (
+            userAnswers[i] === ansIdx
+          ) {
+            correct++;
+          }
+        }
+      );
+
+      const main =
+        document.getElementById(
+          'quiz-main'
+        );
+
+      const notice =
+        document.createElement('p');
+
+      notice.style.cssText =
+        'text-align:center;' +
+        'font-weight:700;' +
+        'padding:12px';
+
+      // PRACTICE ATTEMPT
+      if (
+        window.__quizPracticeOnly
+      ) {
+
+        notice.style.color =
+          '#b45309';
+
+        notice.textContent =
+          'Practice only. This score will not be recorded.';
+
+      } else {
+
+        const resultsRef =
+          db.collection(
+            'quizResults'
+          );
+
+        // Recheck before saving.
+        const existing =
+          await resultsRef
+            .where(
+              'quizId',
+              '==',
+              quizId
+            )
+            .get({
+              source: 'server'
+            });
+
+        const previouslyRecorded =
+          existing.docs.some(
+            doc => {
+
+              const data =
+                doc.data();
+
+              return (
+                data.studentId ===
+                  studentId &&
+
+                (
+                  !data.academicYear ||
+                  data.academicYear ===
+                    academicYear
+                )
+              );
+            }
+          );
+
+        const firstResultRef =
+          resultsRef.doc(
+            `first_${quizId}_${studentId}`
+          );
+
+        let saved = false;
+
+        if (!previouslyRecorded) {
+
+          saved =
+            await db.runTransaction(
+              async transaction => {
+
+                const previous =
+                  await transaction.get(
+                    firstResultRef
+                  );
+
+                if (previous.exists) {
+                  return false;
+                }
+
+                const screenViolations =
+                  Number(
+                    window.__quizViolationCount ||
+                    0
+                  );
+
+                transaction.set(
+                  firstResultRef,
+                  {
+
+                    quizId,
+                    academicYear,
+
+                    studentId,
+                    roll,
+
+                    class:
+                      classVal,
+
+                    section:
+                      sectionVal,
+
+                    phone:
+                      phoneVal,
+
+                    name:
+                      window.studentName,
+
+                    score:
+                      correct,
+
+                    time:
+                      timeTaken,
+
+                    // For Academic
+                    // In-charge review
+                    screenViolations,
+
+                    interruptionEvents:
+                      Array.isArray(
+                        window
+                          .__quizViolationEvents
+                      )
+                        ? window
+                            .__quizViolationEvents
+                        : [],
+
+                    autoSubmitted:
+                      submissionReason ===
+                      'screen-switch-limit',
+
+                    submissionReason,
+
+                    reviewStatus:
+                      submissionReason ===
+                      'screen-switch-limit'
+                        ? 'needs-review'
+                        : 'normal',
+
+                    completed: true,
+
+                    timestamp:
+                      firebase
+                        .firestore
+                        .FieldValue
+                        .serverTimestamp(),
+
+                    leaderboardVisible:
+                      true
+                  }
+                );
+
+                return true;
+              }
+            );
+        }
+
+        if (saved) {
+
+          notice.style.color =
+            '#126c30';
+
+          if (
+            submissionReason ===
+            'screen-switch-limit'
+          ) {
+
+            notice.textContent =
+              'Your quiz was submitted automatically after the third screen-switching violation.';
+
+          } else {
+
+            notice.textContent =
+              'Your first attempt has been recorded.';
+          }
+
+        } else {
+
+          window.__quizPracticeOnly =
+            true;
+
+          notice.style.color =
+            '#b45309';
+
+          notice.textContent =
+            'Your first attempt was already recorded. This result is practice only.';
+        }
+      }
+
+      main.appendChild(
+        notice
+      );
+
+    } catch (e) {
+
+      console.error(
+        'Quiz result saving failed:',
+        e
+      );
+
+      const notice =
+        document.createElement('p');
+
+      notice.style.cssText =
+        'text-align:center;' +
+        'color:#c82333;' +
+        'font-weight:700;' +
+        'padding:12px';
+
+      notice.textContent =
+        'Result was not saved. Please inform your teacher.';
+
+      document
+        .getElementById(
+          'quiz-main'
+        )
+        .appendChild(
+          notice
+        );
+
+    } finally {
+
+      window.__quizSubmitting =
+        false;
+    }
+
+    setTimeout(
+      fetchAndShowLeaderboard,
+      400
+    );
 }
 
         function renderResult() {
@@ -1812,17 +2306,131 @@ window.onload = function() {
     verifyOtpButton.onclick = verifyParentOtp;
   }
 
-  if (startButton) {
-    startButton.onclick = function() {
-      if (!window.__studentAccessGranted || !selectedStudent) {
-        showError('Verify student access before starting the quiz.');
+     if (startButton) {
+
+    startButton.onclick =
+      async function() {
+
+      if (
+        !window.__studentAccessGranted ||
+        !selectedStudent
+      ) {
+
+        showError(
+          'Confirm your student details first.'
+        );
+
         return;
       }
 
-      startQuizNow();
+      startButton.disabled = true;
+
+      try {
+
+        const quizId =
+          new URLSearchParams(
+            location.search
+          ).get('quiz');
+
+        const year =
+          getActiveAcademicYear();
+
+        const existing =
+          await db
+            .collection('quizResults')
+            .where(
+              'quizId',
+              '==',
+              quizId
+            )
+            .get({
+              source: 'server'
+            });
+
+        const attempted =
+          existing.docs.some(doc => {
+
+            const data =
+              doc.data();
+
+            return (
+              data.studentId ===
+                selectedStudent.studentId &&
+
+              (
+                !data.academicYear ||
+                data.academicYear === year
+              )
+            );
+          });
+
+        window.__quizPracticeOnly =
+          attempted;
+
+        // SECOND ATTEMPT OR LATER
+        if (attempted) {
+
+          const continuePractice =
+            window.confirm(
+              'You have already attempted this quiz.\n\n' +
+              'Your first attempt has been recorded.\n\n' +
+              'This attempt is ONLY FOR PRACTICE.\n' +
+              'Your score and rank will not change.\n\n' +
+              'Do you want to continue?'
+            );
+
+          if (!continuePractice) {
+            return;
+          }
+
+        } else {
+
+          // FIRST OFFICIAL ATTEMPT
+          const ready =
+            window.confirm(
+              'IMPORTANT QUIZ INSTRUCTIONS\n\n' +
+
+              '1. Do not answer phone calls during the quiz.\n' +
+
+              '2. Do not reply to WhatsApp messages or open other apps.\n' +
+
+              '3. Do not open Google, ChatGPT or another browser tab.\n' +
+
+              '4. Do not leave the quiz screen or use the Back button.\n' +
+
+              '5. Copying quiz questions is not permitted.\n\n' +
+
+              'You will receive two warnings for leaving the quiz screen.\n' +
+
+              'On the third violation, your quiz will be submitted automatically.\n\n' +
+
+              'Press OK only when you are ready to start.'
+            );
+
+          if (!ready) {
+            return;
+          }
+        }
+
+        startQuizNow();
+
+      } catch (error) {
+
+        console.error(
+          'Previous attempt check failed:',
+          error
+        );
+
+        showError(
+          'Unable to check previous attempts. Try again.'
+        );
+
+      } finally {
+
+        startButton.disabled = false;
+      }
     };
   }
-
   if (activateButton) {
     activateButton.onclick = async function() {
       const phoneDigits = getEnteredPhone();
@@ -2221,6 +2829,7 @@ if (closeLb) {
 }
 
 function saveCurrentProgress() {
+    return; // Official results are saved only by finishQuiz().
     const {
   cls: classVal,
   sec: sectionVal,
@@ -2248,8 +2857,8 @@ if (
       .where("quizId", "==", quizId)
      .where("studentId", "==", studentId)
 .where("academicYear", "==", academicYear)
-      .get()
-      .then(snapshot => {
+            .get()
+      .then(async snapshot => {
           if (!snapshot.empty) {
               // Update the existing result (keep only latest one per user)
               const timeTaken = Math.floor((Date.now() - quizStart) / 1000);
@@ -2271,28 +2880,77 @@ if (
 });
           } else {
                 const timeTaken = Math.floor((Date.now() - quizStart) / 1000); // Calculate time taken in seconds
-               db.collection("quizResults").add({
-  quizId,
-  academicYear,
+                     const main = document.getElementById('quiz-main');
+       const notice = document.createElement('p');
 
-  studentId,
-  roll,
+       notice.style.cssText =
+         'text-align:center;font-weight:700;padding:12px';
 
-  class: classVal,
-  section: sectionVal,
-  phone: phoneVal,
-  name: window.studentName,
+       if (window.__quizPracticeOnly) {
+         notice.style.color = '#b45309';
+         notice.textContent =
+           'Practice only. This score will not be recorded.';
 
-  score: correct,
-  time: Math.floor(
-    (Date.now() - quizStart) / 1000
-  ),
+       } else {
+         const resultsRef = db.collection('quizResults');
 
-  timestamp:
-    firebase.firestore.FieldValue.serverTimestamp(),
+         const snapshot = await resultsRef
+           .where('quizId', '==', quizId)
+           .get({source: 'server'});
 
-  leaderboardVisible: true
-});
+         const previouslyRecorded = snapshot.docs.some(doc => {
+           const data = doc.data();
+
+           return data.studentId === studentId &&
+             (!data.academicYear ||
+               data.academicYear === academicYear);
+         });
+
+         const firstResultRef = resultsRef.doc(
+           `first_${quizId}_${studentId}`
+         );
+
+         let saved = false;
+
+         if (!previouslyRecorded) {
+           saved = await db.runTransaction(async transaction => {
+             const previous = await transaction.get(firstResultRef);
+
+             if (previous.exists) return false;
+
+             transaction.set(firstResultRef, {
+               quizId,
+               academicYear,
+               studentId,
+               roll,
+               class: classVal,
+               section: sectionVal,
+               phone: phoneVal,
+               name: window.studentName,
+               score: correct,
+               time: timeTaken,
+               timestamp:
+                 firebase.firestore.FieldValue.serverTimestamp(),
+               leaderboardVisible: true
+             });
+
+             return true;
+           });
+         }
+
+         if (saved) {
+           notice.style.color = '#126c30';
+           notice.textContent =
+             'Your first attempt has been recorded.';
+         } else {
+           window.__quizPracticeOnly = true;
+           notice.style.color = '#b45309';
+           notice.textContent =
+             'Already attempted. This score is practice only.';
+         }
+       }
+
+       main.appendChild(notice);
           }
       });
 }
