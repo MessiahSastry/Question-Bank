@@ -505,14 +505,33 @@ $('studentSel').replaceChildren(new Option('Select your own name',''));
       const links=zoomLinks(state.meeting.zoomJoinUrl||state.meeting.zoomWebUrl,student.name);
       if(mode==='browser'&&!links.browser)throw uiError('Use Join in Zoom for this personal meeting link.');
       message('joinStatus','Recording your Join click…');
-      // Stable student document: retries/rejoins never create duplicate participant rows.
-      await withDeadline(ref.collection('participants').doc(student.id).set({
+      // Keep the first website Join click for punctuality where existing
+      // Firestore permissions permit reading this participant record.
+      // If reading is denied, preserve the existing working write-only flow.
+      const participantRef=ref.collection('participants').doc(student.id);
+      const clickData={
         studentId:student.id,name:student.name,rollNo:student.roll,
         academicYear:scope.year,classId:scope.classId,sectionId:scope.sectionId,
         class:state.meeting.class,section:state.meeting.section,viewerUid:user.uid,
         lastJoinClickedAt:firebase.firestore.FieldValue.serverTimestamp(),
         lastJoinClickId:clickId(),joinMethod:mode==='browser'?'browser':'zoom'
-      },{merge:true}),'Your Join click could not be confirmed. Please try again.');
+      };
+      try{
+        await withDeadline(db.runTransaction(async tx=>{
+          const snap=await tx.get(participantRef);
+          const prior=snap.exists?(snap.data()||{}):{};
+          // Never replace an existing first Join click on a rejoin.
+          const isFirstClick=!prior.firstJoinClickedAt&&!prior.lastJoinClickedAt&&!prior.joinClickedAt;
+          tx.set(participantRef,{
+            ...clickData,
+            ...(isFirstClick?{firstJoinClickedAt:firebase.firestore.FieldValue.serverTimestamp()}:{})
+          },{merge:true});
+        }),'Your Join click could not be confirmed. Please try again.');
+      }catch(error){
+        if(!String(error?.code||'').includes('permission-denied'))throw error;
+        // Some existing student rules allow writes but not participant reads.
+        await withDeadline(participantRef.set(clickData,{merge:true}),'Your Join click could not be confirmed. Please try again.');
+      }
       if(action!==state.joinAction||state.user!==user)throw uiError('Your selection changed. Please confirm your name again.');
       // Catch a cancellation/reschedule received while the click was being saved.
       await acceptMeeting(await withDeadline(ref.get(serverOptions)));assertJoinIdentity(token);
