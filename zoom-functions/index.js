@@ -304,3 +304,5 @@ exports.zoomOAuthCallback = onRequest({
       detail + ' Return to your teacher page to retry.');
   }
 });
+// Automatic teacher Zoom meeting scheduling and account status.
+Object.assign(exports, require('./meetings'));
