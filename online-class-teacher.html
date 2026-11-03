@@ -575,23 +575,57 @@
     }catch(e){if(state.attendance?.id!==id)return;state.attendance.loading=false;$('attendanceSummary').textContent='Roster unavailable';message('attendanceStatus',readableError(e,'Could not load the class roster. Close and reopen Attendance to retry.'),'error');}
   }
   function renderAttendance(){
-    const a=state.attendance;if(!a)return;const body=$('attendanceRows');body.replaceChildren();
+    const a=state.attendance;if(!a)return;
+    const body=$('attendanceRows');body.replaceChildren();
     for(const row of a.rows){
-      const tr=make('tr'),log=make('td',row.log.label,'log-cell'),select=make('select');select.setAttribute('aria-label','Attendance for '+row.name);select.disabled=!a.canWrite||state.attendanceSaving;
-      if(row.log.at)log.append(document.createElement('br'),make('span',formatTime(row.log.at)));
+      const tr=make('tr'),log=make('td',null,'log-cell'),select=make('select');
+      if(a.joinAvailable&&row.log.at){
+        log.append(make('span',formatDateTime(row.log.at)),document.createElement('br'),make('span',row.log.label));
+      }else log.textContent=a.joinAvailable?row.log.label:'Join records unavailable';
+      const timing=clickPunctuality(a.m,row.log,a.joinAvailable);
+      const clickCell=make('td',timing.label,'click-status '+timing.kind);
+      select.setAttribute('aria-label','Teacher-confirmed attendance for '+row.name);
+      select.disabled=!a.canWrite||state.attendanceSaving;
       for(const [value,label] of [['','Not marked'],['present','Present'],['absent','Absent']])select.add(new Option(label,value));
       select.value=a.changes.has(row.id)?a.changes.get(row.id):row.status;
       select.onchange=()=>{if(select.value===row.status)a.changes.delete(row.id);else a.changes.set(row.id,select.value);updateAttendanceSummary();};
-      const attendanceCell=make('td');attendanceCell.append(select);tr.append(make('td',row.roll||'—'),make('td',row.name,'student-name'),log,attendanceCell);body.append(tr);
+      const teacherCell=make('td');teacherCell.append(select);
+      tr.append(make('td',row.roll||'—'),make('td',row.name,'student-name'),log,clickCell,teacherCell);
+      body.append(tr);
     }
-    if(!a.rows.length){const td=make('td','No students were found in this section.');td.colSpan=4;const tr=make('tr');tr.append(td);body.append(tr);}
+    if(!a.rows.length){const td=make('td','No students were found in this section.');td.colSpan=5;const tr=make('tr');tr.append(td);body.append(tr);}
     Dropdowns.refresh();updateAttendanceSummary();
   }
   function updateAttendanceSummary(){
     const a=state.attendance;if(!a)return;
-    const statuses=a.rows.map(row=>a.changes.has(row.id)?a.changes.get(row.id):row.status),present=statuses.filter(s=>s==='present').length,absent=statuses.filter(s=>s==='absent').length;
-    $('attendanceSummary').textContent=`${a.rows.length} students · ${present} present · ${absent} absent · ${a.rows.length-present-absent} not marked`;
-    $('saveAttendanceBtn').disabled=!a.canWrite||!a.changes.size||state.attendanceSaving;$('saveAttendanceBtn').textContent=state.attendanceSaving?'Saving…':'Save Attendance';
+    const statuses=a.rows.map(row=>a.changes.has(row.id)?a.changes.get(row.id):row.status);
+    const present=statuses.filter(s=>s==='present').length,absent=statuses.filter(s=>s==='absent').length;
+    const kinds=a.rows.map(row=>clickPunctuality(a.m,row.log,a.joinAvailable).kind);
+    const count=kind=>kinds.filter(k=>k===kind).length;
+    $('attendanceSummary').textContent=a.rows.length+' students · Website clicks: '+count('early')+' early, '+count('ontime')+' on time, '+count('late')+' late, '+count('none')+' no click, '+count('unknown')+' unknown · Teacher-confirmed: '+present+' present, '+absent+' absent, '+(a.rows.length-present-absent)+' not marked';
+    $('saveAttendanceBtn').disabled=!a.canWrite||!a.changes.size||state.attendanceSaving;
+    $('saveAttendanceBtn').textContent=state.attendanceSaving?'Saving…':'Save Attendance';
+    $('refreshJoinBtn').disabled=a.loading||state.attendanceRefreshing||!state.user;
+    $('refreshJoinBtn').textContent=state.attendanceRefreshing?'Refreshing…':'Refresh Join Times';
+  }
+  async function refreshJoinTimes(){
+    const a=state.attendance,user=state.user;
+    if(!a||a.loading||state.attendanceRefreshing||!user)return;
+    state.attendanceRefreshing=true;updateAttendanceSummary();
+    try{
+      const snap=await db.collection('meetings').doc(a.id).collection('participants').get();
+      if(state.attendance!==a||state.user!==user)return;
+      const logs=new Map(snap.docs.map(doc=>[doc.id,doc.data()]));
+      for(const row of a.rows)row.log=websiteLog(logs.get(row.id));
+      a.joinAvailable=true;
+      renderAttendance();
+      message('attendanceStatus','Join times updated. Unsaved teacher attendance selections were preserved.','success');
+    }catch(e){
+      if(state.attendance===a)message('attendanceStatus',readableError(e,'Could not refresh website Join times. Previously loaded times are unchanged.'),'warning');
+    }finally{
+      state.attendanceRefreshing=false;
+      if(state.attendance===a)updateAttendanceSummary();
+    }
   }
   async function saveAttendance(){
     const a=state.attendance,user=state.user;if(!a||!a.canWrite||!a.changes.size||!user||state.attendanceSaving)return;
@@ -622,8 +656,12 @@
   function csvCell(value){let v=String(value??'');if(/^\s*[=+\-@]/.test(v))v="'"+v;return '"'+v.replace(/"/g,'""')+'"';}
   function downloadAttendance(){
     const a=state.attendance;if(!a||!a.rows.length)return;
-    const rows=[['Academic year','Class','Section','Subject','Topic','Scheduled (IST)','Roll','Student','Website record','Website time (IST)','Teacher attendance','Save status']];
-    for(const row of a.rows){const status=a.changes.has(row.id)?a.changes.get(row.id):row.status;rows.push([meetingYear(a.m),a.m.class,a.m.section,a.m.subject,a.m.topic,formatDateTime(a.m.startAt),row.roll,row.name,row.log.label,row.log.at?formatDateTime(row.log.at):'',status?status[0].toUpperCase()+status.slice(1):'Not marked',a.changes.has(row.id)?'Unsaved change':row.recorded?'Saved':'No attendance recorded']);}
+    const rows=[['Academic year','Class','Section','Subject','Topic','Scheduled (IST)','Roll','Student','Website Join record','Join click time (IST)','5-minute click status','Time source','Teacher-confirmed attendance','Save status']];
+    for(const row of a.rows){
+      const status=a.changes.has(row.id)?a.changes.get(row.id):row.status;
+      const timing=clickPunctuality(a.m,row.log,a.joinAvailable);
+      rows.push([meetingYear(a.m),a.m.class,a.m.section,a.m.subject,a.m.topic,formatDateTime(a.m.startAt),row.roll,row.name,a.joinAvailable?row.log.label:'Join records unavailable',a.joinAvailable&&row.log.at?formatDateTime(row.log.at):'',timing.label,a.joinAvailable?row.log.source:'unavailable',status?status[0].toUpperCase()+status.slice(1):'Not marked',a.changes.has(row.id)?'Unsaved change':row.recorded?'Saved':'No attendance recorded']);
+    }
     const blob=new Blob(['\uFEFF'+rows.map(row=>row.map(csvCell).join(',')).join('\r\n')],{type:'text/csv;charset=utf-8;'}),url=URL.createObjectURL(blob),link=make('a');link.href=url;link.download=`attendance-${dateParts(ms(a.m.startAt)).date}-${a.id}.csv`;document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
   }
   function stepDate(delta){const selected=$('listDate').value||dateParts().date,d=new Date(selected+'T12:00:00+05:30');d.setTime(d.getTime()+delta*86400000);$('listDate').value=dateParts(d).date;renderMeetings();}
@@ -822,7 +860,7 @@
     $('connectZoomBtn').onclick=connectMyZoomAccount;
     $('refreshBtn').onclick=watchMeetings;$('listDate').addEventListener('change',renderMeetings);$('previousDayBtn').onclick=()=>stepDate(-1);$('nextDayBtn').onclick=()=>stepDate(1);$('todayBtn').onclick=()=>{$('listDate').value=dateParts().date;renderMeetings();};
     $('closeShareBtn').onclick=()=>$('shareDialog').close();$('copyBtn').onclick=copyMessage;
-    $('closeAttendanceBtn').onclick=closeAttendance;$('attendanceDialog').addEventListener('cancel',e=>{e.preventDefault();closeAttendance();});$('saveAttendanceBtn').onclick=saveAttendance;$('downloadAttendanceBtn').onclick=downloadAttendance;
+    $('closeAttendanceBtn').onclick=closeAttendance;$('attendanceDialog').addEventListener('cancel',e=>{e.preventDefault();closeAttendance();});$('saveAttendanceBtn').onclick=saveAttendance;$('refreshJoinBtn').onclick=refreshJoinTimes;$('downloadAttendanceBtn').onclick=downloadAttendance;
     window.addEventListener('beforeunload',e=>{if(state.user&&!state.zoomLeaving&&(hasUnsavedChanges()||state.attendance?.changes.size)){e.preventDefault();e.returnValue='';}});
     document.addEventListener('visibilitychange',()=>{if(!document.hidden){renderMeetings();refreshControls();}});
     setInterval(()=>{if(!document.hidden){renderMeetings();refreshControls();}},30000);
