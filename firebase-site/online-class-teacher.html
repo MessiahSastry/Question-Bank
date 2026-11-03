@@ -386,7 +386,10 @@
     }
     // Firebase Hosting rewrites and the HttpOnly OAuth cookie must be same-origin.
     if(location.origin!=='https://stpatricks-questionbank.web.app'){
-      message('zoomConnectStatus','Open this teacher page on the school Firebase website to connect Zoom. GitHub Pages and local file previews cannot complete the secure connection.','warning');
+      // OAuth requires a same-origin HttpOnly cookie. Move from GitHub Pages to
+      // Firebase Hosting, then resume the click after any required school sign-in.
+      state.zoomLeaving=true;
+      location.assign('https://stpatricks-questionbank.web.app/online-class-teacher.html?connectZoom=1');
       return;
     }
     const user=state.user;
@@ -597,6 +600,15 @@
     await loadClasses({classId:storageGet('sp_selectedClassId'),className:storageGet('sp_selectedClassName'),sectionId:storageGet('sp_selectedSectionId'),sectionName:storageGet('sp_selectedSectionName')});
     if(generation!==state.authGeneration)return;
     state.initializing=false;state.initialSignature=formSignature();watchMeetings();refreshControls();
+    // Resume the teacher-initiated Zoom connection once Firebase Auth is ready.
+    if(location.origin==='https://stpatricks-questionbank.web.app'){
+      const redirectUrl=new URL(location.href);
+      if(redirectUrl.searchParams.get('connectZoom')==='1'){
+        redirectUrl.searchParams.delete('connectZoom');
+        history.replaceState(null,'',redirectUrl.pathname+redirectUrl.search+redirectUrl.hash);
+        void connectMyZoomAccount();
+      }
+    }
   }
   // An accessible custom menu for every select, including attendance rows.
   // Native select elements remain the source of truth for existing app logic.
