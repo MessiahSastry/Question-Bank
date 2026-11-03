@@ -68,10 +68,8 @@ exports.zoomSdkParticipantSignature = onRequest({
   catch (_) {return deny(res, 401, 'AUTH', 'Please reload the class page.');}
   if (!authUser.uid) return deny(res, 401, 'AUTH', 'School access is required.');
 
-  const {meetingId, studentId, parentPhone, childId} = req.body || {};
-  if (![meetingId, studentId].every(validDocId) ||
-      !/^\d{10}$/.test(String(childId || '')) ||
-      !digits10(parentPhone)) {
+  const {meetingId, studentId, parentPhone} = req.body || {};
+  if (![meetingId, studentId].every(validDocId) || !digits10(parentPhone)) {
     return deny(res, 400, 'INPUT', 'Please confirm your student details again.');
   }
   try {
@@ -101,9 +99,8 @@ exports.zoomSdkParticipantSignature = onRequest({
       .collection('students').doc(studentId).get();
     if (!studentSnap.exists) return deny(res, 403, 'STUDENT', 'Student not found in this section.');
     const student = studentSnap.data() || {};
-    if (digits10(student.parentPhone) !== digits10(parentPhone) ||
-        String(student.childId || '').trim() !== String(childId)) {
-      return deny(res, 403, 'STUDENT', 'Parent mobile number and Child ID do not match this student.');
+    if (digits10(student.parentPhone) !== digits10(parentPhone)) {
+      return deny(res, 403, 'STUDENT', 'Registered parent mobile number does not match this student.');
     }
     const name = String(student.name || '').trim();
     if (!name || name.length > 100) return deny(res, 403, 'STUDENT', 'Invalid student name.');
