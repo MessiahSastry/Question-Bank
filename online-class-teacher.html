@@ -52,6 +52,16 @@
 </header>
   <main>
     <div id="authNotice" class="notice" role="status" aria-live="polite">Checking your teacher sign-in…</div>
+    <section id="teacherLoginPanel" class="panel" aria-label="School teacher sign-in" hidden style="max-width:480px;margin:0 auto 20px">
+      <h2>Sign in with your school account</h2>
+      <p class="hint">Use your existing CampusConnect email address and password. No new account is required.</p>
+      <form id="teacherLoginForm" autocomplete="on">
+        <div class="field"><label for="teacherLoginEmail">School email</label><input id="teacherLoginEmail" type="email" autocomplete="username" required></div>
+        <div class="field"><label for="teacherLoginPassword">Password</label><input id="teacherLoginPassword" type="password" autocomplete="current-password" required></div>
+        <button id="teacherLoginSubmit" type="submit" class="btn">Sign In</button>
+      </form>
+      <div id="teacherLoginMessage" class="message" role="status" aria-live="polite"></div>
+    </section>
     <div class="grid">
       <section class="panel" aria-labelledby="editorTitle">
         <div class="panel-head"><div><h2 id="editorTitle">Create Online Class</h2><div class="muted small">Schedule each class or section separately.</div></div><span id="editorBadge" class="badge">New session</span></div>
@@ -80,6 +90,9 @@
           </fieldset>
         </form>
         <div class="buttons" style="margin-top:9px"><button id="shareBtn" class="btn whatsapp" type="button" disabled>Share WhatsApp</button><button id="startBtn" class="btn secondary" type="button" disabled>Start in Zoom</button></div>
+        <div class="buttons" style="margin-top:11px"><button id="connectZoomBtn" class="btn quiet" type="button" disabled>Connect My Zoom Account</button></div>
+        <p class="hint" style="margin-top:7px">Each teacher authorises their own Zoom account using their existing school login. Secure Zoom connection functions must be deployed before this button works.</p>
+        <div id="zoomConnectStatus" class="message" role="status" aria-live="polite"></div>
         <div id="status" class="message" role="status" aria-live="polite"></div>
         <p class="divider-note">In Zoom, use a passcode and Waiting Room. Admit students after checking their names, keep screen sharing teacher-only, and allow students to speak when needed.</p>
       </section>
@@ -123,7 +136,7 @@
     classes:new Map(), sections:new Map(), meetings:new Map(), unsubscribe:null,
     editingId:null, draftId:null, loadedRevision:0, originalStart:null,
     savedSignature:'', initialSignature:'', busy:false, initializing:true, listReady:false,
-    attendance:null, attendanceSaving:false
+    attendance:null, attendanceSaving:false, zoomConnecting:false
   };
   let db = null, auth = null;
   const stamp = () => firebase.firestore.FieldValue.serverTimestamp();
@@ -171,6 +184,9 @@
   function hasUnsavedChanges(){return formSignature()!==(state.editingId?state.savedSignature:state.initialSignature);}
   function refreshControls(){
     $('editorFields').disabled=!state.user||state.busy||state.initializing;
+    $('connectZoomBtn').disabled=!state.user||state.busy||state.initializing||state.zoomConnecting;
+    $('connectZoomBtn').textContent=state.zoomConnecting?'Connecting to Zoom…':'Connect My Zoom Account';
+    $('connectZoomBtn').setAttribute('aria-busy',String(state.zoomConnecting));
     Dropdowns.refresh();
     $('saveBtn').innerHTML=state.busy?'<span class="spinner" aria-hidden="true"></span> Saving…':state.editingId?'Save Changes':'Save Class';
     $('saveBtn').setAttribute('aria-busy',String(state.busy));
@@ -359,6 +375,43 @@
     if(!ok){$('shareText').focus();$('shareText').select();$('shareText').setSelectionRange(0,text.length);try{ok=document.execCommand('copy');}catch(_){}}
     message('shareStatus',ok?'Message copied.':'Select and copy the message, or use Open WhatsApp.',ok?'success':'warning');
   }
+  async function connectMyZoomAccount(){
+    if(!state.user||!auth||state.initializing||state.busy||state.zoomConnecting)return;
+    if(hasUnsavedChanges()||state.attendance?.changes.size){
+      message('zoomConnectStatus','Save or discard any unsaved class or attendance changes before connecting Zoom.','warning');
+      return;
+    }
+    // Firebase Hosting rewrites and the HttpOnly OAuth cookie must be same-origin.
+    if(location.origin!=='https://stpatricks-questionbank.web.app'){
+      message('zoomConnectStatus','Open this teacher page on the school Firebase website to connect Zoom. GitHub Pages and local file previews cannot complete the secure connection.','warning');
+      return;
+    }
+    const user=state.user;
+    state.zoomConnecting=true;refreshControls();
+    message('zoomConnectStatus','Checking your school account and opening Zoom authorisation…');
+    try{
+      const token=await user.getIdToken();
+      if(state.user!==user)throw uiError('Your teacher sign-in changed. Please try again.');
+      const response=await fetch('/zoom/oauth/start',{
+        method:'POST',headers:{Authorization:'Bearer '+token,Accept:'application/json'},
+        credentials:'same-origin',cache:'no-store'
+      });
+      const data=await response.json().catch(()=>null);
+      if(!response.ok){
+        if(response.status===403)throw uiError('Sign in with your existing school teacher account to connect Zoom.');
+        throw uiError('Zoom authorisation is not ready. The secure Firebase backend and Hosting route must be deployed first.');
+      }
+      const target=new URL(String(data?.authorizationUrl||''));
+      if(target.protocol!=='https:'||target.hostname!=='zoom.us'||target.pathname!=='/oauth/authorize')throw uiError('The Zoom authorisation response was invalid.');
+      if(state.user!==user)throw uiError('Your teacher sign-in changed. Please try again.');
+      message('zoomConnectStatus','Redirecting securely to Zoom for account authorisation…');
+      location.assign(target.href);
+    }catch(error){
+      message('zoomConnectStatus',error?.userMessage||'Unable to connect to Zoom. Check the school website and try again.','error');
+    }finally{
+      state.zoomConnecting=false;refreshControls();
+    }
+  }
   function startClass(id){
     const m=state.meetings.get(id);if(!state.user||!m||m.teacherId!==state.user.uid||!sessionStatus(m).startable)return;
     try{
@@ -523,9 +576,13 @@
     }
     state.meetings.clear();state.listReady=false;
     if(!state.user){
-      $('authNotice').hidden=false;$('authNotice').className='notice warning';$('authNotice').textContent='Please sign in through your CampusConnect teacher account, then reopen this page.';
+      const sameOriginSchool=location.origin==='https://stpatricks-questionbank.web.app';
+      $('teacherLoginPanel').hidden=!sameOriginSchool;
+      $('authNotice').hidden=sameOriginSchool;
+      $('authNotice').className='notice warning';$('authNotice').textContent='Please sign in through your CampusConnect teacher account, then reopen this page.';
       $('meetingList').replaceChildren(make('div','Your classes are visible after teacher sign-in.','empty'));$('listSummary').textContent='Teacher sign-in required';refreshControls();return;
     }
+    $('teacherLoginPanel').hidden=true;
     $('authNotice').hidden=true;$('authNotice').textContent='';
     refreshControls();
     const profile=await Promise.allSettled([db.collection('users').doc(user.uid).get(),db.collection('users').doc(user.uid).collection('settings').doc('zoom').get()]);
@@ -700,6 +757,26 @@
     $('classSel').addEventListener('change',async()=>{await loadSections();refreshControls();});
     $('sectionSel').addEventListener('change',refreshControls);
     $('newBtn').onclick=newClass;$('shareBtn').onclick=()=>shareClass(state.editingId);$('startBtn').onclick=()=>startClass(state.editingId);
+    $('connectZoomBtn').onclick=connectMyZoomAccount;
+    $('teacherLoginForm').addEventListener('submit',async event=>{
+      event.preventDefault();
+      if(!auth||state.user)return;
+      const button=$('teacherLoginSubmit');
+      button.disabled=true;
+      message('teacherLoginMessage','Signing in to your school account…');
+      try{
+        await auth.signInWithEmailAndPassword(
+          $('teacherLoginEmail').value.trim(),
+          $('teacherLoginPassword').value
+        );
+        $('teacherLoginPassword').value='';
+        message('teacherLoginMessage','Signed in successfully.','success');
+      }catch(error){
+        message('teacherLoginMessage','Could not sign in. Check your school email and password.','error');
+      }finally{
+        button.disabled=false;
+      }
+    });
     $('refreshBtn').onclick=watchMeetings;$('listDate').addEventListener('change',renderMeetings);$('previousDayBtn').onclick=()=>stepDate(-1);$('nextDayBtn').onclick=()=>stepDate(1);$('todayBtn').onclick=()=>{$('listDate').value=dateParts().date;renderMeetings();};
     $('closeShareBtn').onclick=()=>$('shareDialog').close();$('copyBtn').onclick=copyMessage;
     $('closeAttendanceBtn').onclick=closeAttendance;$('attendanceDialog').addEventListener('cancel',e=>{e.preventDefault();closeAttendance();});$('saveAttendanceBtn').onclick=saveAttendance;$('downloadAttendanceBtn').onclick=downloadAttendance;
