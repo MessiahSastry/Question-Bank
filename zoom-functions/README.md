@@ -20,9 +20,10 @@ import, change, or redeploy the existing quiz lookup and reminder functions.
 
 **NOT DEPLOYED.** The repository does not contain the existing default
 functions/ source, although two functions are live in Firebase. Never deploy
-all functions from this partial checkout. The directory firebase-site/
-also contains only part of the main repository: confirm every live Hosting
-asset is included before deploying Hosting or you may overwrite pages.
+all functions from this partial checkout. The verified live Hosting release
+contains only /index.html, /quiz.html and /404.html (plus two reserved
+Firebase /__/ files); the branch preserves all three and stages two
+additional Zoom online-class pages.
 
 The existing GitHub Actions Hosting deployment triggers only when quiz.html
 changes. A new separate workflow in this branch deploys ONLY functions:zoom
@@ -72,10 +73,12 @@ Zoom only after the server returns an approved authorizationUrl. It stops
 if the teacher has unsaved edits and displays an error if Firebase sign-in,
 the secure backend, or the Hosting route is unavailable.
 
-IMPORTANT: the repository's firebase-site/ Hosting public directory does
-not currently include this teacher page. The new button is **not live**.
-A safe Hosting publish plan must include all live pages and the necessary
-OAuth rewrites before this browser flow can work.
+On this branch, firebase-site/ now includes copies of
+online-class-teacher.html and online-class.html alongside the three existing
+static Hosting files. The teacher page offers sign-in with existing Firebase
+school credentials when opened on stpatricks-questionbank.web.app (sessions
+from other origins are not automatically shared). The new button is **not live**
+until the PR is merged and both isolated Functions and Hosting deploy.
 
 The Zoom callback is validated using a 10-minute browser cookie and a
 one-time Firestore state.
@@ -89,9 +92,12 @@ it does not create the custom one-time state or cookie.
     npm --prefix zoom-functions run check
     firebase deploy --only functions:zoom --project stpatricks-questionbank
 
-The callback uses Hosting rewrites in firebase.json. Those rewrites require
-a carefully reviewed Hosting deployment. Do not run blanket Hosting deploy
-from an incomplete firebase-site/ directory.
+The callback uses Hosting rewrites in firebase.json. The verified live
+Hosting file list has been checked against the staged Hosting folder, which
+preserves all three existing static files. The existing quiz Hosting workflow
+on the PR now deploys for changes to Zoom Hosting pages or firebase.json,
+copying the latest root quiz.html first. Confirm IAM, deployment order, and
+OAuth callback routing before using real Zoom accounts.
 
 ## Not yet implemented
 
