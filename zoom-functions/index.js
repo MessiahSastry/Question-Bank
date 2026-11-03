@@ -33,11 +33,6 @@ function timingEquals(a, b) {
   const y = Buffer.from(String(b || ''));
   return x.length === y.length && crypto.timingSafeEqual(x, y);
 }
-function cookieValue(req, name) {
-  const found = String(req.headers.cookie || '').split(';')
-    .map(x => x.trim()).find(x => x.startsWith(name + '='));
-  return found ? found.slice(name.length + 1) : '';
-}
 function finishPage(res, status, heading, detail) {
   secureHeaders(res);
   res.set('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'");
@@ -162,11 +157,10 @@ exports.zoomOAuthStart = onRequest({
     authorize.searchParams.set('redirect_uri', REDIRECT_URI);
     authorize.searchParams.set('state', state);
 
-    // SameSite=Lax permits the Zoom -> school top-level GET callback.
-    // Firebase Hosting forwards only the reserved __session cookie to
-    // Functions. Scope the OAuth cookie to this callback path for ten minutes.
-    res.setHeader('Set-Cookie', '__session=' + state +
-      '; Max-Age=600; Path=/zoom/oauth/callback; HttpOnly; Secure; SameSite=Lax');
+    // Do not depend on browser cookies: some in-app mobile browsers do not
+    // retain them across the CampusConnect -> Zoom -> Firebase redirects.
+    // State is bound to the authenticated teacher by a server-only HMAC and
+    // a ten-minute, one-use pending record verified in the callback.
     if (formMode) return res.redirect(303, authorize.href);
     return res.status(200).json({authorizationUrl: authorize.href});
   } catch (err) {
@@ -183,10 +177,6 @@ exports.zoomOAuthCallback = onRequest({
 }, async (req, res) => {
   secureHeaders(res);
   if (req.method !== 'GET') return res.status(405).send('Method not allowed');
-
-  // Clear the temporary browser cookie on both success and failure.
-  res.setHeader('Set-Cookie',
-    '__session=; Max-Age=0; Path=/zoom/oauth/callback; HttpOnly; Secure; SameSite=Lax');
 
   const code = req.query.code;
   const state = req.query.state;
@@ -208,17 +198,9 @@ exports.zoomOAuthCallback = onRequest({
     return finishPage(res, 400, 'Zoom connection not completed',
       'The Zoom authorisation response was incomplete. Please reconnect. (ZC03)');
   }
-  const cookie = cookieValue(req, '__session');
-  if (!cookie) {
-    console.warn('Zoom OAuth callback status', 'ZC04');
-    return finishPage(res, 400, 'Zoom connection not completed',
-      'Your browser did not retain the secure connection session. Try opening CampusConnect in Chrome instead of an in-app browser. (ZC04)');
-  }
-  if (!timingEquals(state, cookie)) {
-    console.warn('Zoom OAuth callback status', 'ZC05');
-    return finishPage(res, 400, 'Zoom connection not completed',
-      'The Zoom connection session did not match. Start a fresh connection from CampusConnect. (ZC05)');
-  }
+  // The signed, unpredictable OAuth state is validated against Firestore
+  // in a transaction and can only be claimed once. This also binds the Zoom
+  // credentials to the same Firebase UID that initiated authorisation.
 
   const pendingRef = db.collection('zoomOAuthPending').doc(sha256(state));
   let uid, stage = 'state';
