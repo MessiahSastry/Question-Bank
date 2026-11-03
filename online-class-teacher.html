@@ -731,16 +731,106 @@
     if(state.attendance?.changes.size&&!await ask('Discard attendance changes?','Your unsaved attendance changes will be discarded.','Discard Changes'))return;
     $('attendanceDialog').close();state.attendance=null;
   }
-  function csvCell(value){let v=String(value??'');if(/^\s*[=+\-@]/.test(v))v="'"+v;return '"'+v.replace(/"/g,'""')+'"';}
-  function downloadAttendance(){
-    const a=state.attendance;if(!a||!a.rows.length)return;
-    const rows=[['Academic year','Class','Section','Subject','Topic','Scheduled (IST)','Roll','Student','Website Join record','Join click time (IST)','5-minute click status','Time source','Teacher-confirmed attendance','Save status']];
-    for(const row of a.rows){
-      const status=a.changes.has(row.id)?a.changes.get(row.id):row.status;
-      const timing=clickPunctuality(a.m,row.log,a.joinAvailable);
-      rows.push([meetingYear(a.m),a.m.class,a.m.section,a.m.subject,a.m.topic,formatDateTime(a.m.startAt),row.roll,row.name,a.joinAvailable?row.log.label:'Join records unavailable',a.joinAvailable&&row.log.at?formatDateTime(row.log.at):'',timing.label,a.joinAvailable?row.log.source:'unavailable',status?status[0].toUpperCase()+status.slice(1):'Not marked',a.changes.has(row.id)?'Unsaved change':row.recorded?'Saved':'No attendance recorded']);
+  async function loadPdfLibrary(){
+    if(window.jspdf?.jsPDF)return window.jspdf.jsPDF;
+    await new Promise((resolve,reject)=>{
+      const script=document.createElement('script');
+      script.src='https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.2/jspdf.umd.min.js';
+      script.onload=resolve;
+      script.onerror=()=>reject(uiError('Could not load the PDF generator. Please check your internet and try again.'));
+      document.head.append(script);
+    });
+    if(!window.jspdf?.jsPDF)throw uiError('The PDF generator did not load. Refresh and retry.');
+    return window.jspdf.jsPDF;
+  }
+  async function downloadAttendancePdf(){
+    const a=state.attendance;if(!a||!a.rows.length||a.loading)return;
+    if(a.changes.size){
+      const ok=await ask('Download with unsaved changes?',
+        'The PDF will include your current teacher overrides, but these changes have not yet been saved. Save Attendance first to preserve them.','Download PDF');
+      if(!ok)return;
     }
-    const blob=new Blob(['\uFEFF'+rows.map(row=>row.map(csvCell).join(',')).join('\r\n')],{type:'text/csv;charset=utf-8;'}),url=URL.createObjectURL(blob),link=make('a');link.href=url;link.download=`attendance-${dateParts(ms(a.m.startAt)).date}-${a.id}.csv`;document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
+    const button=$('downloadAttendanceBtn');
+    button.disabled=true;button.textContent='Preparing PDF…';
+    try{
+      const JsPDF=await loadPdfLibrary();
+      if(state.attendance!==a)return;
+      const pdf=new JsPDF({orientation:'portrait',unit:'pt',format:'a4'});
+      const pageW=pdf.internal.pageSize.getWidth(),pageH=pdf.internal.pageSize.getHeight();
+      const margin=32,session=zoomSession(a.m),total=minutesText(session.duration);
+      const results=a.rows.map(row=>({row,info:zoomAttendance(a.m,row)}));
+      const count=status=>results.filter(x=>x.info.final===status).length;
+      const header=()=>{
+        pdf.setFillColor(20,66,105);
+        pdf.rect(0,0,pageW,69,'F');
+        pdf.setTextColor(255,255,255);pdf.setFont('helvetica','bold');
+        pdf.setFontSize(16);pdf.text("ST. PATRICK'S SCHOOL",margin,30);
+        pdf.setFontSize(10);pdf.text('ONLINE CLASS ATTENDANCE REPORT',margin,50);
+        pdf.setTextColor(27,54,77);pdf.setFontSize(9);pdf.setFont('helvetica','normal');
+        const sessionLine=session.verified?'Verified Zoom duration: '+total:
+          'Scheduled duration: '+total+' (actual Zoom duration unverified)';
+        const meta=[
+          'Academic Year: '+meetingYear(a.m)+'    Class: '+a.m.class+'    Section: '+a.m.section,
+          'Teacher: '+a.m.teacherName+'    Subject: '+a.m.subject,
+          'Topic: '+a.m.topic,
+          'Scheduled: '+formatDateTime(a.m.startAt),
+          sessionLine,
+          'Present: '+count('present')+'    Absent: '+count('absent')+
+            '    Pending/Unverified: '+(count('pending')+count('unverified'))+
+            '    Teacher overrides: '+results.filter(x=>x.info.manual).length
+        ];
+        let y=87;
+        for(const line of meta){
+          const parts=pdf.splitTextToSize(String(line),pageW-2*margin);
+          pdf.text(parts,margin,y);
+          y+=Math.max(1,parts.length)*12;
+        }
+        y+=9;
+        pdf.setFillColor(231,239,247);pdf.rect(margin,y,pageW-2*margin,27,'F');
+        pdf.setTextColor(27,54,77);pdf.setFont('helvetica','bold');pdf.setFontSize(9);
+        pdf.text('Roll',margin+7,y+17);
+        pdf.text('Student name',margin+56,y+17);
+        pdf.text('Join time',margin+245,y+17);
+        pdf.text('Time in class',margin+337,y+17);
+        pdf.text('Final status',margin+444,y+17);
+        return y+27;
+      };
+      let y=header();
+      pdf.setFontSize(9);
+      for(const {row,info} of results){
+        const name=pdf.splitTextToSize(String(row.name),183).slice(0,3);
+        const join=Number.isFinite(info.first)?formatTime(info.first):'—';
+        const spent=info.window.verified && !info.raw.some(d=>!Number.isFinite(d.end))?
+          minutesText(info.spent)+' / '+minutesText(info.window.duration):'Unverified';
+        const result=info.statusText+(info.manual?' (Teacher)':'');
+        const statusLines=pdf.splitTextToSize(result,86);
+        const rowH=Math.max(29,name.length*12+10,statusLines.length*12+10);
+        if(y+rowH>pageH-46){pdf.addPage();y=header();}
+        pdf.setDrawColor(223,233,241);pdf.line(margin,y+rowH,pageW-margin,y+rowH);
+        pdf.setTextColor(27,54,77);pdf.setFont('helvetica','normal');
+        pdf.text(String(row.roll||'—').slice(0,11),margin+7,y+18);
+        pdf.text(name,margin+56,y+18);
+        pdf.text(join,margin+245,y+18);
+        pdf.text(spent,margin+337,y+18);
+        pdf.setFont('helvetica','bold');
+        pdf.text(statusLines,margin+444,y+18);
+        y+=rowH;
+      }
+      const pages=pdf.internal.getNumberOfPages();
+      for(let page=1;page<=pages;page++){
+        pdf.setPage(page);
+        pdf.setDrawColor(214,225,235);pdf.line(margin,pageH-42,pageW-margin,pageH-42);
+        pdf.setTextColor(97,113,129);pdf.setFont('helvetica','normal');pdf.setFontSize(8);
+        pdf.text('Automatic status uses signed Zoom events, with a seven-minute allowance; teacher overrides take precedence.',margin,pageH-28);
+        pdf.text('Page '+page+' of '+pages,pageW-margin,pageH-15,{align:'right'});
+      }
+      pdf.save('St_Patricks_Attendance_'+dateParts(ms(a.m.startAt)).date+'_'+a.id+'.pdf');
+      message('attendanceStatus','Attendance PDF prepared. The final status includes any teacher overrides.','success');
+    }catch(e){
+      message('attendanceStatus',readableError(e,'Could not generate the attendance PDF.'),'error');
+    }finally{
+      button.disabled=!a.rows.length;button.textContent='Download PDF';
+    }
   }
   function stepDate(delta){const selected=$('listDate').value||dateParts().date,d=new Date(selected+'T12:00:00+05:30');d.setTime(d.getTime()+delta*86400000);$('listDate').value=dateParts(d).date;renderMeetings();}
   async function handleAuth(user){
