@@ -24,8 +24,12 @@ all functions from this partial checkout. The directory firebase-site/
 also contains only part of the main repository: confirm every live Hosting
 asset is included before deploying Hosting or you may overwrite pages.
 
-Current GitHub Actions deploys Hosting when quiz.html changes, but does
-not deploy this Zoom codebase.
+The existing GitHub Actions Hosting deployment triggers only when quiz.html
+changes. A new separate workflow in this branch deploys ONLY functions:zoom
+automatically when Zoom function source changes on main (or by manual
+workflow_dispatch). It never deploys the default functions or Hosting.
+It uses the existing GitHub Firebase service-account secret; IAM may need
+additional roles for Functions deployment.
 
 ## Firebase Secret Manager
 
