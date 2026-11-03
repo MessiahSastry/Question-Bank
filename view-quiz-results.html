@@ -153,6 +153,7 @@
       <div class="actions">
         <button class="btn" id="refresh" type="button">Refresh Results</button>
         <button class="btn secondary" id="participation" type="button">Recheck Not Attempted</button>
+<button class="btn" id="whatsappShare" type="button">Share Results via WhatsApp</button>
         <button class="btn secondary" id="export" type="button" disabled>Download Excel (CSV)</button>
         <button class="btn secondary" id="print" type="button">Print</button>
         <button class="btn secondary" id="return" type="button">Back to Quick Quiz</button>
@@ -169,7 +170,15 @@
       <h2 id="reportTitle">Student Performance</h2>
       <p class="sub" id="reportInfo">Select a quiz to view its results. Only recorded scores are displayed.</p>
       <div class="scroll"><table><thead><tr><th>Section</th><th class="num">Roll</th><th>Student Name</th><th class="num">Rank</th><th class="num">Best Score</th><th class="num">Percentage</th><th class="num">Attempts</th><th class="num">Time</th><th>Status</th></tr></thead><tbody id="resultsBody"><tr><td colspan="9" class="muted">No quiz selected.</td></tr></tbody></table></div>
-      <p class="note">Students are displayed by section and roll number; ranking is calculated across the selected class from each student's best recorded score (faster time breaks score ties). The app checks the school roster for students who have not attempted. If roster access is restricted, only students with recorded results can be shown.</p>
+      <p class="note">
+Students are displayed by section and roll number.
+Ranking is calculated across the entire class using
+80% accuracy and 20% completion speed.
+The ranking uses each student's highest-scoring attempt,
+with faster time preferred when scores are equal.
+Rankings are provisional and may change as more students attempt the quiz.
+The school roster is checked to identify students who have not attempted.
+</p>
     </section>
   </section>
   <p class="foot">Results are for authorised school staff. Student phone numbers are not shown in this report.</p>
@@ -603,6 +612,35 @@ function sectionRollSort(a,b) {
   return av.localeCompare(bv,undefined,{numeric:true})||
     String(a.name||'').localeCompare(String(b.name||''));
 }
+function rankingPoints(row, max) {
+  if (!max) return 0;
+
+  // Accuracy contributes 80%.
+  const accuracy = Math.max(
+    0,
+    Math.min(100, (row.score / max) * 100)
+  );
+
+  // Speed contributes 20%.
+  // Reference time: 60 seconds per question.
+  const referenceSeconds = max * 60;
+
+  const speed =
+    Number.isFinite(row.time) && row.time > 0
+      ? Math.max(
+          0,
+          100 * (
+            1 - Math.min(row.time, referenceSeconds)
+                / referenceSeconds
+          )
+        )
+      : 0;
+
+  return Number(
+    (accuracy * 0.80 + speed * 0.20).toFixed(3)
+  );
+}
+
 function buildRows(attempts) {
   const map=new Map();
   attempts.forEach(x=>{const key=recordKey(x);if(!map.has(key))map.set(key,[]);map.get(key).push(x)});
@@ -612,11 +650,29 @@ function buildRows(attempts) {
     const score=Number(best.score||0);
     return {key,studentId:best.studentId||'',name:best.name||'Student',cls:best.class||app.currentQuiz?.class||'',section:best.section||'',roll:best.roll??'',score,percent:max?score/max*100:0,attempts:items.length,time:getAttemptTime(best),completed:true};
   });
-  const byRank=[...rows].sort((a,b)=>(b.score-a.score)||
-    ((a.time??Infinity)-(b.time??Infinity))||a.name.localeCompare(b.name));
-  byRank.forEach((row,i)=>{
-    const prev=byRank[i-1];
-    row.rank=prev&&prev.score===row.score&&prev.time===row.time?prev.rank:i+1;
+    // Calculate final ranking points for every student.
+  rows.forEach(r => {
+    r.rankPoints = rankingPoints(r, max);
+  });
+
+  // Rank by combined accuracy and speed.
+  const byRank = [...rows].sort((a, b) =>
+    (b.rankPoints - a.rankPoints) ||
+    (b.score - a.score) ||
+    ((a.time ?? Infinity) - (b.time ?? Infinity)) ||
+    a.name.localeCompare(b.name)
+  );
+
+  byRank.forEach((row, i) => {
+    const prev = byRank[i - 1];
+
+    row.rank =
+      prev &&
+      prev.rankPoints === row.rankPoints &&
+      prev.score === row.score &&
+      prev.time === row.time
+        ? prev.rank
+        : i + 1;
   });
   rows.sort(sectionRollSort);
   return rows;
@@ -738,6 +794,200 @@ async function compareRoster(silent=false) {
   }catch(err){console.error(err);status(`Roster unavailable: ${err.message}. Recorded results are still shown, but Not Attempted students cannot be identified.`, silent?'':'error');}
   finally{button.disabled=false;}
 }
+async function shareWhatsAppReport() {
+  const quizId = $('quizFilter').value;
+  const year = $('year').value.trim();
+
+  if (!quizId) {
+    status('Select a quiz before sharing.', 'error');
+    return;
+  }
+
+  // Open a tab immediately to avoid popup blocking.
+  const waTab = window.open('about:blank', '_blank');
+
+  if (waTab) {
+    waTab.document.title = 'Preparing WhatsApp message';
+    waTab.document.body.textContent =
+      'Checking the latest quiz results and school roster...';
+  }
+
+  const button = $('whatsappShare');
+  button.disabled = true;
+  button.textContent = 'Checking latest results...';
+
+  try {
+
+    // Refresh attempts, ranks and student roster.
+    await showResults();
+
+    if (
+      !app.currentQuiz ||
+      app.currentQuiz.id !== quizId ||
+      $('quizFilter').value !== quizId ||
+      $('year').value.trim() !== year ||
+      !app.rosterChecked
+    ) {
+      if (waTab && !waTab.closed) waTab.close();
+
+      status(
+        'WhatsApp message not prepared: latest results and roster could not be verified.',
+        'error'
+      );
+      return;
+    }
+
+    const quiz = app.currentQuiz;
+    const section = $('sectionFilter').value || 'All Sections';
+
+    const total =
+      quiz.totalQuestions ||
+      quiz.questions?.length ||
+      '?';
+
+    // Top three ranks across the entire class.
+    // Include tied students occupying ranks 1, 2 or 3.
+    const leaders = app.rows
+      .filter(r =>
+        r.completed &&
+        r.rank >= 1 &&
+        r.rank <= 3
+      )
+      .sort((a, b) =>
+        a.rank - b.rank ||
+        b.score - a.score ||
+        (a.time ?? Infinity) - (b.time ?? Infinity) ||
+        a.name.localeCompare(b.name)
+      );
+
+    const medals = {
+      1: '🥇',
+      2: '🥈',
+      3: '🥉'
+    };
+
+       const leaderText = leaders.length
+      ? leaders.map(r =>
+          `${medals[r.rank] || '🏅'} Rank ${r.rank}: ${r.name} (${r.section || 'Section not set'})\n` +
+          `Score: ${r.score}/${total} | Time: ${seconds(r.time)}\n` +
+          `Ranking Points: ${r.rankPoints.toFixed(2)}`
+        ).join('\n\n')
+      : 'No ranks available yet.';
+
+    // Students who have not attempted, respecting section filter.
+    const pending = visibleRows().filter(r => !r.completed);
+
+    // Group pending students by section.
+    const groups = new Map();
+
+    for (const student of pending) {
+      const name = student.section || 'Section not set';
+
+      if (!groups.has(name)) {
+        groups.set(name, []);
+      }
+
+      groups.get(name).push(student);
+    }
+
+    const pendingText = pending.length
+      ? [...groups].map(([name, students]) =>
+          `*${name}*\n` +
+          students.map((r, i) =>
+            `${i + 1}. ${r.name}${
+              r.roll !== '' && r.roll != null
+                ? ` (Roll ${r.roll})`
+                : ''
+            }`
+          ).join('\n')
+        ).join('\n\n')
+      : 'None. All students in the selected section(s) have attempted.';
+
+    // Quiz link.
+    const quizUrl =
+      `https://stpatricks-questionbank.web.app/quiz.html` +
+      `?quiz=${encodeURIComponent(quizId)}` +
+      `&year=${encodeURIComponent(year)}`;
+
+    // Complete WhatsApp message.
+    const message = [
+
+      "*ST. PATRICK'S SCHOOL*",
+      "*QUICK QUIZ – PARTICIPATION & RESULTS*",
+
+      "",
+
+      `Academic Year: ${year}`,
+      `Class: ${quiz.class || '—'}`,
+      `Section (pending list): ${section}`,
+      `Subject: ${quiz.subject || '—'}`,
+      `Chapter: ${quiz.chapter || '—'}`,
+
+      "",
+
+      "🏆 *TOP 3 RANKS SO FAR (CLASS-WIDE)*",
+
+      leaderText,
+
+      "",
+
+      "*STUDENTS YET TO ATTEMPT*",
+
+      pendingText,
+
+      "",
+
+      `*Total Not Attempted: ${pending.length}*`,
+
+      "",
+
+      ...(pending.length
+        ? [
+            "The above students are requested to complete the quiz at the earliest.",
+            ""
+          ]
+        : []),
+
+      "*Note: Rankings are provisional and may change as more students attempt the quiz.*",
+
+      "",
+
+      `Quiz Link: ${quizUrl}`,
+
+      "",
+
+      "*Academic Department*",
+      "St. Patrick's School"
+
+    ].join('\n');
+
+    // Open WhatsApp with the prepared message.
+    const shareUrl =
+      `https://api.whatsapp.com/send?text=${encodeURIComponent(message)}`;
+
+    if (waTab && !waTab.closed) {
+      waTab.location.replace(shareUrl);
+    } else {
+      window.location.assign(shareUrl);
+    }
+
+  } catch (err) {
+
+    if (waTab && !waTab.closed) waTab.close();
+
+    status(
+      'Unable to prepare WhatsApp message: ' + err.message,
+      'error'
+    );
+
+  } finally {
+
+    button.disabled = false;
+    button.textContent = 'Share Results via WhatsApp';
+
+  }
+}
+
 function safeCsv(value){
   let s=String(value??'');if(/^\s*[=+\-@]/.test(s))s="'"+s;
   return `"${s.replace(/"/g,'""')}"`;
@@ -794,6 +1044,7 @@ document.addEventListener('keydown', e => {
 $('quizFilter').addEventListener('change',showResults);
 $('refresh').addEventListener('click',()=>{$('quizFilter').value?showResults():loadQuizzes()});
 $('participation').addEventListener('click',compareRoster);
+$('whatsappShare').addEventListener('click',shareWhatsAppReport);
 $('export').addEventListener('click',exportCsv);
 $('print').addEventListener('click',()=>window.print());
 $('return').addEventListener('click',()=>location.href='quick-quiz.html');
