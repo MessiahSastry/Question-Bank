@@ -251,6 +251,7 @@ exports.zoomCreateMeeting = onRequest({
       if (m.status !== 'scheduled' || m.revision !== snapshot.revision) throw new Error('CLASS_CHANGED');
       tx.update(ref, {
         zoomMeetingId: String(meetingId),
+        ...(!updating ? {zoomPasscode: String(response?.password || '')} : {}),
         zoomJoinUrl: String(joinUrl),
         zoomWebUrl: String(joinUrl),
         zoomProvisionedRevision: snapshot.revision,
