@@ -15,6 +15,8 @@ const CLIENT_SECRET = defineSecret('ZOOM_CLIENT_SECRET');
 const ENCRYPTION_KEY = defineSecret('ZOOM_TOKEN_ENCRYPTION_KEY');
 const REGION = 'asia-south1';
 const SCHOOL_ORIGIN = 'https://stpatricks-questionbank.web.app';
+const CAMPUS_ORIGIN = 'https://messiahsastry.github.io';
+const CAMPUS_TEACHER_PAGE = CAMPUS_ORIGIN + '/Question-Bank/online-class-teacher.html';
 const REDIRECT_URI = SCHOOL_ORIGIN + '/zoom/oauth/callback';
 const STATE_TTL_MS = 10 * 60 * 1000;
 
@@ -46,7 +48,9 @@ function finishPage(res, status, heading, detail) {
     'max-width:560px;margin:12vh auto;padding:26px}main{background:white;' +
     'padding:30px;border:1px solid #d8e4ef;border-radius:15px}h1{font-size:1.3rem}' +
     '</style></head><body><main><h1>' + heading +
-    '</h1><p>' + detail + '</p></main></body></html>';
+    '</h1><p>' + detail + '</p>' +
+    '<p><a href="' + CAMPUS_TEACHER_PAGE + '">Return to school teacher page</a></p>' +
+    '</main></body></html>';
   return res.status(status).type('html').send(page);
 }
 function seal(data, keyBase64) {
@@ -68,8 +72,14 @@ function seal(data, keyBase64) {
 // No per-teacher Firestore allowlist is needed for Zoom connection.
 async function teacherUid(req) {
   const match = /^Bearer (.+)$/i.exec(String(req.headers.authorization || ''));
-  if (!match) return null;
-  const decoded = await admin.auth().verifyIdToken(match[1], true);
+  // A signed-in teacher on GitHub Pages can submit the existing Firebase
+  // ID token in a top-level HTTPS POST. No token goes into the URL.
+  const formToken = req.is('application/x-www-form-urlencoded') &&
+    typeof req.body?.firebaseIdToken === 'string' ?
+    req.body.firebaseIdToken : '';
+  const token = match ? match[1] : formToken;
+  if (!token || token.length > 8192) return null;
+  const decoded = await admin.auth().verifyIdToken(token, true);
   if (!decoded.uid || !decoded.email ||
       decoded.firebase?.sign_in_provider === 'anonymous') return null;
   return decoded.uid;
@@ -91,12 +101,25 @@ exports.zoomOAuthStart = onRequest({
 }, async (req, res) => {
   secureHeaders(res);
   if (req.method !== 'POST') return res.status(405).json({error: 'Method not allowed'});
-  if (req.headers.origin && req.headers.origin !== SCHOOL_ORIGIN) {
+  const formMode = !!req.is('application/x-www-form-urlencoded');
+  const origin = String(req.headers.origin || '');
+  if (formMode) {
+    // The allowed school's GitHub Pages origin sends a top-level form POST,
+    // bypassing fetch CORS while still requiring a verified Firebase ID token.
+    if (origin !== CAMPUS_ORIGIN && origin !== SCHOOL_ORIGIN) {
+      return finishPage(res, 403, 'Zoom connection not started',
+        'Open the teacher page through CampusConnect and try again.');
+    }
+  } else if (origin && origin !== SCHOOL_ORIGIN) {
     return res.status(403).json({error: 'Use the school website'});
   }
   try {
     const uid = await teacherUid(req);
-    if (!uid) return res.status(403).json({error: 'School sign-in required'});
+    if (!uid) {
+      if (formMode) return finishPage(res, 403, 'Zoom connection not started',
+        'Your school sign-in has expired. Return to CampusConnect and sign in.');
+      return res.status(403).json({error: 'School sign-in required'});
+    }
 
     const nonce = crypto.randomBytes(32).toString('base64url');
     const expiresMs = Date.now() + STATE_TTL_MS;
@@ -116,11 +139,16 @@ exports.zoomOAuthStart = onRequest({
     authorize.searchParams.set('state', state);
 
     // SameSite=Lax permits the Zoom -> school top-level GET callback.
-    res.setHeader('Set-Cookie', 'zoom_oauth_state=' + state +
+    // Firebase Hosting forwards only the reserved __session cookie to
+    // Functions. Scope the OAuth cookie to this callback path for ten minutes.
+    res.setHeader('Set-Cookie', '__session=' + state +
       '; Max-Age=600; Path=/zoom/oauth/callback; HttpOnly; Secure; SameSite=Lax');
+    if (formMode) return res.redirect(303, authorize.href);
     return res.status(200).json({authorizationUrl: authorize.href});
   } catch (err) {
     console.error('Zoom OAuth initiation failed:', err?.code || err?.name || 'unknown');
+    if (formMode) return finishPage(res, 500, 'Zoom connection not started',
+      'The secure connection could not be started. Return to the teacher page.');
     return res.status(500).json({error: 'Could not start Zoom authorisation'});
   }
 });
@@ -134,13 +162,13 @@ exports.zoomOAuthCallback = onRequest({
 
   // Clear the temporary browser cookie on both success and failure.
   res.setHeader('Set-Cookie',
-    'zoom_oauth_state=; Max-Age=0; Path=/zoom/oauth/callback; HttpOnly; Secure; SameSite=Lax');
+    '__session=; Max-Age=0; Path=/zoom/oauth/callback; HttpOnly; Secure; SameSite=Lax');
 
   const code = req.query.code;
   const state = req.query.state;
   if (typeof code !== 'string' || code.length < 2 || code.length > 4096 ||
       typeof state !== 'string' || !/^[A-Za-z0-9_-]{43}\.[A-Za-z0-9_-]{43}$/.test(state) ||
-      !timingEquals(state, cookieValue(req, 'zoom_oauth_state'))) {
+      !timingEquals(state, cookieValue(req, '__session'))) {
     return finishPage(res, 400, 'Zoom connection not completed',
       'Return to the school teacher page and start the connection again.');
   }
