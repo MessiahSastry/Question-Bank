@@ -48,9 +48,11 @@ save them into tracked files.
 - The Firebase Hosted site uses `firebase-site/`, which does not yet include
   the root-level teacher webpage. Audit live Hosting assets before deploying.
 - Do not merge the draft PR or deploy until the rollout is reviewed.
-- Authorise teachers explicitly using `zoomTeacherAccess/{uid}` with
-  `enabled: true`, set by a trusted administrator, not by public clients.
-- Add secure Firestore rules for Zoom-related collections.
+- School administrator directly provisions existing Firebase teacher accounts;
+  no separate teacher UID allowlist is used.
+- The school's existing Firestore rules remain unchanged at the owner's
+  request. Broad client database permissions are a known production risk;
+  encrypted tokens and signed OAuth state reduce, but do not eliminate, risk.
 - After deployment, verify secrets and service-account permissions using a
   test teacher account, not live student data.
 
