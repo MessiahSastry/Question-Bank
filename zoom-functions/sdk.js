@@ -105,8 +105,17 @@ exports.zoomSdkParticipantSignature = onRequest({
     const name = String(student.name || '').trim();
     if (!name || name.length > 100) return deny(res, 403, 'STUDENT', 'Invalid student name.');
     const roll = String(student.rollNo ?? student.rollNumber ?? student.roll ?? '').trim();
-    // A plain-english name (and roll) helps teachers verify the waiting room.
-    const displayName = (name + (roll ? ' · Roll ' + roll : '')).slice(0, 120);
+    // A unique non-sensitive tag distinguishes roster students in signed
+    // Zoom participant webhooks, including reconnects and identical names.
+    // Each join has a new tag, all mapped to the same school student.
+    const attendanceTag = crypto.randomBytes(9).toString('base64url');
+    const displayName = (name + (roll ? ' · Roll ' + roll : '')).slice(0, 77)
+      + ' [SP-' + attendanceTag + ']';
+    await db.collection('meetings').doc(meetingId)
+      .collection('zoomStudentCodes').doc(attendanceTag).set({
+        studentId, studentName:name, rollNo:roll,
+        createdAt:admin.firestore.FieldValue.serverTimestamp()
+      });
     // The passcode is captured from Zoom's create-meeting response for new classes.
     // Older meetings may lack it; do not misrepresent a failed SDK join as attendance.
     const passWord = String(meeting.zoomPasscode || '');
