@@ -580,6 +580,26 @@
 #quiz-warning-card.danger #quiz-warning-title {
   color: #c82333;
 }
+        /* Browser-only screenshot deterrence; mobile hardware screenshots need a native app. */
+        body.quiz-protected .quiz-container { -webkit-user-select: none; user-select: none; }
+        #quiz-capture-watermark {
+            display: none; position: fixed; z-index: 101; pointer-events: none;
+            left: 50%; top: 53%; transform: translate(-50%, -50%) rotate(-24deg);
+            max-width: 88vw; width: max-content; white-space: pre-line;
+            text-align: center; line-height: 1.6;
+            font-size: clamp(18px, 4vw, 27px); font-weight: 800;
+            color: rgba(15,61,107,.14);
+        }
+        body.quiz-protected #quiz-capture-watermark { display: block; }
+        @media print {
+            body, body * { visibility: hidden !important; }
+            body::after {
+                content: "Printing quiz questions is not permitted.";
+                visibility: visible !important; position: fixed;
+                top: 35%; left: 8%; width: 84%; text-align: center;
+                font: bold 22px Arial, sans-serif; color: #111;
+            }
+        }
     </style>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
@@ -787,6 +807,7 @@
         <div class="question-number-list" id="question-number-list"></div>
         <div id="quiz-main"></div>
     </div>
+    <div id="quiz-capture-watermark" aria-hidden="true"></div>
 
     <script>
         // --- Modern dropdown for Auth Modal ---
@@ -1585,6 +1606,7 @@ function attachPinToggle(inputId, buttonId) {
         window.__quizHiddenCycle = false;
         window.__quizPendingWarning = '';
         window.__quizAutoSubmitNoticePending = false;
+        let lastCaptureShortcutAt = 0;
 
         function activateQuizGuard() {
 
@@ -1602,6 +1624,13 @@ function attachPinToggle(inputId, buttonId) {
           window.__quizHiddenCycle = false;
           window.__quizPendingWarning = '';
           window.__quizAutoSubmitNoticePending = false;
+          lastCaptureShortcutAt = 0;
+          document.body.classList.add('quiz-protected');
+          const watermark = document.getElementById('quiz-capture-watermark');
+          if (watermark) {
+            const student = String(window.studentName || 'Student').slice(0, 55);
+            watermark.textContent = student + '\nST. PATRICK’S SCHOOL';
+          }
 
           try {
             history.pushState(
@@ -1638,7 +1667,7 @@ function attachPinToggle(inputId, buttonId) {
 
             showQuizModal({
               title: 'QUIZ SUBMITTED',
-              message: 'Your quiz has been submitted because you left the quiz screen three times.',
+              message: 'Your quiz has been submitted after three recorded quiz-rule violations.',
               confirmText: 'View Result',
               danger: true
             });
@@ -1667,22 +1696,26 @@ function attachPinToggle(inputId, buttonId) {
               new Date().toISOString()
           });
 
+          const attemptedCapture = type === 'screenshot-shortcut';
+          const ruleDescription = attemptedCapture ?
+            'Screenshot shortcuts are prohibited during the quiz.' :
+            'You left the quiz screen or used restricted navigation.';
+
           if (
             window.__quizViolationCount === 1
           ) {
 
             window.__quizPendingWarning =
-              'Warning 1 of 2: You left the quiz screen. ' +
-              'Please remain on the quiz page. ' +
-              'If this happens two more times, your quiz will be submitted automatically.';
+              'WARNING 1 OF 2: ' + ruleDescription + ' ' +
+              'Two more recorded violations will submit your quiz automatically.';
 
           } else if (
             window.__quizViolationCount === 2
           ) {
 
             window.__quizPendingWarning =
-              'Final Warning: You have left the quiz screen twice. ' +
-              'If this happens again, your quiz will be submitted automatically.';
+              'FINAL WARNING: ' + ruleDescription + ' ' +
+              'One more recorded violation will submit your quiz automatically.';
 
           } else {
 
@@ -1776,6 +1809,24 @@ function attachPinToggle(inputId, buttonId) {
             );
           }
         );
+
+        // Capture shortcuts are prevented only when the browser delivers the
+        // key event. Android screenshot buttons cannot be intercepted by HTML.
+        function guardScreenshotShortcut(event) {
+          if (!window.__officialAttemptActive || window.__quizFinished) return;
+          const key = String(event.key || '');
+          const pressedPrintScreen = key === 'PrintScreen' || event.code === 'PrintScreen';
+          const pressedPrint = (event.ctrlKey || event.metaKey) && key.toLowerCase() === 'p';
+          const pressedMacCapture = event.metaKey && event.shiftKey && /^(3|4|5)$/.test(key);
+          if (!pressedPrintScreen && !pressedPrint && !pressedMacCapture) return;
+          event.preventDefault();
+          event.stopPropagation();
+          if (event.repeat || Date.now() - lastCaptureShortcutAt < 1200) return;
+          lastCaptureShortcutAt = Date.now();
+          registerQuizViolation('screenshot-shortcut');
+        }
+        document.addEventListener('keydown', guardScreenshotShortcut, true);
+        document.addEventListener('keyup', guardScreenshotShortcut, true);
 
         // Copying is blocked,
         // but does NOT count as a screen violation.
@@ -2029,6 +2080,7 @@ document.getElementById("finish-btn").onclick = async (e) => {
     window.__quizSubmitting = true;
     window.__quizFinished = true;
     window.__officialAttemptActive = false;
+    document.body.classList.remove('quiz-protected');
 
     stopTimer();
 
@@ -2532,6 +2584,7 @@ window.onload = function() {
                 '• Do not answer phone calls during the quiz.\n' +
                 '• Do not open WhatsApp, Google, ChatGPT or other apps.\n' +
                 '• Do not change browser tabs or leave the quiz screen.\n' +
+                '• Screenshots and screen recordings are prohibited.\n' +
                 '• Copying quiz questions is not permitted.\n\n' +
                 'You will receive two warnings.\n' +
                 'On the third violation, this practice quiz will end automatically.',
@@ -2554,7 +2607,8 @@ window.onload = function() {
                 '2. Do not reply to WhatsApp messages or open other apps.\n' +
                 '3. Do not open Google, ChatGPT or another browser tab.\n' +
                 '4. Do not leave the quiz screen or use the Back button.\n' +
-                '5. Copying quiz questions is not permitted.\n\n' +
+                '5. Screenshots and screen recordings are prohibited.\n' +
+                '6. Copying quiz questions is not permitted.\n\n' +
                 'You will receive two warnings for leaving the quiz screen.\n' +
                 'On the third violation, your quiz will be submitted automatically.',
               confirmText: 'I Understand – Start Quiz',
