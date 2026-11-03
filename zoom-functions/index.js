@@ -53,6 +53,30 @@ function finishPage(res, status, heading, detail) {
     '</main></body></html>';
   return res.status(status).type('html').send(page);
 }
+// Classify only well-known Zoom OAuth errors. Never log or display raw
+// responses, authorisation codes, tokens, state values, or client credentials.
+function safeZoomTokenError(response, payload) {
+  const knownCodes = new Set([
+    'invalid_grant','invalid_client','invalid_request',
+    'unauthorized_client','access_denied','unsupported_grant_type',
+    'invalid_scope','server_error','temporarily_unavailable'
+  ]);
+  const rawCode = typeof payload?.error === 'string' ?
+    payload.error.toLowerCase().trim() : '';
+  const oauthCode = knownCodes.has(rawCode) ? rawCode : 'unknown';
+  const rawNumeric = payload?.code;
+  const zoomCode = Number.isInteger(rawNumeric) && rawNumeric >= 4000 &&
+    rawNumeric <= 4999 ? String(rawNumeric) : 'none';
+  const reason = typeof payload?.reason === 'string' ?
+    payload.reason.toLowerCase() : '';
+  const issue = /redirect.?uri|redirect.?url/.test(reason) ?
+      'redirect_mismatch' :
+    /invalid authorization code|invalid grant|expired|already used/.test(reason) ?
+      'invalid_or_expired_code' :
+    /invalid client|client secret|client id|client_id/.test(reason) ?
+      'client_credentials' : 'unspecified';
+  return {httpStatus: response.status, oauthCode, zoomCode, issue};
+}
 function seal(data, keyBase64) {
   const key = Buffer.from(String(keyBase64 || ''), 'base64');
   if (key.length !== 32) throw new Error('Invalid token encryption key length');
@@ -236,9 +260,19 @@ exports.zoomOAuthCallback = onRequest({
       signal: AbortSignal.timeout(12000)
     });
     if (!response.ok) {
-      // Do not print Zoom's response body, as it may include sensitive data.
-      console.error('Zoom OAuth token endpoint HTTP status:', response.status);
-      throw new Error('Zoom token exchange was rejected');
+      // Read response for a known error category only. Never output the
+      // original JSON or any untrusted Zoom response text.
+      let payload = null;
+      try {
+        const errorBody = await response.text();
+        if (errorBody.length <= 4096) payload = JSON.parse(errorBody);
+      } catch (_) {}
+      const reason = safeZoomTokenError(response, payload);
+      console.error('Zoom OAuth token exchange rejected:', JSON.stringify(reason));
+      const err = new Error('Zoom token exchange rejected');
+      err.safeZoomCategory = reason.issue !== 'unspecified' ?
+        reason.issue : reason.oauthCode;
+      throw err;
     }
     const tokens = await response.json();
     if (!tokens.access_token || !tokens.refresh_token) {
@@ -272,10 +306,17 @@ exports.zoomOAuthCallback = onRequest({
       stage === 'token' ? 'ZC07' : 'ZC08';
     console.error('Zoom OAuth callback failed', category,
       err?.code || err?.name || 'unknown');
+    const diagnostic = category === 'ZC07' ?
+      (err?.safeZoomCategory === 'redirect_mismatch' ? 'ZC07-REDIRECT' :
+       err?.safeZoomCategory === 'invalid_or_expired_code' ||
+       err?.safeZoomCategory === 'invalid_grant' ? 'ZC07-CODE' :
+       err?.safeZoomCategory === 'client_credentials' ||
+       err?.safeZoomCategory === 'invalid_client' ? 'ZC07-CLIENT' :
+       'ZC07-OTHER') : category;
     const detail = category === 'ZC06' ?
       'The one-time Zoom connection request expired or was already used. (ZC06)' :
       category === 'ZC07' ?
-      'Zoom did not issue the required account credentials. Verify the Zoom app is enabled for this test account. (ZC07)' :
+      'Zoom rejected the account authorisation exchange. Diagnostic: ' + diagnostic + '.' :
       'The school service could not save the Zoom connection. (ZC08)';
     return finishPage(res, 400, 'Zoom connection not completed',
       detail + ' Return to your teacher page to retry.');
