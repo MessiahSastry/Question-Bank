@@ -306,3 +306,5 @@ exports.zoomOAuthCallback = onRequest({
 });
 // Automatic teacher Zoom meeting scheduling and account status.
 Object.assign(exports, require('./meetings'));
+// Short-lived Meeting SDK signatures for school-verified student joins.
+Object.assign(exports, require('./sdk'));
