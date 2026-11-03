@@ -308,3 +308,6 @@ exports.zoomOAuthCallback = onRequest({
 Object.assign(exports, require('./meetings'));
 // Short-lived Meeting SDK signatures for school-verified student joins.
 Object.assign(exports, require('./sdk'));
+
+// Receive authenticated Zoom meeting events and verified student attendance.
+Object.assign(exports, require('./attendance'));
