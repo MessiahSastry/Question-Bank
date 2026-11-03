@@ -55,12 +55,20 @@ The start handler verifies Firebase Auth and checks this allowlist. Firestore
 rules must deny client access to zoomTeacherCredentials, zoomOAuthPending,
 and restrict zoomTeacherAccess changes to authorised administrators.
 
-## Next: connect this with the school's teacher webpage
+## Teacher webpage integration (prepared on this branch)
 
-Teacher-page integration is not yet added. A Firebase-authenticated teacher
-on the school Hosting domain should make a same-origin POST to
-/zoom/oauth/start with an Authorization: Bearer <Firebase ID token> header.
-The JSON response contains authorizationUrl; navigate the browser to it.
+The root-level online-class-teacher.html now includes a
+"Connect My Zoom Account" button. It uses the signed-in teacher's Firebase
+ID token to make a same-origin POST to /zoom/oauth/start and redirects to
+Zoom only after the server returns an approved authorizationUrl. It stops
+if the teacher has unsaved edits and displays an error if the backend or
+school approval is missing.
+
+IMPORTANT: the repository's firebase-site/ Hosting public directory does
+not currently include this teacher page. The new button is **not live**.
+A safe Hosting publish plan must include all live pages and the necessary
+OAuth rewrites before this browser flow can work.
+
 The Zoom callback is validated using a 10-minute browser cookie and a
 one-time Firestore state.
 
@@ -79,7 +87,6 @@ from an incomplete firebase-site/ directory.
 
 ## Not yet implemented
 
-- Teacher-facing Connect My Zoom Account button
 - Token refresh and revoke/disconnect
 - Further Zoom meeting API permissions and secure identity retrieval
 - Actual embedded Meeting SDK, meeting event verification and attendance
