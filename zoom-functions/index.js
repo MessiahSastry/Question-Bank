@@ -64,20 +64,30 @@ function seal(data, keyBase64) {
     tag: cipher.getAuthTag().toString('base64')
   };
 }
+// School accounts are provisioned directly by the administrator.
+// No per-teacher Firestore allowlist is needed for Zoom connection.
 async function teacherUid(req) {
   const match = /^Bearer (.+)$/i.exec(String(req.headers.authorization || ''));
   if (!match) return null;
   const decoded = await admin.auth().verifyIdToken(match[1], true);
-  if (!decoded.uid || decoded.firebase?.sign_in_provider === 'anonymous') return null;
-  // Explicit school-admin allowlist. Do not grant Zoom access to every Firebase user.
-  const access = await db.collection('zoomTeacherAccess').doc(decoded.uid).get();
-  if (!access.exists || access.get('enabled') !== true) return null;
+  if (!decoded.uid || !decoded.email ||
+      decoded.firebase?.sign_in_provider === 'anonymous') return null;
   return decoded.uid;
+}
+
+// Firestore clients can edit general collections under the school's existing rules.
+// Sign the OAuth state with a server-only key so no client can change its UID/expiry.
+function stateSignature(uid, nonce, expiresMs, keyBase64) {
+  const key = Buffer.from(String(keyBase64 || ''), 'base64');
+  if (key.length !== 32) throw new Error('Invalid state signing key length');
+  return crypto.createHmac('sha256', key)
+    .update('zoom-oauth-v1|' + nonce + '|' + uid + '|' + expiresMs)
+    .digest('base64url');
 }
 
 exports.zoomOAuthStart = onRequest({
   region: REGION, invoker: 'public', maxInstances: 5,
-  secrets: [CLIENT_ID]
+  secrets: [CLIENT_ID, ENCRYPTION_KEY]
 }, async (req, res) => {
   secureHeaders(res);
   if (req.method !== 'POST') return res.status(405).json({error: 'Method not allowed'});
@@ -86,14 +96,17 @@ exports.zoomOAuthStart = onRequest({
   }
   try {
     const uid = await teacherUid(req);
-    if (!uid) return res.status(403).json({error: 'Teacher authorisation required'});
+    if (!uid) return res.status(403).json({error: 'School sign-in required'});
 
-    const state = crypto.randomBytes(32).toString('base64url');
+    const nonce = crypto.randomBytes(32).toString('base64url');
+    const expiresMs = Date.now() + STATE_TTL_MS;
+    const state = nonce + '.' + stateSignature(uid, nonce, expiresMs,
+      ENCRYPTION_KEY.value());
     await db.collection('zoomOAuthPending').doc(sha256(state)).create({
       teacherUid: uid,
       status: 'pending',
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      expiresAt: admin.firestore.Timestamp.fromMillis(Date.now() + STATE_TTL_MS)
+      expiresAt: admin.firestore.Timestamp.fromMillis(expiresMs)
     });
 
     const authorize = new URL('https://zoom.us/oauth/authorize');
@@ -126,7 +139,7 @@ exports.zoomOAuthCallback = onRequest({
   const code = req.query.code;
   const state = req.query.state;
   if (typeof code !== 'string' || code.length < 2 || code.length > 4096 ||
-      typeof state !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(state) ||
+      typeof state !== 'string' || !/^[A-Za-z0-9_-]{43}\.[A-Za-z0-9_-]{43}$/.test(state) ||
       !timingEquals(state, cookieValue(req, 'zoom_oauth_state'))) {
     return finishPage(res, 400, 'Zoom connection not completed',
       'Return to the school teacher page and start the connection again.');
@@ -138,8 +151,14 @@ exports.zoomOAuthCallback = onRequest({
     // A state may be used only once, even if callbacks arrive concurrently.
     uid = await db.runTransaction(async tx => {
       const snap = await tx.get(pendingRef);
+      const expiresMs = snap.exists ? snap.get('expiresAt')?.toMillis() : null;
+      const teacher = snap.exists ? snap.get('teacherUid') : null;
+      const [nonce, mac] = state.split('.');
       if (!snap.exists || snap.get('status') !== 'pending' ||
-          snap.get('expiresAt').toMillis() < Date.now()) {
+          typeof teacher !== 'string' || !teacher ||
+          !Number.isSafeInteger(expiresMs) || expiresMs < Date.now() ||
+          !timingEquals(mac, stateSignature(teacher, nonce, expiresMs,
+            ENCRYPTION_KEY.value()))) {
         throw new Error('Invalid, expired or already claimed OAuth state');
       }
       tx.update(pendingRef, {
