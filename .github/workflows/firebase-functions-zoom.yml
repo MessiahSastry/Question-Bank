@@ -1,0 +1,38 @@
+name: Deploy Zoom functions (isolated)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'zoom-functions/**'
+      - '.github/workflows/firebase-functions-zoom.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-zoom-only:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Authenticate using the existing Firebase deployment identity
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_STPATRICKS_QUESTIONBANK }}
+
+      - name: Install Zoom function dependencies
+        run: npm --prefix zoom-functions install --no-audit --no-fund
+
+      - name: Validate Zoom function syntax
+        run: npm --prefix zoom-functions run check
+
+      - name: Deploy Zoom functions only (never the default functions or Hosting)
+        run: npx --yes firebase-tools@latest deploy --only functions:zoom --project stpatricks-questionbank --non-interactive
