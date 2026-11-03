@@ -534,100 +534,176 @@
     else{const snap=await classRef.collection('sections').where('name','==',m.section).get();if(snap.docs.length!==1)throw uiError('The section could not be resolved uniquely. Edit the meeting and select its section again.');sectionRef=snap.docs[0].ref;}
     return sectionRef;
   }
-  function websiteLog(p){
-    const first=p?.firstJoinClickedAt;
-    if(Number.isFinite(ms(first)))return {label:'First Join click',at:first,source:'first'};
-    const latest=p&&(p.lastJoinClickedAt||p.joinClickedAt);
-    if(Number.isFinite(ms(latest)))return {label:'Latest Join click',at:latest,source:'latest'};
-    const old=p&&(p.firstJoinAt||p.lastSeenAt);
-    if(Number.isFinite(ms(old)))return {label:'Older access log',at:old,source:'legacy'};
-    return {label:'No Join click',at:null,source:'none'};
+  function zoomSession(m){
+    const start=ms(m.zoomActualStartedAt),end=ms(m.zoomActualEndedAt);
+    if(Number.isFinite(start)&&Number.isFinite(end)&&end>start)
+      return {verified:true,start,end,duration:end-start};
+    return {verified:false,start:ms(m.startAt),end:endOf(m),duration:durationOf(m)*60000};
   }
-  function clickPunctuality(m,log,available=true){
-    if(!available)return {label:'Join records unavailable',kind:'unknown'};
-    if(log.source==='legacy')return {label:'Not measured (older log)',kind:'unknown'};
-    if(log.source==='none')return {label:'No Join click',kind:'none'};
-    const start=ms(m.startAt),click=ms(log.at);
-    if(!Number.isFinite(start)||!Number.isFinite(click))return {label:'Not measured',kind:'unknown'};
-    const note=log.source==='latest'?' (latest click)':'';
-    if(click<start)return {label:'Early click'+note,kind:'early'};
-    if(click<=start+5*60000)return {label:'On-time click'+note,kind:'ontime'};
-    return {label:'Late click'+note,kind:'late'};
+  function minutesText(milliseconds){
+    const n=Math.round(Math.max(0,milliseconds)/6000)/10;
+    return (Number.isInteger(n)?String(n):n.toFixed(1))+' min';
+  }
+  function zoomAttendance(m,row){
+    const window=zoomSession(m),raw=Array.isArray(row.record?.zoomIntervals)?row.record.zoomIntervals:[];
+    const valid=raw.map(d=>({start:ms(d.joinedAt),end:d.leftAt?ms(d.leftAt):NaN,reason:d.reason||''}))
+      .filter(d=>Number.isFinite(d.start)).sort((a,b)=>a.start-b.start);
+    const first=valid.length?valid[0].start:NaN;
+    const incomplete=valid.some(d=>!Number.isFinite(d.end)||d.end<d.start);
+    const intervals=valid.filter(d=>Number.isFinite(d.end)&&d.end>=d.start)
+      .map(d=>({start:Math.max(window.start,d.start),end:Math.min(window.end,d.end)}))
+      .filter(d=>Number.isFinite(d.start)&&Number.isFinite(d.end)&&d.end>d.start)
+      .sort((a,b)=>a.start-b.start);
+    const merged=[];
+    for(const current of intervals){
+      const prior=merged[merged.length-1];
+      if(prior&&current.start<=prior.end)prior.end=Math.max(prior.end,current.end);
+      else merged.push({...current});
+    }
+    const spent=merged.reduce((sum,d)=>sum+d.end-d.start,0);
+    let auto='unverified';
+    if(!window.verified)auto='pending';
+    else if(incomplete||row.record?.zoomUnmatchedExits>0)auto='unverified';
+    else auto=spent>=Math.max(0,window.duration-7*60000)?'present':'absent';
+    const manual=state.attendance?.changes?.has(row.id)?
+      state.attendance.changes.get(row.id):row.status;
+    const final=manual==='present'||manual==='absent'?manual:auto;
+    return {window,first,spent,raw:valid,auto,final,manual:manual==='present'||manual==='absent',
+      durationText:(window.verified&&(!incomplete)?minutesText(spent):'—')+' / '+minutesText(window.duration),
+      statusText:final==='present'?'Present':final==='absent'?'Absent':final==='pending'?'Pending':'Unverified'};
   }
   async function openAttendance(id){
     if(!state.user||state.busy)return;
     if(state.attendance&&state.attendance.changes.size&&!await ask('Open another attendance sheet?','Your unsaved attendance changes will be discarded.','Open Attendance'))return;
     const m=state.meetings.get(id),user=state.user;if(!m||m.teacherId!==user.uid)return;
     state.attendance={id,m,rows:[],changes:new Map(),canWrite:false,loading:true};
-    $('attendanceContext').textContent=`${m.class} · ${m.section} · ${m.subject}\n${formatDateTime(m.startAt)}`;
-    $('attendanceRows').replaceChildren();$('attendanceSummary').textContent='Loading class roster…';message('attendanceStatus','');message('attendanceNotice','');$('saveAttendanceBtn').disabled=true;$('refreshJoinBtn').disabled=true;$('downloadAttendanceBtn').disabled=true;
+    $('attendanceContext').textContent=m.class+' · '+m.section+' · '+m.subject+'\n'+formatDateTime(m.startAt);
+    $('attendanceRows').replaceChildren();$('attendanceSummary').textContent='Loading class roster…';
+    message('attendanceStatus','');message('attendanceNotice','');
+    $('saveAttendanceBtn').disabled=true;$('refreshJoinBtn').disabled=true;$('downloadAttendanceBtn').disabled=true;
     if(!$('attendanceDialog').open)$('attendanceDialog').showModal();
     try{
       const section=await resolveSection(m),ref=db.collection('meetings').doc(id);
-      const results=await Promise.allSettled([section.collection('students').get(),ref.collection('participants').get(),ref.collection('attendance').get()]);
+      const results=await Promise.allSettled([section.collection('students').get(),ref.collection('attendance').get(),ref.get()]);
       if(state.user!==user||!state.attendance||state.attendance.id!==id)return;
       if(results[0].status!=='fulfilled')throw results[0].reason;
-      const participants=results[1].status==='fulfilled'?new Map(results[1].value.docs.map(d=>[d.id,d.data()])):new Map();
-      const records=results[2].status==='fulfilled'?new Map(results[2].value.docs.map(d=>[d.id,d.data()])):new Map();
-      const attendance=state.attendance;attendance.canWrite=results[2].status==='fulfilled';attendance.joinAvailable=results[1].status==='fulfilled';attendance.loading=false;
-      attendance.rows=results[0].value.docs.map(doc=>{const d=doc.data(),a=records.get(doc.id)||{};return {id:doc.id,name:String(d.name||'Student'),roll:String(d.rollNo??d.rollNumber??d.roll??''),log:websiteLog(participants.get(doc.id)),recorded:records.has(doc.id),status:['present','absent'].includes(a.status)?a.status:''};}).sort((a,b)=>a.roll.localeCompare(b.roll,undefined,{numeric:true})||a.name.localeCompare(b.name));
-      if(!attendance.canWrite)message('attendanceNotice','Teacher attendance records are unavailable. The school administrator must enable access to this meeting’s attendance records before marks can be saved.','warning');
-      else if(results[1].status!=='fulfilled')message('attendanceNotice','Website joining records could not be loaded. Teacher attendance can still be recorded.','warning');
-      renderAttendance();$('downloadAttendanceBtn').disabled=attendance.rows.length===0;
-    }catch(e){if(state.attendance?.id!==id)return;state.attendance.loading=false;$('attendanceSummary').textContent='Roster unavailable';message('attendanceStatus',readableError(e,'Could not load the class roster. Close and reopen Attendance to retry.'),'error');}
+      const records=results[1].status==='fulfilled'?new Map(results[1].value.docs.map(d=>[d.id,d.data()])):new Map();
+      const attendance=state.attendance;attendance.canWrite=results[1].status==='fulfilled';attendance.loading=false;
+      if(results[2].status==='fulfilled'&&results[2].value.exists)
+        attendance.m=results[2].value.data();
+      attendance.rows=results[0].value.docs.map(doc=>{
+        const d=doc.data(),record=records.get(doc.id)||{};
+        return {id:doc.id,name:String(d.name||'Student'),
+          roll:String(d.rollNo??d.rollNumber??d.roll??''),
+          record,status:['present','absent'].includes(record.status)?record.status:'',
+          recorded:records.has(doc.id)};
+      }).sort((a,b)=>a.roll.localeCompare(b.roll,undefined,{numeric:true})||a.name.localeCompare(b.name));
+      if(!attendance.canWrite)message('attendanceNotice','Attendance records cannot be read or saved with your current school permissions.','warning');
+      else if(!zoomSession(attendance.m).verified)
+        message('attendanceNotice','Verified Zoom meeting start/end events are not yet available for this class. Automatic Present/Absent is pending. You may still mark attendance manually.','warning');
+      renderAttendance();
+      $('downloadAttendanceBtn').disabled=!attendance.rows.length;
+    }catch(e){
+      if(state.attendance?.id!==id)return;
+      state.attendance.loading=false;$('attendanceSummary').textContent='Roster unavailable';
+      message('attendanceStatus',readableError(e,'Could not load the class attendance.'),'error');
+    }
   }
   function renderAttendance(){
     const a=state.attendance;if(!a)return;
     const body=$('attendanceRows');body.replaceChildren();
     for(const row of a.rows){
-      const tr=make('tr'),log=make('td',null,'log-cell'),select=make('select');
-      if(a.joinAvailable&&row.log.at){
-        log.append(make('span',formatDateTime(row.log.at)),document.createElement('br'),make('span',row.log.label));
-      }else log.textContent=a.joinAvailable?row.log.label:'Join records unavailable';
-      const timing=clickPunctuality(a.m,row.log,a.joinAvailable);
-      const clickCell=make('td',timing.label,'click-status '+timing.kind);
-      select.setAttribute('aria-label','Teacher-confirmed attendance for '+row.name);
+      const info=zoomAttendance(a.m,row),tr=make('tr'),select=make('select');
+      select.setAttribute('aria-label','Teacher override for '+row.name);
       select.disabled=!a.canWrite||state.attendanceSaving;
-      for(const [value,label] of [['','Not marked'],['present','Present'],['absent','Absent']])select.add(new Option(label,value));
+      for(const [value,label] of [['','Automatic'],['present','Present'],['absent','Absent']])
+        select.add(new Option(label,value));
       select.value=a.changes.has(row.id)?a.changes.get(row.id):row.status;
-      select.onchange=()=>{if(select.value===row.status)a.changes.delete(row.id);else a.changes.set(row.id,select.value);updateAttendanceSummary();};
-      const teacherCell=make('td');teacherCell.append(select);
-      tr.append(make('td',row.roll||'—'),make('td',row.name,'student-name'),log,clickCell,teacherCell);
+      select.onchange=()=>{
+        if(select.value===row.status)a.changes.delete(row.id);
+        else a.changes.set(row.id,select.value);
+        updateAttendanceSummary();
+        // Refresh the status cell immediately, without rebuilding dropdowns.
+        const now=zoomAttendance(a.m,row);
+        statusCell.textContent=now.statusText+(now.manual?' (Teacher)':'');
+        statusCell.className='attendance-status '+now.final;
+      };
+      const statusCell=make('td',info.statusText+(info.manual?' (Teacher)':''),'attendance-status '+info.final);
+      const overrideCell=make('td');overrideCell.append(select);
+      const details=make('button','Details','btn secondary');details.type='button';
+      details.onclick=()=>openZoomAttendanceDetails(row.id);
+      const detailCell=make('td');detailCell.append(details);
+      tr.append(make('td',row.roll||'—'),make('td',row.name,'student-name'),
+        make('td',Number.isFinite(info.first)?formatTime(info.first):'—'),
+        make('td',info.durationText,'attendance-duration'),statusCell,overrideCell,detailCell);
       body.append(tr);
     }
-    if(!a.rows.length){const td=make('td','No students were found in this section.');td.colSpan=5;const tr=make('tr');tr.append(td);body.append(tr);}
+    if(!a.rows.length){
+      const td=make('td','No students were found in this section.');td.colSpan=7;
+      const tr=make('tr');tr.append(td);body.append(tr);
+    }
     Dropdowns.refresh();updateAttendanceSummary();
   }
   function updateAttendanceSummary(){
     const a=state.attendance;if(!a)return;
-    const statuses=a.rows.map(row=>a.changes.has(row.id)?a.changes.get(row.id):row.status);
-    const present=statuses.filter(s=>s==='present').length,absent=statuses.filter(s=>s==='absent').length;
-    const kinds=a.rows.map(row=>clickPunctuality(a.m,row.log,a.joinAvailable).kind);
-    const count=kind=>kinds.filter(k=>k===kind).length;
-    $('attendanceSummary').textContent=a.rows.length+' students · Website clicks: '+count('early')+' early, '+count('ontime')+' on time, '+count('late')+' late, '+count('none')+' no click, '+count('unknown')+' unknown · Teacher-confirmed: '+present+' present, '+absent+' absent, '+(a.rows.length-present-absent)+' not marked';
+    const results=a.rows.map(row=>zoomAttendance(a.m,row));
+    const count=status=>results.filter(r=>r.final===status).length;
+    const overridden=results.filter(r=>r.manual).length;
+    $('attendanceSummary').textContent=a.rows.length+' students · '+count('present')+
+      ' present · '+count('absent')+' absent · '+(count('unverified')+count('pending'))+
+      ' unverified/pending · '+overridden+' teacher overrides · Seven-minute allowance';
     $('saveAttendanceBtn').disabled=!a.canWrite||!a.changes.size||state.attendanceSaving;
     $('saveAttendanceBtn').textContent=state.attendanceSaving?'Saving…':'Save Attendance';
     $('refreshJoinBtn').disabled=a.loading||state.attendanceRefreshing||!state.user;
-    $('refreshJoinBtn').textContent=state.attendanceRefreshing?'Refreshing…':'Refresh Join Times';
+    $('refreshJoinBtn').textContent=state.attendanceRefreshing?'Refreshing…':'Refresh Attendance';
   }
   async function refreshJoinTimes(){
     const a=state.attendance,user=state.user;
     if(!a||a.loading||state.attendanceRefreshing||!user)return;
     state.attendanceRefreshing=true;updateAttendanceSummary();
     try{
-      const snap=await db.collection('meetings').doc(a.id).collection('participants').get();
+      const ref=db.collection('meetings').doc(a.id);
+      const [session,records]=await Promise.all([ref.get(),ref.collection('attendance').get()]);
       if(state.attendance!==a||state.user!==user)return;
-      const logs=new Map(snap.docs.map(doc=>[doc.id,doc.data()]));
-      for(const row of a.rows)row.log=websiteLog(logs.get(row.id));
-      a.joinAvailable=true;
+      if(session.exists)a.m=session.data();
+      const map=new Map(records.docs.map(doc=>[doc.id,doc.data()]));
+      for(const row of a.rows){
+        row.record=map.get(row.id)||{};
+        row.status=['present','absent'].includes(row.record.status)?row.record.status:'';
+        row.recorded=map.has(row.id);
+      }
       renderAttendance();
-      message('attendanceStatus','Join times updated. Unsaved teacher attendance selections were preserved.','success');
+      message('attendanceNotice',zoomSession(a.m).verified?'':'Verified Zoom meeting start/end data is not available yet. Only teacher overrides can establish attendance until Zoom event delivery is configured.',zoomSession(a.m).verified?'':'warning');
+      message('attendanceStatus','Attendance refreshed. Unsaved teacher selections are preserved.','success');
     }catch(e){
-      if(state.attendance===a)message('attendanceStatus',readableError(e,'Could not refresh website Join times. Previously loaded times are unchanged.'),'warning');
+      if(state.attendance===a)message('attendanceStatus',readableError(e,'Could not refresh attendance.'),'warning');
     }finally{
       state.attendanceRefreshing=false;
       if(state.attendance===a)updateAttendanceSummary();
     }
+  }
+  function openZoomAttendanceDetails(studentId){
+    const a=state.attendance,row=a?.rows.find(x=>x.id===studentId);if(!row)return;
+    const info=zoomAttendance(a.m,row),body=$('zoomAttendanceDetailBody');
+    $('zoomAttendanceDetailTitle').textContent=row.name+' · Zoom history';
+    body.replaceChildren();
+    body.append(make('p','Roll: '+(row.roll||'—')+' · Final status: '+info.statusText+
+      (info.manual?' (Teacher override)':'')+' · '+info.durationText,'small'));
+    if(!info.raw.length){
+      body.append(make('p','No verified Zoom entry/exit events for this student. A website Join click does not count as attendance.','muted'));
+    }else{
+      info.raw.forEach((event,index)=>{
+        const el=make('div',null,'history-row');
+        el.append(make('strong','Entry '+(index+1)),make('p','Entered: '+formatDateTime(event.start)));
+        el.append(make('p','Exited: '+(Number.isFinite(event.end)?formatDateTime(event.end):'Exit not recorded')));
+        if(Number.isFinite(event.end)&&event.end>=event.start)
+          el.append(make('p','Time in this entry: '+minutesText(event.end-event.start)));
+        if(event.reason)el.append(make('p','Reason: '+event.reason,'small muted'));
+        body.append(el);
+      });
+    }
+    body.append(make('p','Only verified Zoom meeting entries and exits are counted. Minimizing another app is not visible unless Zoom actually disconnects.','bottom-note'));
+    $('zoomAttendanceDetailDialog').showModal();
   }
   async function saveAttendance(){
     const a=state.attendance,user=state.user;if(!a||!a.canWrite||!a.changes.size||!user||state.attendanceSaving)return;
