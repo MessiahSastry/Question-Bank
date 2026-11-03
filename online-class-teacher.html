@@ -52,6 +52,16 @@
 </header>
   <main>
     <div id="authNotice" class="notice" role="status" aria-live="polite">Checking your teacher sign-in…</div>
+    <section id="teacherLoginPanel" class="panel" aria-label="School teacher sign-in" hidden style="max-width:480px;margin:0 auto 20px">
+      <h2>Sign in with your school account</h2>
+      <p class="hint">Use your existing CampusConnect email address and password. No new account is required.</p>
+      <form id="teacherLoginForm" autocomplete="on">
+        <div class="field"><label for="teacherLoginEmail">School email</label><input id="teacherLoginEmail" type="email" autocomplete="username" required></div>
+        <div class="field"><label for="teacherLoginPassword">Password</label><input id="teacherLoginPassword" type="password" autocomplete="current-password" required></div>
+        <button id="teacherLoginSubmit" type="submit" class="btn">Sign In</button>
+      </form>
+      <div id="teacherLoginMessage" class="message" role="status" aria-live="polite"></div>
+    </section>
     <div class="grid">
       <section class="panel" aria-labelledby="editorTitle">
         <div class="panel-head"><div><h2 id="editorTitle">Create Online Class</h2><div class="muted small">Schedule each class or section separately.</div></div><span id="editorBadge" class="badge">New session</span></div>
@@ -566,9 +576,13 @@
     }
     state.meetings.clear();state.listReady=false;
     if(!state.user){
-      $('authNotice').hidden=false;$('authNotice').className='notice warning';$('authNotice').textContent='Please sign in through your CampusConnect teacher account, then reopen this page.';
+      const sameOriginSchool=location.origin==='https://stpatricks-questionbank.web.app';
+      $('teacherLoginPanel').hidden=!sameOriginSchool;
+      $('authNotice').hidden=sameOriginSchool;
+      $('authNotice').className='notice warning';$('authNotice').textContent='Please sign in through your CampusConnect teacher account, then reopen this page.';
       $('meetingList').replaceChildren(make('div','Your classes are visible after teacher sign-in.','empty'));$('listSummary').textContent='Teacher sign-in required';refreshControls();return;
     }
+    $('teacherLoginPanel').hidden=true;
     $('authNotice').hidden=true;$('authNotice').textContent='';
     refreshControls();
     const profile=await Promise.allSettled([db.collection('users').doc(user.uid).get(),db.collection('users').doc(user.uid).collection('settings').doc('zoom').get()]);
@@ -744,6 +758,25 @@
     $('sectionSel').addEventListener('change',refreshControls);
     $('newBtn').onclick=newClass;$('shareBtn').onclick=()=>shareClass(state.editingId);$('startBtn').onclick=()=>startClass(state.editingId);
     $('connectZoomBtn').onclick=connectMyZoomAccount;
+    $('teacherLoginForm').addEventListener('submit',async event=>{
+      event.preventDefault();
+      if(!auth||state.user)return;
+      const button=$('teacherLoginSubmit');
+      button.disabled=true;
+      message('teacherLoginMessage','Signing in to your school account…');
+      try{
+        await auth.signInWithEmailAndPassword(
+          $('teacherLoginEmail').value.trim(),
+          $('teacherLoginPassword').value
+        );
+        $('teacherLoginPassword').value='';
+        message('teacherLoginMessage','Signed in successfully.','success');
+      }catch(error){
+        message('teacherLoginMessage','Could not sign in. Check your school email and password.','error');
+      }finally{
+        button.disabled=false;
+      }
+    });
     $('refreshBtn').onclick=watchMeetings;$('listDate').addEventListener('change',renderMeetings);$('previousDayBtn').onclick=()=>stepDate(-1);$('nextDayBtn').onclick=()=>stepDate(1);$('todayBtn').onclick=()=>{$('listDate').value=dateParts().date;renderMeetings();};
     $('closeShareBtn').onclick=()=>$('shareDialog').close();$('copyBtn').onclick=copyMessage;
     $('closeAttendanceBtn').onclick=closeAttendance;$('attendanceDialog').addEventListener('cancel',e=>{e.preventDefault();closeAttendance();});$('saveAttendanceBtn').onclick=saveAttendance;$('downloadAttendanceBtn').onclick=downloadAttendance;
