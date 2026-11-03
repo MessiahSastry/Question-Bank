@@ -307,6 +307,15 @@
   function normalizePhone(raw){let digits=String(raw??'').replace(/\D/g,'');if(digits.length===12&&digits.startsWith('91'))digits=digits.slice(2);else if(digits.length===11&&digits.startsWith('0'))digits=digits.slice(1);return digits.length===10?digits:'';}
 function uiError(text){const e=new Error(text);e.userMessage=text;return e;}
   function readableError(e,fallback){const code=String(e&&e.code||'');if(code.includes('permission-denied'))return 'The school app could not allow this action. Contact your teacher if trying again does not help.';if(code.includes('unavailable')||code.includes('network-request-failed'))return 'Connection unavailable. Check your internet and try again.';if(code.includes('operation-not-allowed'))return 'Student access is not enabled. Please contact your teacher.';return e&&e.userMessage||fallback;}
+  function authStartError(e){
+    const code=String(e?.code||'').toLowerCase();
+    if(code==='auth/too-many-requests'||code==='auth/quota-exceeded')return 'Too many student sign-in attempts. Firebase has temporarily restricted sign-in. Please contact your teacher. ('+code+')';
+    if(code==='auth/operation-not-allowed'||code==='auth/admin-restricted-operation')return 'Firebase anonymous student sign-in is disabled. The school administrator needs to check Firebase Authentication. ('+code+')';
+    if(code==='auth/network-request-failed'||code==='auth/timeout')return 'Student sign-in could not reach Firebase. Check your internet connection and open the class link in Chrome. ('+code+')';
+    if(code==='auth/unauthorized-domain'||code==='auth/app-not-authorized')return 'This website is not authorised for Firebase student access. Contact the school administrator. ('+code+')';
+    if(code==='auth/internal-error')return 'Firebase could not finish signing in. Open the class link in Chrome and retry. ('+code+')';
+    return 'Student sign-in failed. Open this class link directly in Chrome and try again.'+(code?' (Error: '+code+')':' (Unknown Firebase authentication error)');
+  }
   function message(id,text,type=''){const el=$(id);el.textContent=text||'';el.className='message'+(type?' '+type:'');}
   function withDeadline(promise,text='The connection is taking too long. Please try again.',limit=15000){let timer;return Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(uiError(text)),limit);})]).finally(()=>clearTimeout(timer));}
   function scopeFingerprint(m){return JSON.stringify([meetingYear(m),m.classId||'',m.sectionId||'',m.class||'',m.section||'']);}
@@ -450,7 +459,7 @@ StudentDropdown.refresh();
       if(state.authAttempted){state.loading=false;state.loadError='Your student session needs to reconnect. Please tap Try Again.';render();return;}
       state.authAttempted=true;state.signingIn=true;state.loading=true;render();
       try{const credential=await withDeadline(auth.signInAnonymously(),'Student access is taking too long. Please try again.');if(!state.user&&credential?.user)await handleAuth(credential.user);}
-      catch(e){state.loading=false;state.loadError=readableError(e,'Could not start student access. Check your connection and try again.');render();}
+      catch(e){console.warn('Student Firebase sign-in failed:',String(e?.code||'unknown'));state.loading=false;state.loadError=authStartError(e);render();}
       finally{state.signingIn=false;}
       return;
     }
