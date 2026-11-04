@@ -171,13 +171,15 @@
     <section class="card" style="margin-top:18px">
       <h2 id="reportTitle">Student Performance</h2>
       <p class="sub" id="reportInfo">Select a quiz to view its results. Only recorded scores are displayed.</p>
-      <div class="scroll"><table><thead><tr><th>Section</th><th class="num">Roll</th><th>Student Name</th><th class="num">Rank</th><th class="num">Marks</th><th class="num">Percentage</th><th class="num">Attempts</th><th class="num">Time</th><th class="num">Final Points (80+20)</th><th>Status</th></tr></thead><tbody id="resultsBody"><tr><td colspan="10" class="muted">No quiz selected.</td></tr></tbody></table></div>
+      <div class="scroll"><table><thead><tr><th>Section</th><th class="num">Roll</th><th>Student Name</th><th class="num">Rank</th><th class="num">Marks</th><th class="num">Percentage</th><th class="num">Attempts</th><th class="num">Time</th><th class="num">Final Marks (80+20)</th><th>Status</th></tr></thead><tbody id="resultsBody"><tr><td colspan="10" class="muted">No quiz selected.</td></tr></tbody></table></div>
       <p class="note">
 Students are displayed by section and roll number.
 Ranking is calculated across the entire class using
 80% accuracy and 20% completion speed.
 Only the first recorded official attempt counts; practice attempts do not change ranks.
-Final Points = 80% accuracy + 20% speed (60 seconds per question).
+Final Marks are out of the quiz total: 80% actual marks + 20% speed marks.
+Full speed marks for completion within 12 seconds/question (3 minutes for 15 questions);
+no speed marks at 60 seconds/question or longer.
 Rankings are provisional and may change as more students attempt the quiz.
 The school roster is checked to identify students who have not attempted.
 </p>
@@ -619,32 +621,29 @@ function sectionRollSort(a,b) {
   return av.localeCompare(bv,undefined,{numeric:true})||
     String(a.name||'').localeCompare(String(b.name||''));
 }
-function rankingPoints(row, max) {
-  if (!max) return 0;
+function finalQuizMarks(row, max) {
+  if (!Number.isFinite(max) || max <= 0) return 0;
 
-  // Accuracy contributes 80%.
-  const accuracy = Math.max(
-    0,
-    Math.min(100, (row.score / max) * 100)
-  );
+  // The 80:20 result is MARKS OUT OF max, not points out of 100.
+  // For 15 questions: 12 academic marks + up to 3 speed marks.
+  const actualMarks = Math.max(0, Math.min(max, Number(row.score) || 0));
+  const academicMarks = actualMarks * 0.80;
 
-  // Speed contributes 20%.
   // Reference time: 60 seconds per question.
+  // Full speed credit: within 12 seconds per question (3 min / 15 Q).
+  // Speed credit declines linearly from the target time to the reference
+  // time, and stops at 0 after the reference time.
+  const targetSeconds = max * 12;
   const referenceSeconds = max * 60;
+  const elapsed = Number(row.time);
+  const speedRatio = Number.isFinite(elapsed) && elapsed > 0
+    ? Math.max(0, Math.min(1,
+        (referenceSeconds - elapsed) / (referenceSeconds - targetSeconds)
+      ))
+    : 0;
+  const speedMarks = max * 0.20 * speedRatio;
 
-  const speed =
-    Number.isFinite(row.time) && row.time > 0
-      ? Math.max(
-          0,
-          100 * (
-            1 - Math.min(row.time, referenceSeconds)
-                / referenceSeconds
-          )
-        )
-      : 0;
-
-  // Rank using the same two-decimal precision displayed to teachers.
-  return Number((accuracy * 0.80 + speed * 0.20).toFixed(2));
+  return Number(Math.min(max, academicMarks + speedMarks).toFixed(2));
 }
 
 function buildRows(attempts) {
@@ -658,14 +657,15 @@ function buildRows(attempts) {
     const score=Number(best.score||0);
     return {key,studentId:best.studentId||'',name:best.name||'Student',cls:best.class||app.currentQuiz?.class||'',section:best.section||'',roll:best.roll??'',score,percent:max?score/max*100:0,attempts:items.length,time:getAttemptTime(best),completed:true};
   });
-    // Calculate final ranking points for every student.
+    // Calculate final marks (out of the quiz total) for every student.
   rows.forEach(r => {
-    r.rankPoints = rankingPoints(r, max);
+    r.finalMarks = finalQuizMarks(r, max);
   });
 
-  // Rank by combined accuracy and speed.
+  // Rank by combined marks and speed, with academic marks then time
+  // used to break ties in the displayed two-decimal final marks.
   const byRank = [...rows].sort((a, b) =>
-    (b.rankPoints - a.rankPoints) ||
+    (b.finalMarks - a.finalMarks) ||
     (b.score - a.score) ||
     ((a.time ?? Infinity) - (b.time ?? Infinity)) ||
     a.name.localeCompare(b.name)
@@ -676,7 +676,7 @@ function buildRows(attempts) {
 
     row.rank =
       prev &&
-      prev.rankPoints === row.rankPoints &&
+      prev.finalMarks === row.finalMarks &&
       prev.score === row.score &&
       prev.time === row.time
         ? prev.rank
@@ -718,7 +718,7 @@ function renderRows() {
     cell(tr, r.completed ? `${r.percent.toFixed(1)}%` : '—', 'num');
     cell(tr, r.completed ? r.attempts : 0, 'num');
     cell(tr, r.completed ? seconds(r.time) : '—', 'num');
-    cell(tr, r.completed ? r.rankPoints.toFixed(2) : '—', 'num');
+    cell(tr, r.completed ? `${r.finalMarks.toFixed(2)}/${app.currentQuiz.totalQuestions || app.currentQuiz.questions?.length || '?'}` : '—', 'num');
 
     const s = cell(tr, '');
     const span = document.createElement('span');
@@ -884,7 +884,7 @@ async function shareWhatsAppReport(kind) {
       ? leaders.map(r =>
           `${medals[r.rank] || '🏅'} Rank ${r.rank}: ${r.name} (${r.section || 'Section not set'})\n` +
           `Score: ${r.score}/${total} | Time: ${seconds(r.time)}\n` +
-          `Ranking Points: ${r.rankPoints.toFixed(2)}`
+          `Final Marks (80+20): ${r.finalMarks.toFixed(2)}/${total}`
         ).join('\n\n')
       : 'No ranks available yet.';
 
@@ -994,11 +994,12 @@ async function loadQuizResultsPdfLibrary() {
   if (window.jspdf?.jsPDF) return window.jspdf.jsPDF;
   await new Promise((resolve, reject) => {
     const script = document.createElement('script');
-    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.2/jspdf.umd.min.js';
+    // Bundled with this site: no reliance on a third-party PDF CDN.
+    script.src = new URL('vendor/jspdf.umd.min.js', document.baseURI).href;
     script.onload = resolve;
     script.onerror = () => {
       script.remove();
-      reject(new Error('PDF generator could not load. Check the internet connection and retry.'));
+      reject(new Error('School PDF module could not load. Refresh the page and try again.'));
     };
     document.head.appendChild(script);
   });
@@ -1036,7 +1037,7 @@ async function downloadResultsPdf() {
     }).format(new Date());
     // Compact portrait columns. Preserve all report fields without clipping.
     const colWidths = [62,32,154,56,58,73,36,61];
-    const headings = ['Section','Roll','Student Name','Marks','Time Taken','Final Points','Rank','Status'];
+    const headings = ['Section','Roll','Student Name','Marks','Time Taken','Final Marks','Rank','Status'];
     const xs = [left];
     colWidths.forEach(w => xs.push(xs[xs.length - 1] + w));
     const tableRight = xs[xs.length - 1];
@@ -1059,7 +1060,7 @@ async function downloadResultsPdf() {
         'Subject: '+String(quiz.subject||'—')+'     Chapter: '+String(quiz.chapter||'—'),
         'Questions: '+total+'     Attempted: '+attempted+'     Not attempted: '+(rows.length-attempted)+
           '     Generated: '+generated+' IST',
-        'Final Points = 80% marks accuracy + 20% speed (60 seconds per question). First official attempt only.'
+        'Final Marks = 80% actual marks + 20% speed marks; full speed at 12 seconds/question. First attempt only.'
       ];
       let y = 84;
       for (const textValue of meta) {
@@ -1088,7 +1089,7 @@ async function downloadResultsPdf() {
         row.name || 'Student',
         row.completed ? String(row.score)+'/'+total : '—',
         row.completed ? seconds(row.time) : '—',
-        row.completed ? Number(row.rankPoints).toFixed(2) : '—',
+        row.completed ? Number(row.finalMarks).toFixed(2)+'/'+total : '—',
         row.completed ? String(row.rank) : '—',
         row.completed ? 'Attempted' : 'Not Attempted'
       ];
@@ -1134,7 +1135,7 @@ async function downloadResultsPdf() {
       pdfFilenamePart(year)
     ].join('_')+'.pdf';
     doc.save(filename);
-    status('PDF created: marks, time, final 80+20 points and class-wide ranks.', 'success');
+    status('PDF created: marks, time, final 80+20 marks and class-wide ranks.', 'success');
   } catch (error) {
     console.error('Unable to generate quiz PDF:',error);
     status('PDF could not be created: '+(error.message||'Unknown error'), 'error');
@@ -1151,11 +1152,11 @@ function safeCsv(value){
 function exportCsv(){
    if(!app.currentQuiz||!visibleRows().length)return;
   const total=app.currentQuiz.totalQuestions||app.currentQuiz.questions?.length||'';
-  const headers=['Section','Roll','Student Name','Rank','Marks','Percentage','Attempts','Time','Final Points (80+20)','Status','Academic Year','Class','Subject','Chapter','Quiz ID'];
+  const headers=['Section','Roll','Student Name','Rank','Marks','Percentage','Attempts','Time','Final Marks (80+20)','Status','Academic Year','Class','Subject','Chapter','Quiz ID'];
     const lines=[headers,...visibleRows().map(r=>[
     r.section,r.roll,r.name,r.completed?r.rank:'—',r.completed?`${r.score}/${total}`:'—',
     r.completed?`${r.percent.toFixed(1)}%`:'—',r.completed?r.attempts:0,
-    r.completed?seconds(r.time):'—',r.completed?r.rankPoints.toFixed(2):'—',r.completed?'Attempted':'Not Attempted',
+    r.completed?seconds(r.time):'—',r.completed?`${r.finalMarks.toFixed(2)}/${total}`:'—',r.completed?'Attempted':'Not Attempted',
     $('year').value.trim(),r.cls,app.currentQuiz.subject,app.currentQuiz.chapter,app.currentQuiz.id
   ])];
   const csv='\ufeff'+lines.map(row=>row.map(safeCsv).join(',')).join('\r\n');
