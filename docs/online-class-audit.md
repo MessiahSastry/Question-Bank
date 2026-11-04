@@ -108,10 +108,12 @@ Those need an isolated integration test after the configuration review.
 
 ## Release blockers and residual risks
 
-1. **Live Firestore rules are absent and unverified.** Review the real source and
-   [the required access matrix](../zoom-functions/FIRESTORE_REVIEW.md). Clients must
-   not write server evidence, token records or tag mappings. Do not deploy guessed
-   blanket rules because the database serves unrelated school applications.
+1. **Existing Firebase/Firestore rules remain unchanged by owner instruction.**
+   No rule export, replacement or deployment is required for this work. The live
+   rules were not inspected, so their database-level protection is unverified.
+   [The access matrix](../zoom-functions/FIRESTORE_REVIEW.md) is informational,
+   not a rule-change requirement. Backend checks do not establish that existing
+   direct browser database permissions are restricted; this audit makes no such claim.
 2. **Approve existing teacher accounts before rollout.** Use trusted server-issued
    claims and refresh staff tokens. This branch did not modify authentication data.
 3. **Parent-mobile entry is self-identification.** Ownership and anonymous roster
@@ -140,8 +142,9 @@ Those need an isolated integration test after the configuration review.
 
 ## Deployment requirements and review boundary
 
-Read the current setup documentation, verify the rules, teacher claims, four Zoom
-secrets, event subscription/scopes, OAuth redirect and GitHub deployment identity.
+Keep the existing Firebase/Firestore rules unchanged. Read the current setup
+documentation and verify teacher claims, the four Zoom secrets, event
+subscription/scopes, OAuth redirect and GitHub deployment identity.
 Test two teacher accounts and a synthetic roster, including sibling selection,
 two devices for one student, disconnection, missing exit, delayed events, early end,
 manual override and PDF download. Keep automatic absence Pending when verification

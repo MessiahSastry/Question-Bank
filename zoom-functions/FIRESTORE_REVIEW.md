@@ -1,17 +1,18 @@
-# Firestore review required before rollout
+# Existing Firestore rules remain unchanged
 
-The deployed Firestore rules are not present in this repository and were not
-retrieved during this audit. No rules or production data were changed. This
-document is a review specification, not a deployable replacement ruleset.
+The owner has instructed that the existing Firebase/Firestore rules must remain
+unchanged. This work does not request an export, replacement or deployment of
+rules. No existing rules or production data have been changed.
 
-Export the actual deployed rules into version control, retain the unrelated
-applications' behaviour, and test the merged rules with the Firestore emulator
-before owner-approved deployment. A narrow deny does **not** override a broader
-allow: every matching rule must be reviewed.
+The live rules were not inspected and are absent from this repository. This
+file records the access boundaries considered during the audit; it is not a
+deployable ruleset, a rollout requirement or an instruction to modify permissions.
+Backend authorization checks apply to the service endpoints, but cannot establish
+that direct browser database access is restricted by the existing rules.
 
-## Required access boundaries
+## Informational access matrix
 
-| Path or field group | Required boundary |
+| Path or field group | Boundary described by the audit |
 | --- | --- |
 | `zoomTeacherCredentials/{uid}` | No browser reads or writes. Only trusted server SDKs may access encrypted tokens or refresh locks. |
 | `zoomOAuthPending/{stateHash}` | No browser reads or writes. Server owns signed one-use OAuth state. |
@@ -28,34 +29,18 @@ allow: every matching rule must be reviewed.
 
 ## Student lookup limitation
 
-The current online-class frontend resolves its class/section and directly reads
-matching full student documents by the entered parentPhone. It can use anonymous
-Firebase sessions. The SDK backend independently validates the selected roster
-student and parent number, but this does not prove ownership of that phone.
+The current student frontend directly queries matching full student documents by
+the entered parent mobile number and can use anonymous Firebase sessions. The SDK
+backend independently validates the selected student and number, while phone
+ownership and the live rules' permission boundaries remain unverified.
 
-The exact permissions currently granted to anonymous clients remain unverified.
-Do not claim that the UI's query filter prevents a different query, or that a
-Firebase API key is a security boundary. For stronger data minimization, move
-lookup to a rate-limited backend returning only the necessary student IDs,
-names and rolls, and remove direct anonymous access to full roster records.
-Review the quiz's existing lookup dependencies before changing shared roster
-permissions. This branch intentionally does not alter the quiz system.
+The existing parent-mobile login, quiz access and Firebase rules are preserved.
+No Child ID or OTP is introduced. Zoom Waiting Room admission and teacher review
+remain part of the existing flow. Future changes to lookup or database permissions
+are outside this work and would require a separate request.
 
-Child ID and OTP have not been introduced. Zoom Waiting Room admission remains
-necessary; parent-mobile self-identification and a display-name attendance tag
-are not strong identity authentication. Participant-only SDK signatures do not
-confer teacher access.
+## Verification limits
 
-## Required rule tests once the real source is available
-
-Test unauthenticated, anonymous, self-registered email, approved teacher, another
-teacher, and administrator sessions. Verify private collections are denied to
-all browser roles; only an approved owner may edit schedules/overrides/confirmation;
-server fields cannot be forged or deleted; lookup exposes no unrelated roster
-data; and the existing quiz/other school applications retain their authorised
-behaviour. The current offline application tests do not validate deployed rules.
-
-References:
-- https://firebase.google.com/docs/firestore/security/rules-structure
-- https://firebase.google.com/docs/firestore/security/rules-query
-- https://firebase.google.com/docs/auth/admin/custom-claims
+The offline application tests validate backend and page behaviour. They do not
+validate deployed rules or prove that browser clients cannot bypass page controls.
+No claim that existing rule protections were verified is made.

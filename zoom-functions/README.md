@@ -62,11 +62,14 @@ modular Firebase Admin APIs.
 
 ## Deployment boundary
 
-Review [the audit](../docs/online-class-audit.md) and
-[Firestore requirements](FIRESTORE_REVIEW.md) before rollout.
-Production Firestore rules are absent from this repository, and `firebase.json`
-also references a default `functions/` directory that is not present. Do not
-publish guessed rules or run a blanket Firebase deployment.
+Review [the audit](../docs/online-class-audit.md) before rollout.
+**Keep the existing Firebase/Firestore rules unchanged, as instructed by the owner.**
+No rule replacement, rule deployment or export of live rules is required for this
+work. [The access notes](FIRESTORE_REVIEW.md) record unverified security boundaries;
+they are informational, not instructions to change rules.
+
+`firebase.json` references a default `functions/` directory that is not present.
+Do not run a blanket Firebase deployment.
 
 After the owner approves rollout and the documented prerequisites are met,
 deploy only the `zoom` functions codebase and the intended Hosting files.

@@ -13,7 +13,8 @@ not access secret values or change the Zoom app.
 3. Subscribe to `meeting.started`, `meeting.ended`,
    `meeting.participant_joined` and `meeting.participant_left` for the teachers'
    installed Zoom app. Validate the endpoint and reauthorize scopes if required.
-4. Protect the server collections and metadata described in `FIRESTORE_REVIEW.md`.
+4. Keep the existing Firebase/Firestore rules unchanged. The access notes in
+   `FIRESTORE_REVIEW.md` are informational and do not require rule changes.
 5. Use a designated test teacher and synthetic/test roster to check joining,
    admission, disconnect/rejoin, an early meeting end, delayed records, overrides
    and PDF download. Measure webhook acknowledgement latency for a 40-45 student class.
