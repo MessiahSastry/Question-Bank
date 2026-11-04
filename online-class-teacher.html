@@ -99,7 +99,7 @@
   </main>
   <dialog id="appDialog" aria-labelledby="appDialogTitle"><div class="dialog-head"><h2 id="appDialogTitle">CampusConnect</h2></div><div class="dialog-body"><p id="appDialogText" class="dialog-text"></p><div class="buttons"><button id="dialogBackBtn" class="btn secondary" type="button">Go back</button><button id="dialogOKBtn" class="btn" type="button">Continue</button></div></div></dialog>
   <dialog id="shareDialog" aria-labelledby="shareTitle"><div class="dialog-head"><h2 id="shareTitle">Share class invitation</h2><button id="closeShareBtn" class="dialog-close" type="button" aria-label="Close sharing">×</button></div><div class="dialog-body"><label for="shareText" class="small">Message preview</label><textarea id="shareText" class="share-text" readonly></textarea><div class="buttons"><button id="copyBtn" class="btn secondary" type="button">Copy Message</button><a id="whatsAppLink" class="btn whatsapp" target="_blank" rel="noopener noreferrer">Open WhatsApp</a></div><div id="shareStatus" class="message" role="status" aria-live="polite"></div></div></dialog>
-  <dialog id="attendanceDialog" class="attendance-dialog" aria-labelledby="attendanceTitle"><div class="dialog-head"><h2 id="attendanceTitle">Class attendance</h2><button id="closeAttendanceBtn" class="dialog-close" type="button" aria-label="Close attendance">×</button></div><div class="dialog-body"><div id="attendanceContext" class="small muted"></div><div id="attendanceNotice" class="message"></div><p id="attendanceSummary" class="attendance-summary"></p><div class="table-scroll"><table><thead><tr><th scope="col">Roll</th><th scope="col">Student</th><th scope="col">Join time</th><th scope="col">Time spent</th><th scope="col">Status</th><th scope="col">Teacher override</th><th scope="col">Details</th></tr></thead><tbody id="attendanceRows"></tbody></table></div><div class="buttons"><button id="saveAttendanceBtn" class="btn" type="button" disabled>Save Attendance</button><button id="refreshJoinBtn" class="btn secondary" type="button" disabled>Refresh Attendance</button><button id="downloadAttendanceBtn" class="btn secondary" type="button" disabled>Download PDF</button></div><div id="attendanceStatus" class="message" role="status" aria-live="polite"></div><p class="bottom-note">Automatic attendance uses verified Zoom entry/exit events and the actual class duration, allowing seven minutes away. Students without sufficient evidence appear as Unverified. Teachers can override Present or Absent, and the PDF uses the final result. Switching apps cannot be detected by Zoom webhooks unless it disconnects the student.</p></div></dialog>
+  <dialog id="attendanceDialog" class="attendance-dialog" aria-labelledby="attendanceTitle"><div class="dialog-head"><h2 id="attendanceTitle">Class attendance</h2><button id="closeAttendanceBtn" class="dialog-close" type="button" aria-label="Close attendance">×</button></div><div class="dialog-body"><div id="attendanceContext" class="small muted"></div><div id="attendanceNotice" class="message"></div><p id="attendanceSummary" class="attendance-summary"></p><div class="table-scroll"><table><thead><tr><th scope="col">Roll</th><th scope="col">Student</th><th scope="col">Join time</th><th scope="col">Time spent</th><th scope="col">Status</th><th scope="col">Teacher override</th><th scope="col">Details</th></tr></thead><tbody id="attendanceRows"></tbody></table></div><div class="buttons"><button id="saveAttendanceBtn" class="btn" type="button" disabled>Save Attendance</button><button id="refreshJoinBtn" class="btn secondary" type="button" disabled>Refresh Attendance</button><button id="downloadAttendanceBtn" class="btn secondary" type="button" disabled>Download PDF</button></div><div id="attendanceStatus" class="message" role="status" aria-live="polite"></div><p class="bottom-note">Attendance uses verified Zoom entry/exit events and the actual class duration, with a seven-minute allowance. Once the class is verified as complete, a student with no recorded join is Absent (0 minutes). Pending means verification is not complete. Teachers can override the final status.</p></div></dialog>
   <dialog id="zoomAttendanceDetailDialog" aria-labelledby="zoomAttendanceDetailTitle"><div class="dialog-head"><h2 id="zoomAttendanceDetailTitle">Student entry / exit history</h2><button id="closeDetailBtn" class="dialog-close" type="button" aria-label="Close details">×</button></div><div id="zoomAttendanceDetailBody" class="dialog-body"></div></dialog>
   <script>
   'use strict';
@@ -563,16 +563,31 @@
       else merged.push({...current});
     }
     const spent=merged.reduce((sum,d)=>sum+d.end-d.start,0);
-    let auto='unverified';
-    if(!window.verified)auto='pending';
-    else if(incomplete||row.record?.zoomUnmatchedExits>0)auto='unverified';
-    else auto=spent>0&&spent>=Math.max(0,window.duration-7*60000)?'present':'absent';
+    // Allow delayed Zoom participant webhooks to arrive after meeting.ended.
+    const settled=window.verified&&Date.now()>=window.end+2*60000;
+    let auto='pending';
+    if(settled){
+      if(incomplete||row.record?.zoomUnmatchedExits>0)auto='unverified';
+      else auto=spent>=Math.max(0,window.duration-7*60000)?'present':'absent';
+    }
     const manual=state.attendance?.changes?.has(row.id)?
       state.attendance.changes.get(row.id):row.status;
     const final=manual==='present'||manual==='absent'?manual:auto;
     return {window,first,spent,raw:valid,auto,final,manual:manual==='present'||manual==='absent',
-      durationText:(window.verified&&(!incomplete)?minutesText(spent):'—')+' / '+minutesText(window.duration),
+      durationText:(!valid.length?'0 min':window.verified&&!incomplete?minutesText(spent):'—')+' / '+minutesText(window.duration),
       statusText:final==='present'?'Present':final==='absent'?'Absent':final==='pending'?'Pending':'Unverified'};
+  }
+  function attendanceNotice(m,canWrite){
+    if(!canWrite)return 'Attendance records cannot be read or saved with your current school permissions.';
+    const session=zoomSession(m);
+    if(session.verified)return Date.now()<session.end+2*60000?
+      'Zoom class ended. Final attendance will appear shortly after records update.':'';
+    if(Date.now()<endOf(m))return 'Attendance will be confirmed after the Zoom class ends.';
+    return 'Zoom attendance verification is unavailable. You can mark attendance manually.';
+  }
+  function showAttendanceNotice(a){
+    const notice=attendanceNotice(a.m,a.canWrite);
+    message('attendanceNotice',notice,!a.canWrite||(!zoomSession(a.m).verified&&Date.now()>=endOf(a.m))?'warning':'');
   }
   async function openAttendance(id){
     if(!state.user||state.busy)return;
@@ -600,9 +615,7 @@
           record,status:['present','absent'].includes(record.status)?record.status:'',
           recorded:records.has(doc.id)};
       }).sort((a,b)=>a.roll.localeCompare(b.roll,undefined,{numeric:true})||a.name.localeCompare(b.name));
-      if(!attendance.canWrite)message('attendanceNotice','Attendance records cannot be read or saved with your current school permissions.','warning');
-      else if(!zoomSession(attendance.m).verified)
-        message('attendanceNotice','Verified Zoom meeting start/end events are not yet available for this class. Automatic Present/Absent is pending. You may still mark attendance manually.','warning');
+      showAttendanceNotice(attendance);
       renderAttendance();
       $('downloadAttendanceBtn').disabled=!attendance.rows.length;
     }catch(e){
@@ -675,7 +688,7 @@
         row.recorded=map.has(row.id);
       }
       renderAttendance();
-      message('attendanceNotice',zoomSession(a.m).verified?'':'Verified Zoom meeting start/end data is not available yet. Only teacher overrides can establish attendance until Zoom event delivery is configured.',zoomSession(a.m).verified?'':'warning');
+      showAttendanceNotice(a);
       message('attendanceStatus','Attendance refreshed. Unsaved teacher selections are preserved.','success');
     }catch(e){
       if(state.attendance===a)message('attendanceStatus',readableError(e,'Could not refresh attendance.'),'warning');
@@ -802,8 +815,7 @@
       for(const {row,info} of results){
         const name=pdf.splitTextToSize(String(row.name),183).slice(0,3);
         const join=Number.isFinite(info.first)?formatTime(info.first):'—';
-        const spent=info.window.verified && !info.raw.some(d=>!Number.isFinite(d.end))?
-          minutesText(info.spent)+' / '+minutesText(info.window.duration):'Unverified';
+        const spent=info.durationText;
         const result=info.statusText+(info.manual?' (Teacher)':'');
         const statusLines=pdf.splitTextToSize(result,86);
         const rowH=Math.max(29,name.length*12+10,statusLines.length*12+10);
