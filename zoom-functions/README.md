@@ -1,115 +1,77 @@
-# St. Patrick's School — isolated Zoom OAuth backend
+# St. Patrick's School online-class backend
 
-This is a separate Firebase Functions codebase named **zoom**. It does not
-import, change, or redeploy the existing quiz lookup and reminder functions.
+This is the isolated Firebase Functions codebase `zoom`, running on Node.js 22.
+It does not import or deploy the existing quiz/reminder functions.
 
-## Functions
+## Current functions
 
-- zoomOAuthStart: requires the existing school Firebase account's signed-in,
-  non-anonymous ID token with an email address, then creates a short-lived,
-  HMAC-signed OAuth state and same-site cookie. School administrators provision
-  Firebase teacher accounts; no manual per-teacher UID allowlist is required.
-- zoomOAuthCallback: validates the state and cookie, exchanges the Zoom code
-  on the server, encrypts access and refresh tokens, and saves them by
-  Firebase teacher UID.
-- Region: asia-south1 (Mumbai).
-- Zoom Development OAuth redirect:
-  https://stpatricks-questionbank.web.app/zoom/oauth/callback
+| Function | Purpose |
+| --- | --- |
+| zoomOAuthStart | Starts a signed, one-use, ten-minute OAuth authorization for an approved school teacher. |
+| zoomOAuthCallback | Checks state and current teacher approval, exchanges the Zoom code, encrypts tokens and stores them by teacher UID. |
+| zoomConnectionStatus | Reports that teacher's connection and meeting scopes. |
+| zoomCreateMeeting | Creates or updates the owning teacher's meeting, with revision and refresh-token locks. |
+| zoomSdkParticipantSignature | Checks the joining window, class/section roster and registered parent mobile; returns a participant-only SDK signature and attendance tag. |
+| zoomAttendanceWebhook | Validates signed Zoom events and atomically updates attendance evidence. |
 
-## Important deployment precautions
+Region: `asia-south1`. Hosting routes are defined in `../firebase.json`.
+The teacher page runs on GitHub Pages; the Firebase teacher URL redirects there.
+The student page is mirrored at the repository root and in `firebase-site/`.
 
-**NOT DEPLOYED.** The repository does not contain the existing default
-functions/ source, although two functions are live in Firebase. Never deploy
-all functions from this partial checkout. The verified live Hosting release
-contains only /index.html, /quiz.html and /404.html (plus two reserved
-Firebase /__/ files); the branch preserves all three and stages two
-additional Zoom online-class pages.
+## School teacher approval
 
-The existing GitHub Actions Hosting deployment triggers only when quiz.html
-changes. A new separate workflow in this branch deploys ONLY functions:zoom
-automatically when Zoom function source changes on main (or by manual
-workflow_dispatch). It never deploys the default functions or Hosting.
-It uses the existing GitHub Firebase service-account secret; IAM may need
-additional roles for Functions deployment.
+A Firebase email account alone is **not** teacher authorization. The server and
+teacher page require an administrator-issued `schoolTeacher: true` or
+`schoolAdmin: true` Firebase custom claim. Client-editable profile fields do not count.
 
-## Firebase Secret Manager
+Before deploying this branch, approve existing staff UIDs in a trusted Admin SDK
+environment. The supplied helper defaults to a read-only preview:
 
-Do not commit Zoom credentials, encryption keys, OAuth tokens, or Firebase
-service-account JSON files to GitHub.
+```bash
+cd zoom-functions
+node scripts/teacher-access.js --uid FIREBASE_UID --grant
+```
 
-Create three secrets in the Firebase project:
+After checking the exact UID, add `--apply` to make the change. Other custom
+claims are preserved. Staff must sign in again to refresh their tokens.
+`--revoke` removes only the teacher claim; an existing schoolAdmin claim still grants access.
+This audit did not grant claims or change production Auth accounts.
 
-    firebase functions:secrets:set ZOOM_CLIENT_ID
-    firebase functions:secrets:set ZOOM_CLIENT_SECRET
-    firebase functions:secrets:set ZOOM_TOKEN_ENCRYPTION_KEY
+## Secrets
 
-For the third secret, generate a unique random 32-byte key in base64:
+The existing Secret Manager names are `ZOOM_CLIENT_ID`, `ZOOM_CLIENT_SECRET`,
+`ZOOM_TOKEN_ENCRYPTION_KEY` (32 random bytes encoded as Base64), and
+`ZOOM_WEBHOOK_SECRET_TOKEN`. Never put values in source, issues, logs or chat.
+The webhook function is already exported; do not add a duplicate export.
+OAuth uses signed state, not a browser cookie.
 
-    node -e "console.log(require('node:crypto').randomBytes(32).toString('base64'))"
+## Checks
 
-Back up the encryption key securely. Losing it makes stored tokens unreadable.
+```bash
+npm ci --ignore-scripts --no-audit --no-fund
+npm run check
+npm test
+npm run smoke
+```
 
-## School teacher authentication
+The smoke check loads real SDK exports against a non-production emulator
+address and performs no database requests. The regression suite uses local
+Firestore/Auth/Zoom doubles; it is not a live Zoom or Firestore emulator test.
+A package lock makes builds reproducible. Runtime dependencies use the supported
+modular Firebase Admin APIs.
 
-The school administrator provisions Firebase teacher accounts. The Zoom start
-function requires a valid, non-revoked Firebase ID token with an email and
-rejects anonymous accounts. There is no extra Firestore allowlist to maintain.
-The OAuth state contains a server-signed identity/expiry binding so clients
-cannot change the teacher UID or expiry by editing the pending record.
+## Deployment boundary
 
-**Security limitation:** The school's existing broad Firestore rules are left
-unchanged at the owner's request. Other signed-in users can still read, alter,
-or delete Zoom Firestore documents, disrupting connections or changing metadata.
-Zoom access/refresh tokens are encrypted server-side, with the key held only
-in Google Secret Manager; no client receives plaintext tokens. Revisit rules
-before broader production rollout.
+Review [the audit](../docs/online-class-audit.md) and
+[Firestore requirements](FIRESTORE_REVIEW.md) before rollout.
+Production Firestore rules are absent from this repository, and `firebase.json`
+also references a default `functions/` directory that is not present. Do not
+publish guessed rules or run a blanket Firebase deployment.
 
-## Teacher webpage integration (prepared on this branch)
+After the owner approves rollout and the documented prerequisites are met,
+deploy only the `zoom` functions codebase and the intended Hosting files.
+Both deployment workflows trigger on `main`; merging this branch is a production
+rollout action. Creating the branch/draft PR runs validation only.
 
-The root-level online-class-teacher.html now includes a
-"Connect My Zoom Account" button. It uses the signed-in teacher's Firebase
-ID token to make a same-origin POST to /zoom/oauth/start and redirects to
-Zoom only after the server returns an approved authorizationUrl. It stops
-if the teacher has unsaved edits and displays an error if Firebase sign-in,
-the secure backend, or the Hosting route is unavailable.
-
-On this branch, firebase-site/ now includes copies of
-online-class-teacher.html and online-class.html alongside the three existing
-static Hosting files. The teacher page offers sign-in with existing Firebase
-school credentials when opened on stpatricks-questionbank.web.app (sessions
-from other origins are not automatically shared). The new button is **not live**
-until the PR is merged and both isolated Functions and Hosting deploy.
-
-The Zoom callback is validated using a 10-minute browser cookie and a
-one-time Firestore state.
-
-Do not click Zoom's standalone Add App Now for this school OAuth flow:
-it does not create the custom one-time state or cookie.
-
-## Deploy only after reviewing all hosted files
-
-    npm --prefix zoom-functions install
-    npm --prefix zoom-functions run check
-    firebase deploy --only functions:zoom --project stpatricks-questionbank
-
-The callback uses Hosting rewrites in firebase.json. The verified live
-Hosting file list has been checked against the staged Hosting folder, which
-preserves all three existing static files. The existing quiz Hosting workflow
-on the PR now deploys for changes to Zoom Hosting pages or firebase.json,
-copying the latest root quiz.html first. Confirm IAM, deployment order, and
-OAuth callback routing before using real Zoom accounts.
-
-## Not yet implemented
-
-- Token refresh and revoke/disconnect
-- Further Zoom meeting API permissions and secure identity retrieval
-- Actual embedded Meeting SDK, meeting event verification and attendance
-- The cumulative 5-minute missed-time allowance
-- Zoom cross-account review and production approval
-- Firestore rules hardening (deferred at the school owner's request) and end-to-end testing
-
-Sources:
-https://firebase.google.com/docs/functions/organize-functions
-https://firebase.google.com/docs/functions/config-env
-https://developers.zoom.us/docs/integrations/oauth/
-https://developers.zoom.us/docs/meeting-sdk/auth/
+No paid participant-report API, Child ID, OTP or new runtime dependency has been added.
+Attendance keeps the seven-minute allowance and teacher overrides.

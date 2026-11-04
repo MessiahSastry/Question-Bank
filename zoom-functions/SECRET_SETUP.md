@@ -43,18 +43,13 @@ save them into tracked files.
 
 ## Prerequisites for deployment
 
-- Source for the existing `default` functions is **not** in this GitHub repo.
-  Never run a blanket Functions deployment.
-- The Firebase Hosted site uses `firebase-site/`, which does not yet include
-  the root-level teacher webpage. Audit live Hosting assets before deploying.
-- Do not merge the draft PR or deploy until the rollout is reviewed.
-- School administrator directly provisions existing Firebase teacher accounts;
-  no separate teacher UID allowlist is used.
-- The school's existing Firestore rules remain unchanged at the owner's
-  request. Broad client database permissions are a known production risk;
-  encrypted tokens and signed OAuth state reduce, but do not eliminate, risk.
-- After deployment, verify secrets and service-account permissions using a
-  test teacher account, not live student data.
+- The `default` functions source is not in this repository. Never run a blanket Functions deployment.
+- Firebase Hosting serves `firebase-site/`. Its teacher page redirects to the GitHub Pages teacher page; the student page is mirrored from the root source.
+- Teacher accounts need server-issued `schoolTeacher: true` or `schoolAdmin: true` custom claims before this branch is deployed. See `README.md` for the dry-run-first helper. An email account alone is insufficient.
+- Retrieve and review the live Firestore rules with `FIRESTORE_REVIEW.md`. They are absent from this repository; this audit did not change them.
+- The attendance webhook is already exported and additionally requires `ZOOM_WEBHOOK_SECRET_TOKEN`, the Zoom Event Subscription Secret Token. Store it privately in Secret Manager and validate the four-event subscription described in `ATTENDANCE_SETUP.md`.
+- Review rollout order and owner approval before merging: the existing main-branch workflows deploy production.
+- Use a designated test teacher and synthetic roster for integration checks. No production data was changed during this audit.
 
 ## Secrets and scopes
 

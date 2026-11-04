@@ -3,12 +3,14 @@
 // Separate Firebase codebase for St. Patrick's School Zoom OAuth.
 // This file does not modify or import the existing quiz/reminder functions.
 const crypto = require('node:crypto');
-const admin = require('firebase-admin');
+const {getApps, initializeApp} = require('firebase-admin/app');
+const {getFirestore, Timestamp, FieldValue} = require('firebase-admin/firestore');
 const {onRequest} = require('firebase-functions/v2/https');
 const {defineSecret} = require('firebase-functions/params');
+const {teacherUid: approvedTeacherUid, teacherStillApproved} = require('./auth');
 
-if (!admin.apps.length) admin.initializeApp();
-const db = admin.firestore();
+if (!getApps().length) initializeApp();
+const db = getFirestore();
 
 const CLIENT_ID = defineSecret('ZOOM_CLIENT_ID');
 const CLIENT_SECRET = defineSecret('ZOOM_CLIENT_SECRET');
@@ -87,21 +89,9 @@ function seal(data, keyBase64) {
     tag: cipher.getAuthTag().toString('base64')
   };
 }
-// School accounts are provisioned directly by the administrator.
-// No per-teacher Firestore allowlist is needed for Zoom connection.
+// School teacher access is granted using server-controlled custom claims.
 async function teacherUid(req) {
-  const match = /^Bearer (.+)$/i.exec(String(req.headers.authorization || ''));
-  // A signed-in teacher on GitHub Pages can submit the existing Firebase
-  // ID token in a top-level HTTPS POST. No token goes into the URL.
-  const formToken = req.is('application/x-www-form-urlencoded') &&
-    typeof req.body?.firebaseIdToken === 'string' ?
-    req.body.firebaseIdToken : '';
-  const token = match ? match[1] : formToken;
-  if (!token || token.length > 8192) return null;
-  const decoded = await admin.auth().verifyIdToken(token, true);
-  if (!decoded.uid || !decoded.email ||
-      decoded.firebase?.sign_in_provider === 'anonymous') return null;
-  return decoded.uid;
+  return approvedTeacherUid(req, {allowForm: true});
 }
 
 // Firestore clients can edit general collections under the school's existing rules.
@@ -147,8 +137,8 @@ exports.zoomOAuthStart = onRequest({
     await db.collection('zoomOAuthPending').doc(sha256(state)).create({
       teacherUid: uid,
       status: 'pending',
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      expiresAt: admin.firestore.Timestamp.fromMillis(expiresMs)
+      createdAt: FieldValue.serverTimestamp(),
+      expiresAt: Timestamp.fromMillis(expiresMs)
     });
 
     const authorize = new URL('https://zoom.us/oauth/authorize');
@@ -220,11 +210,12 @@ exports.zoomOAuthCallback = onRequest({
       }
       tx.update(pendingRef, {
         status: 'claimed',
-        claimedAt: admin.firestore.FieldValue.serverTimestamp()
+        claimedAt: FieldValue.serverTimestamp()
       });
       return snap.get('teacherUid');
     });
 
+    if (!await teacherStillApproved(uid)) throw new Error('Teacher access revoked');
     stage = 'token';
     const form = new URLSearchParams({
       grant_type: 'authorization_code', code,
@@ -272,12 +263,14 @@ exports.zoomOAuthCallback = onRequest({
     stage = 'storage';
     await db.collection('zoomTeacherCredentials').doc(uid).set({
       encryptedTokens: encrypted,
-      connectedAt: admin.firestore.FieldValue.serverTimestamp(),
-      accessExpiresAt: admin.firestore.Timestamp.fromMillis(
+      connectedAt: FieldValue.serverTimestamp(),
+      accessExpiresAt: Timestamp.fromMillis(
         Date.now() + Math.max(60, Number(tokens.expires_in) || 3600) * 1000
       ),
       provider: 'zoom',
-      status: 'connected'
+      status: 'connected',
+      refreshLock: FieldValue.delete(),
+      refreshLockUntil: FieldValue.delete()
     }, {merge: true});
     await pendingRef.delete();
 
