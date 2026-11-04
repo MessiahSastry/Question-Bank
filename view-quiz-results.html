@@ -156,6 +156,7 @@
 <button class="btn" id="whatsappRanks" type="button">Share Top 3 Ranks</button>
 <button class="btn secondary" id="whatsappPending" type="button">Share Not Attempted</button>
         <button class="btn secondary" id="export" type="button" disabled>Download Excel (CSV)</button>
+        <button class="btn secondary" id="downloadPdf" type="button" disabled>Download PDF (80+20)</button>
         <button class="btn secondary" id="print" type="button">Print</button>
         <button class="btn secondary" id="return" type="button">Back to Quick Quiz</button>
       </div>
@@ -164,19 +165,19 @@
     <section class="metrics" aria-label="Summary statistics">
       <div class="metric"><strong id="participants">—</strong><span>Students with results</span></div>
       <div class="metric"><strong id="attempts">—</strong><span>Recorded attempts</span></div>
-      <div class="metric"><strong id="average">—</strong><span>Average best score</span></div>
+      <div class="metric"><strong id="average">—</strong><span>Average marks</span></div>
       <div class="metric"><strong id="missing">—</strong><span>Not attempted (roster check)</span></div>
     </section>
     <section class="card" style="margin-top:18px">
       <h2 id="reportTitle">Student Performance</h2>
       <p class="sub" id="reportInfo">Select a quiz to view its results. Only recorded scores are displayed.</p>
-      <div class="scroll"><table><thead><tr><th>Section</th><th class="num">Roll</th><th>Student Name</th><th class="num">Rank</th><th class="num">Best Score</th><th class="num">Percentage</th><th class="num">Attempts</th><th class="num">Time</th><th>Status</th></tr></thead><tbody id="resultsBody"><tr><td colspan="9" class="muted">No quiz selected.</td></tr></tbody></table></div>
+      <div class="scroll"><table><thead><tr><th>Section</th><th class="num">Roll</th><th>Student Name</th><th class="num">Rank</th><th class="num">Marks</th><th class="num">Percentage</th><th class="num">Attempts</th><th class="num">Time</th><th class="num">Final Points (80+20)</th><th>Status</th></tr></thead><tbody id="resultsBody"><tr><td colspan="10" class="muted">No quiz selected.</td></tr></tbody></table></div>
       <p class="note">
 Students are displayed by section and roll number.
 Ranking is calculated across the entire class using
 80% accuracy and 20% completion speed.
-The ranking uses each student's highest-scoring attempt,
-with faster time preferred when scores are equal.
+Only the first recorded official attempt counts; practice attempts do not change ranks.
+Final Points = 80% accuracy + 20% speed (60 seconds per question).
 Rankings are provisional and may change as more students attempt the quiz.
 The school roster is checked to identify students who have not attempted.
 </p>
@@ -579,8 +580,9 @@ function clearReport() {
   $('reportTitle').textContent='Student Performance';
   $('reportInfo').textContent='Select a quiz to view its results.';
   $('resultsBody').replaceChildren();
-  const tr=document.createElement('tr'), td=document.createElement('td');td.colSpan=9;td.textContent='No quiz selected.';td.className='muted';tr.append(td);$('resultsBody').append(tr);
+  const tr=document.createElement('tr'), td=document.createElement('td');td.colSpan=10;td.textContent='No quiz selected.';td.className='muted';tr.append(td);$('resultsBody').append(tr);
   $('export').disabled=true;
+  $('downloadPdf').disabled=true;
 }
 function recordKey(r) {
   if(r.studentId) return `id:${r.studentId}`;
@@ -595,11 +597,15 @@ function timeForSort(x) {
   return t === null ? Number.POSITIVE_INFINITY : t;
 }
 function bestAttempt(rows) {
-  return [...rows].sort((a,b)=>
-    (Number(b.score||0)-Number(a.score||0)) ||
-    (timeForSort(a)-timeForSort(b)) ||
-    (ts(a)-ts(b))
-  )[0];
+  // Only first recorded official result counts, not any later high score.
+  // Prefer canonical first_{quizId}_{studentId} documents, else oldest date.
+  return [...rows].sort((a,b) => {
+    const firstA=String(a.recordId||'').startsWith('first_')?0:1;
+    const firstB=String(b.recordId||'').startsWith('first_')?0:1;
+    return (firstA-firstB) ||
+      ((ts(a)||Infinity)-(ts(b)||Infinity)) ||
+      String(a.recordId||'').localeCompare(String(b.recordId||''));
+  })[0];
 }
 function ts(v){return v.timestamp?.toMillis?.()||0;}
 function sectionRollSort(a,b) {
@@ -637,14 +643,15 @@ function rankingPoints(row, max) {
         )
       : 0;
 
-  return Number(
-    (accuracy * 0.80 + speed * 0.20).toFixed(3)
-  );
+  // Rank using the same two-decimal precision displayed to teachers.
+  return Number((accuracy * 0.80 + speed * 0.20).toFixed(2));
 }
 
 function buildRows(attempts) {
   const map=new Map();
-  attempts.forEach(x=>{const key=recordKey(x);if(!map.has(key))map.set(key,[]);map.get(key).push(x)});
+  attempts.filter(x => x.practiceOnly !== true && x.isPractice !== true &&
+    x.attemptType !== 'practice'
+  ).forEach(x=>{const key=recordKey(x);if(!map.has(key))map.set(key,[]);map.get(key).push(x)});
   const max=Math.max(0,Number(app.currentQuiz?.totalQuestions||app.currentQuiz?.questions?.length||0));
   const rows=[...map.entries()].map(([key,items])=>{
     const best=bestAttempt(items);
@@ -693,7 +700,7 @@ function renderRows() {
   if (!rows.length) {
     const tr = document.createElement('tr');
     const td = cell(tr, 'No students found in the selected section.');
-    td.colSpan = 9;
+    td.colSpan = 10;
     td.className = 'muted';
     tbody.append(tr);
     return;
@@ -711,6 +718,7 @@ function renderRows() {
     cell(tr, r.completed ? `${r.percent.toFixed(1)}%` : '—', 'num');
     cell(tr, r.completed ? r.attempts : 0, 'num');
     cell(tr, r.completed ? seconds(r.time) : '—', 'num');
+    cell(tr, r.completed ? r.rankPoints.toFixed(2) : '—', 'num');
 
     const s = cell(tr, '');
     const span = document.createElement('span');
@@ -743,6 +751,7 @@ function renderSummary() {
     `${app.rosterChecked ? 'Roster compared' : 'Recorded attempts only'}`;
 
   $('export').disabled = !rows.length;
+  $('downloadPdf').disabled = !rows.length;
 }
 async function showResults() {
   const id=$('quizFilter').value;
@@ -987,11 +996,11 @@ function safeCsv(value){
 function exportCsv(){
    if(!app.currentQuiz||!visibleRows().length)return;
   const total=app.currentQuiz.totalQuestions||app.currentQuiz.questions?.length||'';
-  const headers=['Section','Roll','Student Name','Rank','Best Score','Percentage','Attempts','Time','Status','Academic Year','Class','Subject','Chapter','Quiz ID'];
+  const headers=['Section','Roll','Student Name','Rank','Marks','Percentage','Attempts','Time','Final Points (80+20)','Status','Academic Year','Class','Subject','Chapter','Quiz ID'];
     const lines=[headers,...visibleRows().map(r=>[
     r.section,r.roll,r.name,r.completed?r.rank:'—',r.completed?`${r.score}/${total}`:'—',
     r.completed?`${r.percent.toFixed(1)}%`:'—',r.completed?r.attempts:0,
-    r.completed?seconds(r.time):'—',r.completed?'Attempted':'Not Attempted',
+    r.completed?seconds(r.time):'—',r.completed?r.rankPoints.toFixed(2):'—',r.completed?'Attempted':'Not Attempted',
     $('year').value.trim(),r.cls,app.currentQuiz.subject,app.currentQuiz.chapter,app.currentQuiz.id
   ])];
   const csv='\ufeff'+lines.map(row=>row.map(safeCsv).join(',')).join('\r\n');
