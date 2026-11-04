@@ -989,6 +989,160 @@ async function shareWhatsAppReport(kind) {
   }
 }
 
+
+async function loadQuizResultsPdfLibrary() {
+  if (window.jspdf?.jsPDF) return window.jspdf.jsPDF;
+  await new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.2/jspdf.umd.min.js';
+    script.onload = resolve;
+    script.onerror = () => {
+      script.remove();
+      reject(new Error('PDF generator could not load. Check the internet connection and retry.'));
+    };
+    document.head.appendChild(script);
+  });
+  if (!window.jspdf?.jsPDF) throw new Error('PDF generator unavailable. Please refresh and retry.');
+  return window.jspdf.jsPDF;
+}
+function pdfFilenamePart(value) {
+  return String(value ?? '').trim().replace(/[^a-z0-9_-]+/gi, '_')
+    .replace(/^_+|_+$/g, '').slice(0, 44) || 'Results';
+}
+async function downloadResultsPdf() {
+  if (!app.currentQuiz || !visibleRows().length) {
+    status('Select a quiz with results before downloading the PDF.', 'error');
+    return;
+  }
+  const quiz = app.currentQuiz;
+  const year = $('year').value.trim();
+  const section = $('sectionFilter').value || 'All Sections';
+  // Snapshot the same student rows displayed to the teacher.
+  const rows = visibleRows().map(row => ({...row}));
+  const button = $('downloadPdf');
+  button.disabled = true;
+  button.textContent = 'Preparing PDF…';
+  try {
+    const JsPDF = await loadQuizResultsPdfLibrary();
+    const doc = new JsPDF({orientation:'landscape',unit:'pt',format:'a4'});
+    const width = doc.internal.pageSize.getWidth();
+    const height = doc.internal.pageSize.getHeight();
+    const left = 31, right = width - 31;
+    const total = Math.max(0, Number(quiz.totalQuestions || quiz.questions?.length || 0));
+    const attempted = rows.filter(row => row.completed).length;
+    const generated = new Intl.DateTimeFormat('en-IN', {
+      timeZone:'Asia/Kolkata',year:'numeric',month:'short',day:'2-digit',
+      hour:'2-digit',minute:'2-digit',hour12:true
+    }).format(new Date());
+    const colWidths = [84,52,192,74,86,100,50,140];
+    const headings = ['Section','Roll','Student Name','Marks','Time Taken','Final Points','Rank','Status'];
+    const xs = [left];
+    colWidths.forEach(w => xs.push(xs[xs.length - 1] + w));
+    const tableRight = xs[xs.length - 1];
+    if (tableRight > right) throw new Error('Unable to fit the report on A4 paper.');
+
+    function pageHeader() {
+      doc.setFillColor(15,61,107);
+      doc.rect(0,0,width,68,'F');
+      doc.setTextColor(255,255,255);
+      doc.setFont('helvetica','bold');
+      doc.setFontSize(17);
+      doc.text("ST. PATRICK'S SCHOOL",left,30);
+      doc.setFontSize(10);
+      doc.text('QUICK QUIZ - OFFICIAL RESULTS (80% MARKS + 20% TIME)',left,49);
+      doc.setTextColor(32,52,73);
+      doc.setFont('helvetica','normal');
+      doc.setFontSize(9);
+      const meta = [
+        'Academic Year: '+year+'     Class: '+String(quiz.class||'—')+'     Section: '+section,
+        'Subject: '+String(quiz.subject||'—')+'     Chapter: '+String(quiz.chapter||'—'),
+        'Questions: '+total+'     Attempted: '+attempted+'     Not attempted: '+(rows.length-attempted)+
+          '     Generated: '+generated+' IST',
+        'Final Points = 80% marks accuracy + 20% speed (60 seconds per question). First official attempt only.'
+      ];
+      let y = 84;
+      for (const textValue of meta) {
+        const pieces = doc.splitTextToSize(textValue, width-2*left);
+        doc.text(pieces,left,y);
+        y += pieces.length*12+3;
+      }
+      y += 6;
+      doc.setFillColor(231,240,250);
+      doc.rect(left,y,tableRight-left,28,'F');
+      doc.setTextColor(15,61,107);
+      doc.setFont('helvetica','bold');
+      doc.setFontSize(9);
+      for(let i=0;i<headings.length;i++){
+        doc.text(doc.splitTextToSize(headings[i],colWidths[i]-10),xs[i]+5,y+18);
+      }
+      doc.setTextColor(32,52,73);
+      return y+28;
+    }
+
+    let y = pageHeader();
+    rows.forEach((row,index) => {
+      const values = [
+        row.section || '—',
+        row.roll === undefined || row.roll === null || String(row.roll) === '' ? '—' : String(row.roll),
+        row.name || 'Student',
+        row.completed ? String(row.score)+'/'+total : '—',
+        row.completed ? seconds(row.time) : '—',
+        row.completed ? Number(row.rankPoints).toFixed(2) : '—',
+        row.completed ? String(row.rank) : '—',
+        row.completed ? 'Attempted' : 'Not Attempted'
+      ];
+      const cols = values.map((value,i) =>
+        doc.splitTextToSize(String(value),colWidths[i]-10).slice(0,5)
+      );
+      const lines = Math.max(...cols.map(parts => parts.length));
+      const rowHeight = Math.max(29, lines*11+13);
+      if (y+rowHeight > height-49) {
+        doc.addPage();
+        y = pageHeader();
+      }
+      if (index%2) {
+        doc.setFillColor(248,251,254);
+        doc.rect(left,y,tableRight-left,rowHeight,'F');
+      }
+      doc.setDrawColor(220,233,243);
+      doc.line(left,y+rowHeight,tableRight,y+rowHeight);
+      cols.forEach((parts,i) => {
+        doc.setTextColor(32,52,73);
+        doc.setFont('helvetica',i===5||i===6?'bold':'normal');
+        doc.setFontSize(9);
+        doc.text(parts,xs[i]+5,y+17);
+      });
+      y += rowHeight;
+    });
+    const count = doc.internal.getNumberOfPages();
+    for(let page=1;page<=count;page++){
+      doc.setPage(page);
+      doc.setDrawColor(210,222,233);
+      doc.line(left,height-36,right,height-36);
+      doc.setFont('helvetica','normal');
+      doc.setFontSize(8);
+      doc.setTextColor(95,110,127);
+      doc.text('Class-wide ranking; section selection filters this report. Practice attempts do not count.',left,height-23);
+      doc.text('Page '+page+' / '+count,right,height-23,{align:'right'});
+    }
+    const filename = [
+      'St_Patricks_Quiz_Results',
+      pdfFilenamePart(quiz.class),
+      pdfFilenamePart(section),
+      pdfFilenamePart(quiz.subject),
+      pdfFilenamePart(year)
+    ].join('_')+'.pdf';
+    doc.save(filename);
+    status('PDF created: marks, time, final 80+20 points and class-wide ranks.', 'success');
+  } catch (error) {
+    console.error('Unable to generate quiz PDF:',error);
+    status('PDF could not be created: '+(error.message||'Unknown error'), 'error');
+  } finally {
+    button.textContent = 'Download PDF (80+20)';
+    button.disabled = !app.currentQuiz || !visibleRows().length;
+  }
+}
+
 function safeCsv(value){
   let s=String(value??'');if(/^\s*[=+\-@]/.test(s))s="'"+s;
   return `"${s.replace(/"/g,'""')}"`;
@@ -1048,6 +1202,7 @@ $('participation').addEventListener('click',compareRoster);
 $('whatsappRanks').addEventListener('click', () => shareWhatsAppReport('ranks'));
 $('whatsappPending').addEventListener('click', () => shareWhatsAppReport('pending'));
 $('export').addEventListener('click',exportCsv);
+$('downloadPdf').addEventListener('click',downloadResultsPdf);
 $('print').addEventListener('click',()=>window.print());
 $('return').addEventListener('click',()=>location.href='quick-quiz.html');
 auth.onAuthStateChanged(user=>{
