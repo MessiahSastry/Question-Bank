@@ -5,7 +5,8 @@ Review date: 4 November 2026. Source baseline:
 
 This branch contains source fixes for review. It has not been merged or deployed.
 No production Firestore data, Auth accounts, Zoom accounts, secrets or subscriptions
-were changed. No new runtime dependency or paid service was introduced.
+were changed. No new runtime dependency or paid service was introduced. Existing teacher/admin
+permissions are preserved; no individual teacher setup or new approval system is required.
 
 ## Scope and preserved behaviour
 
@@ -26,7 +27,7 @@ still copies its unchanged quiz source as it did before this branch.
 
 | Area | Confirmed source defect | Result on this branch |
 | --- | --- | --- |
-| Teacher authorization | An email Firebase account was accepted as a teacher although register.html permits email account creation. | Teacher page and teacher APIs require server-issued approval claims. OAuth callback checks the current account again. A dry-run-first staff approval helper is supplied. |
+| Teacher access compatibility | Existing CampusConnect permissions and teacher access must be preserved without individual setup. | Reuse existing sign-in and owning-teacher UID checks; reject anonymous student sessions on teacher APIs and check current account status during OAuth completion. No custom claims, allowlist or staff approval helper is required. |
 | Webhook retry | Raw events could persist before projection failed; a duplicate retry then returned before rebuilding. | Raw evidence, orphan repair and attendance projection commit atomically. Retries repair legacy incomplete projections. |
 | Concurrent events | Separate history reads and attendance writes could publish an older projection over a newer one. | Transactions serialize through each student attendance row, retaining the latest complete evidence and teacher override fields. |
 | Event order | An exit arriving before the student's identifying join could be discarded. | Unidentified signed events are retained and attached when a later event establishes that participant binding. |
@@ -72,19 +73,19 @@ webhooks nor the SDK prove attention or viewing time.
 
 | Files | Purpose |
 | --- | --- |
-| online-class-teacher.html | Teacher approval, session lifecycle, final-attendance confirmation and refresh behaviour. |
+| online-class-teacher.html | Existing teacher access, session lifecycle, final-attendance confirmation and refresh behaviour. |
 | online-class.html; firebase-site/online-class.html | Student joining, SDK connection state, timeouts and matching hosted copy. |
 | zoom-functions/index.js, meetings.js, sdk.js, attendance.js | Approved access, token refresh, join checks and atomic webhook processing. |
 | zoom-functions/auth.js; attendance-model.js | Shared teacher authorization and pure event reconciliation. |
 | zoom-functions/package.json; package-lock.json | Supported Firebase versions and reproducible dependency installation. |
-| scripts/check-online-class.js; zoom-functions/scripts/*; zoom-functions/test/* | Syntax/config checks, safe staff approval helper, runtime smoke check and regression suite. |
+| scripts/check-online-class.js; zoom-functions/scripts/*; zoom-functions/test/* | Syntax/config checks, runtime smoke check and regression suite. |
 | .github/workflows/firebase-functions-zoom.yml; firebase-hosting-merge.yml; zoom-pr-checks.yml | Validation gates, locked installation, pinned deployment CLI and student-source trigger coverage. |
 | docs/online-class-audit.md; zoom-functions/README.md; ATTENDANCE_SETUP.md; SECRET_SETUP.md; FIRESTORE_REVIEW.md | Audit, limits and reviewed rollout requirements. |
 
 ## Validation performed
 
 - Node.js 22.23.4: all online-class syntax, source/hosted student equality and Hosting route checks passed.
-- 70 local regression tests passed: teacher approval, OAuth state/replay/revocation,
+- 70 local regression tests passed: existing teacher access without new setup, OAuth state/replay/account status,
   meeting ownership/create/update/concurrency, token refresh, webhook authentication,
   event failure/retry/order/deduplication, SDK roster/phone/window checks, reconnection,
   interval union/thresholds, confirmations, overrides and PDF pagination.
@@ -114,8 +115,9 @@ Those need an isolated integration test after the configuration review.
    [The access matrix](../zoom-functions/FIRESTORE_REVIEW.md) is informational,
    not a rule-change requirement. Backend checks do not establish that existing
    direct browser database permissions are restricted; this audit makes no such claim.
-2. **Approve existing teacher accounts before rollout.** Use trusted server-issued
-   claims and refresh staff tokens. This branch did not modify authentication data.
+2. **Existing teacher permissions remain unchanged.** Reuse CampusConnect sign-in
+   and the current teacher/admin access model. No individual teacher configuration,
+   custom claims or new approval flags are required. Live authentication data was not changed.
 3. **Parent-mobile entry is self-identification.** Ownership and anonymous roster
    read limits cannot be proved by this flow. Review direct full-document student
    lookup and use a limited-field backend lookup before a broader privacy rollout.
@@ -143,7 +145,7 @@ Those need an isolated integration test after the configuration review.
 ## Deployment requirements and review boundary
 
 Keep the existing Firebase/Firestore rules unchanged. Read the current setup
-documentation and verify teacher claims, the four Zoom secrets, event
+documentation and verify existing teacher sign-in, the four Zoom secrets, event
 subscription/scopes, OAuth redirect and GitHub deployment identity.
 Test two teacher accounts and a synthetic roster, including sibling selection,
 two devices for one student, disconnection, missing exit, delayed events, early end,
@@ -170,4 +172,3 @@ or replacing the existing quiz/other applications is outside this branch's scope
 - https://marketplacefront.zoom.us/sdk/meeting/web/functions/ZoomMtg.inMeetingServiceListener.html — connection status events.
 - https://firebase.google.com/docs/firestore/manage-data/transactions — atomic operations and retries.
 - https://firebase.google.com/docs/firestore/security/rules-structure — overlapping rule behaviour.
-- https://firebase.google.com/docs/auth/admin/custom-claims — server-controlled teacher authorization.

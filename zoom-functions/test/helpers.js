@@ -99,7 +99,7 @@ function loadBackend(filename, {db = memoryDb(), decoded = {}, getUser, fetch, e
   firestore.FieldValue = fields;
   const admin = {apps: [1], firestore,
     auth: () => ({verifyIdToken: async () => decoded,
-      getUser: getUser || (async uid => ({uid, email: 'teacher@example.invalid', customClaims: {schoolTeacher: true}}))})};
+      getUser: getUser || (async uid => ({uid, email: 'teacher@example.invalid'}))})};
   const cache = new Map();
   function load(file, extra = '') {
     const absolute = path.resolve(__dirname, '..', file);

@@ -7,7 +7,7 @@ const {getApps, initializeApp} = require('firebase-admin/app');
 const {getFirestore, Timestamp, FieldValue} = require('firebase-admin/firestore');
 const {onRequest} = require('firebase-functions/v2/https');
 const {defineSecret} = require('firebase-functions/params');
-const {teacherUid: approvedTeacherUid, teacherStillApproved} = require('./auth');
+const {teacherUid: existingTeacherUid, teacherAccountActive} = require('./auth');
 
 if (!getApps().length) initializeApp();
 const db = getFirestore();
@@ -89,9 +89,9 @@ function seal(data, keyBase64) {
     tag: cipher.getAuthTag().toString('base64')
   };
 }
-// School teacher access is granted using server-controlled custom claims.
+// Reuse the existing CampusConnect teacher sign-in without additional setup.
 async function teacherUid(req) {
-  return approvedTeacherUid(req, {allowForm: true});
+  return existingTeacherUid(req, {allowForm: true});
 }
 
 // Firestore clients can edit general collections under the school's existing rules.
@@ -215,7 +215,7 @@ exports.zoomOAuthCallback = onRequest({
       return snap.get('teacherUid');
     });
 
-    if (!await teacherStillApproved(uid)) throw new Error('Teacher access revoked');
+    if (!await teacherAccountActive(uid)) throw new Error('Teacher access revoked');
     stage = 'token';
     const form = new URLSearchParams({
       grant_type: 'authorization_code', code,

@@ -4,12 +4,12 @@ const assert = require('node:assert/strict');
 const {Timestamp, loadBackend, response} = require('./helpers');
 
 for (const [label, decoded, expected] of [
-  ['approved teacher', {uid: 'teacher', email: 'teacher@example.invalid', schoolTeacher: true}, 'teacher'],
-  ['school administrator', {uid: 'admin', email: 'admin@example.invalid', schoolAdmin: true}, 'admin'],
-  ['self-registered email', {uid: 'new', email: 'new@example.invalid'}, null],
-  ['anonymous account', {uid: 'anon', email: 'anon@example.invalid', schoolTeacher: true, firebase: {sign_in_provider: 'anonymous'}}, null],
-  ['missing email', {uid: 'teacher', schoolTeacher: true}, null],
-  ['string claim', {uid: 'teacher', email: 'teacher@example.invalid', schoolTeacher: 'true'}, null]
+  ['existing teacher without new claims', {uid: 'teacher', email: 'teacher@example.invalid'}, 'teacher'],
+  ['existing administrator without new claims', {uid: 'admin', email: 'admin@example.invalid'}, 'admin'],
+  ['missing UID', {email: 'teacher@example.invalid'}, null],
+  ['anonymous account', {uid: 'anon', email: 'anon@example.invalid', firebase: {sign_in_provider: 'anonymous'}}, null],
+  ['missing email', {uid: 'teacher'}, null],
+  ['disabled account', {uid: 'teacher', email: 'teacher@example.invalid', disabled: true}, null]
 ]) {
   test('teacher authorization: ' + label, async () => {
     const {exports} = loadBackend('auth.js', {decoded});
@@ -17,16 +17,16 @@ for (const [label, decoded, expected] of [
   });
 }
 test('OAuth form tokens are accepted only by the explicit OAuth form route', async () => {
-  const {exports} = loadBackend('auth.js', {decoded: {uid: 'teacher', email: 'teacher@example.invalid', schoolTeacher: true}});
+  const {exports} = loadBackend('auth.js', {decoded: {uid: 'teacher', email: 'teacher@example.invalid'}});
   const req = {headers: {}, is: () => true, body: {firebaseIdToken: 'token'}};
   assert.equal(await exports.teacherUid(req), null);
   assert.equal(await exports.teacherUid(req, {allowForm: true}), 'teacher');
 });
-test('OAuth callback approval check rejects disabled and unapproved accounts', async () => {
-  for (const user of [{uid: 'teacher', email: 'teacher@example.invalid', disabled: true, customClaims: {schoolTeacher: true}},
-    {uid: 'teacher', email: 'teacher@example.invalid', customClaims: {}}]) {
+test('OAuth callback checks existing account status without teacher setup', async () => {
+  for (const user of [{uid: 'teacher', email: 'teacher@example.invalid', disabled: true},
+    {uid: 'teacher', disabled: false}]) {
     const {exports} = loadBackend('auth.js', {getUser: async () => user});
-    assert.equal(await exports.teacherStillApproved('teacher'), false);
+    assert.equal(await exports.teacherAccountActive('teacher'), false);
   }
 });
 function sdkFixture(overrides = {}, studentOverrides = {}) {

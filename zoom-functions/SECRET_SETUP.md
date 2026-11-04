@@ -45,7 +45,7 @@ save them into tracked files.
 
 - The `default` functions source is not in this repository. Never run a blanket Functions deployment.
 - Firebase Hosting serves `firebase-site/`. Its teacher page redirects to the GitHub Pages teacher page; the student page is mirrored from the root source.
-- Teacher accounts need server-issued `schoolTeacher: true` or `schoolAdmin: true` custom claims before this branch is deployed. See `README.md` for the dry-run-first helper. An email account alone is insufficient.
+- Reuse existing CampusConnect teacher/admin permissions and sign-in. Do not configure individual teachers, add custom claims or change existing access permissions for this rollout.
 - Keep the existing Firebase/Firestore rules unchanged, as instructed by the owner. No rule export, replacement or deployment is required for this work; `FIRESTORE_REVIEW.md` contains informational access notes only.
 - The attendance webhook is already exported and additionally requires `ZOOM_WEBHOOK_SECRET_TOKEN`, the Zoom Event Subscription Secret Token. Store it privately in Secret Manager and validate the four-event subscription described in `ATTENDANCE_SETUP.md`.
 - Review rollout order and owner approval before merging: the existing main-branch workflows deploy production.

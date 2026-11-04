@@ -7,8 +7,8 @@ It does not import or deploy the existing quiz/reminder functions.
 
 | Function | Purpose |
 | --- | --- |
-| zoomOAuthStart | Starts a signed, one-use, ten-minute OAuth authorization for an approved school teacher. |
-| zoomOAuthCallback | Checks state and current teacher approval, exchanges the Zoom code, encrypts tokens and stores them by teacher UID. |
+| zoomOAuthStart | Starts a signed, one-use, ten-minute OAuth authorization using the existing CampusConnect teacher sign-in. |
+| zoomOAuthCallback | Checks state and the existing account status, exchanges the Zoom code, encrypts tokens and stores them by teacher UID. |
 | zoomConnectionStatus | Reports that teacher's connection and meeting scopes. |
 | zoomCreateMeeting | Creates or updates the owning teacher's meeting, with revision and refresh-token locks. |
 | zoomSdkParticipantSignature | Checks the joining window, class/section roster and registered parent mobile; returns a participant-only SDK signature and attendance tag. |
@@ -18,24 +18,19 @@ Region: `asia-south1`. Hosting routes are defined in `../firebase.json`.
 The teacher page runs on GitHub Pages; the Firebase teacher URL redirects there.
 The student page is mirrored at the repository root and in `firebase-site/`.
 
-## School teacher approval
+## Existing teacher permissions
 
-A Firebase email account alone is **not** teacher authorization. The server and
-teacher page require an administrator-issued `schoolTeacher: true` or
-`schoolAdmin: true` Firebase custom claim. Client-editable profile fields do not count.
+Reuse the existing CampusConnect sign-in, teacher UID and owning-teacher checks.
+Teachers do not need new custom claims, an individual allowlist, approval flags,
+or any other per-teacher setup. Existing administrator/coordinator permissions
+in other school pages are unchanged. No profile schema or Firebase rules change
+is required.
 
-Before deploying this branch, approve existing staff UIDs in a trusted Admin SDK
-environment. The supplied helper defaults to a read-only preview:
-
-```bash
-cd zoom-functions
-node scripts/teacher-access.js --uid FIREBASE_UID --grant
-```
-
-After checking the exact UID, add `--apply` to make the change. Other custom
-claims are preserved. Staff must sign in again to refresh their tokens.
-`--revoke` removes only the teacher claim; an existing schoolAdmin claim still grants access.
-This audit did not grant claims or change production Auth accounts.
+The backend verifies existing Firebase ID tokens, rejects anonymous student
+sessions for teacher endpoints, and keeps teacherId ownership checks on meetings.
+OAuth completion also checks that the same account is still active. This does
+not create a new teacher permission system or establish new database rule protections.
+No live Auth accounts or permissions were changed during this work.
 
 ## Secrets
 

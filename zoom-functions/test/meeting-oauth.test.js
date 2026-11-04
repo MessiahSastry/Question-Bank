@@ -3,7 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {Timestamp, loadBackend, response} = require('./helpers');
 
-const teacher = {uid: 'teacher', email: 'teacher@example.invalid', schoolTeacher: true};
+const teacher = {uid: 'teacher', email: 'teacher@example.invalid'};
 function meetingFixture({decoded = teacher, scopes = 'meeting:write:meeting meeting:update:meeting', overrides = {}, changeDuringRequest = false} = {}) {
   const requests = [];
   const {exports, db} = loadBackend('meetings.js', {decoded,
@@ -34,8 +34,8 @@ test('one teacher cannot generate another teacher’s meeting', async () => {
   const f = meetingFixture({decoded: {...teacher, uid: 'other-teacher'}});
   assert.equal((await f.send()).statusCode, 403); assert.equal(f.requests.length, 0);
 });
-test('self-registered users cannot call the teacher meeting API', async () => {
-  const f = meetingFixture({decoded: {uid: 'teacher', email: 'teacher@example.invalid'}});
+test('anonymous student sessions cannot call the teacher meeting API', async () => {
+  const f = meetingFixture({decoded: {uid: 'teacher', email: 'teacher@example.invalid', firebase: {sign_in_provider: 'anonymous'}}});
   assert.equal((await f.send()).statusCode, 401); assert.equal(f.requests.length, 0);
 });
 test('concurrent requests create only one Zoom meeting', async () => {
@@ -62,10 +62,10 @@ test('missing scopes, cancelled classes and invalid durations stop before a Zoom
   }
 });
 
-function oauthFixture({approved = true} = {}) {
+function oauthFixture({active = true} = {}) {
   let tokenRequests = 0;
   const {exports, db} = loadBackend('index.js', {decoded: teacher,
-    getUser: async uid => ({uid, email: 'teacher@example.invalid', customClaims: approved ? {schoolTeacher: true} : {}}),
+    getUser: async uid => ({uid, email: 'teacher@example.invalid', disabled: !active}),
     fetch: async () => {tokenRequests++; return {ok: true, status: 200,
       json: async () => ({access_token: 'private-access', refresh_token: 'private-refresh', expires_in: 3600})};}});
   const req = {method: 'POST', headers: {authorization: 'Bearer token', origin: 'https://stpatricks-questionbank.web.app'},
@@ -74,7 +74,7 @@ function oauthFixture({approved = true} = {}) {
   const callback = async state => {const res = response(); await exports.zoomOAuthCallback({method: 'GET', query: {code: 'test-code', state}}, res); return res;};
   return {db, req, start, callback, tokenRequests: () => tokenRequests};
 }
-test('OAuth binds credentials to the initiating approved teacher and consumes state once', async () => {
+test('OAuth binds credentials to the initiating existing teacher and consumes state once', async () => {
   const f = oauthFixture(), started = await f.start(); assert.equal(started.statusCode, 200);
   const state = new URL(started.body.authorizationUrl).searchParams.get('state');
   const completed = await f.callback(state); assert.equal(completed.statusCode, 200);
@@ -83,8 +83,8 @@ test('OAuth binds credentials to the initiating approved teacher and consumes st
   assert.equal(stored.access_token, undefined); assert.ok(!completed.body.includes('private-access'));
   assert.equal((await f.callback(state)).statusCode, 400); assert.equal(f.tokenRequests(), 1);
 });
-test('revoked teacher approval blocks OAuth callback before token exchange', async () => {
-  const f = oauthFixture({approved: false}), started = await f.start();
+test('disabled teacher account blocks OAuth callback before token exchange', async () => {
+  const f = oauthFixture({active: false}), started = await f.start();
   const state = new URL(started.body.authorizationUrl).searchParams.get('state');
   assert.equal((await f.callback(state)).statusCode, 400); assert.equal(f.tokenRequests(), 0);
 });
