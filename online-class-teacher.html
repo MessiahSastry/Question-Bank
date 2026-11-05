@@ -128,7 +128,7 @@
     classes:new Map(), sections:new Map(), meetings:new Map(), unsubscribe:null,
     editingId:null, draftId:null, loadedRevision:0, originalStart:null,
     savedSignature:'', initialSignature:'', busy:false, initializing:true, listReady:false,
-    attendance:null, attendanceSaving:false, attendanceRefreshing:false, zoomConnecting:false, zoomLeaving:false, zoomInfo:null
+    attendance:null, attendanceSaving:false, attendanceRefreshing:false, zoomConnecting:false, zoomLeaving:false, zoomInfo:null, pdfLoader:null, pdfDownloading:false
   };
   let db = null, auth = null;
   const stamp = () => firebase.firestore.FieldValue.serverTimestamp();
@@ -817,102 +817,122 @@
   }
   async function loadPdfLibrary(){
     if(window.jspdf?.jsPDF)return window.jspdf.jsPDF;
-    await new Promise((resolve,reject)=>{
-      const script=document.createElement('script');
-      script.src='https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.2/jspdf.umd.min.js';
-      script.onload=resolve;
-      script.onerror=()=>reject(uiError('Could not load the PDF generator. Please check your internet and try again.'));
-      document.head.append(script);
-    });
-    if(!window.jspdf?.jsPDF)throw uiError('The PDF generator did not load. Refresh and retry.');
-    return window.jspdf.jsPDF;
+    if(state.pdfLoader)return state.pdfLoader;
+    state.pdfLoader=(async()=>{
+      // Use the already-bundled PDF library first; retain the existing CDN as a fallback.
+      for(const src of ['vendor/jspdf.umd.min.js','https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.2/jspdf.umd.min.js']){
+        try{
+          await new Promise((resolve,reject)=>{
+            const script=document.createElement('script');
+            const finish=error=>{
+              clearTimeout(timer);script.onload=null;script.onerror=null;
+              if(error){script.remove();reject(error);}else resolve();
+            };
+            const timer=setTimeout(()=>finish(new Error('PDF load timeout')),15000);
+            script.src=src;
+            script.onload=()=>finish();script.onerror=()=>finish(new Error('PDF load failed'));
+            document.head.append(script);
+          });
+          if(window.jspdf?.jsPDF)return window.jspdf.jsPDF;
+        }catch(_){}
+      }
+      throw uiError('Could not load the PDF generator. Check your connection and try again.');
+    })().catch(error=>{state.pdfLoader=null;throw error;});
+    return state.pdfLoader;
   }
   async function downloadAttendancePdf(){
-    const a=state.attendance;if(!a||!a.rows.length||a.loading)return;
+    const a=state.attendance;if(!a||!a.rows.length||a.loading||state.pdfDownloading)return;
     if(a.changes.size){
       const ok=await ask('Download with unsaved changes?',
         'The PDF will include your current teacher overrides, but these changes have not yet been saved. Save Attendance first to preserve them.','Download PDF');
       if(!ok)return;
     }
     const button=$('downloadAttendanceBtn');
-    button.disabled=true;button.textContent='Preparing PDF…';
+    state.pdfDownloading=true;button.disabled=true;button.textContent='Preparing PDF…';
     try{
       const JsPDF=await loadPdfLibrary();
       if(state.attendance!==a)return;
       const pdf=new JsPDF({orientation:'portrait',unit:'pt',format:'a4'});
       const pageW=pdf.internal.pageSize.getWidth(),pageH=pdf.internal.pageSize.getHeight();
-      const margin=32,session=zoomSession(a.m),total=minutesText(session.duration);
+      const margin=28,width=pageW-2*margin,session=zoomSession(a.m),total=minutesText(session.duration);
+      const columns=[
+        {label:'Roll',width:30},{label:'Student name',width:238},
+        {label:'Join time',width:62},{label:'Time in class',width:112},
+        {label:'Final status',width:width-442}
+      ];
+      let left=margin;
+      for(const column of columns){column.x=left;left+=column.width;}
       const results=a.rows.map(row=>({row,info:zoomAttendance(a.m,row)}));
-      const count=status=>results.filter(x=>x.info.final===status).length;
+      const count=status=>results.filter(item=>item.info.final===status).length;
+      const lineHeight=10.5,bottom=pageH-40;
+      function cell(value,column,bold=false){
+        const text=String(value),available=column.width-8;
+        pdf.setFont('helvetica',bold?'bold':'normal');pdf.setFontSize(9);
+        const measured=pdf.getTextWidth(text);
+        const size=measured>available-1?Math.max(8.5,9*(available-1)/measured):9;
+        pdf.setFontSize(size);
+        return {column,bold,size,lines:pdf.splitTextToSize(text,available)};
+      }
+      const rows=results.map(({row,info})=>{
+        const cells=[cell(row.roll||'-',columns[0]),cell(row.name,columns[1]),
+          cell(Number.isFinite(info.first)?formatTime(info.first):'-',columns[2]),
+          cell(info.durationText,columns[3]),
+          cell(info.statusText+(info.manual?' (Teacher)':''),columns[4],true)];
+        return {cells,height:Math.max(14,Math.max(...cells.map(item=>item.lines.length))*lineHeight+4)};
+      });
       const header=()=>{
-        pdf.setFillColor(20,66,105);
-        pdf.rect(0,0,pageW,69,'F');
+        pdf.setFillColor(20,66,105);pdf.rect(0,0,pageW,46,'F');
         pdf.setTextColor(255,255,255);pdf.setFont('helvetica','bold');
-        pdf.setFontSize(16);pdf.text("ST. PATRICK'S SCHOOL",margin,30);
-        pdf.setFontSize(10);pdf.text('ONLINE CLASS ATTENDANCE REPORT',margin,50);
-        pdf.setTextColor(27,54,77);pdf.setFontSize(9);pdf.setFont('helvetica','normal');
-        const sessionLine=session.verified?'Verified Zoom duration: '+total:
-          'Scheduled duration: '+total+' (actual Zoom duration unverified)';
+        pdf.setFontSize(14);pdf.text("ST. PATRICK'S SCHOOL",margin,22);
+        pdf.setFontSize(8.5);pdf.text('ONLINE CLASS ATTENDANCE REPORT',margin,36);
+        pdf.setTextColor(27,54,77);pdf.setFont('helvetica','normal');pdf.setFontSize(8.5);
+        const sessionLine=session.verified?'Verified Zoom duration: '+total:'Scheduled duration: '+total+' (actual duration unverified)';
         const meta=[
-          'Academic Year: '+meetingYear(a.m)+'    Class: '+a.m.class+'    Section: '+a.m.section,
-          'Teacher: '+a.m.teacherName+'    Subject: '+a.m.subject,
-          'Topic: '+a.m.topic,
-          'Scheduled: '+formatDateTime(a.m.startAt),
-          sessionLine,
+          'Academic Year: '+meetingYear(a.m)+'    Class: '+(a.m.class||'-')+'    Section: '+(a.m.section||'-'),
+          'Teacher: '+(a.m.teacherName||'-')+'    Subject: '+(a.m.subject||'-'),
+          'Topic: '+(a.m.topic||'-'),
+          'Scheduled: '+formatDateTime(a.m.startAt)+'    '+sessionLine,
           'Present: '+count('present')+'    Absent: '+count('absent')+
             '    Pending/Unverified: '+(count('pending')+count('unverified'))+
-            '    Teacher overrides: '+results.filter(x=>x.info.manual).length
+            '    Teacher overrides: '+results.filter(item=>item.info.manual).length,
+          ...(a.changes.size?['Unsaved teacher changes are included in this preview.']:[])
         ];
-        let y=87;
-        for(const line of meta){
-          const parts=pdf.splitTextToSize(String(line),pageW-2*margin);
-          pdf.text(parts,margin,y);
-          y+=Math.max(1,parts.length)*12;
+        let y=60;
+        for(const text of meta){
+          const lines=pdf.splitTextToSize(String(text),width);
+          pdf.text(lines,margin,y,{lineHeightFactor:11/8.5});y+=lines.length*11;
         }
-        y+=9;
-        pdf.setFillColor(231,239,247);pdf.rect(margin,y,pageW-2*margin,27,'F');
-        pdf.setTextColor(27,54,77);pdf.setFont('helvetica','bold');pdf.setFontSize(9);
-        pdf.text('Roll',margin+7,y+17);
-        pdf.text('Student name',margin+56,y+17);
-        pdf.text('Join time',margin+245,y+17);
-        pdf.text('Time in class',margin+337,y+17);
-        pdf.text('Final status',margin+444,y+17);
-        return y+27;
+        y+=4;
+        pdf.setFillColor(231,239,247);pdf.rect(margin,y,width,18,'F');
+        pdf.setFont('helvetica','bold');pdf.setFontSize(8.5);
+        for(const column of columns)pdf.text(column.label,column.x+4,y+12);
+        return y+18;
       };
       let y=header();
-      pdf.setFontSize(9);
-      for(const {row,info} of results){
-        const name=pdf.splitTextToSize(String(row.name),183).slice(0,3);
-        const join=Number.isFinite(info.first)?formatTime(info.first):'—';
-        const spent=info.durationText;
-        const result=info.statusText+(info.manual?' (Teacher)':'');
-        const statusLines=pdf.splitTextToSize(result,86);
-        const rowH=Math.max(29,name.length*12+10,statusLines.length*12+10);
-        if(y+rowH>pageH-46){pdf.addPage();y=header();}
-        pdf.setDrawColor(223,233,241);pdf.line(margin,y+rowH,pageW-margin,y+rowH);
-        pdf.setTextColor(27,54,77);pdf.setFont('helvetica','normal');
-        pdf.text(String(row.roll||'—').slice(0,11),margin+7,y+18);
-        pdf.text(name,margin+56,y+18);
-        pdf.text(join,margin+245,y+18);
-        pdf.text(spent,margin+337,y+18);
-        pdf.setFont('helvetica','bold');
-        pdf.text(statusLines,margin+444,y+18);
-        y+=rowH;
-      }
+      rows.forEach(({cells,height},index)=>{
+        if(y+height>bottom){pdf.addPage();y=header();}
+        if(index%2){pdf.setFillColor(247,250,253);pdf.rect(margin,y,width,height,'F');}
+        pdf.setDrawColor(223,233,241);pdf.setLineWidth(.3);pdf.line(margin,y+height,pageW-margin,y+height);
+        pdf.setTextColor(27,54,77);
+        for(const item of cells){
+          pdf.setFont('helvetica',item.bold?'bold':'normal');pdf.setFontSize(item.size);
+          pdf.text(item.lines,item.column.x+4,y+3+item.size,{lineHeightFactor:lineHeight/item.size});
+        }
+        y+=height;
+      });
       const pages=pdf.internal.getNumberOfPages();
       for(let page=1;page<=pages;page++){
-        pdf.setPage(page);
-        pdf.setDrawColor(214,225,235);pdf.line(margin,pageH-42,pageW-margin,pageH-42);
+        pdf.setPage(page);pdf.setDrawColor(214,225,235);pdf.line(margin,pageH-31,pageW-margin,pageH-31);
         pdf.setTextColor(97,113,129);pdf.setFont('helvetica','normal');pdf.setFontSize(8);
-        pdf.text('Automatic status uses signed Zoom events, with a seven-minute allowance; teacher overrides take precedence.',margin,pageH-28);
-        pdf.text('Page '+page+' of '+pages,pageW-margin,pageH-15,{align:'right'});
+        pdf.text('Seven-minute allowance. Teacher overrides take precedence.',margin,pageH-18);
+        pdf.text('Page '+page+' of '+pages,pageW-margin,pageH-18,{align:'right'});
       }
       pdf.save('St_Patricks_Attendance_'+dateParts(ms(a.m.startAt)).date+'_'+a.id+'.pdf');
-      message('attendanceStatus','Attendance PDF prepared. The final status includes any teacher overrides.','success');
+      message('attendanceStatus','Attendance PDF prepared ('+pages+' page'+(pages===1?'':'s')+'). Teacher overrides are included.','success');
     }catch(e){
       message('attendanceStatus',readableError(e,'Could not generate the attendance PDF.'),'error');
     }finally{
-      button.disabled=!a.rows.length;button.textContent='Download PDF';
+      state.pdfDownloading=false;button.disabled=!state.attendance?.rows.length||!!state.attendance?.loading;button.textContent='Download PDF';
     }
   }
   function stepDate(delta){const selected=$('listDate').value||dateParts().date,d=new Date(selected+'T12:00:00+05:30');d.setTime(d.getTime()+delta*86400000);$('listDate').value=dateParts(d).date;renderMeetings();}

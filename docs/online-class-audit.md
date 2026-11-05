@@ -1,6 +1,6 @@
 # St. Patrick's School online-class audit
 
-Review date: 4 November 2026. Source baseline:
+Review date: 4 November 2026; compact-PDF follow-up: 5 November 2026. Source baseline:
 `d27a33d51a8372b3bddf3a085cc799401f28cab2` on `main`.
 
 This branch contains source fixes for review. It has not been merged or deployed.
@@ -41,7 +41,8 @@ still copies its unchanged quiz source as it did before this branch.
 | Token refresh | A request could refresh from a stale token snapshot even after another request rotated it. | Credentials are reread under the per-teacher lock and a newly refreshed token is reused. Reconnection clears obsolete locks. |
 | SDK/mobile | SDK success was used as a connection signal; disconnect/reconnect events were ignored and duplicate join actions remained possible. | Actual Zoom status events control connection messages and rejoin availability. An active SDK session blocks another join or student switch. Existing permission settling and page-switch behaviour remain. SDK/service timeouts offer a retry path. |
 | Deployment coverage | Root online-class.html changes did not trigger Hosting deployment or PR checks. | Both source and hosted student pages are validated, and root student changes trigger staging/Hosting. |
-| Validation/dependencies | Only index.js was checked; no regression suite or dependency lock was present. | All online-class modules/pages/config are checked, 70 behaviour tests and real SDK-load smoke checks run in CI, and npm ci uses a committed lock. Existing Firebase packages were updated and code migrated to their supported modular Admin APIs. |
+| Validation/dependencies | Only index.js was checked; no regression suite or dependency lock was present. | All online-class modules/pages/config are checked, 75 behaviour tests and real SDK-load smoke checks run in CI, and npm ci uses a committed lock. Existing Firebase packages were updated and code migrated to their supported modular Admin APIs. |
+| Compact attendance PDF | The previous roomy table needed three pages for the 45-student long-name test. | A compact portrait layout fits that sample on one A4 page, retains full names and teacher overrides, and paginates larger reports without clipping. The existing bundled PDF library is tried first, with fallback and retry support. |
 | Setup instructions | Documentation described an unexported webhook and cookie-based OAuth, despite current exports/state behaviour. | Setup documentation now matches the implementation and rollout prerequisites. |
 
 ## Attendance policy
@@ -85,14 +86,18 @@ webhooks nor the SDK prove attention or viewing time.
 ## Validation performed
 
 - Node.js 22.23.4: all online-class syntax, source/hosted student equality and Hosting route checks passed.
-- 70 local regression tests passed: existing teacher access without new setup, OAuth state/replay/account status,
+- 75 local regression tests passed: existing teacher access without new setup, OAuth state/replay/account status,
   meeting ownership/create/update/concurrency, token refresh, webhook authentication,
   event failure/retry/order/deduplication, SDK roster/phone/window checks, reconnection,
   interval union/thresholds, confirmations, overrides and PDF pagination.
 - The real installed Firebase Admin 14.5.0 / Firebase Functions 7.4.0 packages load
   all six exports in a non-production, no-request smoke check.
-- A synthetic 45-student portrait PDF generated successfully as three A4 pages;
-  rendered pages were visually checked for headers, columns, row continuity and footers.
+- The compact PDF fits the 45-student register-name sample on one portrait A4 page.
+  Larger rosters and unusually long names continue on additional pages without
+  truncating names. Rendered pages were checked for headers, columns and footers.
+- The PDF loader uses the existing bundled library first, with the existing CDN as
+  a fallback. Stalled loads time out, and a later download can retry. Unsaved teacher
+  overrides are explicitly labelled in the exported preview.
 - Dependency audit after the update: **0 high, 0 critical, 6 moderate findings**.
   Remaining transitive findings are glob/minimatch through rimraf and Google client
   dependencies (gaxios, gcp-metadata, google-gax). The normal non-force audit fix did

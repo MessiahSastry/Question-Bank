@@ -52,4 +52,7 @@ The parent-mobile flow remains self-identification, not proof of phone ownership
 The optional Zoom past-participant API requires a paid plan and is not used.
 
 The PDF uses the same calculation as the table, includes teacher overrides,
-and retains portrait pagination. Unsaved overrides are identified before export.
+and uses a compact portrait layout. A normal 40-45 student class can fit one A4
+page; long names, long class details or larger rosters continue onto extra pages
+without removing names. Unsaved overrides are identified before export and labelled
+in the report. The PDF library loads locally first, with a fallback and retry path.
