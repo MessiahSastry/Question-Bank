@@ -177,7 +177,7 @@ Students are displayed by section and roll number.
 Ranking is calculated across the entire class using
 80% accuracy and 20% completion speed.
 Only the first recorded official attempt counts; practice attempts do not change ranks.
-Final Marks are out of the quiz total: 80% actual marks + 20% speed marks.
+Final marks are rounded to whole numbers out of the quiz total: 80% actual marks + 20% speed marks. No speed marks are awarded for a score of zero.
 Full speed marks for completion within 12 seconds/question (3 minutes for 15 questions);
 no speed marks at 60 seconds/question or longer.
 Rankings are provisional and may change as more students attempt the quiz.
@@ -627,6 +627,8 @@ function finalQuizMarks(row, max) {
   // The 80:20 result is MARKS OUT OF max, not points out of 100.
   // For 15 questions: 12 academic marks + up to 3 speed marks.
   const actualMarks = Math.max(0, Math.min(max, Number(row.score) || 0));
+  // A student with no correct answers cannot earn a speed bonus.
+  if (actualMarks === 0) return 0;
   const academicMarks = actualMarks * 0.80;
 
   // Reference time: 60 seconds per question.
@@ -643,7 +645,8 @@ function finalQuizMarks(row, max) {
     : 0;
   const speedMarks = max * 0.20 * speedRatio;
 
-  return Number(Math.min(max, academicMarks + speedMarks).toFixed(2));
+  // Final quiz marks are whole numbers, not decimal points.
+  return Math.round(Math.min(max, academicMarks + speedMarks));
 }
 
 function rankSectionRows(rows) {
@@ -661,7 +664,9 @@ function rankSectionRows(rows) {
     members.sort((a, b) =>
       (b.finalMarks - a.finalMarks) ||
       (b.score - a.score) ||
-      ((a.time ?? Infinity) - (b.time ?? Infinity)) ||
+      // Students with zero correct answers are not separated by speed.
+      (a.score > 0 && b.score > 0
+        ? ((a.time ?? Infinity) - (b.time ?? Infinity)) : 0) ||
       a.name.localeCompare(b.name)
     );
     members.forEach((row, i) => {
@@ -669,7 +674,7 @@ function rankSectionRows(rows) {
       row.rank = prev &&
         prev.finalMarks === row.finalMarks &&
         prev.score === row.score &&
-        prev.time === row.time ? prev.rank : i + 1;
+        (row.score === 0 || prev.time === row.time) ? prev.rank : i + 1;
     });
   }
 }
@@ -728,7 +733,7 @@ function renderRows() {
     cell(tr, r.completed ? `${r.percent.toFixed(1)}%` : '—', 'num');
     cell(tr, r.completed ? r.attempts : 0, 'num');
     cell(tr, r.completed ? seconds(r.time) : '—', 'num');
-    cell(tr, r.completed ? `${r.finalMarks.toFixed(2)}/${app.currentQuiz.totalQuestions || app.currentQuiz.questions?.length || '?'}` : '—', 'num');
+    cell(tr, r.completed ? `${r.finalMarks}/${app.currentQuiz.totalQuestions || app.currentQuiz.questions?.length || '?'}` : '—', 'num');
 
     const s = cell(tr, '');
     const span = document.createElement('span');
@@ -901,7 +906,7 @@ async function shareWhatsAppReport(kind) {
           students.map(r =>
             `${medals[r.rank] || '🏅'} Section Rank ${r.rank}: ${r.name}\n` +
             `Score: ${r.score}/${total} | Time: ${seconds(r.time)}\n` +
-            `Final Marks (80+20): ${r.finalMarks.toFixed(2)}/${total}`
+            `Final Marks (80+20): ${r.finalMarks}/${total}`
           ).join('\n\n')
         ).join('\n\n')
       : 'No section ranks available yet.';
@@ -1078,7 +1083,7 @@ async function downloadResultsPdf() {
         'Subject: '+String(quiz.subject||'—')+'     Chapter: '+String(quiz.chapter||'—'),
         'Questions: '+total+'     Attempted: '+attempted+'     Not attempted: '+(rows.length-attempted)+
           '     Generated: '+generated+' IST',
-        'Final Marks = 80% actual marks + 20% speed marks; full speed at 12 seconds/question. First attempt only.'
+        'Final marks are rounded; 80% academic + 20% speed. No speed marks for zero correct. First attempt only.'
       ];
       let y = 84;
       for (const textValue of meta) {
@@ -1107,7 +1112,7 @@ async function downloadResultsPdf() {
         row.name || 'Student',
         row.completed ? String(row.score)+'/'+total : '—',
         row.completed ? seconds(row.time) : '—',
-        row.completed ? Number(row.finalMarks).toFixed(2)+'/'+total : '—',
+        row.completed ? String(row.finalMarks)+'/'+total : '—',
         row.completed && row.rank != null ? String(row.rank) : '—',
         row.completed ? 'Attempted' : 'Not Attempted'
       ];
@@ -1174,7 +1179,7 @@ function exportCsv(){
     const lines=[headers,...visibleRows().map(r=>[
     r.section,r.roll,r.name,r.completed&&r.rank!=null?r.rank:'—',r.completed?`${r.score}/${total}`:'—',
     r.completed?`${r.percent.toFixed(1)}%`:'—',r.completed?r.attempts:0,
-    r.completed?seconds(r.time):'—',r.completed?`${r.finalMarks.toFixed(2)}/${total}`:'—',r.completed?'Attempted':'Not Attempted',
+    r.completed?seconds(r.time):'—',r.completed?`${r.finalMarks}/${total}`:'—',r.completed?'Attempted':'Not Attempted',
     $('year').value.trim(),r.cls,app.currentQuiz.subject,app.currentQuiz.chapter,app.currentQuiz.id
   ])];
   const csv='\ufeff'+lines.map(row=>row.map(safeCsv).join(',')).join('\r\n');
