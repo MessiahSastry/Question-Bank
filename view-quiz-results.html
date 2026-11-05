@@ -171,7 +171,7 @@
     <section class="card" style="margin-top:18px">
       <h2 id="reportTitle">Student Performance</h2>
       <p class="sub" id="reportInfo">Select a quiz to view its results. Only recorded scores are displayed.</p>
-      <div class="scroll"><table><thead><tr><th>Section</th><th class="num">Roll</th><th>Student Name</th><th class="num">Rank</th><th class="num">Marks</th><th class="num">Percentage</th><th class="num">Attempts</th><th class="num">Time</th><th class="num">Final Marks (80+20)</th><th>Status</th></tr></thead><tbody id="resultsBody"><tr><td colspan="10" class="muted">No quiz selected.</td></tr></tbody></table></div>
+      <div class="scroll"><table><thead><tr><th>Section</th><th class="num">Roll</th><th>Student Name</th><th class="num">Section Rank</th><th class="num">Marks</th><th class="num">Percentage</th><th class="num">Attempts</th><th class="num">Time</th><th class="num">Final Marks (80+20)</th><th>Status</th></tr></thead><tbody id="resultsBody"><tr><td colspan="10" class="muted">No quiz selected.</td></tr></tbody></table></div>
       <p class="note">
 Students are displayed by section and roll number.
 Ranking is calculated across the entire class using
@@ -646,6 +646,34 @@ function finalQuizMarks(row, max) {
   return Number(Math.min(max, academicMarks + speedMarks).toFixed(2));
 }
 
+function rankSectionRows(rows) {
+  // Rank each section independently. No section => no automatic rank.
+  const sections = new Map();
+  for (const row of rows) {
+    row.rank = null;
+    if (!row.completed) continue;
+    const section = String(row.section || '').trim().toLowerCase();
+    if (!section) continue;
+    if (!sections.has(section)) sections.set(section, []);
+    sections.get(section).push(row);
+  }
+  for (const members of sections.values()) {
+    members.sort((a, b) =>
+      (b.finalMarks - a.finalMarks) ||
+      (b.score - a.score) ||
+      ((a.time ?? Infinity) - (b.time ?? Infinity)) ||
+      a.name.localeCompare(b.name)
+    );
+    members.forEach((row, i) => {
+      const prev = members[i - 1];
+      row.rank = prev &&
+        prev.finalMarks === row.finalMarks &&
+        prev.score === row.score &&
+        prev.time === row.time ? prev.rank : i + 1;
+    });
+  }
+}
+
 function buildRows(attempts) {
   const map=new Map();
   attempts.filter(x => x.practiceOnly !== true && x.isPractice !== true &&
@@ -662,26 +690,8 @@ function buildRows(attempts) {
     r.finalMarks = finalQuizMarks(r, max);
   });
 
-  // Rank by combined marks and speed, with academic marks then time
-  // used to break ties in the displayed two-decimal final marks.
-  const byRank = [...rows].sort((a, b) =>
-    (b.finalMarks - a.finalMarks) ||
-    (b.score - a.score) ||
-    ((a.time ?? Infinity) - (b.time ?? Infinity)) ||
-    a.name.localeCompare(b.name)
-  );
-
-  byRank.forEach((row, i) => {
-    const prev = byRank[i - 1];
-
-    row.rank =
-      prev &&
-      prev.finalMarks === row.finalMarks &&
-      prev.score === row.score &&
-      prev.time === row.time
-        ? prev.rank
-        : i + 1;
-  });
+  // Every section starts its own ranking at 1.
+  rankSectionRows(rows);
   rows.sort(sectionRollSort);
   return rows;
 }
@@ -711,7 +721,7 @@ function renderRows() {
     cell(tr, r.section);
     cell(tr, r.roll, 'num');
     cell(tr, r.name);
-    cell(tr, r.completed ? r.rank : '—', 'num');
+    cell(tr, r.completed && r.rank != null ? r.rank : '—', 'num');
     cell(tr, r.completed ?
       `${r.score}/${app.currentQuiz.totalQuestions || app.currentQuiz.questions?.length || '?'}` :
       '—', 'num');
@@ -798,6 +808,8 @@ async function compareRoster(silent=false) {
       }
     }
     app.rosterChecked=true;
+    // Updated roster sections can change ranking groups.
+    rankSectionRows(app.rows);
     app.rows.sort(sectionRollSort);
     renderRows();renderSummary();
     status(`Roster checked: ${roster.length} active students; ${app.rows.filter(x=>!x.completed).length} without a recorded attempt.`, 'success');
@@ -859,20 +871,23 @@ async function shareWhatsAppReport(kind) {
       quiz.questions?.length ||
       '?';
 
-    // Top three ranks across the entire class.
-    // Include tied students occupying ranks 1, 2 or 3.
-    const leaders = app.rows
-      .filter(r =>
-        r.completed &&
-        r.rank >= 1 &&
-        r.rank <= 3
-      )
+    // When All Sections is selected, include each section's own top three.
+    // When one section is selected, share only that section's top three.
+    const leaders = visibleRows()
+      .filter(r => r.completed && r.rank >= 1 && r.rank <= 3)
       .sort((a, b) =>
+        String(a.section || '').localeCompare(String(b.section || ''), undefined, {numeric:true}) ||
         a.rank - b.rank ||
         b.score - a.score ||
         (a.time ?? Infinity) - (b.time ?? Infinity) ||
         a.name.localeCompare(b.name)
       );
+    const leaderGroups = new Map();
+    for (const row of leaders) {
+      const sectionName = String(row.section || '').trim();
+      if (!leaderGroups.has(sectionName)) leaderGroups.set(sectionName, []);
+      leaderGroups.get(sectionName).push(row);
+    }
 
     const medals = {
       1: '🥇',
@@ -880,13 +895,16 @@ async function shareWhatsAppReport(kind) {
       3: '🥉'
     };
 
-          const leaderText = leaders.length
-      ? leaders.map(r =>
-          `${medals[r.rank] || '🏅'} Rank ${r.rank}: ${r.name} (${r.section || 'Section not set'})\n` +
-          `Score: ${r.score}/${total} | Time: ${seconds(r.time)}\n` +
-          `Final Marks (80+20): ${r.finalMarks.toFixed(2)}/${total}`
+    const leaderText = leaders.length
+      ? [...leaderGroups].map(([sectionName, students]) =>
+          `*${sectionName || 'Section not set'}*\n` +
+          students.map(r =>
+            `${medals[r.rank] || '🏅'} Section Rank ${r.rank}: ${r.name}\n` +
+            `Score: ${r.score}/${total} | Time: ${seconds(r.time)}\n` +
+            `Final Marks (80+20): ${r.finalMarks.toFixed(2)}/${total}`
+          ).join('\n\n')
         ).join('\n\n')
-      : 'No ranks available yet.';
+      : 'No section ranks available yet.';
 
     // Students who have not attempted, respecting section filter.
     const pending = visibleRows().filter(r => !r.completed);
@@ -932,7 +950,7 @@ async function shareWhatsAppReport(kind) {
       '',
       `Academic Year: ${year}`,
       `Class: ${quiz.class || '—'}`,
-      isPending ? `Section: ${section}` : 'Ranking: Class-wide',
+      `Section: ${section}`,
       `Subject: ${quiz.subject || '—'}`,
       `Chapter: ${quiz.chapter || '—'}`,
       '',
@@ -950,7 +968,7 @@ async function shareWhatsAppReport(kind) {
             `Quiz Link: ${quizUrl}`
           ]
         : [
-            '🏆 *TOP 3 RANKS SO FAR (CLASS-WIDE)*',
+            '🏆 *TOP 3 RANKS SO FAR (SECTION-WISE)*',
             '',
             leaderText,
             '',
@@ -1037,7 +1055,7 @@ async function downloadResultsPdf() {
     }).format(new Date());
     // Compact portrait columns. Preserve all report fields without clipping.
     const colWidths = [62,32,154,56,58,73,36,61];
-    const headings = ['Section','Roll','Student Name','Marks','Time Taken','Final Marks','Rank','Status'];
+    const headings = ['Section','Roll','Student Name','Marks','Time Taken','Final Marks','Section Rank','Status'];
     const xs = [left];
     colWidths.forEach(w => xs.push(xs[xs.length - 1] + w));
     const tableRight = xs[xs.length - 1];
@@ -1090,7 +1108,7 @@ async function downloadResultsPdf() {
         row.completed ? String(row.score)+'/'+total : '—',
         row.completed ? seconds(row.time) : '—',
         row.completed ? Number(row.finalMarks).toFixed(2)+'/'+total : '—',
-        row.completed ? String(row.rank) : '—',
+        row.completed && row.rank != null ? String(row.rank) : '—',
         row.completed ? 'Attempted' : 'Not Attempted'
       ];
       const cols = values.map((value,i) =>
@@ -1124,7 +1142,7 @@ async function downloadResultsPdf() {
       doc.setFont('helvetica','normal');
       doc.setFontSize(8);
       doc.setTextColor(95,110,127);
-      doc.text('Class-wide ranks | Selected section only | First official attempt',left,height-23);
+      doc.text('Section-wise ranks | First official attempt',left,height-23);
       doc.text('Page '+page+' / '+count,right,height-23,{align:'right'});
     }
     const filename = [
@@ -1135,7 +1153,7 @@ async function downloadResultsPdf() {
       pdfFilenamePart(year)
     ].join('_')+'.pdf';
     doc.save(filename);
-    status('PDF created: marks, time, final 80+20 marks and class-wide ranks.', 'success');
+    status('PDF created: marks, time, final 80+20 marks and section-wise ranks.', 'success');
   } catch (error) {
     console.error('Unable to generate quiz PDF:',error);
     status('PDF could not be created: '+(error.message||'Unknown error'), 'error');
@@ -1152,9 +1170,9 @@ function safeCsv(value){
 function exportCsv(){
    if(!app.currentQuiz||!visibleRows().length)return;
   const total=app.currentQuiz.totalQuestions||app.currentQuiz.questions?.length||'';
-  const headers=['Section','Roll','Student Name','Rank','Marks','Percentage','Attempts','Time','Final Marks (80+20)','Status','Academic Year','Class','Subject','Chapter','Quiz ID'];
+  const headers=['Section','Roll','Student Name','Section Rank','Marks','Percentage','Attempts','Time','Final Marks (80+20)','Status','Academic Year','Class','Subject','Chapter','Quiz ID'];
     const lines=[headers,...visibleRows().map(r=>[
-    r.section,r.roll,r.name,r.completed?r.rank:'—',r.completed?`${r.score}/${total}`:'—',
+    r.section,r.roll,r.name,r.completed&&r.rank!=null?r.rank:'—',r.completed?`${r.score}/${total}`:'—',
     r.completed?`${r.percent.toFixed(1)}%`:'—',r.completed?r.attempts:0,
     r.completed?seconds(r.time):'—',r.completed?`${r.finalMarks.toFixed(2)}/${total}`:'—',r.completed?'Attempted':'Not Attempted',
     $('year').value.trim(),r.cls,app.currentQuiz.subject,app.currentQuiz.chapter,app.currentQuiz.id
