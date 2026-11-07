@@ -89,6 +89,7 @@ var key="stpatricks.gif.creator.v1";
 var codeKey="stpatricks.gif.creator.code.v1";
 var get=function(id){return document.getElementById(id);};
 var runner=null,runId=0,timeout=null,blobUrl=null,busy=false;
+var referenceImage=null,referenceVersion=0;
 function status(message,state){get("status").textContent=message;get("status").dataset.state=state||"info";}
 function save(){
 var data={};
@@ -101,6 +102,22 @@ try{var data=JSON.parse(localStorage.getItem(key)||"{}");fields.forEach(function
 restore();
 fields.forEach(function(name){get(name).addEventListener("input",save);get(name).addEventListener("change",save);});
 get("pythonCode").addEventListener("input",function(){try{if(this.value.length<60000)localStorage.setItem(codeKey,this.value);}catch(ignore){}});
+get("referenceImage").addEventListener("change",async function(){
+var file=this.files&&this.files[0],version=++referenceVersion;
+referenceImage=null;get("referencePanel").hidden=true;
+if(!file){status("Choose a textbook diagram.");return;}
+if(!["image/png","image/jpeg"].includes(file.type)||file.size>6*1024*1024){this.value="";status("Select a PNG or JPG image no larger than 6 MB.","error");return;}
+status("Reading textbook diagram...");
+try{
+var dataUrl=await new Promise(function(resolve,reject){var reader=new FileReader();reader.onload=function(){resolve(String(reader.result));};reader.onerror=function(){reject(Error("Unable to read image."));};reader.readAsDataURL(file);});
+var image=await new Promise(function(resolve,reject){var img=new Image();img.onload=function(){resolve(img);};img.onerror=function(){reject(Error("Unreadable image."));};img.src=dataUrl;});
+if(version!==referenceVersion)return;
+if(image.naturalWidth<200||image.naturalHeight<200||image.naturalWidth*image.naturalHeight>21000000)throw Error("Use a clearer diagram with supported dimensions.");
+referenceImage={base64:dataUrl.split(",")[1],name:file.name,width:image.naturalWidth,height:image.naturalHeight};
+get("referencePreview").src=dataUrl;get("referenceName").textContent=file.name+" ("+image.naturalWidth+" × "+image.naturalHeight+")";get("referencePanel").hidden=false;
+status("Textbook diagram ready. Attach the same image in ChatGPT.","success");
+}catch(error){this.value="";referenceImage=null;status(error.message||"Image could not be read.","error");}
+});
 function details(){
 var obj={};
 fields.forEach(function(name){obj[name]=get(name).value.trim();});
@@ -140,6 +157,7 @@ try{return document.execCommand("copy");}catch(ignore){return false;}
 }
 get("getPrompt").addEventListener("click",function(){
 var d=details();if(!d)return;
+if(!referenceImage){status("Upload a textbook diagram first. You must also attach it in ChatGPT.","error");return;}
 var p=prompt(d);
 get("promptText").value=p;get("promptArea").hidden=false;save();
 window.open("https://chatgpt.com/","_blank","noopener,noreferrer");
@@ -164,6 +182,7 @@ return (topic.replace(/[^a-zA-Z0-9 -]/g,"").trim().replace(/\s+/g,"-").slice(0,6
 }
 get("generate").addEventListener("click",function(){
 var d=details();if(!d)return;
+if(!referenceImage){status("Upload the same textbook diagram before generating the GIF.","error");return;}
 var code=normalizeCode(get("pythonCode").value);
 if(!code){status("Paste Python code from ChatGPT first.","error");return;}
 if(code.length>60000){status("Code is too long. Ask ChatGPT for a shorter Pillow-only animation (under 60,000 characters).","error");return;}
@@ -189,7 +208,7 @@ var data=event.data||{};
 if(data.app!=="stpatricks-gif-runner")return;
 if(data.kind==="ready"){
 status("Python is ready. Drawing your animated diagram...");
-runner.contentWindow.postMessage({app:"stpatricks-gif-creator",kind:"run",runId:runId,code:runner.dataset.code},"*");
+runner.contentWindow.postMessage({app:"stpatricks-gif-creator",kind:"run",runId:runId,code:runner.dataset.code,referenceImages:[referenceImage.base64]},"*");
 }else if(data.kind==="status"){
 status(data.message||"Generating GIF...");
 }else if(data.kind==="error"){
