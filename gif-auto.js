@@ -142,7 +142,7 @@ function photosynthesis(c,i){
  label(c,352,645,"Leaves");
 }
 function circuit(c,i){
- const lit=i>=3,wire=lit?"#da922c":"#63849b";
+ const lit=i>=2,wire=lit?"#da922c":"#63849b";
  // rectangle schematic: cell lower left, switch upper, lamp at right
  line(c,240,605,420,605,wire,9);
  line(c,516,605,678,605,wire,9);
