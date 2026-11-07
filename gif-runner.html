@@ -29,6 +29,9 @@ if(data.kind!=="run")return;
 try{
 var script=String(data.code||"");
 if(!script||script.length>60000)throw Error("Invalid or oversized Python code.");
+var inputs=data.referenceImages||[];
+if(!Array.isArray(inputs)||inputs.length!==1||typeof inputs[0]!=="string"||inputs[0].length>9000000)throw Error("Upload one supported textbook reference diagram before generating.");
+py.globals.set("__school_gif_reference_json",JSON.stringify(inputs));
 notify({kind:"status",message:"Rendering the animation frames..."});
 var suffix=[
 "",
@@ -43,7 +46,16 @@ var suffix=[
 "    raise ValueError('gif_bytes is not a GIF. Save with format=GIF.')",
 "_gif_base64.b64encode(gif_bytes).decode('ascii')"
 ].join("\n");
-var result=await py.runPythonAsync(script+"\n"+suffix);
+var setup=[
+"import io as _school_io, json as _school_json, base64 as _school_base64",
+"from PIL import Image as _school_Image",
+"source_images = [_school_Image.open(_school_io.BytesIO(_school_base64.b64decode(item))).convert('RGBA') for item in _school_json.loads(__school_gif_reference_json)]",
+"if len(source_images) != 1:",
+"    raise ValueError('Expected one textbook diagram')",
+"if source_images[0].width * source_images[0].height > 21000000:",
+"    raise ValueError('Image is too large for the browser')"
+].join("\n");
+var result=await py.runPythonAsync(setup+"\n"+script+"\n"+suffix);
 notify({kind:"result",runId:data.runId,base64:result});
 }catch(error){notify({kind:"error",message:String(error&&error.message||error)});}
 });
@@ -59,7 +71,7 @@ worker.onmessage=function(event){send(event.data||{});};
 worker.onerror=function(event){send({kind:"error",message:"Python worker error: "+(event.message||"Please reload and retry")});};
 window.addEventListener("message",function(event){
 if(event.source!==parent||!event.data||event.data.app!=="stpatricks-gif-creator")return;
-if(event.data.kind==="run"&&worker)worker.postMessage({kind:"run",runId:event.data.runId,code:event.data.code});
+if(event.data.kind==="run"&&worker)worker.postMessage({kind:"run",runId:event.data.runId,code:event.data.code,referenceImages:event.data.referenceImages});
 });
 }catch(error){send({kind:"error",message:"Cannot start the isolated Python worker: "+error.message});}
 })();
