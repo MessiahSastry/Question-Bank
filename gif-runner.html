@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' https://cdn.jsdelivr.net; connect-src https://cdn.jsdelivr.net; worker-src blob:; style-src 'unsafe-inline'; img-src data: blob:; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>Sandboxed Python GIF Engine</title>
+</head>
+<body>
+<script>
+(function(){
+"use strict";
+var worker=null;
+function send(message){message.app="stpatricks-gif-runner";parent.postMessage(message,"*");}
+function workerEngine(){
+"use strict";
+var cdn="https://cdn.jsdelivr.net/pyodide/v0.27.7/full/";
+function notify(message){self.postMessage(message);}
+(async function(){
+try{
+notify({kind:"status",message:"Downloading the Python engine (first use requires internet)..."});
+importScripts(cdn+"pyodide.js");
+var py=await loadPyodide({indexURL:cdn});
+notify({kind:"status",message:"Loading the Pillow image library..."});
+await py.loadPackage("pillow");
+notify({kind:"ready"});
+self.addEventListener("message",async function(event){
+var data=event.data||{};
+if(data.kind!=="run")return;
+try{
+var script=String(data.code||"");
+if(!script||script.length>60000)throw Error("Invalid or oversized Python code.");
+notify({kind:"status",message:"Rendering the animation frames..."});
+var suffix=[
+"",
+"import base64 as _gif_base64",
+"if 'gif_bytes' not in globals():",
+"    raise ValueError('Your Python code must assign the final GIF to gif_bytes = buffer.getvalue()')",
+"if not isinstance(gif_bytes, (bytes, bytearray)):",
+"    raise TypeError('gif_bytes must contain GIF image bytes')",
+"if len(gif_bytes) > 25000000:",
+"    raise ValueError('The GIF exceeds 25 MB. Use fewer frames or simpler artwork.')",
+"if gif_bytes[:6] not in (b'GIF87a', b'GIF89a'):",
+"    raise ValueError('gif_bytes is not a GIF. Save with format=GIF.')",
+"_gif_base64.b64encode(gif_bytes).decode('ascii')"
+].join("\n");
+var result=await py.runPythonAsync(script+"\n"+suffix);
+notify({kind:"result",runId:data.runId,base64:result});
+}catch(error){notify({kind:"error",message:String(error&&error.message||error)});}
+});
+}catch(error){notify({kind:"error",message:"Python engine failed to load: "+String(error&&error.message||error)});}
+})();
+}
+try{
+var blob=new Blob(["("+workerEngine.toString()+")();"],{type:"application/javascript"});
+var url=URL.createObjectURL(blob);
+worker=new Worker(url);
+URL.revokeObjectURL(url);
+worker.onmessage=function(event){send(event.data||{});};
+worker.onerror=function(event){send({kind:"error",message:"Python worker error: "+(event.message||"Please reload and retry")});};
+window.addEventListener("message",function(event){
+if(event.source!==parent||!event.data||event.data.app!=="stpatricks-gif-creator")return;
+if(event.data.kind==="run"&&worker)worker.postMessage({kind:"run",runId:event.data.runId,code:event.data.code});
+});
+}catch(error){send({kind:"error",message:"Cannot start the isolated Python worker: "+error.message});}
+})();
+</script>
+</body>
+</html>
