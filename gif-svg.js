@@ -92,14 +92,14 @@ function shape(c,x,y,w,h,r,fill,stroke){
 function label(c,s,x,y,size=27,color="#213951",bold=false,align="left"){
  c.textBaseline="middle";c.textAlign=align;c.fillStyle=color;c.font=(bold?"700 ":"400 ")+size+"px Arial,sans-serif";c.fillText(s,x,y);
 }
-function short(c,s,max){s=String(s);while(c.measureText(s).width>max&&s.length>5)s=s.slice(0,-2);return s;}
-function wrap(c,s,x,y,max=737,sz=25,limit=4){
- c.font=sz+"px Arial,sans-serif";c.textBaseline="middle";c.textAlign="left";c.fillStyle="#263f56";
- let lines=[],current="";for(const word of String(s).split(/\s+/)){
-  let next=current?current+" "+word:word;
-  if(c.measureText(next).width>max&&current){lines.push(current);current=word;}else current=next;
+function short(c,s,max){s=String(s);if(c.measureText(s).width<=max)return s;while(c.measureText(s+"…").width>max&&s.length>5)s=s.slice(0,-1);return s+"…";}
+function wrap(c,s,x,y,max=740,size=29,lineHeight=47,limit=4){
+ c.font="600 "+size+"px Arial,sans-serif";c.textBaseline="middle";c.textAlign="left";c.fillStyle="#173a56";
+ let rows=[],line="";for(const word of String(s).split(/\s+/)){
+  let next=line?line+" "+word:word;
+  if(c.measureText(next).width>max&&line){rows.push(line);line=word;}else line=next;
  }
- if(current)lines.push(current);lines.slice(0,limit).forEach((v,i)=>c.fillText(v,x,y+i*40));
+ if(line)rows.push(line);rows.slice(0,limit).forEach((row,i)=>c.fillText(short(c,row,max),x,y+i*lineHeight));
 }
 function imgFor(svg){
  return new Promise((resolve,reject)=>{
@@ -112,22 +112,28 @@ function imgFor(svg){
 async function draw(i,c,w,h){
  const d=info(false),f=model.frames[i],img=await imgFor(f.svg);
  c.setTransform(1,0,0,1,0,0);c.clearRect(0,0,w,h);c.save();c.scale(w/900,h/1600);
- c.fillStyle="#f3f8fd";c.fillRect(0,0,900,1600);
- const grad=c.createLinearGradient(0,0,900,238);grad.addColorStop(0,"#0e3a68");grad.addColorStop(1,"#1776a0");
- c.fillStyle=grad;c.fillRect(0,0,900,240);
- label(c,"ST. PATRICK'S SCHOOL",450,58,35,"white",true,"center");
- label(c,"EDUCATIONAL ANIMATION",450,108,19,"#c6edff",true,"center");
- c.font="700 31px Arial";label(c,short(c,d.topic||model.title,785),450,167,31,"white",true,"center");
- label(c,d.class+"  •  "+d.subject,450,211,21,"#e3f3ff",false,"center");
- shape(c,53,261,794,71,16,"#e2eef8");
- c.font="700 22px Arial";label(c,short(c,d.chapter||model.title,742),79,296,22,"#15456e",true);
- shape(c,52,354,796,796,24,"white","#d5e5f1");
- c.save();c.beginPath();c.roundRect(72,375,756,756,16);c.clip();c.drawImage(img,78,381,744,744);c.restore();
- shape(c,52,1175,796,322,22,"white","#d5e5f1");
- shape(c,76,1199,155,39,15,"#dcf3eb");label(c,"STEP "+(i+1)+" / "+model.frames.length,153,1219,18,"#13735c",true,"center");
- c.font="700 32px Arial";label(c,short(c,f.name,725),78,1291,32,"#103c6b",true);
- wrap(c,f.detail,78,1354);
- label(c,"Scientific illustration • Teacher verification required",450,1554,18,"#7289a1",false,"center");
+ c.fillStyle="#f5f9fc";c.fillRect(0,0,900,1600);
+ const grad=c.createLinearGradient(0,0,900,185);grad.addColorStop(0,"#0e3c69");grad.addColorStop(1,"#1577a1");
+ c.fillStyle=grad;c.fillRect(0,0,900,185);
+ label(c,"St. Patrick's School",450,59,40,"white",true,"center");
+ label(c,d.class+"  •  "+d.subject,450,109,24,"#d8effe",false,"center");
+ c.font="700 31px Arial";label(c,short(c,d.topic||model.title,835),450,155,31,"white",true,"center");
+ // One illustration canvas: the current stage text sits ON the illustration, not in a separate card.
+ shape(c,27,198,846,1316,24,"white","#d8e5f1");
+ c.save();c.beginPath();c.roundRect(34,205,832,1300,18);c.clip();
+ c.drawImage(img,37,220,826,826);
+ const fade=c.createLinearGradient(0,945,0,1200);
+ fade.addColorStop(0,"rgba(255,255,255,0.04)");
+ fade.addColorStop(.4,"rgba(245,251,254,0.94)");
+ fade.addColorStop(1,"rgba(238,248,252,0.99)");
+ c.fillStyle=fade;c.fillRect(37,945,826,455);
+ shape(c,61,1090,778,297,18,"rgba(242,249,253,.97)");
+ shape(c,82,1110,171,45,15,"#d9f1ea");
+ label(c,"STAGE "+(i+1)+" / "+model.frames.length,166,1132,21,"#0c7567",true,"center");
+ c.font="700 36px Arial";label(c,short(c,f.name,714),84,1207,36,"#103d68",true);
+ wrap(c,f.detail,83,1271,740,29,47,4);
+ c.restore();
+ c.font="500 23px Arial";label(c,short(c,d.chapter||model.title,811),450,1466,23,"#456580",false,"center");
  c.restore();
 }
 function stop(){if(timer){clearInterval(timer);timer=null;}}
