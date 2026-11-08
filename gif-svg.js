@@ -81,7 +81,7 @@ function loadCode(code){
   checkTree(part.documentElement);
   const doc=base.cloneNode(true),r=doc.documentElement;
   for(const node of [...part.documentElement.childNodes])if(node.nodeType===1)r.appendChild(doc.importNode(node,true));
-  r.setAttribute("width","900");r.setAttribute("height","900");
+  r.setAttribute("width",String(v[2]));r.setAttribute("height",String(v[3]));
   return {name:f.stage.slice(0,110),detail:f.explanation.slice(0,500),svg:serializer.serializeToString(doc)};
  });
  return {title:String(obj.title||"Educational Animation").slice(0,200),frames};
@@ -164,6 +164,7 @@ async function make(){
  const d=info();if(!d)return;
  try{model=loadCode($("gifCode").value);}catch(e){status(e.message,"error");return;}
  const [w,h]=d.resolution.split("x").map(Number);
+ const selectedSpeed=speed();
  stop();lock(true);$("download").hidden=true;
  if(gifUrl){URL.revokeObjectURL(gifUrl);gifUrl=null;}
  try{
@@ -173,7 +174,7 @@ async function make(){
   const gif=new GIF({workerScript,workers:1,width:w,height:h,quality:w>=1000?14:10,repeat:0});
   for(let i=0;i<model.frames.length;i++){
    await draw(i,render,w,h);
-   gif.addFrame(render,{copy:true,delay:Math.round((i===model.frames.length-1?1900:1300)/speed()),dispose:2});
+   gif.addFrame(render,{copy:true,delay:Math.round((i===model.frames.length-1?1900:1300)/selectedSpeed),dispose:2});
    status("Prepared animation stage "+(i+1)+" / "+model.frames.length);
    await new Promise(r=>setTimeout(r,8));
   }
