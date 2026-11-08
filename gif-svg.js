@@ -187,18 +187,103 @@ async function make(){
  }catch(e){status("Generation error: "+e.message,"error");}
  finally{lock(false);}
 }
-function init(){
- try{const x=JSON.parse(localStorage.getItem("school.svg.fields")||"{}");fields.forEach(k=>{if(x[k])$(k).value=x[k];});$("gifCode").value=localStorage.getItem("school.svg.code")||"";}catch(e){}
- fields.forEach(k=>{$(k).addEventListener("change",save);$(k).addEventListener("input",save);});
- $("getPrompt").addEventListener("click",async()=>{const d=info();if(!d)return;$("promptText").value=prompt(d);$("promptArea").hidden=false;
-  status(await copy($("promptText").value)?"Instructions copied. Open ChatGPT, paste the instructions, then paste the returned JSON code here.":"Instructions ready. Copy them and paste into ChatGPT.");
+function enhanceSelects(){
+ const selects=[...document.querySelectorAll("select[data-modern='true']")];
+ let current=null;
+ function close(){
+  if(!current)return;
+  current.root.classList.remove("open");
+  current.button.setAttribute("aria-expanded","false");
+  current=null;
+ }
+ selects.forEach(sel=>{
+  const host=document.createElement("div");host.className="smart-select";
+  const button=document.createElement("button");button.type="button";button.className="select-trigger";
+  button.setAttribute("aria-expanded","false");button.setAttribute("aria-haspopup","listbox");
+  const value=document.createElement("span");value.className="value";
+  const chev=document.createElement("span");chev.className="chevron";chev.textContent="⌄";
+  button.append(value,chev);
+  const panel=document.createElement("div");panel.className="option-panel";panel.setAttribute("role","listbox");
+  const options=[...sel.options],controls=[];
+  let search=null;
+  if(options.length>9){
+   search=document.createElement("input");search.className="option-search";search.type="search";
+   search.placeholder="Search…";search.setAttribute("aria-label","Search options");panel.appendChild(search);
+  }
+  function refresh(){
+   const selected=options.find(opt=>opt.value===sel.value)||options[0];
+   value.textContent=selected?selected.textContent:"Select";
+   controls.forEach(item=>item.setAttribute("aria-selected",String(item.dataset.value===sel.value)));
+  }
+  for(const opt of options){
+   const item=document.createElement("button");item.type="button";item.className="option-item";
+   item.setAttribute("role","option");item.textContent=opt.textContent;item.dataset.value=opt.value;
+   item.addEventListener("click",()=>{
+    sel.value=opt.value;sel.dispatchEvent(new Event("change",{bubbles:true}));
+    refresh();close();button.focus();
+   });
+   controls.push(item);panel.appendChild(item);
+  }
+  if(search)search.addEventListener("input",()=>{
+   const q=search.value.toLocaleLowerCase();
+   controls.forEach(item=>item.hidden=!item.textContent.toLocaleLowerCase().includes(q));
+  });
+  button.addEventListener("click",()=>{
+   if(current&&current.root===host){close();return;}
+   close();host.classList.add("open");button.setAttribute("aria-expanded","true");current={root:host,button};
+   if(search){search.value="";controls.forEach(item=>item.hidden=false);search.focus();}
+  });
+  button.addEventListener("keydown",e=>{
+   if(["ArrowDown","Enter"," "].includes(e.key)){
+    e.preventDefault();if(!host.classList.contains("open"))button.click();
+    if(!search)(controls.find(c=>c.dataset.value===sel.value)||controls[0]).focus();
+   }
+  });
+  panel.addEventListener("keydown",e=>{
+   if(e.key==="Escape"){close();button.focus();return;}
+   const list=controls.filter(v=>!v.hidden),n=list.indexOf(document.activeElement);
+   if((e.key==="ArrowDown"||e.key==="ArrowUp")&&list.length){
+    e.preventDefault();list[(n+(e.key==="ArrowDown"?1:-1)+list.length)%list.length].focus();
+   }
+  });
+  sel.addEventListener("change",refresh);
+  sel.classList.add("enhanced-native");
+  sel.parentNode.insertBefore(host,sel.nextSibling);host.append(button,panel);refresh();
  });
- $("copyPrompt").addEventListener("click",async()=>status(await copy($("promptText").value)?"Instructions copied.":"Select the instructions and copy manually."));
- $("gifCode").addEventListener("input",()=>{model=null;stop();$("previewArea").hidden=true;$("download").hidden=true;try{if($("gifCode").value.length<=450000)localStorage.setItem("school.svg.code",$("gifCode").value);}catch(e){}});
- $("previewBtn").addEventListener("click",()=>{try{model=loadCode($("gifCode").value);start();status("Preview ready. Check every anatomical structure and label.","success");}catch(e){status(e.message,"error");}});
+ document.addEventListener("pointerdown",e=>{if(current&&!current.root.contains(e.target))close();});
+ document.addEventListener("keydown",e=>{if(e.key==="Escape")close();});
+}
+function init(){
+ try{
+  const x=JSON.parse(localStorage.getItem("school.svg.fields")||"{}");
+  fields.forEach(k=>{if(x[k])$(k).value=x[k];});
+  $("gifCode").value=localStorage.getItem("school.svg.code")||"";
+  const oldSpeed=localStorage.getItem("school.svg.speed");
+  if(["0.5","0.75","1","1.5","2"].includes(oldSpeed))$("speed").value=oldSpeed;
+ }catch(e){}
+ fields.forEach(k=>{$(k).addEventListener("change",save);$(k).addEventListener("input",save);});
+ $("speed").addEventListener("change",()=>{
+  try{localStorage.setItem("school.svg.speed",$("speed").value);}catch(e){}
+  if(model&&!busy)start();
+  if(!$("download").hidden){
+   $("download").hidden=true;
+   status("Speed updated. Press Create GIF to download with the new speed.");
+  }
+ });
+ enhanceSelects();
+ $("getPrompt").addEventListener("click",()=>{
+  const d=info();if(!d)return;
+  const msg=prompt(d);
+  // Same prefilled-prompt link pattern already used in the school's Quiz Creator.
+  const url="https://chatgpt.com/?prompt="+encodeURIComponent(msg);
+  window.open(url,"_blank","noopener,noreferrer");
+ });
+ $("gifCode").addEventListener("input",()=>{
+  model=null;stop();$("previewArea").hidden=true;$("download").hidden=true;
+  try{if($("gifCode").value.length<=450000)localStorage.setItem("school.svg.code",$("gifCode").value);}catch(e){}
+ });
  $("generate").addEventListener("click",make);
- $("clearCode").addEventListener("click",()=>{if(busy)return;$("gifCode").value="";model=null;stop();$("previewArea").hidden=true;$("download").hidden=true;try{localStorage.removeItem("school.svg.code");}catch(e){}status("Code cleared.");});
- status("Select your lesson, get the illustration code from ChatGPT, paste it here, and make the GIF.");
+ status("Paste the illustration code from ChatGPT, then tap Create GIF.");
 }
 function save(){try{const d={};fields.forEach(k=>d[k]=$(k).value);localStorage.setItem("school.svg.fields",JSON.stringify(d));}catch(e){}}
 init();
