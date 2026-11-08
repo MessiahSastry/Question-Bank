@@ -181,7 +181,7 @@ function start(){
  },Math.round((step===model.frames.length-1?4200:3500)/speed()));};
  show(0).then(()=>schedule());
 }
-function lock(v){busy=v;["getPrompt","generate"].forEach(id=>$(id).disabled=v);}
+function lock(v){busy=v;["getPrompt","generate","clearCode"].forEach(id=>$(id).disabled=v);}
 async function worker(){
  if(!window.GIF)throw Error("GIF library not loaded. Check internet and refresh.");
  if(workerUrl)return workerUrl;
@@ -319,6 +319,20 @@ function init(){
  $("gifCode").addEventListener("input",()=>{
   model=null;stop();$("previewArea").hidden=true;$("download").hidden=true;
   try{if($("gifCode").value.length<=450000)localStorage.setItem("school.svg.code",$("gifCode").value);}catch(e){}
+ });
+ $("clearCode").addEventListener("click",()=>{
+  if(busy)return;
+  $("gifCode").value="";
+  model=null;
+  drawVersion++;
+  stop();
+  $("previewArea").hidden=true;
+  $("download").hidden=true;
+  $("download").removeAttribute("href");
+  if(gifUrl){URL.revokeObjectURL(gifUrl);gifUrl=null;}
+  pc.clearRect(0,0,preview.width,preview.height);
+  try{localStorage.removeItem("school.svg.code");}catch(e){}
+  status("Illustration code cleared. Lesson details and speed are unchanged.","success");
  });
  $("generate").addEventListener("click",make);
  status("Paste the illustration code from ChatGPT, then tap Create GIF.");
