@@ -50,6 +50,7 @@ label{display:block;font-size:13px;font-weight:800;color:#244e70;margin-bottom:7
 @media(max-width:620px){.fields,.tools{grid-template-columns:1fr}.card{padding:15px}.header{padding:23px 12px 26px}.menu{max-height:235px}}
 </style>
 <script src="chapters.js"></script>
+<script src="educational-chapters.js?v=20261108"></script>
 </head>
 <body>
 <header class="header"><div class="school">St. Patrick's School</div><h1>Educational Tools</h1><p>Teaching visuals and classroom materials • Powered by your ChatGPT account</p></header>
@@ -57,13 +58,14 @@ label{display:block;font-size:13px;font-weight:800;color:#244e70;margin-bottom:7
 <a class="back" href="students.html">← Back to Section Tools</a>
 <section class="card">
 <h2>Lesson Details</h2>
-<p class="note">Choose the class, board, subject and chapter. Enter a topic if you want to focus on one concept; Educational GIF starts with a blank topic.</p>
+<p class="note">Choose the class, board and subject, then type or select a chapter. The topic fills automatically for five tools and remains editable; GIF has its own blank topic field.</p>
 <div class="fields">
 <div class="field"><label for="classBtn">Class</label><div class="picker" data-name="class"><button type="button" class="pick-button" id="classBtn" aria-expanded="false"><span class="value empty">Select Class</span><span class="chevron">▼</span></button><div class="menu" hidden><input class="filter" type="text" placeholder="Search classes" aria-label="Search classes"><div class="options"></div></div></div></div>
 <div class="field"><label for="boardBtn">Board</label><div class="picker" data-name="board"><button type="button" class="pick-button" id="boardBtn" aria-expanded="false"><span class="value empty">Select Board</span><span class="chevron">▼</span></button><div class="menu" hidden><input class="filter" type="text" placeholder="Search boards" aria-label="Search boards"><div class="options"></div></div></div></div>
 <div class="field"><label for="subjectBtn">Subject</label><div class="picker" data-name="subject"><button type="button" class="pick-button" id="subjectBtn" aria-expanded="false"><span class="value empty">Select Subject</span><span class="chevron">▼</span></button><div class="menu" hidden><input class="filter" type="text" placeholder="Search subjects" aria-label="Search subjects"><div class="options"></div></div></div></div>
 <div class="field"><label for="chapter">Chapter</label><input id="chapter" type="text" placeholder="Type or select a chapter" autocomplete="off" maxlength="220"><div id="chapterMenu" class="menu" hidden><div id="chapterOptions"></div></div></div>
-<div class="field full"><label for="topic">Topic / Concept (editable)</label><input id="topic" type="text" placeholder="Enter topic or process (optional for whole chapter)" autocomplete="off" maxlength="220"><p class="tip">GIF topic is deliberately blank. Write the process you want to animate.</p></div>
+<div class="field full"><label for="topic">Topic / Concept (auto-filled · editable)</label><input id="topic" type="text" placeholder="Automatically filled from the selected chapter; you can edit it" autocomplete="off" maxlength="360"><p class="tip">Used for Mind Map, Flashcards, Slide Deck, Infographic and Visual Revision Sheet. You can change it at any time.</p></div>
+<div class="field full gif-topic-field"><label for="gifTopic">Educational GIF — Topic / Process (type yourself)</label><input id="gifTopic" type="text" placeholder="Leave blank until you are ready to create an educational GIF" autocomplete="off" maxlength="360"><p class="tip">This remains blank automatically, even when you select a chapter. Enter the specific process you want animated.</p></div>
 </div>
 <div id="feedback" role="alert"></div>
 </section>
@@ -87,69 +89,149 @@ label{display:block;font-size:13px;font-weight:800;color:#244e70;margin-bottom:7
 const schoolName="St. Patrick's School";
 const $=id=>document.getElementById(id);
 const state={class:'',board:'AP State Board',subject:''};
-const grades=['Nursery','LKG','UKG','1st Class','2nd Class','3rd Class','4th Class','5th Class','6th Class','7th Class','8th Class','9th Class','10th Class'];
+const grades=['Nursery','LKG','UKG','1st Class','2nd Class','3rd Class','4th Class','5th Class','6th Class','7th Class','8th Class','9th Class','10th Class','11th Class','12th Class'];
 const boards=['AP State Board','CBSE','ICSE','IIT & NEET Foundation'];
 const subjectsDefault=['Telugu','Hindi','English','Mathematics','Science','Environmental Studies','Physics','Chemistry','Biology','Social Studies','Computer Science','Physics IIT & NEET','Chemistry IIT & NEET','Biology NEET','Math IIT'];
 const pickerOptions={class:grades,board:boards,subject:subjectsDefault};
-const books=window.textbooks||{};
+const apBooks=window.textbooks||{};
+const curriculum=window.EDUCATIONAL_CHAPTERS||{};
+const cbseCore=window.EDUCATIONAL_CBSE_SUBJECTS||{};
 const params=new URLSearchParams(window.location.search);
+let currentTool='';
+function subjectsFor(className,boardName){
+ if(!className||!boardName)return subjectsDefault;
+ let available;
+ if(boardName==='CBSE'){
+   const catalog=curriculum.CBSE?.[className]||{};
+   const core=cbseCore[className]||[];
+   // Show official category labels plus distinct disciplinary science options when present.
+   const disciplines=['Physics','Chemistry','Biology'];
+   available=[...core,...disciplines.filter(k=>Array.isArray(catalog[k])&&catalog[k].length)];
+ }else if(boardName==='IIT & NEET Foundation'){
+   available=Object.keys(curriculum['IIT & NEET Foundation']?.[className]||{});
+ }else if(boardName==='AP State Board'){
+   available=Object.keys(apBooks[className]||{});
+ }else{
+   available=subjectsDefault;
+ }
+ return Array.from(new Set((available||[]).filter(Boolean)));
+}
+function chapterData(){
+ const grade=state.class,subject=state.subject;
+ if(!grade||!subject)return [];
+ let bySubject;
+ if(state.board==='CBSE')bySubject=curriculum.CBSE?.[grade];
+ else if(state.board==='IIT & NEET Foundation')bySubject=curriculum['IIT & NEET Foundation']?.[grade];
+ else if(state.board==='AP State Board')bySubject=apBooks[grade];
+ else bySubject=null;
+ const list=bySubject?.[subject];
+ return Array.isArray(list)?list:[];
+}
+function automaticTopic(chapter){
+ const value=String(chapter||'').trim();
+ if(!value)return '';
+ // Foundation chapters often embed the actual lesson concept in (Subtopics: ...).
+ const sub=value.match(/\(\s*Subtopics?\s*:\s*([\s\S]+?)\s*\)\s*$/i);
+ if(sub)return sub[1].trim();
+ // AP chapter catalogue may include useful concept details inside final parentheses.
+ const section=value.match(/:\s*Assimilation\s*\d+[^()]*\(([^)]+)\)\s*$/i);
+ if(section)return section[1].replace(/^\s*Subtopics?\s*:\s*/i,'').trim();
+ return value;
+}
+function autoFillTopic(){
+ $('topic').value=automaticTopic($('chapter').value);
+ // GIF topic is never changed here.
+}
 function closeMenus(except){
- document.querySelectorAll('.picker').forEach(el=>{if(el===except)return;el.querySelector('.menu').hidden=true;el.querySelector('.pick-button').setAttribute('aria-expanded','false')});
+ document.querySelectorAll('.picker').forEach(el=>{
+  if(el===except)return;
+  el.querySelector('.menu').hidden=true;
+  el.querySelector('.pick-button').setAttribute('aria-expanded','false');
+ });
  if(except!=='chapter')$('chapterMenu').hidden=true;
 }
 function setPicked(name,value){
+ const previous=state[name];
  state[name]=value;
- const el=document.querySelector('.picker[data-name="'+name+'"]'),span=el.querySelector('.value');
+ const el=document.querySelector('.picker[data-name="'+name+'"]');
+ const span=el.querySelector('.value');
  span.textContent=value||('Select '+name.charAt(0).toUpperCase()+name.slice(1));
  span.classList.toggle('empty',!value);
- if(name==='class'){
-   const available=Object.keys(books[value]||{});
-   pickerOptions.subject=Array.from(new Set([...available,...subjectsDefault]));
-   if(state.subject&&!pickerOptions.subject.includes(state.subject))setPicked('subject','');
+ if(name==='class'||name==='board'){
+   pickerOptions.subject=subjectsFor(state.class,state.board);
+   if(previous!==value){
+     state.subject='';
+     const v=document.querySelector('.picker[data-name="subject"]').querySelector('.value');
+     v.textContent='Select Subject';v.classList.add('empty');
+     $('chapter').value='';
+     autoFillTopic();
+     $('gifTopic').value='';
+   }
+ }else if(name==='subject'&&previous!==value){
    $('chapter').value='';
+   autoFillTopic();
+   $('gifTopic').value='';
  }
- if(name==='subject')$('chapter').value='';
  closeMenus();
 }
-function setOptions(name,values){pickerOptions[name]=values||[];const menu=document.querySelector('.picker[data-name="'+name+'"]');if(menu&&!menu.querySelector('.menu').hidden)renderOptions(menu,'');}
 function renderOptions(picker,term){
  const name=picker.dataset.name,items=pickerOptions[name]||[],box=picker.querySelector('.options');
  box.replaceChildren();
  const filtered=items.filter(x=>x.toLowerCase().includes(term.toLowerCase()));
- if(!filtered.length){const label=document.createElement('div');label.className='tip';label.textContent='No matching options';box.appendChild(label);return}
+ if(!filtered.length){
+  const label=document.createElement('div');
+  label.className='tip';
+  label.textContent='No matching options — select another board/class or type your chapter manually.';
+  box.appendChild(label);return;
+ }
  for(const item of filtered){
-  const btn=document.createElement('button');btn.type='button';btn.className='option';btn.textContent=item;btn.setAttribute('role','option');btn.addEventListener('click',()=>setPicked(name,item));box.appendChild(btn);
+  const btn=document.createElement('button');
+  btn.type='button';btn.className='option';btn.textContent=item;
+  btn.setAttribute('role','option');
+  btn.addEventListener('click',()=>setPicked(name,item));
+  box.appendChild(btn);
  }
 }
 document.querySelectorAll('.picker').forEach(picker=>{
  const trigger=picker.querySelector('.pick-button'),menu=picker.querySelector('.menu'),filter=picker.querySelector('.filter');
  trigger.addEventListener('click',()=>{
-  const open=menu.hidden;closeMenus(picker);menu.hidden=!open;trigger.setAttribute('aria-expanded',String(open));
+  const open=menu.hidden;closeMenus(picker);
+  menu.hidden=!open;trigger.setAttribute('aria-expanded',String(open));
   if(open){filter.value='';renderOptions(picker,'');filter.focus()}
  });
  filter.addEventListener('input',()=>renderOptions(picker,filter.value));
- filter.addEventListener('keydown',e=>{if(e.key==='Escape'){closeMenus();trigger.focus() }});
+ filter.addEventListener('keydown',e=>{if(e.key==='Escape'){closeMenus();trigger.focus()}});
 });
 function showChapterOptions(){
- const list=books[state.class]&&books[state.class][state.subject];
- const all=Array.isArray(list)?list:[],query=$('chapter').value.trim().toLowerCase();
- const matched=all.filter(x=>x.toLowerCase().includes(query)).slice(0,35),box=$('chapterOptions');
+ const list=chapterData();
+ const query=$('chapter').value.trim().toLocaleLowerCase();
+ const matched=list.filter(x=>x.toLocaleLowerCase().includes(query)).slice(0,45),box=$('chapterOptions');
  box.replaceChildren();
  if(!matched.length){$('chapterMenu').hidden=true;return}
  matched.forEach(txt=>{
-   const b=document.createElement('button');b.type='button';b.className='option';b.textContent=txt;
-   b.addEventListener('click',()=>{$('chapter').value=txt;$('chapterMenu').hidden=true;$('chapter').focus()});
-   box.appendChild(b);
+  const btn=document.createElement('button');
+  btn.type='button';btn.className='option';btn.textContent=txt;
+  btn.addEventListener('click',()=>{
+   $('chapter').value=txt;
+   autoFillTopic();
+   $('chapterMenu').hidden=true;
+   $('chapter').focus();
+  });
+  box.appendChild(btn);
  });
  closeMenus('chapter');$('chapterMenu').hidden=false;
 }
-$('chapter').addEventListener('input',showChapterOptions);
+$('chapter').addEventListener('input',()=>{
+ autoFillTopic();showChapterOptions();
+});
 $('chapter').addEventListener('focus',showChapterOptions);
 $('chapter').addEventListener('keydown',e=>{if(e.key==='Escape')$('chapterMenu').hidden=true});
-document.addEventListener('click',e=>{if(!e.target.closest('.picker')&&!e.target.closest('.field:has(#chapter)'))closeMenus()});
+document.addEventListener('click',e=>{
+ if(!e.target.closest('.picker')&&!e.target.closest('.field:has(#chapter)'))closeMenus();
+});
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeMenus()});
 function getLessonContext(){
- const chapter=$('chapter').value.trim(),topic=$('topic').value.trim();
+ const chapter=$('chapter').value.trim(),topic=(currentTool==='educational-gif'?$('gifTopic').value.trim():$('topic').value.trim());
  return [
   'SCHOOL IDENTITY: '+schoolName,
   'Class: '+state.class,
@@ -162,7 +244,7 @@ function getLessonContext(){
  ].join('\n');
 }
 function sharedVisualHeader(){
- const chapter=$('chapter').value.trim(),topic=$('topic').value.trim(),title=topic||chapter;
+ const chapter=$('chapter').value.trim(),topic=(currentTool==='educational-gif'?$('gifTopic').value.trim():$('topic').value.trim()),title=topic||chapter;
  return [
   'MANDATORY BRAND DESIGN FOR ALL FINISHED OUTPUTS:',
   'Match the school header shown in the St. Patrick\'s School educational GIF reference.',
@@ -534,7 +616,7 @@ The final response should be the actual generated 1080 x 1920 PIXEL PORTRAIT INF
   }
 
 function buildEducationalGifPrompt(){
- const t=$('topic').value.trim();
+ const t=$('gifTopic').value.trim();
  return [
   'You are an expert science and school-education animator and textbook illustrator.',
   getLessonContext(),
@@ -573,7 +655,8 @@ document.querySelectorAll('button[data-tool]').forEach(btn=>{
   if(!state.board)return showError('Please select the board first.');
   if(!state.subject)return showError('Please select the subject first.');
   if(!$('chapter').value.trim())return showError('Please enter or select the chapter first.');
-  if(tool==='educational-gif'&&!$('topic').value.trim())return showError('For Educational GIF, type the specific topic or process you want to animate.');
+  if(tool==='educational-gif'&&!$('gifTopic').value.trim())return showError('For Educational GIF, type the specific topic or process you want to animate.');
+  currentTool=tool;
   const fn=builders[tool];if(!fn)return showError('Tool unavailable.');
   const body=fn();
   const prompt=body+'\n\n'+(additions[tool]||'')+'\n\n'+sharedVisualHeader();
@@ -591,8 +674,9 @@ if(classChosen&&grades.includes(classChosen))setPicked('class',classChosen);
 if(boards.includes(saved.board))setPicked('board',saved.board);else setPicked('board','AP State Board');
 if(saved.subject&&(pickerOptions.subject||[]).includes(saved.subject))setPicked('subject',saved.subject);
 if(saved.chapter&&saved.class===state.class&&saved.subject===state.subject)$('chapter').value=saved.chapter;
-// Topic intentionally starts empty on every fresh visit; especially for Educational GIF.
-$('topic').value='';
+// First five tools auto-fill topic from the selected/typed chapter. GIF stays blank.
+autoFillTopic();
+$('gifTopic').value='';
 })();
 </script>
 </body>
