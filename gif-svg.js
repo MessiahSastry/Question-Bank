@@ -22,13 +22,13 @@ return [
 "",
 "VISUAL QUALITY: This is for school lessons, not an icon set. The SVG must be a comprehensive high-detail textbook illustration. Draw accurately proportioned structures using numerous organic SVG paths, fine outlines, subtle gradients, layers and cross-sectional anatomy. Label the correct parts with legible leader lines. Every relevant internal structure must be drawn; no cartoon flowers, stick figures, emoji, crude circles, simplistic flowchart, or merely decorative shapes. For mathematics use exact geometric constructions instead.",
 "The baseSvg is the original detailed illustration and stays IDENTICAL across all frames. Add motion/progression using overlay layers in each frame, with accurate position, arrows, highlights, transport paths and formation stages as scientifically applicable. Do not simply blink labels. Build 6–8 stages that actually explain the process.",
-"Use professional textbook colours, sensible scale and accurate structure orientation. The full artwork should fill most of the 900x900 canvas without cramped overlapping labels. Show separate cutaway or inset illustrations within this canvas where needed. Include all stable labels in baseSvg and varying markers and arrows in each overlay. Keep the illustration stationary across frames.",
+"Use professional textbook colours, sensible scale and accurate structure orientation. The full artwork should fill most of the 900x1200 portrait canvas without cramped overlapping labels. Show separate cutaway or inset illustrations within this canvas where needed. Include all stable labels in baseSvg and varying markers and arrows in each overlay. Keep the illustration stationary across frames.",
 "Use only svg,g,defs,linearGradient,radialGradient,stop,path,line,polyline,polygon,circle,ellipse,rect,text,tspan,marker,clipPath,mask,pattern,filter,feGaussianBlur,feOffset,feMerge,feMergeNode,feDropShadow.",
-"All gradients and marker definitions go inside baseSvg. Use url(#id) references only. No embedded images, external URLs, base64, scripts, JavaScript, CSS, foreignObject, SVG animation elements, file loading, font downloads or external assets. SVG xmlns MUST be http://www.w3.org/2000/svg, base viewBox exactly 0 0 900 900, and frame overlays must be SVG fragments (<g>...</g>).",
-"Each frame has a clearly distinct accurate stage, a short title, and a scientifically correct explanation (approximately 15–35 words). No extra headings inside the SVG; the school app supplies the title, class and captions.",
+"All gradients and marker definitions go inside baseSvg. Use url(#id) references only. No embedded images, external URLs, base64, scripts, JavaScript, CSS, foreignObject, SVG animation elements, file loading, font downloads or external assets. SVG xmlns MUST be http://www.w3.org/2000/svg, base viewBox exactly 0 0 900 1200, and frame overlays must be SVG fragments (<g>...</g>).",
+"Each frame has a clearly distinct accurate stage, a short title, and a concise scientifically correct explanation (preferably 15–28 words) that fits in four readable lines. No extra headings inside the SVG; the school app supplies the title, class and captions.",
 "All double quotes inside SVG strings MUST be correctly escaped for valid JSON. No trailing commas or comments. Deliver self-contained original vector illustration code, not Python. The user will paste this JSON in a browser GIF creator.",
-"Important for mobile clarity: all SVG structure labels must use a minimum font-size of 34px, preferably 36-44px, bold or semi-bold, in high-contrast colours. Keep every label and leader line away from the outer 35px edges and do not overlap anatomy or other labels.",
-"Reserve the lowest 15 percent of the diagram for an on-image stage title and translucent explanation overlay that this app automatically draws. Place the most important anatomical structures in the upper or central portion. Keep the entire vector diagram detailed and proportionally correct.",
+"Important for mobile clarity: all SVG structure labels must use a minimum font-size of 36px, preferably 38-46px, bold or semi-bold, in high-contrast colours. Keep every label and leader line away from the outer 35px edges and do not overlap anatomy or other labels.",
+"Use the full SVG canvas for the illustration, internal labels and leader lines. The app provides an entirely separate, non-overlapping explanation region INSIDE the final GIF image, below the complete SVG illustration. Do not put stage captions or the explanation inside SVG, and do not leave artificial blank margins. Place every label at least 45 SVG units inside the outer edges, with no clipping or overlap.",
 "Be candid about your illustration: this is detailed vector textbook art, not photographic AI rendering. Do not claim perfect anatomical accuracy without textbook verification.",
 "Return only the JSON object."
 ].join("\n");
@@ -93,13 +93,30 @@ function label(c,s,x,y,size=27,color="#213951",bold=false,align="left"){
  c.textBaseline="middle";c.textAlign=align;c.fillStyle=color;c.font=(bold?"700 ":"400 ")+size+"px Arial,sans-serif";c.fillText(s,x,y);
 }
 function short(c,s,max){s=String(s);if(c.measureText(s).width<=max)return s;while(c.measureText(s+"…").width>max&&s.length>5)s=s.slice(0,-1);return s+"…";}
-function wrap(c,s,x,y,max=740,size=29,lineHeight=47,limit=4){
- c.font="600 "+size+"px Arial,sans-serif";c.textBaseline="middle";c.textAlign="left";c.fillStyle="#173a56";
- let rows=[],line="";for(const word of String(s).split(/\s+/)){
-  let next=line?line+" "+word:word;
-  if(c.measureText(next).width>max&&line){rows.push(line);line=word;}else line=next;
+function paragraphLines(c,s,maxWidth,size){
+ c.font="600 "+size+"px Arial,sans-serif";
+ const rows=[];let row="";
+ for(const word of String(s||"").trim().split(/\s+/)){
+  if(!word)continue;
+  const next=row?row+" "+word:word;
+  if(c.measureText(next).width>maxWidth&&row){rows.push(row);row=word;}else row=next;
  }
- if(line)rows.push(line);rows.slice(0,limit).forEach((row,i)=>c.fillText(short(c,row,max),x,y+i*lineHeight));
+ if(row)rows.push(row);
+ return rows;
+}
+function explanation(c,s,x,top,maxWidth=745){
+ // Fit long scientific captions without covering the diagram or spilling out of the GIF.
+ let font=29,rows=paragraphLines(c,s,maxWidth,font);
+ while(rows.length>5&&font>22){font--;rows=paragraphLines(c,s,maxWidth,font);}
+ const lineHeight=font+12;
+ const bottomLimit=1463;
+ c.font="600 "+font+"px Arial,sans-serif";
+ c.textAlign="left";c.textBaseline="middle";c.fillStyle="#173954";
+ rows.slice(0,5).forEach((row,i)=>{
+  if(top+i*lineHeight>bottomLimit)return;
+  if(i===4&&rows.length>5)row=short(c,row+"…",maxWidth);
+  c.fillText(short(c,row,maxWidth),x,top+i*lineHeight);
+ });
 }
 function imgFor(svg){
  return new Promise((resolve,reject)=>{
@@ -111,33 +128,46 @@ function imgFor(svg){
 }
 async function draw(i,c,w,h){
  const d=info(false),f=model.frames[i],img=await imgFor(f.svg);
- c.setTransform(1,0,0,1,0,0);c.clearRect(0,0,w,h);c.save();c.scale(w/900,h/1600);
- c.fillStyle="#f5f9fc";c.fillRect(0,0,900,1600);
- const grad=c.createLinearGradient(0,0,900,185);grad.addColorStop(0,"#0e3c69");grad.addColorStop(1,"#1577a1");
- c.fillStyle=grad;c.fillRect(0,0,900,185);
- label(c,"St. Patrick's School",450,59,40,"white",true,"center");
- label(c,d.class+"  •  "+d.subject,450,109,24,"#d8effe",false,"center");
- c.font="700 31px Arial";label(c,short(c,d.topic||model.title,835),450,155,31,"white",true,"center");
- // One illustration canvas: the current stage text sits ON the illustration, not in a separate card.
- shape(c,27,198,846,1316,24,"white","#d8e5f1");
- c.save();c.beginPath();c.roundRect(34,205,832,1300,18);c.clip();
- // Respect the source illustration's aspect ratio. Old 900-square and new portrait SVGs both work.
- const fit=Math.min(826/img.naturalWidth,1138/img.naturalHeight);
- const iw=img.naturalWidth*fit,ih=img.naturalHeight*fit;
- c.drawImage(img,37+(826-iw)/2,220+(1138-ih)/2,iw,ih);
- // Stage title and explanation are superimposed ON the illustration, not underneath it.
- const fade=c.createLinearGradient(0,1010,0,1345);
- fade.addColorStop(0,"rgba(255,255,255,0.08)");
- fade.addColorStop(.45,"rgba(246,252,255,0.84)");
- fade.addColorStop(1,"rgba(240,249,252,0.98)");
- c.fillStyle=fade;c.fillRect(37,1000,826,425);
- shape(c,61,1053,778,349,18,"rgba(242,249,253,.94)");
- shape(c,82,1075,171,44,15,"#d9f1ea");
- label(c,"STAGE "+(i+1)+" / "+model.frames.length,166,1097,21,"#0c7567",true,"center");
- c.font="700 36px Arial";label(c,short(c,f.name,714),84,1160,36,"#103d68",true);
- wrap(c,f.detail,83,1226,740,29,47,4);
+ c.setTransform(1,0,0,1,0,0);
+ c.clearRect(0,0,w,h);
+ c.save();c.scale(w/900,h/1600);
+ c.fillStyle="#f4f8fb";c.fillRect(0,0,900,1600);
+
+ // Compact school header.
+ const grad=c.createLinearGradient(0,0,900,185);
+ grad.addColorStop(0,"#103c6a");grad.addColorStop(1,"#1475a1");
+ c.fillStyle=grad;c.fillRect(0,0,900,187);
+ label(c,"St. Patrick's School",450,56,41,"#fff",true,"center");
+ label(c,(d.class||"Class")+"  •  "+(d.subject||"Subject"),450,111,25,"#deeffb",false,"center");
+ c.font="700 33px Arial";
+ label(c,short(c,d.topic||model.title,825),450,156,33,"#fff",true,"center");
+
+ // The original SVG is fitted ENTIRELY within an independent scientific diagram area.
+ // Neither its text nor its leaders can be covered by the explanation area.
+ const fig={x:27,y:204,w:846,h:929};
+ shape(c,fig.x,fig.y,fig.w,fig.h,22,"#fff","#d3e1ec");
+ const inset={x:46,y:221,w:808,h:895};
+ const iw=img.naturalWidth||900,ih=img.naturalHeight||1200;
+ const fit=Math.min(inset.w/iw,inset.h/ih);
+ const dw=iw*fit,dh=ih*fit;
+ c.save();c.beginPath();c.rect(inset.x,inset.y,inset.w,inset.h);c.clip();
+ c.drawImage(img,inset.x+(inset.w-dw)/2,inset.y+(inset.h-dh)/2,dw,dh);
  c.restore();
- c.font="500 23px Arial";label(c,short(c,d.chapter||model.title,811),450,1466,23,"#456580",false,"center");
+
+ // Explanation is within this GIF but OUTSIDE the source diagram area.
+ const cap={x:27,y:1147,w:846,h:357};
+ shape(c,cap.x,cap.y,cap.w,cap.h,22,"#f3faff","#d2e6ef");
+ c.fillStyle="#168391";c.fillRect(49,1170,5,44);
+ shape(c,65,1171,186,48,18,"#d9f0e7");
+ label(c,"STAGE "+(i+1)+" / "+model.frames.length,158,1196,23,"#126b5e",true,"center");
+ const name=String(f.name||"Stage").replace(/^\s*\d+\s*[.)-]\s*/,"").trim();
+ c.font="700 33px Arial";
+ label(c,short(c,name,568),271,1197,33,"#103b67",true);
+ c.fillStyle="#cfe4ec";c.fillRect(64,1239,768,2);
+ explanation(c,f.detail,70,1283,760);
+
+ c.font="500 21px Arial";
+ label(c,short(c,d.chapter||model.title,822),450,1554,21,"#516f85",false,"center");
  c.restore();
 }
 function stop(){if(timer){clearTimeout(timer);timer=null;}}
@@ -148,7 +178,7 @@ function start(){
  const schedule=()=>{if(!model)return;timer=setTimeout(async()=>{
   if(!busy&&model)await show((step+1)%model.frames.length);
   if(model)schedule();
- },Math.round((step===model.frames.length-1?1900:1300)/speed()));};
+ },Math.round((step===model.frames.length-1?4200:3500)/speed()));};
  show(0).then(()=>schedule());
 }
 function lock(v){busy=v;["getPrompt","generate"].forEach(id=>$(id).disabled=v);}
@@ -174,7 +204,7 @@ async function make(){
   const gif=new GIF({workerScript,workers:1,width:w,height:h,quality:w>=1000?14:10,repeat:0});
   for(let i=0;i<model.frames.length;i++){
    await draw(i,render,w,h);
-   gif.addFrame(render,{copy:true,delay:Math.round((i===model.frames.length-1?1900:1300)/selectedSpeed),dispose:2});
+   gif.addFrame(render,{copy:true,delay:Math.round((i===model.frames.length-1?4200:3500)/selectedSpeed),dispose:2});
    status("Prepared animation stage "+(i+1)+" / "+model.frames.length);
    await new Promise(r=>setTimeout(r,8));
   }
