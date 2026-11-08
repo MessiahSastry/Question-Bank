@@ -4,6 +4,7 @@
 const $=id=>document.getElementById(id),NS="http://www.w3.org/2000/svg";
 const validTags=new Set(["svg","g","defs","linearGradient","radialGradient","stop","path","line","polyline","polygon","circle","ellipse","rect","text","tspan","marker","clipPath","mask","pattern","filter","feGaussianBlur","feOffset","feMerge","feMergeNode","feDropShadow"]);
 let model=null,step=0,timer=null,busy=false,workerUrl=null,gifUrl=null,drawVersion=0;
+let svgRepairNotes=[];
 const fields=["class","subject","chapter","topic","resolution"];
 const preview=$("stageCanvas"),pc=preview.getContext("2d");
 function status(s,type){$("status").textContent=s;$("status").dataset.state=type||"info";}
@@ -28,6 +29,7 @@ return [
 "Each frame has a clearly distinct accurate stage, a short title, and a concise scientifically correct explanation (preferably 15–28 words) that fits in four readable lines. No extra headings inside the SVG; the school app supplies the title, class and captions.",
 "All double quotes inside SVG strings MUST be correctly escaped for valid JSON. No trailing commas or comments. Deliver self-contained original vector illustration code, not Python. The user will paste this JSON in a browser GIF creator.",
 "SVG MUST ALSO BE VALID XML: close EVERY opening tag in the correct nesting order, quote all attribute values, escape any bare ampersand as &amp;, less-than signs inside text as &lt; and greater-than signs as &gt;. Never write HTML-only entities such as &nbsp; in SVG. Every frame overlay must be a valid <g>...</g> fragment. Double-check baseSvg and every overlay parse as XML before responding.",
+"VERY IMPORTANT TAG BALANCE: In every stage overlay the number of <g> opening tags MUST equal the number of </g> closing tags. Close nested groups in reverse order; never add an extra </g>. Self-close empty geometry elements (<path .../>, <rect .../>, <line .../>) unless they truly contain nested tags. Check Stage 1 through Stage 8 independently for valid SVG XML.",
 "Important for mobile clarity: all SVG structure labels must use a minimum font-size of 36px, preferably 38-46px, bold or semi-bold, in high-contrast colours. Keep every label and leader line away from the outer 35px edges and do not overlap anatomy or other labels.",
 "Use the full SVG canvas for the illustration, internal labels and leader lines. The app provides an entirely separate, non-overlapping explanation region INSIDE the final GIF image, below the complete SVG illustration. Do not put stage captions or the explanation inside SVG, and do not leave artificial blank margins. Place every label at least 45 SVG units inside the outer edges, with no clipping or overlap.",
 "Be candid about your illustration: this is detailed vector textbook art, not photographic AI rendering. Do not claim perfect anatomical accuracy without textbook verification.",
@@ -56,22 +58,62 @@ function normalizeXmlEntities(s){
   return code?"&#"+code+";":"&amp;"+entity+";";
  });
 }
+function repairSvgTagNesting(source){
+ // Conservative XML recovery for the extra or missing SVG end tags produced by some AI responses.
+ // Do not reinterpret element attributes, scripts or text; invalid/unsafe tags still fail validation.
+ const tags=/<\/?([A-Za-z][A-Za-z0-9:._-]*)(?:\s+(?:"[^"]*"|'[^']*'|[^"'<>])*)?\s*\/?>/g;
+ const stack=[];let out="",pos=0,edits=0,count=0,match;
+ while((match=tags.exec(source))!==null){
+  if(++count>6000)return null;
+  const between=source.slice(pos,match.index);
+  if(between.includes("<"))return null; // E.g. comments, declarations, malformed attributes.
+  const full=match[0],name=match[1];
+  if(!validTags.has(name))return null; // Preserve element allowlist during recovery.
+  out+=between;
+  if(full.startsWith("</")){
+   const index=stack.lastIndexOf(name);
+   if(index<0){edits++;} // Extraneous closing tag, e.g. Stage 3 ending in </g></g>.
+   else{
+    while(stack.length-1>index){out+="</"+stack.pop()+">";edits++;}
+    out+=full;stack.pop();
+   }
+  }else{
+   out+=full;
+   if(!/\/\s*>$/.test(full))stack.push(name);
+  }
+  pos=tags.lastIndex;
+ }
+ const tail=source.slice(pos);
+ if(tail.includes("<"))return null;
+ out+=tail;
+ while(stack.length){out+="</"+stack.pop()+">";edits++;}
+ if(edits===0||out.length>280000)return null;
+ return {svg:out,edits};
+}
 function xml(s,context="Illustration"){
  if(typeof s!=="string"||s.length>270000)throw Error(context+": SVG text must be under 270 KB.");
  const parser=new DOMParser();
  let doc=parser.parseFromString(s,"image/svg+xml");
  let failures=doc.getElementsByTagName("parsererror");
  if(!failures.length)return doc;
- const repaired=normalizeXmlEntities(s);
- if(repaired!==s){
-  doc=parser.parseFromString(repaired,"image/svg+xml");
+ const normalized=normalizeXmlEntities(s);
+ if(normalized!==s){
+  doc=parser.parseFromString(normalized,"image/svg+xml");
   failures=doc.getElementsByTagName("parsererror");
-  if(!failures.length)return doc;
+  if(!failures.length){svgRepairNotes.push(context+": corrected SVG text entities");return doc;}
  }
- // Include the failing stage and a short browser parser diagnostic.
+ const fixed=repairSvgTagNesting(normalized);
+ if(fixed){
+  doc=parser.parseFromString(fixed.svg,"image/svg+xml");
+  failures=doc.getElementsByTagName("parsererror");
+  if(!failures.length){
+   svgRepairNotes.push(context+": corrected "+fixed.edits+" mismatched SVG tag(s)");
+   return doc;
+  }
+ }
  const diagnostic=String(failures[0]?.textContent||"")
   .replace(/https?:\/\/\S+/g,"").replace(/\s+/g," ").trim().slice(0,200);
- throw Error(context+": Invalid SVG XML."+(diagnostic?" "+diagnostic:"")+" Ask ChatGPT to correct the SVG markup.");
+ throw Error(context+": SVG contains XML formatting errors."+(diagnostic?" "+diagnostic:"")+" Regenerate the code or correct the mismatched tags.");
 }
 function checkTree(root){
  const nodes=[root,...root.getElementsByTagName("*")];
@@ -95,6 +137,7 @@ function checkTree(root){
  }
 }
 function loadCode(code){
+ svgRepairNotes=[];
  if(!code||code.length>450000)throw Error("Paste the complete ChatGPT SVG code (maximum 450 KB).");
  let obj;try{obj=JSON.parse(withoutFence(code));}catch(e){throw Error("ChatGPT returned invalid JSON. Ask it to fix the escaping of SVG quotes.");}
  if(!obj||obj.format!=="school-gif-v1"||!Array.isArray(obj.frames)||obj.frames.length<4||obj.frames.length>8)throw Error("Use school-gif-v1 code with 4–8 frames.");
@@ -113,7 +156,7 @@ function loadCode(code){
   r.setAttribute("width",String(v[2]));r.setAttribute("height",String(v[3]));
   return {name:f.stage.slice(0,110),detail:f.explanation.slice(0,500),svg:serializer.serializeToString(doc)};
  });
- return {title:String(obj.title||"Educational Animation").slice(0,200),frames};
+ return {title:String(obj.title||"Educational Animation").slice(0,200),frames,repairNotes:svgRepairNotes.slice()};
 }
 function shape(c,x,y,w,h,r,fill,stroke){
  c.beginPath();c.roundRect(x,y,w,h,r);if(fill){c.fillStyle=fill;c.fill();}if(stroke){c.strokeStyle=stroke;c.lineWidth=2;c.stroke();}
@@ -247,7 +290,7 @@ async function make(){
   $("download").href=gifUrl;
   $("download").download=(d.topic.replace(/[^a-z0-9 -]/gi,"").trim().replace(/\s+/g,"-").slice(0,70)||"Educational-GIF")+".gif";
   $("download").textContent="⬇ Download GIF ("+(b.size/1048576).toFixed(1)+" MB)";
-  $("download").hidden=false;start();status("GIF generated from your illustration code. Review and download.","success");
+  $("download").hidden=false;start();status(model.repairNotes.length?"GIF created. Auto-corrected "+model.repairNotes.join("; ")+". Review the result before sharing.":"GIF generated from your illustration code. Review and download.","success");
  }catch(e){status("Generation error: "+e.message,"error");}
  finally{lock(false);}
 }
