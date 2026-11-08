@@ -18,7 +18,7 @@ return [
 "Class: "+d.class,"Subject: "+d.subject,"Chapter: "+d.chapter,"Topic: "+d.topic,
 "",
 "Return ONLY one valid JSON object, optionally inside a JSON markdown code block. Use this exact schema:",
-'{"format":"school-gif-v1","title":"Lesson title","baseSvg":"<svg xmlns=\\"http://www.w3.org/2000/svg\\" viewBox=\\"0 0 900 900\\" width=\\"900\\" height=\\"900\\">...FULL DETAIL...</svg>","frames":[{"stage":"Stage name","explanation":"Concise scientific explanation","overlay":"<g>...stage-specific animation overlay...</g>"}]}',
+'{"format":"school-gif-v1","title":"Lesson title","baseSvg":"<svg xmlns=\\"http://www.w3.org/2000/svg\\" viewBox=\\"0 0 900 1200\\" width=\\"900\\" height=\\"1200\\">...FULL DETAIL...</svg>","frames":[{"stage":"Stage name","explanation":"Concise scientific explanation","overlay":"<g>...stage-specific animation overlay...</g>"}]}',
 "",
 "VISUAL QUALITY: This is for school lessons, not an icon set. The SVG must be a comprehensive high-detail textbook illustration. Draw accurately proportioned structures using numerous organic SVG paths, fine outlines, subtle gradients, layers and cross-sectional anatomy. Label the correct parts with legible leader lines. Every relevant internal structure must be drawn; no cartoon flowers, stick figures, emoji, crude circles, simplistic flowchart, or merely decorative shapes. For mathematics use exact geometric constructions instead.",
 "The baseSvg is the original detailed illustration and stays IDENTICAL across all frames. Add motion/progression using overlay layers in each frame, with accurate position, arrows, highlights, transport paths and formation stages as scientifically applicable. Do not simply blink labels. Build 6–8 stages that actually explain the process.",
@@ -121,17 +121,21 @@ async function draw(i,c,w,h){
  // One illustration canvas: the current stage text sits ON the illustration, not in a separate card.
  shape(c,27,198,846,1316,24,"white","#d8e5f1");
  c.save();c.beginPath();c.roundRect(34,205,832,1300,18);c.clip();
- c.drawImage(img,37,220,826,826);
- const fade=c.createLinearGradient(0,945,0,1200);
- fade.addColorStop(0,"rgba(255,255,255,0.04)");
- fade.addColorStop(.4,"rgba(245,251,254,0.94)");
- fade.addColorStop(1,"rgba(238,248,252,0.99)");
- c.fillStyle=fade;c.fillRect(37,945,826,455);
- shape(c,61,1090,778,297,18,"rgba(242,249,253,.97)");
- shape(c,82,1110,171,45,15,"#d9f1ea");
- label(c,"STAGE "+(i+1)+" / "+model.frames.length,166,1132,21,"#0c7567",true,"center");
- c.font="700 36px Arial";label(c,short(c,f.name,714),84,1207,36,"#103d68",true);
- wrap(c,f.detail,83,1271,740,29,47,4);
+ // Respect the source illustration's aspect ratio. Old 900-square and new portrait SVGs both work.
+ const fit=Math.min(826/img.naturalWidth,1138/img.naturalHeight);
+ const iw=img.naturalWidth*fit,ih=img.naturalHeight*fit;
+ c.drawImage(img,37+(826-iw)/2,220+(1138-ih)/2,iw,ih);
+ // Stage title and explanation are superimposed ON the illustration, not underneath it.
+ const fade=c.createLinearGradient(0,1010,0,1345);
+ fade.addColorStop(0,"rgba(255,255,255,0.08)");
+ fade.addColorStop(.45,"rgba(246,252,255,0.84)");
+ fade.addColorStop(1,"rgba(240,249,252,0.98)");
+ c.fillStyle=fade;c.fillRect(37,1000,826,425);
+ shape(c,61,1053,778,349,18,"rgba(242,249,253,.94)");
+ shape(c,82,1075,171,44,15,"#d9f1ea");
+ label(c,"STAGE "+(i+1)+" / "+model.frames.length,166,1097,21,"#0c7567",true,"center");
+ c.font="700 36px Arial";label(c,short(c,f.name,714),84,1160,36,"#103d68",true);
+ wrap(c,f.detail,83,1226,740,29,47,4);
  c.restore();
  c.font="500 23px Arial";label(c,short(c,d.chapter||model.title,811),450,1466,23,"#456580",false,"center");
  c.restore();
