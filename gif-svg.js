@@ -179,7 +179,7 @@ function init(){
   status(await copy($("promptText").value)?"Instructions copied. Open ChatGPT, paste the instructions, then paste the returned JSON code here.":"Instructions ready. Copy them and paste into ChatGPT.");
  });
  $("copyPrompt").addEventListener("click",async()=>status(await copy($("promptText").value)?"Instructions copied.":"Select the instructions and copy manually."));
- $("gifCode").addEventListener("input",()=>{model=null;stop();$("previewArea").hidden=true;$("download").hidden=true;try{if($("gifCode").value.length<225000)localStorage.setItem("school.svg.code",$("gifCode").value);}catch(e){}});
+ $("gifCode").addEventListener("input",()=>{model=null;stop();$("previewArea").hidden=true;$("download").hidden=true;try{if($("gifCode").value.length<=450000)localStorage.setItem("school.svg.code",$("gifCode").value);}catch(e){}});
  $("previewBtn").addEventListener("click",()=>{try{model=loadCode($("gifCode").value);start();status("Preview ready. Check every anatomical structure and label.","success");}catch(e){status(e.message,"error");}});
  $("generate").addEventListener("click",make);
  $("clearCode").addEventListener("click",()=>{if(busy)return;$("gifCode").value="";model=null;stop();$("previewArea").hidden=true;$("download").hidden=true;try{localStorage.removeItem("school.svg.code");}catch(e){}status("Code cleared.");});
