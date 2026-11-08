@@ -205,6 +205,9 @@ function enhanceSelects(){
   const host=document.createElement("div");host.className="smart-select";
   const button=document.createElement("button");button.type="button";button.className="select-trigger";
   button.setAttribute("aria-expanded","false");button.setAttribute("aria-haspopup","listbox");
+  button.id=sel.id+"-trigger";
+  const fieldLabel=sel.parentNode.querySelector("label");
+  if(fieldLabel)fieldLabel.htmlFor=button.id;
   const value=document.createElement("span");value.className="value";
   const chev=document.createElement("span");chev.className="chevron";chev.textContent="⌄";
   button.append(value,chev);
