@@ -27,6 +27,8 @@ return [
 "All gradients and marker definitions go inside baseSvg. Use url(#id) references only. No embedded images, external URLs, base64, scripts, JavaScript, CSS, foreignObject, SVG animation elements, file loading, font downloads or external assets. SVG xmlns MUST be http://www.w3.org/2000/svg, base viewBox exactly 0 0 900 900, and frame overlays must be SVG fragments (<g>...</g>).",
 "Each frame has a clearly distinct accurate stage, a short title, and a scientifically correct explanation (approximately 15–35 words). No extra headings inside the SVG; the school app supplies the title, class and captions.",
 "All double quotes inside SVG strings MUST be correctly escaped for valid JSON. No trailing commas or comments. Deliver self-contained original vector illustration code, not Python. The user will paste this JSON in a browser GIF creator.",
+"Important for mobile clarity: all SVG structure labels must use a minimum font-size of 34px, preferably 36-44px, bold or semi-bold, in high-contrast colours. Keep every label and leader line away from the outer 35px edges and do not overlap anatomy or other labels.",
+"Reserve the lowest 15 percent of the diagram for an on-image stage title and translucent explanation overlay that this app automatically draws. Place the most important anatomical structures in the upper or central portion. Keep the entire vector diagram detailed and proportionally correct.",
 "Be candid about your illustration: this is detailed vector textbook art, not photographic AI rendering. Do not claim perfect anatomical accuracy without textbook verification.",
 "Return only the JSON object."
 ].join("\n");
