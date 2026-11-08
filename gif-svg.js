@@ -136,11 +136,18 @@ async function draw(i,c,w,h){
  c.font="500 23px Arial";label(c,short(c,d.chapter||model.title,811),450,1466,23,"#456580",false,"center");
  c.restore();
 }
-function stop(){if(timer){clearInterval(timer);timer=null;}}
+function stop(){if(timer){clearTimeout(timer);timer=null;}}
+function speed(){const n=Number($("speed").value);return Number.isFinite(n)&&n>0?n:1;}
 async function show(i){const v=++drawVersion;try{await draw(i,pc,preview.width,preview.height);if(v===drawVersion)step=i;}catch(e){status("Preview error: "+e.message,"error");}}
-function start(){stop();$("previewArea").hidden=false;show(0);timer=setInterval(()=>{if(!busy&&model)show((step+1)%model.frames.length);},1600);}
-async function copy(s){try{await navigator.clipboard.writeText(s);return true;}catch(e){try{$("promptText").select();return document.execCommand("copy");}catch(x){return false;}}}
-function lock(v){busy=v;["getPrompt","generate","previewBtn","clearCode"].forEach(id=>$(id).disabled=v);}
+function start(){
+ stop();$("previewArea").hidden=false;
+ const schedule=()=>{if(!model)return;timer=setTimeout(async()=>{
+  if(!busy&&model)await show((step+1)%model.frames.length);
+  if(model)schedule();
+ },Math.round((step===model.frames.length-1?1900:1300)/speed()));};
+ show(0).then(()=>schedule());
+}
+function lock(v){busy=v;["getPrompt","generate"].forEach(id=>$(id).disabled=v);}
 async function worker(){
  if(!window.GIF)throw Error("GIF library not loaded. Check internet and refresh.");
  if(workerUrl)return workerUrl;
@@ -162,7 +169,7 @@ async function make(){
   const gif=new GIF({workerScript,workers:1,width:w,height:h,quality:w>=1000?14:10,repeat:0});
   for(let i=0;i<model.frames.length;i++){
    await draw(i,render,w,h);
-   gif.addFrame(render,{copy:true,delay:i===model.frames.length-1?1900:1300,dispose:2});
+   gif.addFrame(render,{copy:true,delay:Math.round((i===model.frames.length-1?1900:1300)/speed()),dispose:2});
    status("Prepared animation stage "+(i+1)+" / "+model.frames.length);
    await new Promise(r=>setTimeout(r,8));
   }
