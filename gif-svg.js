@@ -49,8 +49,15 @@ function checkTree(root){
   if(n.namespaceURI!==NS||!validTags.has(n.localName))throw Error("Unsupported SVG element: "+n.localName);
   for(const att of [...n.attributes]){
    const key=att.localName.toLowerCase(),val=att.value;
+   // XML namespace declarations are metadata, not requests to fetch external SVG resources.
+   // Every valid SVG needs xmlns="http://www.w3.org/2000/svg".
+   if(att.namespaceURI==="http://www.w3.org/2000/xmlns/"||att.name==="xmlns"){
+    if(att.name==="xmlns"&&val===NS)continue;
+    if(att.name==="xmlns:xlink"&&val==="http://www.w3.org/1999/xlink")continue;
+    throw Error("Unexpected SVG namespace declaration.");
+   }
    if(key.startsWith("on")||key==="href"||key==="style")throw Error("SVG scripts, links and stylesheet attributes are not allowed.");
-   if(att.namespaceURI&&att.namespaceURI!==NS&&att.namespaceURI!=="http://www.w3.org/2000/xmlns/")throw Error("Unexpected SVG attribute namespace.");
+   if(att.namespaceURI&&att.namespaceURI!==NS)throw Error("Unexpected SVG attribute namespace.");
    if(/javascript:|data:|https?:|@import/i.test(val))throw Error("No external SVG resources allowed.");
    if(/url\s*\(/i.test(val) && /url\s*\(/i.test(val.replace(/url\s*\(\s*['"]?#[A-Za-z][\w-]*['"]?\s*\)/gi,"")))throw Error("Use only local SVG url(#id) markers.");
   }
