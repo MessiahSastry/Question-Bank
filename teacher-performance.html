@@ -490,6 +490,7 @@ async function loadYear(){
  if(token!==loadId)return;
  S.classes.sort(function(a,b){return a.name.localeCompare(b.name,undefined,{numeric:true});});
  populateAdmin();
+ configureComparisonFilters();
  await calculate(token);
 }
 async function calculate(token){
@@ -552,6 +553,100 @@ function renderExamAudits(){
    (r.fallbackCount?' · Alternate exam ID results: '+r.fallbackCount:'')+' · Exam IDs: '+esc(r.ids)+'</span></div>';
  }).join('')+(rows.length>100?'<p class="hint">Showing first 100 rows. Refine search.</p>':''):'<p class="hint">No matching teacher or examination records found.</p>';
 }
+
+function selectedComparisonRecords(exam){
+ var classId=$('filterClass').value,subject=$('filterSubject').value;
+ return S.results.filter(function(r){
+  return (!exam||exam==='overall'||r.exam===exam)&&
+   (!classId||r.classId===classId)&&(!subject||key(r.subject)===key(subject));
+ });
+}
+function scoreSummary(records,teacherId){
+ var perStudent=new Map();
+ records.forEach(function(r){
+  if(teacherId&&r.teacherId!==teacherId)return;
+  if(!perStudent.has(r.studentKey))perStudent.set(r.studentKey,new Map());
+  var perExam=perStudent.get(r.studentKey);
+  if(!perExam.has(r.exam))perExam.set(r.exam,[]);
+  perExam.get(r.exam).push(r.percent);
+ });
+ var values=Array.from(perStudent.values()).map(function(exams){
+  return mean(Array.from(exams.values()).map(mean));
+ });
+ return {value:mean(values),count:values.length,values:values};
+}
+function performanceBand(v){
+ if(v>=90)return {name:'Outstanding',css:'perf-outstanding'};
+ if(v>=80)return {name:'Excellent',css:'perf-excellent'};
+ if(v>=70)return {name:'Good',css:'perf-good'};
+ if(v>=60)return {name:'Needs Improvement',css:'perf-improve'};
+ return {name:'Requires Attention',css:'perf-attention'};
+}
+function comparisonRows(records){
+ return S.teachers.map(function(t){
+  var summary=scoreSummary(records,t.id);
+  return{id:t.id,name:t.name||'Unnamed Teacher',value:summary.value,count:summary.count};
+ }).filter(function(t){return t.count>0&&t.value!==null;}).sort(function(a,b){
+  return b.value-a.value||a.name.localeCompare(b.name,undefined,{sensitivity:'base'});
+ });
+}
+function configureComparisonFilters(){
+ var formerClass=$('filterClass').value;
+ var classes=S.classes.filter(function(c){return S.assignments.some(function(a){return a.classId===c.id;});});
+ choose('filterClass',classes,'All Classes',classes.some(function(c){return c.id===formerClass;})?formerClass:'');
+ updateComparisonSubjects();
+}
+function updateComparisonSubjects(){
+ var cls=$('filterClass').value,previous=$('filterSubject').value;
+ var map=new Map();
+ S.assignments.filter(function(a){return !cls||a.classId===cls;}).forEach(function(a){
+  if(!map.has(key(a.subject)))map.set(key(a.subject),a.subject);
+ });
+ var opts=Array.from(map.values()).sort(function(a,b){return a.localeCompare(b,undefined,{numeric:true});}).map(function(n){return{id:n,name:n};});
+ choose('filterSubject',opts,'All Subjects',opts.some(function(x){return x.id===previous;})?previous:'');
+}
+function examSequenceIndex(id){
+ var m=String(id).match(/^(fa|sa):(\d+)$/);
+ if(m){var n=Number(m[2]);return m[1]==='fa'?(n<=2?n*10:(n+1)*10):n===1?30:n===2?70:70+n*10;}
+ return 1000;
+}
+function orderedExamKeys(){
+ return S.allExamKeys.slice().sort(function(a,b){
+  return examSequenceIndex(a)-examSequenceIndex(b)||
+   String(S.examLabels.get(a)||a).localeCompare(String(S.examLabels.get(b)||b),undefined,{numeric:true});
+ });
+}
+function matchedImprovement(teacherId,earlier,later,records){
+ // Compare the same students AND the same teacher-taught subjects in both exams.
+ var pairs=new Map();
+ records.forEach(function(r){
+  if(r.teacherId!==teacherId||(r.exam!==earlier&&r.exam!==later))return;
+  var pairKey=JSON.stringify([r.studentKey,key(r.subject)]);
+  if(!pairs.has(pairKey))pairs.set(pairKey,{student:r.studentKey,earlier:[],later:[]});
+  pairs.get(pairKey)[r.exam===earlier?'earlier':'later'].push(r.percent);
+ });
+ var pairedStudents=new Map();
+ pairs.forEach(function(p){
+  if(!p.earlier.length||!p.later.length)return;
+  if(!pairedStudents.has(p.student))pairedStudents.set(p.student,{earlier:[],later:[]});
+  pairedStudents.get(p.student).earlier.push(mean(p.earlier));
+  pairedStudents.get(p.student).later.push(mean(p.later));
+ });
+ var diffs=Array.from(pairedStudents.values()).map(function(p){return mean(p.later)-mean(p.earlier);});
+ return{earlier:earlier,later:later,delta:mean(diffs),count:diffs.length};
+}
+function improvementForTeacher(teacherId,records){
+ var exams=orderedExamKeys().filter(function(id){return records.some(function(r){return r.teacherId===teacherId&&r.exam===id;});});
+ // Prefer the longest comparable period: earliest to latest, using matched cohorts.
+ for(var i=0;i<exams.length-1;i++){
+  for(var j=exams.length-1;j>i;j--){
+   var result=matchedImprovement(teacherId,exams[i],exams[j],records);
+   if(result.count>=3)return result;
+  }
+ }
+ return null;
+}
+
 function renderGraph(){
  var selected=$('exam').value||'overall';
  var rows=S.teachers.map(function(t){
