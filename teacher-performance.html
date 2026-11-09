@@ -204,6 +204,20 @@ var db,auth,user,isAdmin=false,loadId=0;
 var S={year:'',teachers:[],classes:[],assignments:[],selectedSections:new Set(),selectedSubjects:new Set(),availableSubjects:[],examsBySection:new Map(),groupCache:new Map(),rosterCache:new Map(),marksCache:new Map(),results:[],allExamKeys:[],examLabels:new Map()};
 var modernSelects=new Map(),activePicker=null,subjectLoadSeq=0;
 function key(v){return String(v==null?'':v).normalize('NFKC').trim().toLowerCase().replace(/\s+/g,' ');}
+function examGroupKey(name){
+ // Different class/section versions of an exam can have different IDs
+ // and labels (FA 1, FA-1, Formative Assessment 1).
+ var normalized=key(name).replace(/[–—]/g,'-');
+ var match=normalized.match(/^(?:fa|formative[\s._-]*assessment)[\s._:-]*0*(\d+)$/);
+ if(match)return 'fa:'+Number(match[1]);
+ match=normalized.match(/^(?:sa|summative[\s._-]*assessment)[\s._:-]*0*(\d+)$/);
+ if(match)return 'sa:'+Number(match[1]);
+ return 'name:'+normalized;
+}
+function examDisplayName(name){
+ var group=examGroupKey(name),match=group.match(/^(fa|sa):(\d+)$/);
+ return match?(match[1]==='fa'?'Formative Assessment ':'Summative Assessment ')+match[2]:String(name||'');
+}
 function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c];});}
 function mean(a){return a.length?a.reduce(function(x,y){return x+y;},0)/a.length:null;}
 function status(t,kind){$('status').textContent=t;$('status').className=kind||'';}
@@ -334,7 +348,7 @@ function parseMark(data,exam,subject){
      if(found.length&&(!topics(exam,subject).length||found.length===vals.length))raw=found.reduce(function(a,b){return a+Number(b);},0);
    }
  }
- if(raw===undefined||raw===null||String(raw).trim()==='')return{kind:'missing'};
+ if(raw===undefined||raw===null||String(raw).trim()==='')return{kind:'absent'};
  if(/^(ab|abs|absent)$/i.test(String(raw).trim()))return{kind:'absent'};
  if(!/^[+-]?(?:\d+\.?\d*|\.\d+)$/.test(String(raw).trim()))return{kind:'invalid'};
  var val=Number(raw);
@@ -400,7 +414,7 @@ async function loadYear(){
  await calculate(token);
 }
 async function calculate(token){
- status('Checking completed examinations and combining student marks...');
+ status('Checking examination marks and section-specific settings...');
  var candidates=S.assignments.filter(function(a){return S.teachers.some(function(t){return t.id===a.teacherId;})&&getSection(a.classId,a.sectionId);});
  var locations=Array.from(new Set(candidates.map(function(a){return sectionKey(a.classId,a.sectionId);})));
  try{
@@ -417,12 +431,14 @@ async function calculate(token){
    var ex=exams[j],sub=subConfig(ex,a.subject);
    if(!sub)continue;
    var items=people.map(function(st){return{student:st,result:parseMark(S.marksCache.get(sectionKey(a.classId,a.sectionId)+'|'+st.id).get(ex.id),ex,a.subject)};});
-   var completed=!explicitlyIncomplete(ex)&&(finalStatus(ex)||items.every(function(x){return x.result.kind==='score'||x.result.kind==='absent';}));
-   if(!completed||!items.some(function(x){return x.result.kind==='score';})){unfinished++;continue;}
+   // A student with no entered marks is absent; do not suppress all results
+   // just because other students in this class or section have missing marks.
+   var entered=items.filter(function(x){return x.result.kind==='score';});
+   if(!entered.length){unfinished++;continue;}
    sectionCount++;
-   var examKey=key(ex.name),displayName=ex.name;
+   var examKey=examGroupKey(ex.name),displayName=examDisplayName(ex.name);
    if(!labels.has(examKey))labels.set(examKey,displayName);
-   items.forEach(function(x){if(x.result.kind==='score')records.push({teacherId:a.teacherId,studentKey:sectionKey(a.classId,a.sectionId)+'|'+x.student.id,exam:examKey,percent:x.result.percent});});
+   entered.forEach(function(x){records.push({teacherId:a.teacherId,studentKey:sectionKey(a.classId,a.sectionId)+'|'+x.student.id,exam:examKey,percent:x.result.percent});});
   }
  }
  if(token!==loadId)return;
@@ -430,9 +446,9 @@ async function calculate(token){
  var current=$('exam').value;
  choose('exam',[{id:'overall',name:'Overall Performance — All Completed Exams'}].concat(S.allExamKeys.map(function(id){return{id:id,name:labels.get(id)};})),'Select examination',S.allExamKeys.includes(current)||current==='overall'?current:'overall');
  $('exam').disabled=false;
- status(records.length?'':'No completed examination results found for the current teacher allotments.',records.length?'':'warning');
+ status(records.length?'':'No entered examination marks found for the current teacher allotments.',records.length?'':'warning');
  renderGraph();
- }catch(e){if(token===loadId){status('Could not calculate marks: '+e.message,'error');$('bars').innerHTML='<div class="empty">Unable to load results. Check Firebase access and try Refresh.</div>';}}
+ }catch(e){if(token===loadId){status('Could not calculate marks: '+e.message,'error');$('bars').innerHTML='<div class="empty">Unable to load results. Check Firebase access and reopen the page.</div>';}}
 }
 function renderGraph(){
  var selected=$('exam').value||'overall';
