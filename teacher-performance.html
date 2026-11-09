@@ -3,13 +3,13 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Teachers' Performance | St. Patrick's School</title>
+<title>Teachers' Academic Performance | St. Patrick's School</title>
 <style>
 :root{font-family:system-ui,-apple-system,"Segoe UI",Arial,sans-serif;color:#20334b;background:#f2f6fa}
 *{box-sizing:border-box}body{margin:0}.shell{max-width:1080px;margin:auto;padding:16px}
-header{background:#103d6c;color:#fff;border-radius:15px;padding:20px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:14px}
+header{background:#103d6c;color:#fff;border-radius:15px;padding:20px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;text-align:center}
 h1{margin:0;font-size:24px}h2{margin:0 0 14px;font-size:19px}h3{margin:0 0 10px;font-size:16px}
-header p{margin:5px 0 0;color:#d1e4f6}.actions{display:flex;gap:8px;flex-wrap:wrap}
+header p{margin:6px 0 0;color:#d1e4f6}.actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
 button,a.btn{min-height:43px;border:1px solid #b9cadb;border-radius:9px;background:white;color:#173b60;padding:9px 13px;font-size:14px;font-weight:650;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center}
 button:hover,a.btn:hover{background:#e8f1fa}button:disabled{opacity:.5;cursor:not-allowed}
 .primary{background:#145a9b;color:#fff;border-color:#145a9b}.primary:hover{background:#0d477e}
@@ -36,7 +36,7 @@ select:disabled{background:#f2f4f6}.muted,.hint{font-size:13px;color:#5b6f83;lin
 .multi-menu .done{width:100%;margin-top:8px;background:#155b98;color:white;border-color:#155b98}
 @media(max-width:700px){.modern-menu,.multi-menu{max-height:300px}.modern-trigger,.multi-trigger{font-size:16px!important}}
 
-#status{min-height:20px;margin-top:12px;font-size:14px;white-space:pre-wrap}
+#status{margin-top:12px;font-size:14px;white-space:pre-wrap}#status:empty{display:none}
 .error{color:#9d2437}.warning{color:#8a5b15}
 .bar-row{display:grid;grid-template-columns:minmax(135px,230px) minmax(130px,1fr) 74px;gap:12px;align-items:center;border-bottom:1px solid #edf1f5;padding:14px 0}
 .bar-row:last-child{border:0}.teacher-name{font-weight:700;overflow-wrap:anywhere}
@@ -100,8 +100,8 @@ body.dialog-open{overflow:hidden}
 <body>
 <main class="shell">
 <header>
-<div><h1>St. Patrick's School</h1><p>Teachers' Academic Performance Comparison</p></div>
-<div class="actions"><a class="btn" href="students.html">← Section Tools</a><button id="refresh" type="button">Refresh</button><button id="adminButton" class="btn" type="button" hidden>Manage Teachers &amp; Allotments</button></div>
+<div><h1>St. Patrick's School</h1><p>Teachers' Academic Performance</p></div>
+<div class="actions"><button id="adminButton" class="btn" type="button" hidden>Manage Teachers &amp; Allotments</button></div>
 </header>
 <section class="panel">
 <div class="filters">
@@ -109,7 +109,6 @@ body.dialog-open{overflow:hidden}
 <div class="field"><label for="exam">Completed Examination</label><select id="exam" disabled><option>Loading...</option></select></div>
 </div>
 <div id="status" role="status" aria-live="polite">Checking sign-in...</div>
-<div class="summary" id="summary">Only finalized or fully entered results are included. Each teacher has one combined bar.</div>
 </section>
 <section class="panel" aria-label="Teacher performance graph">
 <div class="section-title"><h2>Teacher Comparison</h2><span class="hint">Average marks (%) · Highest first</span></div>
@@ -432,26 +431,36 @@ async function calculate(token){
  choose('exam',[{id:'overall',name:'Overall Performance — All Completed Exams'}].concat(S.allExamKeys.map(function(id){return{id:id,name:labels.get(id)};})),'Select examination',S.allExamKeys.includes(current)||current==='overall'?current:'overall');
  $('exam').disabled=false;
  status(records.length?'':'No completed examination results found for the current teacher allotments.',records.length?'':'warning');
- $('summary').textContent=S.teachers.length+' teachers · '+candidates.length+' allotments · '+sectionCount+' completed subject-exam sections · '+unfinished+' not-yet-complete subject-exam sections. Results update when marks or allotments change.';
  renderGraph();
  }catch(e){if(token===loadId){status('Could not calculate marks: '+e.message,'error');$('bars').innerHTML='<div class="empty">Unable to load results. Check Firebase access and try Refresh.</div>';}}
 }
 function renderGraph(){
- var selected=$('exam').value||'overall',rows=S.teachers.map(function(t){
-  var assigned=S.assignments.filter(function(a){return a.teacherId===t.id;}),st=new Map(),allStudents=new Set(),exams=new Set();
-  assigned.forEach(function(a){var people=S.rosterCache.get(sectionKey(a.classId,a.sectionId))||[];people.forEach(function(p){allStudents.add(sectionKey(a.classId,a.sectionId)+'|'+p.id);});});
-  S.results.forEach(function(r){if(r.teacherId!==t.id||(selected!=='overall'&&r.exam!==selected))return;
-    exams.add(r.exam);if(!st.has(r.studentKey))st.set(r.studentKey,new Map());
-    var em=st.get(r.studentKey);if(!em.has(r.exam))em.set(r.exam,[]);em.get(r.exam).push(r.percent);
+ var selected=$('exam').value||'overall';
+ var rows=S.teachers.map(function(t){
+  var perStudent=new Map();
+  S.results.forEach(function(r){
+   if(r.teacherId!==t.id||(selected!=='overall'&&r.exam!==selected))return;
+   if(!perStudent.has(r.studentKey))perStudent.set(r.studentKey,new Map());
+   var perExam=perStudent.get(r.studentKey);
+   if(!perExam.has(r.exam))perExam.set(r.exam,[]);
+   perExam.get(r.exam).push(r.percent);
   });
-  var values=Array.from(st.values()).map(function(e){return mean(Array.from(e.values()).map(mean));});
-  return{name:t.name||'Unnamed Teacher',value:mean(values),count:values.length,roster:allStudents.size,exams:exams.size,assignments:assigned.length};
- });
- rows.sort(function(a,b){return(b.value===null?-1:b.value)-(a.value===null?-1:a.value)||a.name.localeCompare(b.name);});
- $('bars').innerHTML=rows.length?rows.map(function(r){
-  var val=r.value===null?null:Math.max(0,Math.min(100,r.value));
-  return'<div class="bar-row"><div><div class="teacher-name">'+esc(r.name)+'</div><div class="detail">'+r.count+'/'+r.roster+' students · '+r.exams+' exam'+(r.exams===1?'':'s')+'</div></div><div class="track" aria-label="'+esc(r.name)+' performance '+(val===null?'not available':val.toFixed(1)+' percent')+'"><div class="fill" style="width:'+(val===null?0:val.toFixed(3))+'%"></div></div><div class="percent">'+(val===null?'N/A':val.toFixed(1)+'%')+'</div></div>';
- }).join(''):'<div class="empty">No teachers have been added yet. The administrator can add teachers and allot their classes and subjects.</div>';
+  // Only students with at least one valid mark for the selected exam contribute.
+  // The same child in two subjects still counts as one student.
+  var values=Array.from(perStudent.values()).map(function(exams){
+   return mean(Array.from(exams.values()).map(mean));
+  });
+  return{name:String(t.name||'Unnamed Teacher'),value:mean(values),count:values.length};
+ }).filter(function(item){return item.count>0&&item.value!==null;});
+ rows.sort(function(a,b){return b.value-a.value||a.name.localeCompare(b.name,undefined,{sensitivity:'base'});});
+ $('bars').innerHTML=rows.length?rows.map(function(row){
+  var value=Math.max(0,Math.min(100,row.value));
+  return '<div class="bar-row"><div><div class="teacher-name">'+esc(row.name)+'</div>'+
+    '<div class="detail">'+row.count+' Student'+(row.count===1?'':'s')+'</div></div>'+
+    '<div class="track" aria-label="'+esc(row.name)+' performance '+value.toFixed(1)+' percent">'+
+    '<div class="fill" style="width:'+value.toFixed(3)+'%"></div></div>'+
+    '<div class="percent">'+value.toFixed(1)+'%</div></div>';
+ }).join(''):'<div class="empty">No eligible examination results found for this selection.</div>';
 }
 function populateAdmin(){
  if(!allowed())return;
@@ -670,7 +679,6 @@ async function init(){
 }
 $('year').addEventListener('change',async function(){S.year=this.value;localStorage.setItem('sp_selectedYear',S.year);if(S.year)await loadYear();});
 $('exam').addEventListener('change',renderGraph);
-$('refresh').addEventListener('click',async function(){if(S.year)await loadYear();});
 $('adminButton').addEventListener('click',function(){if(!allowed())return;$('adminPanel').hidden=false;$('adminPanel').scrollIntoView({behavior:'smooth',block:'start'});});
 $('closeAdmin').addEventListener('click',function(){$('adminPanel').hidden=true;});
 $('allotClass').addEventListener('change',fillSections);
