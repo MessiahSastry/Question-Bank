@@ -92,7 +92,16 @@ ul.clean li{display:flex;align-items:center;justify-content:space-between;gap:10
 <h3>Allot Class, Section &amp; Subject</h3>
 <form id="allotForm">
 <div class="form-row">
-<div class="field"><label for="allotTeacher">Teacher</label><select id="allotTeacher" required></select></div>
+<div class="field"><label for="teacherSelectButton">Teacher</label>
+<input type="hidden" id="allotTeacher" value="">
+<div class="modern-select" id="teacherPicker">
+<button id="teacherSelectButton" type="button" class="modern-trigger" aria-haspopup="listbox" aria-expanded="false" aria-controls="teacherSelectMenu" disabled><span id="teacherSelectedName" class="selected-label">Loading teachers...</span><span class="chevron" aria-hidden="true">▾</span></button>
+<div id="teacherSelectMenu" class="modern-menu" hidden>
+<input id="teacherSearch" class="modern-search" type="search" placeholder="Search teachers..." autocomplete="off" aria-label="Search teachers">
+<div id="teacherSelectList" role="listbox" aria-label="Available teachers"></div>
+</div>
+</div>
+</div>
 <div class="field"><label for="allotClass">Class</label><select id="allotClass" required></select></div>
 <div class="field full"><label id="allotSectionLabel" for="sectionPickerButton">Sections (select one or more)</label>
 <div class="multi-picker" id="sectionPicker">
@@ -129,13 +138,19 @@ function adminStatus(t){$('adminStatus').textContent=t;}
 function allowed(){return !!(user&&user.email&&key(user.email)===ADMIN&&isAdmin);}
 function requireAdmin(){if(!allowed())throw new Error('Administrator access required.');}
 function choose(id,items,label,selected){
+ if(id==='allotTeacher'){
+ var chosen=items.find(function(x){return x.id===selected;});
+ $(id).value=chosen?chosen.id:'';syncTeacherPicker();return;
+ }
  var e=$(id),html='<option value="">'+esc(label)+'</option>';
  items.forEach(function(it){html+='<option value="'+esc(it.id)+'"'+(selected===it.id?' selected':'')+'>'+esc(it.name)+'</option>';});
  e.innerHTML=html;e.disabled=items.length===0;syncModernSelect(id);
 }
 function closePickers(){
  modernSelects.forEach(function(info){info.menu.hidden=true;info.button.setAttribute('aria-expanded','false');});
- $('sectionPickerMenu').hidden=true;$('sectionPickerButton').setAttribute('aria-expanded','false');activePicker=null;
+ $('sectionPickerMenu').hidden=true;$('sectionPickerButton').setAttribute('aria-expanded','false');
+$('teacherSelectMenu').hidden=true;$('teacherSelectButton').setAttribute('aria-expanded','false');
+activePicker=null;
 }
 function syncModernSelect(id){
  var info=modernSelects.get(id);if(!info)return;
@@ -151,7 +166,7 @@ function renderModernOptions(info,search){
  }).join(''):'<div class="modern-options-empty">No matching options.</div>';
 }
 function upgradeSelects(){
- ['year','exam','allotTeacher','allotClass','allotSubject'].forEach(function(id){
+ ['year','exam','allotClass','allotSubject'].forEach(function(id){
   var select=$(id),wrapper=document.createElement('div');wrapper.className='modern-select';select.parentNode.insertBefore(wrapper,select);wrapper.appendChild(select);
   var button=document.createElement('button');button.type='button';button.className='modern-trigger';button.id=id+'Trigger';button.setAttribute('aria-haspopup','listbox');button.setAttribute('aria-expanded','false');
   button.innerHTML='<span class="selected-label"></span><span class="chevron" aria-hidden="true">▾</span>';wrapper.appendChild(button);
@@ -178,6 +193,45 @@ function upgradeSelects(){
  });
  document.addEventListener('pointerdown',function(ev){if(!ev.target.closest('.modern-select,.multi-picker'))closePickers();});
  document.addEventListener('keydown',function(ev){if(ev.key==='Escape')closePickers();});
+}
+function syncTeacherPicker(){
+ var id=$('allotTeacher').value,t=S.teachers.find(function(x){return x.id===id;});
+ $('teacherSelectedName').textContent=t?t.name:(S.teachers.length?'Select teacher':'No teachers added yet');
+ $('teacherSelectButton').disabled=S.teachers.length===0;
+ $('teacherSelectButton').setAttribute('aria-label',t?'Teacher: '+t.name:'Select teacher');
+ if(!$('teacherSelectMenu').hidden)renderTeacherOptions($('teacherSearch').value);
+}
+function renderTeacherOptions(search){
+ var term=key(search),teachers=S.teachers.filter(function(t){return !term||key(t.name).includes(term);});
+ $('teacherSelectList').innerHTML=teachers.length?teachers.map(function(t){
+ var selected=$('allotTeacher').value===t.id;
+ return '<button type="button" class="modern-option" role="option" aria-selected="'+selected+'" data-teacher-id="'+esc(t.id)+'"><span>'+esc(t.name)+'</span>'+(selected?'<span aria-hidden="true">✓</span>':'')+'</button>';
+ }).join(''):'<div class="modern-options-empty">'+(S.teachers.length?'No matching teachers.':'Use Add Teacher to create a teacher first.')+'</div>';
+}
+function setupTeacherPicker(){
+ $('teacherSelectButton').addEventListener('click',function(){
+  if(this.disabled)return;
+  var wasOpen=!$('teacherSelectMenu').hidden;closePickers();if(wasOpen)return;
+  $('teacherSelectMenu').hidden=false;this.setAttribute('aria-expanded','true');
+  $('teacherSearch').value='';renderTeacherOptions('');$('teacherSearch').focus({preventScroll:true});
+ });
+ $('teacherSearch').addEventListener('input',function(){renderTeacherOptions(this.value);});
+ $('teacherSelectList').addEventListener('click',function(e){
+  var button=e.target.closest('[data-teacher-id]');if(!button)return;
+  var teacher=S.teachers.find(function(t){return t.id===button.dataset.teacherId;});if(!teacher)return;
+  $('allotTeacher').value=teacher.id;closePickers();syncTeacherPicker();
+  $('teacherSelectButton').focus({preventScroll:true});
+ });
+ $('teacherSelectMenu').addEventListener('keydown',function(e){
+  if(e.key==='Escape'){e.preventDefault();closePickers();$('teacherSelectButton').focus();return;}
+  if(e.key==='ArrowDown'||e.key==='ArrowUp'){
+   var options=Array.from($('teacherSelectList').querySelectorAll('button'));
+   if(!options.length)return;e.preventDefault();
+   var i=options.indexOf(document.activeElement),direction=e.key==='ArrowDown'?1:-1;
+   options[(i+direction+options.length)%options.length].focus();
+  }
+ });
+ syncTeacherPicker();
 }
 function groupFor(n){return GROUP[n]||'default';}
 function sectionKey(c,s){return c+'|'+s;}
@@ -435,6 +489,7 @@ $('allotList').addEventListener('click',async function(e){
  await reloadAfterEdit('Allotment removed (archived in Firestore).');}catch(ex){adminStatus('Could not remove allotment: '+ex.message);}
 });
 upgradeSelects();
+setupTeacherPicker();
 init();
 })();
 </script>
