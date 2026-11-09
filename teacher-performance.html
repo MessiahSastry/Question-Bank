@@ -82,6 +82,14 @@ ul.clean li{display:flex;align-items:center;justify-content:space-between;gap:10
 .danger-btn:hover{background:#a92831!important}
 .danger-btn:focus-visible,.warning-actions button:focus-visible{outline:3px solid #6ca6d3;outline-offset:3px}
 body.dialog-open{overflow:hidden}
+.duplicate-count{font-size:12px;font-weight:750;background:#fff1de;color:#99530c;border-radius:999px;padding:5px 10px;white-space:nowrap}
+.duplicate-list{max-height:245px;overflow:auto;display:grid;gap:8px;margin:14px 0}
+.duplicate-item{border:1px solid #e5e9ef;border-radius:10px;background:#f9fbfd;padding:10px 12px;line-height:1.5}
+.duplicate-item strong{display:block;color:#213c59;font-size:14px;overflow-wrap:anywhere}
+.duplicate-item small{display:block;font-size:12px;color:#5c7286;margin-top:2px;overflow-wrap:anywhere}
+.duplicate-ok{background:#155b98!important;color:#fff!important;border-color:#155b98!important;min-width:130px}
+.duplicate-ok:hover{background:#0d4678!important}
+.duplicate-overflow{font-size:12px;color:#7e5a2e;padding:4px 2px}
 [hidden]{display:none!important}
 @media(max-width:700px){.shell{padding:10px}.panel{padding:14px}.admin-grid{grid-template-columns:1fr}.bar-row{grid-template-columns:minmax(110px,38%) 1fr 62px;gap:7px}.teacher-name{font-size:13px}.detail{font-size:11px}h1{font-size:21px}header{padding:16px}.form-row{grid-template-columns:1fr}.form-row .full{grid-column:auto}}
 </style>
@@ -171,6 +179,19 @@ body.dialog-open{overflow:hidden}
    <button id="cancelRemove" type="button">Cancel</button>
    <button id="confirmRemove" type="button" class="danger-btn">Remove Allotment</button>
   </div>
+ </div>
+</div>
+<div id="duplicateOverlay" class="warning-overlay" hidden>
+ <div class="warning-dialog" role="alertdialog" aria-modal="true" aria-labelledby="duplicateTitle" aria-describedby="duplicateDescription">
+  <div class="warning-icon" aria-hidden="true">⚠</div>
+  <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+   <h2 id="duplicateTitle" style="margin:0">Already Allotted</h2>
+   <span id="duplicateCount" class="duplicate-count"></span>
+  </div>
+  <p id="duplicateDescription" style="margin-top:12px">These class, section and subject combinations have already been allotted:</p>
+  <div class="duplicate-list" id="duplicateItems"></div>
+  <p class="warning-note">No new allotments were saved. Please remove or change the existing allotment before trying again.</p>
+  <div class="warning-actions"><button type="button" class="duplicate-ok" id="closeDuplicate">OK, Got It</button></div>
  </div>
 </div>
 <script>
@@ -489,6 +510,52 @@ function confirmRemoveAllotment(a){
   document.addEventListener('keydown',onKey,true);
  });
 }
+var duplicateDialogOpen=false;
+function showAlreadyAllotted(duplicates,classId){
+ if(duplicateDialogOpen)return Promise.resolve();
+ duplicateDialogOpen=true;
+ var collator=new Intl.Collator('en',{sensitivity:'base',numeric:true});
+ var found=duplicates.map(function(pair){
+  var existing=S.assignments.find(function(a){
+   return a.classId===classId&&a.sectionId===pair.sectionId&&key(a.subject)===key(pair.subject);
+  });
+  var teacher=existing&&S.teachers.find(function(t){return t.id===existing.teacherId;});
+  return {section:sectionName(classId,pair.sectionId),subject:pair.subject,
+   teacher:teacher?.name||'Existing teacher'};
+ }).sort(function(a,b){
+  return collator.compare(a.section,b.section)||collator.compare(a.subject,b.subject);
+ });
+ $('duplicateCount').textContent=found.length+' conflict'+(found.length===1?'':'s');
+ $('duplicateDescription').textContent=found.length===1
+  ? 'This class, section and subject is already allotted:'
+  : 'These class, section and subject combinations are already allotted:';
+ $('duplicateItems').innerHTML=found.slice(0,15).map(function(row){
+  return '<div class="duplicate-item"><strong>'+esc(className(classId))+' · Section '+esc(row.section)+' · '+esc(row.subject)+'</strong><small>Already assigned to: '+esc(row.teacher)+'</small></div>';
+ }).join('')+(found.length>15?'<div class="duplicate-overflow">And '+(found.length-15)+' more existing allotments.</div>':'');
+ $('duplicateOverlay').hidden=false;
+ document.body.classList.add('dialog-open');
+ var previous=document.activeElement;
+ $('closeDuplicate').focus({preventScroll:true});
+ return new Promise(function(resolve){
+  function settle(){
+   $('duplicateOverlay').hidden=true;
+   duplicateDialogOpen=false;
+   document.body.classList.remove('dialog-open');
+   $('closeDuplicate').removeEventListener('click',settle);
+   $('duplicateOverlay').removeEventListener('click',outside);
+   document.removeEventListener('keydown',escape,true);
+   if(previous?.isConnected)previous.focus({preventScroll:true});
+   resolve();
+  }
+  function outside(e){if(e.target===$('duplicateOverlay'))settle();}
+  function escape(e){if(e.key==='Escape'){e.preventDefault();settle();}
+   else if(e.key==='Tab'){e.preventDefault();$('closeDuplicate').focus();}
+  }
+  $('closeDuplicate').addEventListener('click',settle);
+  $('duplicateOverlay').addEventListener('click',outside);
+  document.addEventListener('keydown',escape,true);
+ });
+}
 function renderAllotments(){
  // Show teachers alphabetically; count unique classes and unique class-section pairs,
  // not the number of subject assignments.
@@ -649,9 +716,11 @@ $('allotForm').addEventListener('submit',async function(e){
  var duplicates=combinations.filter(function(pair){
  return S.assignments.some(function(a){return a.classId===classId&&a.sectionId===pair.sectionId&&key(a.subject)===key(pair.subject);});
  });
- if(duplicates.length)throw new Error('Already allotted: '+duplicates.map(function(pair){
- return sectionName(classId,pair.sectionId)+' — '+pair.subject;
- }).join(', ')+'. Remove the existing allotments first.');
+ if(duplicates.length){
+  adminStatus(''); // The in-app popup explains the exact conflicts.
+  await showAlreadyAllotted(duplicates,classId);
+  return; // Preserve all current selections; never overwrite or partly save.
+ }
  var batch=db.batch(),collection=db.collection('years').doc(S.year).collection('teacherAssignments');
  combinations.forEach(function(pair){
  batch.set(collection.doc(),{teacherId:teacherId,classId:classId,sectionId:pair.sectionId,subject:pair.subject,active:true,createdAt:firebase.firestore.FieldValue.serverTimestamp(),createdBy:user.uid});
