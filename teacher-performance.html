@@ -63,7 +63,7 @@ ul.clean li{display:flex;align-items:center;justify-content:space-between;gap:10
 </section>
 <section id="adminPanel" class="panel" hidden>
 <div class="section-title"><h2>Manage Teachers &amp; Allotments</h2><button id="closeAdmin" type="button">Close</button></div>
-<p class="hint">Only the authorized administrator may change teacher names or allotments. Classes, sections and subjects are taken from existing Firestore records; this page never creates new classes or sections.</p>
+<p class="hint">This page shows the controls only to the authorized admin. Firebase Security Rules must separately enforce write permissions. Classes, sections and subjects come from existing Firestore records.</p>
 <div class="admin-grid">
 <div class="card">
 <h3>Add Teacher</h3>
@@ -120,14 +120,15 @@ function parseMark(data,exam,subject){
  var max=Number(config.max);if(!(max>0&&Number.isFinite(max)))return{kind:'invalid'};
  var raw=readSubject(data,subject);
  if(raw&&typeof raw==='object'){
-   var nums=topics(exam,subject).length?topics(exam,subject).map(function(t){return readSubject(raw,t.name);}):Object.values(raw);
-   raw=nums.filter(function(n){return n!==null&&n!==''&&Number.isFinite(Number(n));}).reduce(function(a,b){return a+Number(b);},0);
+   var ts=topics(exam,subject),nums=ts.length?ts.map(function(t){return readSubject(raw,t.name);}):Object.values(raw);
+   var present=nums.filter(function(n){return n!==undefined&&n!==null&&n!==''&&Number.isFinite(Number(n));});
+   raw=present.length&&(ts.length===0||present.length===ts.length)?present.reduce(function(a,b){return a+Number(b);},0):undefined;
  }else if(raw===undefined){
    var subs=readSubject(data&&data.__subs,subject)||readSubject(data,'__subs.'+subject);
    if(subs&&typeof subs==='object'){
      var vals=topics(exam,subject).length?topics(exam,subject).map(function(t){return readSubject(subs,t.name);}):Object.values(subs);
-     var found=vals.filter(function(n){return n!==null&&n!==''&&Number.isFinite(Number(n));});
-     if(found.length)raw=found.reduce(function(a,b){return a+Number(b);},0);
+     var found=vals.filter(function(n){return n!==undefined&&n!==null&&n!==''&&Number.isFinite(Number(n));});
+     if(found.length&&(!topics(exam,subject).length||found.length===vals.length))raw=found.reduce(function(a,b){return a+Number(b);},0);
    }
  }
  if(raw===undefined||raw===null||String(raw).trim()==='')return{kind:'missing'};
