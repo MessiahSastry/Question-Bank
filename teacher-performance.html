@@ -164,6 +164,12 @@ body.dialog-open{overflow:hidden}
 <div id="allotSummary" class="allot-summary" aria-live="polite"></div>
 <div id="allotList" aria-live="polite"></div>
 </section>
+<details class="card" id="examAuditPanel" style="margin-top:18px">
+ <summary style="cursor:pointer;font-weight:750;color:#174f7f">Check missing teacher results</summary>
+ <p class="hint">Search teacher, class, section or exam to see which recorded marks were counted (e.g. Anil FA 1).</p>
+ <div class="field"><label for="auditSearch">Find examination records</label><input id="auditSearch" type="search" placeholder="Anil FA 1" autocomplete="off"></div>
+ <div id="auditResults" style="max-height:360px;overflow:auto;margin-top:12px" aria-live="polite"></div>
+</details>
 <p class="hint" id="adminStatus" role="status" aria-live="polite"></p>
 </section>
 </main>
@@ -201,7 +207,7 @@ var ADMIN='messiah.sastry@stpatricksschool.com';
 var GROUP={'Nursery':'nursery-lkg-ukg','LKG':'nursery-lkg-ukg','UKG':'nursery-lkg-ukg','1st Class':'class-1-2','2nd Class':'class-1-2','3rd Class':'class-3-5','4th Class':'class-3-5','5th Class':'class-3-5','6th Class':'class-6-9','7th Class':'class-6-9','8th Class':'class-6-9','9th Class':'class-6-9','10th Class':'class-10'};
 var $=function(id){return document.getElementById(id);};
 var db,auth,user,isAdmin=false,loadId=0;
-var S={year:'',teachers:[],classes:[],assignments:[],selectedSections:new Set(),selectedSubjects:new Set(),availableSubjects:[],examsBySection:new Map(),groupCache:new Map(),rosterCache:new Map(),marksCache:new Map(),results:[],allExamKeys:[],examLabels:new Map()};
+var S={year:'',teachers:[],classes:[],assignments:[],selectedSections:new Set(),selectedSubjects:new Set(),availableSubjects:[],examsBySection:new Map(),groupCache:new Map(),rosterCache:new Map(),marksCache:new Map(),results:[],audits:[],allExamKeys:[],examLabels:new Map()};
 var modernSelects=new Map(),activePicker=null,subjectLoadSeq=0;
 function key(v){return String(v==null?'':v).normalize('NFKC').trim().toLowerCase().replace(/\s+/g,' ');}
 function examGroupKey(name){
@@ -369,21 +375,51 @@ function explicitlyIncomplete(exam){
 }
 async function effectiveExams(cid,sid){
  var k=sectionKey(cid,sid);if(S.examsBySection.has(k))return S.examsBySection.get(k);
- var yr=db.collection('years').doc(S.year),cls=getClass(cid),g=groupFor(cls.name),groupSnap;
+ var yr=db.collection('years').doc(S.year),cls=getClass(cid),g=groupFor(cls.name);
  if(!S.groupCache.has(g))S.groupCache.set(g,yr.collection('exams').doc('classGroups').collection(g).get());
- var snapshots=await Promise.all([S.groupCache.get(g),yr.collection('classes').doc(cid).collection('examOverrides').get(),refSection(cid,sid).collection('examOverrides').get()]);
- var m=new Map();snapshots[0].forEach(function(doc){m.set(doc.id,Object.assign({id:doc.id},doc.data()));});
- function apply(snap,origin){snap.forEach(function(doc){var o=doc.data()||{},base=m.get(doc.id);
-   if(o.hidden===true){m.delete(doc.id);return;}
-   if(o.origin===origin||!base){m.set(doc.id,Object.assign({id:doc.id},o));return;}
-   var z=Object.assign({},base,o,{id:doc.id});
-   if(!Array.isArray(o.subjects)||!o.subjects.length)z.subjects=base.subjects;
-   if(!Array.isArray(o.subtopics)||!o.subtopics.length)z.subtopics=base.subtopics;
-   m.set(doc.id,z);
- });}
- apply(snapshots[1],'class-only');apply(snapshots[2],'section-only');
- var out=Array.from(m.values()).filter(function(ex){return Array.isArray(ex.subjects)&&ex.subjects.length;}).map(function(ex){ex.name=String(ex.name||ex.id);return ex;});
- S.examsBySection.set(k,out);return out;
+ var snaps=await Promise.all([S.groupCache.get(g),yr.collection('classes').doc(cid).collection('examOverrides').get(),refSection(cid,sid).collection('examOverrides').get()]);
+ var map=new Map(),names=new Map(),hiddenIds=new Set();
+ snaps[0].forEach(function(doc){var v=doc.data()||{};map.set(doc.id,Object.assign({id:doc.id,__origin:'group'},v));names.set(doc.id,new Set([examGroupKey(v.name||doc.id)]));});
+ function apply(snap,onlyOrigin,scope){
+  snap.forEach(function(doc){
+   var o=doc.data()||{},base=map.get(doc.id);
+   if(o.hidden===true){map.delete(doc.id);hiddenIds.add(doc.id);return;}
+   if(!names.has(doc.id))names.set(doc.id,new Set());
+   if(o.name)names.get(doc.id).add(examGroupKey(o.name));
+   if(base?.name)names.get(doc.id).add(examGroupKey(base.name));
+   if(o.origin===onlyOrigin||!base){
+    map.set(doc.id,Object.assign({id:doc.id,__origin:scope+'-only'},o));
+   }else{
+    var ex=Object.assign({},base,o,{id:doc.id,__origin:scope+'-overridden'});
+    if(!Array.isArray(o.subjects)||!o.subjects.length)ex.subjects=base.subjects;
+    if(!Array.isArray(o.subtopics)||!o.subtopics.length)ex.subtopics=base.subtopics;
+    map.set(doc.id,ex);
+   }
+  });
+ }
+ apply(snaps[1],'class-only','class');apply(snaps[2],'section-only','section');
+ var ranks={'section-only':5,'section-overridden':4,'class-only':3,'class-overridden':2,group:1};
+ var preferred=new Map();
+ Array.from(map.values()).filter(function(ex){return Array.isArray(ex.subjects)&&ex.subjects.length;}).forEach(function(ex){
+  ex.name=String(ex.name||ex.id);
+  var name=examGroupKey(ex.name),old=preferred.get(name);
+  if(!old||(ranks[ex.__origin]||0)>(ranks[old.__origin]||0))preferred.set(name,ex);
+ });
+ var list=Array.from(preferred.values()).map(function(ex){
+  var name=examGroupKey(ex.name),ids=[ex.id];
+  names.forEach(function(keys,id){if(id!==ex.id&&!hiddenIds.has(id)&&keys.has(name))ids.push(id);});
+  ex.compatibleIds=Array.from(new Set(ids));return ex;
+ });
+ S.examsBySection.set(k,list);return list;
+}
+function examSubjectMark(marksById,exam,subject){
+ var ids=exam.compatibleIds||[exam.id],absent=null;
+ for(var i=0;i<ids.length;i++){
+  var result=parseMark(marksById?.get(ids[i]),exam,subject);
+  if(result.kind==='score')return{result:result,matchedId:ids[i]};
+  if(result.kind==='absent'&&!absent)absent={result:result,matchedId:ids[i]};
+ }
+ return absent||{result:{kind:'absent'},matchedId:null};
 }
 async function roster(cid,sid){
  var k=sectionKey(cid,sid);if(S.rosterCache.has(k))return S.rosterCache.get(k);
@@ -418,37 +454,60 @@ async function calculate(token){
  var candidates=S.assignments.filter(function(a){return S.teachers.some(function(t){return t.id===a.teacherId;})&&getSection(a.classId,a.sectionId);});
  var locations=Array.from(new Set(candidates.map(function(a){return sectionKey(a.classId,a.sectionId);})));
  try{
- await concurrent(locations,6,async function(loc){
-  var p=loc.split('|'),cid=p[0],sid=p[1],pe=await Promise.all([effectiveExams(cid,sid),roster(cid,sid)]);
-  await concurrent(pe[1],10,async function(person){await marks(cid,sid,person.id);});
- });
- if(token!==loadId)return;
- var records=[],labels=new Map(),sectionCount=0,unfinished=0;
- for(var i=0;i<candidates.length;i++){
-  var a=candidates[i],people=await roster(a.classId,a.sectionId),exams=await effectiveExams(a.classId,a.sectionId);
-  if(!people.length)continue;
-  for(var j=0;j<exams.length;j++){
-   var ex=exams[j],sub=subConfig(ex,a.subject);
-   if(!sub)continue;
-   var items=people.map(function(st){return{student:st,result:parseMark(S.marksCache.get(sectionKey(a.classId,a.sectionId)+'|'+st.id).get(ex.id),ex,a.subject)};});
-   // A student with no entered marks is absent; do not suppress all results
-   // just because other students in this class or section have missing marks.
-   var entered=items.filter(function(x){return x.result.kind==='score';});
-   if(!entered.length){unfinished++;continue;}
-   sectionCount++;
-   var examKey=examGroupKey(ex.name),displayName=examDisplayName(ex.name);
-   if(!labels.has(examKey))labels.set(examKey,displayName);
-   entered.forEach(function(x){records.push({teacherId:a.teacherId,studentKey:sectionKey(a.classId,a.sectionId)+'|'+x.student.id,exam:examKey,percent:x.result.percent});});
+  await concurrent(locations,6,async function(loc){
+   var p=loc.split('|'),cid=p[0],sid=p[1],pe=await Promise.all([effectiveExams(cid,sid),roster(cid,sid)]);
+   await concurrent(pe[1],10,async function(person){await marks(cid,sid,person.id);});
+  });
+  if(token!==loadId)return;
+  var records=[],labels=new Map(),audits=[];
+  for(var i=0;i<candidates.length;i++){
+   var a=candidates[i],people=await roster(a.classId,a.sectionId),exams=await effectiveExams(a.classId,a.sectionId);
+   var teacher=S.teachers.find(function(t){return t.id===a.teacherId;}),matching=exams.filter(function(ex){return !!subConfig(ex,a.subject);});
+   if(!matching.length){
+    audits.push({teacher:teacher?.name||a.teacherId,cls:className(a.classId),section:sectionName(a.classId,a.sectionId),subject:a.subject,exam:'No matching subject/exam',scored:0,absent:people.length,source:'No matching exam configuration',ids:'-',fallbackCount:0});
+    continue;
+   }
+   for(var j=0;j<matching.length;j++){
+    var ex=matching[j],examKey=examGroupKey(ex.name),entered=[],fallbackCount=0;
+    people.forEach(function(st){
+     var stored=S.marksCache.get(sectionKey(a.classId,a.sectionId)+'|'+st.id)||new Map();
+     var match=examSubjectMark(stored,ex,a.subject);
+     if(match.result.kind==='score'){
+      entered.push({student:st,percent:match.result.percent});
+      if(match.matchedId!==ex.id)fallbackCount++;
+     }
+    });
+    audits.push({teacher:teacher?.name||a.teacherId,cls:className(a.classId),section:sectionName(a.classId,a.sectionId),subject:a.subject,exam:ex.name,scored:entered.length,absent:people.length-entered.length,source:ex.__origin||'group',ids:ex.compatibleIds?.join(', ')||ex.id,fallbackCount:fallbackCount});
+    if(!entered.length)continue;
+    if(!labels.has(examKey))labels.set(examKey,examDisplayName(ex.name));
+    entered.forEach(function(x){records.push({teacherId:a.teacherId,studentKey:sectionKey(a.classId,a.sectionId)+'|'+x.student.id,exam:examKey,percent:x.percent});});
+   }
   }
+  if(token!==loadId)return;
+  S.results=records;S.audits=audits;S.examLabels=labels;
+  S.allExamKeys=Array.from(labels.keys()).sort(function(a,b){return labels.get(a).localeCompare(labels.get(b),undefined,{numeric:true});});
+  var current=$('exam').value;
+  choose('exam',[{id:'overall',name:'Overall Performance — All Completed Exams'}].concat(S.allExamKeys.map(function(id){return{id:id,name:labels.get(id)};})),'Select examination',S.allExamKeys.includes(current)||current==='overall'?current:'overall');
+  $('exam').disabled=false;
+  status(records.length?'':'No entered examination marks found for the current teacher allotments.',records.length?'':'warning');
+  renderGraph();renderExamAudits();
+ }catch(e){
+  if(token===loadId){status('Could not calculate marks: '+e.message,'error');$('bars').innerHTML='<div class="empty">Unable to load results. Check Firebase access and reopen the page.</div>';}
  }
- if(token!==loadId)return;
- S.results=records;S.examLabels=labels;S.allExamKeys=Array.from(labels.keys()).sort(function(x,y){return labels.get(x).localeCompare(labels.get(y),undefined,{numeric:true});});
- var current=$('exam').value;
- choose('exam',[{id:'overall',name:'Overall Performance — All Completed Exams'}].concat(S.allExamKeys.map(function(id){return{id:id,name:labels.get(id)};})),'Select examination',S.allExamKeys.includes(current)||current==='overall'?current:'overall');
- $('exam').disabled=false;
- status(records.length?'':'No entered examination marks found for the current teacher allotments.',records.length?'':'warning');
- renderGraph();
- }catch(e){if(token===loadId){status('Could not calculate marks: '+e.message,'error');$('bars').innerHTML='<div class="empty">Unable to load results. Check Firebase access and reopen the page.</div>';}}
+}
+function renderExamAudits(){
+ if(!allowed())return;
+ var words=key($('auditSearch').value).split(/\s+/).filter(Boolean);
+ var rows=S.audits.filter(function(r){
+  var str=key([r.teacher,r.cls,r.section,r.subject,r.exam,r.source].join(' '));
+  return words.every(function(w){return str.includes(w);});
+ });
+ $('auditResults').innerHTML=rows.length?rows.slice(0,100).map(function(r){
+  return '<div style="padding:11px 7px;border-bottom:1px solid #e0e8ef"><b>'+esc(r.teacher)+'</b> · '+esc(r.cls)+' / '+esc(r.section)+
+   '<br><span class="hint">'+esc(r.subject)+' · '+esc(r.exam)+'</span>'+
+   '<br><span class="hint">Students with marks: <b>'+r.scored+'</b> · Absent/no marks: '+r.absent+' · Exam type: '+esc(r.source)+
+   (r.fallbackCount?' · Alternate exam ID results: '+r.fallbackCount:'')+' · Exam IDs: '+esc(r.ids)+'</span></div>';
+ }).join('')+(rows.length>100?'<p class="hint">Showing first 100 rows. Refine search.</p>':''):'<p class="hint">No matching teacher or examination records found.</p>';
 }
 function renderGraph(){
  var selected=$('exam').value||'overall';
@@ -693,6 +752,7 @@ async function init(){
   });
  }catch(e){status('Firebase initialization failed: '+e.message,'error');}
 }
+$('auditSearch').addEventListener('input',renderExamAudits);
 $('year').addEventListener('change',async function(){S.year=this.value;localStorage.setItem('sp_selectedYear',S.year);if(S.year)await loadYear();});
 $('exam').addEventListener('change',renderGraph);
 $('adminButton').addEventListener('click',function(){if(!allowed())return;$('adminPanel').hidden=false;$('adminPanel').scrollIntoView({behavior:'smooth',block:'start'});});
