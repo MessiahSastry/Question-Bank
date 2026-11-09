@@ -250,7 +250,7 @@ var ADMIN='messiah.sastry@stpatricksschool.com';
 var GROUP={'Nursery':'nursery-lkg-ukg','LKG':'nursery-lkg-ukg','UKG':'nursery-lkg-ukg','1st Class':'class-1-2','2nd Class':'class-1-2','3rd Class':'class-3-5','4th Class':'class-3-5','5th Class':'class-3-5','6th Class':'class-6-9','7th Class':'class-6-9','8th Class':'class-6-9','9th Class':'class-6-9','10th Class':'class-10'};
 var $=function(id){return document.getElementById(id);};
 var db,auth,user,isAdmin=false,loadId=0;
-var S={year:'',teachers:[],classes:[],assignments:[],selectedSections:new Set(),selectedSubjects:new Set(),availableSubjects:[],examsBySection:new Map(),groupCache:new Map(),rosterCache:new Map(),marksCache:new Map(),results:[],audits:[],allExamKeys:[],examLabels:new Map(),selectedTeacherId:null};
+var S={year:'',teachers:[],classes:[],assignments:[],selectedSections:new Set(),selectedSubjects:new Set(),availableSubjects:[],examsBySection:new Map(),groupCache:new Map(),rosterCache:new Map(),marksCache:new Map(),results:[],audits:[],allExamKeys:[],examLabels:new Map(),selectedTeacherId:null,improvementCache:new Map()};
 var modernSelects=new Map(),activePicker=null,subjectLoadSeq=0;
 function key(v){return String(v==null?'':v).normalize('NFKC').trim().toLowerCase().replace(/\s+/g,' ');}
 function examGroupKey(name){
@@ -478,7 +478,7 @@ async function marks(cid,sid,studentId){
 async function loadYear(){
  var token=++loadId;status('Loading classes, teachers and allotments from Firebase...');
  $('bars').innerHTML='<div class="empty">Calculating marks...</div>';
- S.examsBySection.clear();S.groupCache.clear();S.rosterCache.clear();S.marksCache.clear();
+ S.examsBySection.clear();S.groupCache.clear();S.rosterCache.clear();S.marksCache.clear();S.improvementCache.clear();
  var yr=db.collection('years').doc(S.year),docs=await Promise.all([db.collection('performanceTeachers').get(),yr.collection('teacherAssignments').get(),yr.collection('classes').get()]);
  if(token!==loadId)return;
  S.teachers=docs[0].docs.map(function(d){return Object.assign({id:d.id},d.data());}).filter(function(t){return t.archived!==true;}).sort(function(a,b){return String(a.name||'').localeCompare(String(b.name||''));});
@@ -671,11 +671,16 @@ function renderRankings(rows){
    '<div class="detail">'+row.count+' Student'+(row.count===1?'':'s')+' · '+esc(band.name)+'</div></div>'+
    '<strong>'+row.value.toFixed(1)+'%</strong></div>';
  }).join(''):'<p class="hint">No results for this selection.</p>';
- var all=selectedComparisonRecords('overall');
- var improved=S.teachers.map(function(t){
-  return{teacher:t,change:improvementForTeacher(t.id,all)};
- }).filter(function(item){
-  return item.change&&item.change.delta>0;
+ var cacheKey=JSON.stringify([S.year,$('filterClass').value,$('filterSubject').value]);
+ if(!S.improvementCache.has(cacheKey)){
+  var all=selectedComparisonRecords('overall');
+  S.improvementCache.set(cacheKey,S.teachers.map(function(t){
+   return{teacher:t,change:improvementForTeacher(t.id,all)};
+  }));
+ }
+ var visible=new Set(rows.map(function(r){return r.id;}));
+ var improved=S.improvementCache.get(cacheKey).filter(function(item){
+  return item.change&&item.change.delta>0&&visible.has(item.teacher.id);
  }).sort(function(a,b){
   return b.change.delta-a.change.delta||
    String(a.teacher.name).localeCompare(String(b.teacher.name));
