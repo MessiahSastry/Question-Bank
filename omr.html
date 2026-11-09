@@ -647,6 +647,15 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
     <section class="card">
       <div class="sectionTitle"><i class="fa fa-file-pdf"></i> OMR Sheet Preview & Download</div>
       <div class="toolbar">
+        <label for="omrPrintInk" style="display:flex;align-items:center;gap:7px;font-size:13px;font-weight:600;white-space:nowrap;">
+          Printing colour
+          <select id="omrPrintInk" class="select" style="width:auto;min-width:133px;padding:8px 10px;" aria-label="OMR printing colour">
+            <option value="magenta">Magenta</option>
+            <option value="deep-blue">Deep Blue</option>
+            <option value="cyan">Cyan</option>
+            <option value="green">Green</option>
+          </select>
+        </label>
         <button class="btn" id="btnGenerate"><i class="fa fa-file-export"></i> Generate OMR (PDF)</button>
         <span class="status" id="tplStatus">No template yet.</span>
       </div>
@@ -688,7 +697,7 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
     <header>
       <div class="title">
         <div class="h1">Exam Settings</div>
-                <div class="sub">Define roll digits, sections, bubble size and black-marker recognition</div>
+                <div class="sub">Define roll digits, sections, bubble size and alignment-marker recognition</div>
       </div>
           <button class="icon-btn modal-close" type="button"
         onclick="document.getElementById('dlgExam').close()" aria-label="Close">
@@ -709,7 +718,7 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
                <div>
           <div class="label">Sheet Recognition</div>
           <div class="select" style="display:flex;align-items:center;min-height:42px;">
-            Black square markers (automatic)
+            Solid square markers (automatic)
           </div>
         </div>
       </div>
@@ -777,7 +786,7 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
     <header>
       <div class="title">
         <div class="h1">Scan OMR</div>
-        <div class="sub">Scanner v5 · Align all four black squares inside the blue boxes</div>
+        <div class="sub">Scanner v5 · Align all four printed squares inside the blue boxes</div>
       </div>
       <button class="icon-btn modal-close" type="button"
               onclick="stopCameraStream(); document.getElementById('dlgCamera').close()"
@@ -800,7 +809,7 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
         </div>
       </div>
       <div class="status" id="cameraHint" style="margin-top:8px;">
-        Keep the entire OMR sheet in view. All four black squares must sit inside the blue boxes.
+        Keep the entire OMR sheet in view. All four printed squares must sit inside the blue boxes.
       </div>
       <div class="toolbar" style="justify-content:flex-end;gap:8px;margin-top:12px;">
         <button class="btn" type="button" id="btnCameraCancel">
@@ -3547,7 +3556,58 @@ async function loadImageAsDataURL(src){
   });
 }
 
-        // ===== PDF GENERATION (colourful layout + ROIs) =====
+// Four independently selectable colours for the printed OMR PDF.
+// This selection is NOT tied to examinations or stored in the database.
+// The offset printer should output the selected hue as one spot-ink plate.
+const OMR_PRINT_INKS=Object.freeze({
+  magenta:{name:'Magenta',rgb:[212,0,127]},
+  'deep-blue':{name:'Deep Blue',rgb:[21,74,156]},
+  cyan:{name:'Cyan',rgb:[0,141,187]},
+  green:{name:'Green',rgb:[19,123,84]}
+});
+function currentOmrPrintInk(){
+  const k=document.getElementById('omrPrintInk')?.value||'magenta';
+  return OMR_PRINT_INKS[k]||OMR_PRINT_INKS.magenta;
+}
+// Remap the OMR PDF drawing calls onto the selected hue and lighter tints.
+// White remains white paper; the application's website colours do not change.
+function useSingleInkForOmrPdf(doc,ink){
+  const remap=(r,g,b)=>{
+    const v=(g===undefined?[r,r,r]:[r,g,b]).map(x=>Math.min(255,Math.max(0,Number(x)||0)));
+    const luminance=0.299*v[0]+0.587*v[1]+0.114*v[2];
+    const density=Math.max(0,Math.min(1,(255-luminance)/255));
+    return ink.rgb.map(x=>Math.round(255-(255-x)*density));
+  };
+  for(const method of ['setTextColor','setDrawColor','setFillColor']){
+    const original=doc[method].bind(doc);
+    doc[method]=function(r,g,b){return original(...remap(r,g,b));};
+  }
+}
+// Convert the existing school logos to the same print hue.
+function loadOmrSingleInkLogo(src,ink){
+  return new Promise(resolve=>{
+    const img=new Image();
+    img.onload=()=>{
+      try{
+        const canvas=document.createElement('canvas');
+        canvas.width=img.naturalWidth;canvas.height=img.naturalHeight;
+        const ctx=canvas.getContext('2d',{willReadFrequently:true});
+        ctx.drawImage(img,0,0);
+        const px=ctx.getImageData(0,0,canvas.width,canvas.height),d=px.data;
+        for(let i=0;i<d.length;i+=4){
+          const density=(d[i+3]/255)*(1-Math.min(d[i],d[i+1],d[i+2])/255);
+          for(let c=0;c<3;c++)d[i+c]=Math.round(255-(255-ink.rgb[c])*density);
+          d[i+3]=255;
+        }
+        ctx.putImageData(px,0,0);
+        resolve({data:canvas.toDataURL('image/png'),ratio:canvas.width/canvas.height});
+      }catch(e){console.warn('OMR logo rendering:',src,e);resolve(null);}
+    };
+    img.onerror=()=>{console.warn('Missing OMR logo:',src);resolve(null);};
+    img.src=src;
+  });
+}
+        // ===== PDF GENERATION (single-colour OMR layout + existing ROIs) =====
             el('btnGenerate').onclick = async () => {
 
       console.log('Generate OMR clicked');
@@ -3621,6 +3681,8 @@ async function loadImageAsDataURL(src){
 }
            const { jsPDF } = window.jspdf;
       const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+      const selectedPrintInk = currentOmrPrintInk();
+      useSingleInkForOmrPdf(doc,selectedPrintInk);
       const W = 210, H = 297;
       const margin = 10;
       const cx = W / 2;
@@ -3667,39 +3729,44 @@ async function loadImageAsDataURL(src){
                // ---------- HEADER (white background like question paper) ----------
       const headerH = 40;   // virtual header height for layout (no blue banner)
 
-           // Logos are intentionally skipped here.
-      // Do not use await before PDF download.
-
-      // push the heading block a little lower so it doesn’t touch top line
-      const titleY = 26;    // was 20
-
-      // School name with blue fill + thin red outline (slightly bigger)
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(30);                 // a little bigger than before
-      doc.setDrawColor(220, 38, 38);       // red outline
-      doc.setLineWidth(0.2);               // thinner outline
-      doc.setTextColor(15, 61, 107);       // blue fill
-     doc.text(
-  currentSchoolName || 'School',
-  cx,
-  titleY,
-  {
-    align:'center',
-    renderingMode:'fillThenStroke'
-  }
-);
+      // Logo on each side of the school title; both use the selected ink.
+      const [leftLogo,rightLogo]=await Promise.all([
+        loadOmrSingleInkLogo('logo.png',selectedPrintInk),
+        loadOmrSingleInkLogo('logo1.png',selectedPrintInk)
+      ]);
+      function printSchoolLogo(logo,cxLogo){
+        if(!logo)return;
+        const ratio=logo.ratio||1;
+        const w=ratio>=1?14:14*ratio,h=ratio>=1?14/ratio:14;
+        doc.addImage(logo.data,'PNG',cxLogo-w/2,15+(14-h)/2,w,h);
+      }
+      printSchoolLogo(leftLogo,39);
+      printSchoolLogo(rightLogo,W-39);
+      const titleY=26;
+      const schoolTitle=currentSchoolName||"St. Patrick's School";
+      doc.setFont('helvetica','bold');
+      doc.setFontSize(30);
+      if(doc.getTextWidth(schoolTitle)>112)doc.setFontSize(30*112/doc.getTextWidth(schoolTitle));
+      doc.setDrawColor(15,61,107);
+      doc.setLineWidth(0.15);
+      doc.setTextColor(15,61,107);
+      doc.text(schoolTitle,cx,titleY,{align:'center',renderingMode:'fillThenStroke'});
 
       // Subheading in blue
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(11);
       doc.setTextColor(23, 98, 167);
       doc.text('IIT & NEET FOUNDATION', cx, titleY + 7, { align: 'center' });
+      doc.setFont('helvetica','normal');
+      doc.setFontSize(8);
+      doc.setTextColor(23,98,167);
+      doc.text(`Academic Year: ${academicYear}`,cx,titleY+11.3,{align:'center'});
 
-      // Exam name in dark green
+      // Exam name in the selected single colour
       doc.setFont('helvetica', 'bold');
-      doc.setFontSize(13);
+      doc.setFontSize(12);
       doc.setTextColor(0, 105, 62);
-      doc.text(examLabel.toUpperCase(), cx, titleY + 14, { align: 'center' });
+      doc.text(examLabel.toUpperCase(), cx, titleY + 15.5, { align: 'center' });
 
       // Reset text colour
       doc.setTextColor(0, 0, 0);
@@ -3925,7 +3992,7 @@ async function loadImageAsDataURL(src){
         '5. Do not overwrite or try to erase answers.',
         '6. Multiple-correct: mark every correct option and no extra options.',
         '7. Avoid stray marks; do not fold, tear or damage the sheet.',
-        '8. Do not write over the black square markers or page margins.',
+        '8. Do not write over the square alignment markers or page margins.',
         '9. Mark answers only on this OMR sheet, not on the question paper.',
         '10. Check Roll No. and answers before handing over the sheet; follow invigilator’s instructions.'
       ];
@@ -5235,8 +5302,9 @@ async function loadImageAsDataURL(src){
           .replace(/[\\/:*?"<>|]/g, '')
           .replace(/\s+/g, '_');
 
+      const printInkName=selectedPrintInk.name.replace(/\s+/g,'_');
       const fileName =
-        `OMR_${safeExamLabel}.pdf`;
+        `OMR_${safeExamLabel}_${printInkName}.pdf`;
 
       const downloadLink =
         document.createElement('a');
