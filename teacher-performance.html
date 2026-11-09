@@ -106,7 +106,9 @@ body.dialog-open{overflow:hidden}
 <section class="panel">
 <div class="filters">
 <div class="field"><label for="year">Academic Year</label><select id="year" disabled><option>Loading...</option></select></div>
-<div class="field"><label for="exam">Completed Examination</label><select id="exam" disabled><option>Loading...</option></select></div>
+<div class="field"><label for="exam">Examination</label><select id="exam" disabled><option>Loading...</option></select></div>
+<div class="field"><label for="filterClass">Compare Class</label><select id="filterClass" disabled><option value="">All Classes</option></select></div>
+<div class="field"><label for="filterSubject">Compare Subject</label><select id="filterSubject" disabled><option value="">All Subjects</option></select></div>
 </div>
 <div id="status" role="status" aria-live="polite">Checking sign-in...</div>
 </section>
@@ -114,6 +116,16 @@ body.dialog-open{overflow:hidden}
 <div class="section-title"><h2>Teacher Comparison</h2><span class="hint">Average marks (%) · Highest first</span></div>
 <div id="bars" aria-live="polite"><div class="empty">Loading teacher performance...</div></div>
 <p class="hint">Overall: Each student's percentages are averaged across their available completed exams; students then count equally. If a teacher teaches more than one subject to a student in the same exam, those subject percentages are averaged for that exam. AB and missing marks do not count as zero; genuine zero marks do.</p>
+</section>
+<section class="panel" id="teacherDetail" hidden aria-labelledby="detailTitle">
+ <div class="section-title"><div><h2 id="detailTitle">Teacher Details</h2><div id="detailSummary" class="hint"></div></div><button id="closeDetail" type="button" class="small-btn">Close</button></div>
+ <div id="detailSections"></div>
+ <div class="analysis-layout"><div class="analysis-box"><h3>Examination-wise Improvement</h3><div id="detailTrend"></div></div><div class="analysis-box"><h3>Student Performance Distribution</h3><div id="detailDistribution"></div></div></div>
+</section>
+<section class="panel" id="rankingPanel" aria-labelledby="rankTitle">
+ <div class="section-title"><h2 id="rankTitle">Performance Highlights</h2><span class="hint">Based on selected class and subject</span></div>
+ <div class="analysis-layout"><div class="analysis-box"><h3>🏆 Top Performing Teachers</h3><div id="topTeachers"></div></div><div class="analysis-box"><h3>📈 Most Improved Teachers</h3><div id="improvedTeachers"></div></div></div>
+ <p class="hint">Most improved uses the earliest and latest comparable examinations with at least 3 of the same students and subjects in both. Improvement is measured in percentage points. Exam difficulty may vary.</p>
 </section>
 <section id="adminPanel" class="panel" hidden>
 <div class="section-title"><h2>Manage Teachers &amp; Allotments</h2><button id="closeAdmin" type="button">Close</button></div>
@@ -207,7 +219,7 @@ var ADMIN='messiah.sastry@stpatricksschool.com';
 var GROUP={'Nursery':'nursery-lkg-ukg','LKG':'nursery-lkg-ukg','UKG':'nursery-lkg-ukg','1st Class':'class-1-2','2nd Class':'class-1-2','3rd Class':'class-3-5','4th Class':'class-3-5','5th Class':'class-3-5','6th Class':'class-6-9','7th Class':'class-6-9','8th Class':'class-6-9','9th Class':'class-6-9','10th Class':'class-10'};
 var $=function(id){return document.getElementById(id);};
 var db,auth,user,isAdmin=false,loadId=0;
-var S={year:'',teachers:[],classes:[],assignments:[],selectedSections:new Set(),selectedSubjects:new Set(),availableSubjects:[],examsBySection:new Map(),groupCache:new Map(),rosterCache:new Map(),marksCache:new Map(),results:[],audits:[],allExamKeys:[],examLabels:new Map()};
+var S={year:'',teachers:[],classes:[],assignments:[],selectedSections:new Set(),selectedSubjects:new Set(),availableSubjects:[],examsBySection:new Map(),groupCache:new Map(),rosterCache:new Map(),marksCache:new Map(),results:[],audits:[],allExamKeys:[],examLabels:new Map(),selectedTeacherId:null};
 var modernSelects=new Map(),activePicker=null,subjectLoadSeq=0;
 function key(v){return String(v==null?'':v).normalize('NFKC').trim().toLowerCase().replace(/\s+/g,' ');}
 function examGroupKey(name){
@@ -260,7 +272,7 @@ function renderModernOptions(info,search){
  }).join(''):'<div class="modern-options-empty">No matching options.</div>';
 }
 function upgradeSelects(){
- ['year','exam','allotClass'].forEach(function(id){
+ ['year','exam','filterClass','filterSubject','allotClass'].forEach(function(id){
   var select=$(id),wrapper=document.createElement('div');wrapper.className='modern-select';select.parentNode.insertBefore(wrapper,select);wrapper.appendChild(select);
   var button=document.createElement('button');button.type='button';button.className='modern-trigger';button.id=id+'Trigger';button.setAttribute('aria-haspopup','listbox');button.setAttribute('aria-expanded','false');
   button.innerHTML='<span class="selected-label"></span><span class="chevron" aria-hidden="true">▾</span>';wrapper.appendChild(button);
@@ -480,7 +492,7 @@ async function calculate(token){
     audits.push({teacher:teacher?.name||a.teacherId,cls:className(a.classId),section:sectionName(a.classId,a.sectionId),subject:a.subject,exam:ex.name,scored:entered.length,absent:people.length-entered.length,source:ex.__origin||'group',ids:ex.compatibleIds?.join(', ')||ex.id,fallbackCount:fallbackCount});
     if(!entered.length)continue;
     if(!labels.has(examKey))labels.set(examKey,examDisplayName(ex.name));
-    entered.forEach(function(x){records.push({teacherId:a.teacherId,studentKey:sectionKey(a.classId,a.sectionId)+'|'+x.student.id,exam:examKey,percent:x.percent});});
+    entered.forEach(function(x){records.push({teacherId:a.teacherId,studentKey:sectionKey(a.classId,a.sectionId)+'|'+x.student.id,exam:examKey,percent:x.percent,classId:a.classId,sectionId:a.sectionId,subject:a.subject});});
    }
   }
   if(token!==loadId)return;
