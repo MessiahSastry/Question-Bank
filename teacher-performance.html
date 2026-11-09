@@ -52,6 +52,22 @@ select:disabled{background:#f2f4f6}.muted,.hint{font-size:13px;color:#5b6f83;lin
 .card{padding:15px;background:#f8fafc;border:1px solid #e0e8f0;border-radius:11px}
 ul.clean{padding:0;margin:12px 0;list-style:none;max-height:230px;overflow:auto}
 ul.clean li{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 3px;border-bottom:1px solid #dce6ee;font-size:13px}
+.allot-overview{margin-top:18px;padding:17px;border:1px solid #dce7f0;background:#f9fbfd;border-radius:13px}
+.allot-summary{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0 16px}
+.allot-summary span{display:inline-flex;gap:5px;align-items:center;background:#e8f2fb;color:#164c7a;padding:8px 11px;border-radius:9px;font-size:13px;font-weight:700}
+.teacher-allot-card{background:#fff;border:1px solid #d9e5ef;border-radius:11px;padding:14px;margin:12px 0}
+.teacher-allot-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.teacher-allot-head h4{color:#173d65;font-size:16px;margin:0 0 4px}
+.teacher-allot-stats{font-size:12px;color:#55718e;font-weight:650;line-height:1.6}
+.allot-class{border-top:1px solid #e8eff5;margin-top:10px;padding-top:10px}
+.allot-class strong{font-size:14px;color:#173e65}
+.allot-section{display:grid;grid-template-columns:minmax(62px,110px) minmax(0,1fr);gap:10px;align-items:start;padding:9px 0 4px;font-size:13px;border-bottom:1px solid #f0f3f6}
+.allot-section:last-child{border:0}.allot-section-name{font-weight:750;color:#36546f;overflow-wrap:anywhere}
+.allot-subjects{display:flex;gap:7px;flex-wrap:wrap;align-items:center}
+.allot-subject{display:inline-flex;align-items:center;gap:6px;border:1px solid #d1e2f0;background:#f0f7fd;border-radius:8px;padding:4px 5px 4px 9px;color:#214b70;font-size:12px;max-width:100%}
+.allot-subject-name{overflow-wrap:anywhere}.allot-subject button{min-height:28px;min-width:28px;padding:2px 6px;border:0;border-radius:6px;background:white;color:#a13d4c;font-size:13px}
+.allot-subject button:hover{background:#fcecef;color:#882532}
+.unassigned{color:#77899c;font-size:13px;margin:9px 0 0}
 .small-btn{min-height:33px;padding:4px 8px;font-size:12px}
 [hidden]{display:none!important}
 @media(max-width:700px){.shell{padding:10px}.panel{padding:14px}.admin-grid{grid-template-columns:1fr}.bar-row{grid-template-columns:minmax(110px,38%) 1fr 62px;gap:7px}.teacher-name{font-size:13px}.detail{font-size:11px}h1{font-size:21px}header{padding:16px}.form-row{grid-template-columns:1fr}.form-row .full{grid-column:auto}}
@@ -120,9 +136,14 @@ ul.clean li{display:flex;align-items:center;justify-content:space-between;gap:10
 <div class="full"><button class="primary" type="submit">Save Allotments to Selected Sections &amp; Subjects</button></div>
 </div>
 </form>
-<h3 style="margin-top:23px">Existing Allotments</h3><ul class="clean" id="allotList"></ul>
+
 </div>
 </div>
+<section class="allot-overview" aria-labelledby="allotOverviewTitle">
+<div class="section-title"><h3 id="allotOverviewTitle">Existing Allotments — Teachers A–Z</h3><span class="hint">All classes and sections in one place</span></div>
+<div id="allotSummary" class="allot-summary" aria-live="polite"></div>
+<div id="allotList" aria-live="polite"></div>
+</section>
 <p class="hint" id="adminStatus" role="status" aria-live="polite"></p>
 </section>
 </main>
@@ -395,9 +416,52 @@ function populateAdmin(){
  renderAllotments();
 }
 function renderAllotments(){
- $('allotList').innerHTML=S.assignments.map(function(a){var t=S.teachers.find(function(x){return x.id===a.teacherId;});
-  return'<li><span><b>'+esc(t?.name||'Unknown teacher')+'</b><br>'+esc(className(a.classId))+' · '+esc(sectionName(a.classId,a.sectionId))+' · '+esc(a.subject)+'</span><button type="button" class="small-btn" data-remove="'+esc(a.id)+'">Remove</button></li>';
- }).join('')||'<li>No allotments for this academic year.</li>';
+ // Show teachers alphabetically; count unique classes and unique class-section pairs,
+ // not the number of subject assignments.
+ var collator=new Intl.Collator('en',{sensitivity:'base',numeric:true});
+ var teachers=S.teachers.slice().sort(function(a,b){
+  return collator.compare(String(a.name||''),String(b.name||''))||String(a.id).localeCompare(String(b.id));
+ });
+ var grouped=S.assignments.reduce(function(map,a){
+  if(!map.has(a.teacherId))map.set(a.teacherId,[]);
+  map.get(a.teacherId).push(a);return map;
+ },new Map());
+ var assignedCount=teachers.filter(function(t){return (grouped.get(t.id)||[]).length>0;}).length;
+ var uniquePairs=new Set(S.assignments.map(function(a){return JSON.stringify([a.classId,a.sectionId]);}));
+ $('allotSummary').innerHTML=[
+  '<span>'+teachers.length+' Teachers</span>',
+  '<span>'+assignedCount+' Allotted</span>',
+  '<span>'+(teachers.length-assignedCount)+' Not Allotted</span>',
+  '<span>'+uniquePairs.size+' School Sections Covered</span>',
+  '<span>'+S.assignments.length+' Subject Allotments</span>'
+ ].join('');
+ $('allotList').innerHTML=teachers.length?teachers.map(function(t){
+  var assignments=grouped.get(t.id)||[];
+  var classes=new Map(),distinctSubjects=new Set(),pairs=new Set();
+  assignments.forEach(function(a){
+   pairs.add(JSON.stringify([a.classId,a.sectionId]));
+   distinctSubjects.add(key(a.subject));
+   if(!classes.has(a.classId))classes.set(a.classId,new Map());
+   var sections=classes.get(a.classId);
+   if(!sections.has(a.sectionId))sections.set(a.sectionId,[]);
+   sections.get(a.sectionId).push(a);
+  });
+  var classRows=Array.from(classes.entries()).sort(function(a,b){
+   return collator.compare(className(a[0]),className(b[0]));
+  }).map(function(entry){
+   var cid=entry[0],sectionRows=Array.from(entry[1].entries()).sort(function(a,b){
+    return collator.compare(sectionName(cid,a[0]),sectionName(cid,b[0]));
+   }).map(function(sectionEntry){
+    var sid=sectionEntry[0];
+    var subjects=sectionEntry[1].slice().sort(function(a,b){return collator.compare(String(a.subject||''),String(b.subject||''));});
+    return '<div class="allot-section"><span class="allot-section-name">'+esc(sectionName(cid,sid))+'</span><div class="allot-subjects">'+subjects.map(function(a){
+     return '<span class="allot-subject"><span class="allot-subject-name">'+esc(a.subject)+'</span><button type="button" data-remove="'+esc(a.id)+'" aria-label="Remove '+esc(a.subject)+' from '+esc(className(cid))+' '+esc(sectionName(cid,sid))+' for '+esc(t.name)+'" title="Remove this allotment">×</button></span>';
+    }).join('')+'</div></div>';
+   }).join('');
+   return '<div class="allot-class"><strong>'+esc(className(cid))+'</strong>'+sectionRows+'</div>';
+  }).join('');
+  return '<article class="teacher-allot-card"><div class="teacher-allot-head"><h4>'+esc(t.name||'Unnamed Teacher')+'</h4><div class="teacher-allot-stats">'+classes.size+' Class'+(classes.size===1?'':'es')+' · '+pairs.size+' Section'+(pairs.size===1?'':'s')+' · '+distinctSubjects.size+' Subject'+(distinctSubjects.size===1?'':'s')+' · '+assignments.length+' Allotment'+(assignments.length===1?'':'s')+'</div></div>'+(classRows||'<p class="unassigned">No classes or sections allotted yet.</p>')+'</article>';
+ }).join(''):'<div class="empty">No teachers have been added yet.</div>';
 }
 function renderSections(){
  var c=$('allotClass').value,cl=getClass(c),sections=cl?.sections||[],selected=sections.filter(function(x){return S.selectedSections.has(x.id);});
