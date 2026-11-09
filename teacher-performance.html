@@ -69,6 +69,19 @@ ul.clean li{display:flex;align-items:center;justify-content:space-between;gap:10
 .allot-subject button:hover{background:#fcecef;color:#882532}
 .unassigned{color:#77899c;font-size:13px;margin:9px 0 0}
 .small-btn{min-height:33px;padding:4px 8px;font-size:12px}
+.warning-overlay{position:fixed;inset:0;z-index:1000;background:rgba(6,20,38,.58);display:flex;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(3px)}
+.warning-dialog{width:min(100%,440px);background:#fff;border-radius:18px;box-shadow:0 24px 65px rgba(4,20,35,.3);padding:23px;max-height:calc(100dvh - 36px);overflow:auto;color:#20334b}
+.warning-icon{display:grid;place-items:center;width:52px;height:52px;border-radius:15px;background:#fff0e2;color:#b85d06;font-size:29px;margin-bottom:12px}
+.warning-dialog h2{margin:0 0 9px;color:#1d354f;font-size:21px}
+.warning-dialog p{color:#4c6076;font-size:14px;line-height:1.6;margin:0 0 14px}
+.warning-target{background:#f7f9fc;border:1px solid #dce5ee;border-radius:10px;padding:13px;margin:14px 0;font-size:14px;line-height:1.65;overflow-wrap:anywhere}
+.warning-note{color:#8e4b10!important;background:#fff6e9;border:1px solid #f5ddc3;border-radius:9px;padding:10px 12px;font-size:13px!important}
+.warning-actions{display:flex;gap:11px;justify-content:flex-end;margin-top:19px}
+.warning-actions button{flex:1;min-height:46px;font-size:14px}
+.danger-btn{background:#c43c42!important;color:white!important;border-color:#c43c42!important}
+.danger-btn:hover{background:#a92831!important}
+.danger-btn:focus-visible,.warning-actions button:focus-visible{outline:3px solid #6ca6d3;outline-offset:3px}
+body.dialog-open{overflow:hidden}
 [hidden]{display:none!important}
 @media(max-width:700px){.shell{padding:10px}.panel{padding:14px}.admin-grid{grid-template-columns:1fr}.bar-row{grid-template-columns:minmax(110px,38%) 1fr 62px;gap:7px}.teacher-name{font-size:13px}.detail{font-size:11px}h1{font-size:21px}header{padding:16px}.form-row{grid-template-columns:1fr}.form-row .full{grid-column:auto}}
 </style>
@@ -147,6 +160,19 @@ ul.clean li{display:flex;align-items:center;justify-content:space-between;gap:10
 <p class="hint" id="adminStatus" role="status" aria-live="polite"></p>
 </section>
 </main>
+<div id="removeOverlay" class="warning-overlay" hidden>
+ <div class="warning-dialog" role="alertdialog" aria-modal="true" aria-labelledby="removeDialogTitle" aria-describedby="removeDialogMessage">
+  <div class="warning-icon" aria-hidden="true">⚠</div>
+  <h2 id="removeDialogTitle">Remove this allotment?</h2>
+  <p id="removeDialogMessage">Please confirm the teacher assignment you want to remove.</p>
+  <div id="removeDialogTarget" class="warning-target"></div>
+  <p class="warning-note">This will update the teacher's allotments and recalculate the performance graph. Students' original examination marks will not be deleted.</p>
+  <div class="warning-actions">
+   <button id="cancelRemove" type="button">Cancel</button>
+   <button id="confirmRemove" type="button" class="danger-btn">Remove Allotment</button>
+  </div>
+ </div>
+</div>
 <script>
 (function(){
 'use strict';
@@ -415,6 +441,54 @@ function populateAdmin(){
  $('teacherList').innerHTML=S.teachers.map(function(t){return'<li><span>'+esc(t.name)+'</span><button type="button" class="small-btn" data-rename="'+esc(t.id)+'">Rename</button></li>';}).join('')||'<li>No teachers added.</li>';
  renderAllotments();
 }
+var removeDialogPromise=null;
+function confirmRemoveAllotment(a){
+ if(removeDialogPromise)return Promise.resolve(false);
+ var teacher=S.teachers.find(function(t){return t.id===a.teacherId;});
+ var teacherName=String(teacher?.name||'Unknown teacher');
+ $('removeDialogMessage').textContent='Are you sure you want to remove this teacher allotment?';
+ $('removeDialogTarget').textContent='Teacher: '+teacherName+'\nClass: '+className(a.classId)+'\nSection: '+sectionName(a.classId,a.sectionId)+'\nSubject: '+String(a.subject||'');
+ $('removeDialogTarget').style.whiteSpace='pre-line';
+ $('confirmRemove').disabled=false;
+ $('removeOverlay').hidden=false;
+ document.body.classList.add('dialog-open');
+ var previouslyFocused=document.activeElement;
+ $('cancelRemove').focus({preventScroll:true});
+ return new Promise(function(resolve){
+  removeDialogPromise=resolve;
+  function settle(confirmed){
+   if(!removeDialogPromise)return;
+   $('removeOverlay').hidden=true;
+   document.body.classList.remove('dialog-open');
+   var done=removeDialogPromise;removeDialogPromise=null;
+   if(previouslyFocused?.isConnected)previouslyFocused.focus({preventScroll:true});
+   done(confirmed);
+  }
+  function onCancel(){settle(false);}
+  function onConfirm(){settle(true);}
+  function onOverlayClick(e){if(e.target===$('removeOverlay'))settle(false);}
+  function onKey(e){
+   if(e.key==='Escape'){e.preventDefault();settle(false);}
+   if(e.key==='Tab'){
+    var cancel=$('cancelRemove'),remove=$('confirmRemove');
+    if(e.shiftKey&&document.activeElement===cancel){e.preventDefault();remove.focus();}
+    else if(!e.shiftKey&&document.activeElement===remove){e.preventDefault();cancel.focus();}
+   }
+  }
+  function cleanup(){
+   $('cancelRemove').removeEventListener('click',onCancel);
+   $('confirmRemove').removeEventListener('click',onConfirm);
+   $('removeOverlay').removeEventListener('click',onOverlayClick);
+   document.removeEventListener('keydown',onKey,true);
+  }
+  var original=removeDialogPromise;
+  removeDialogPromise=function(value){cleanup();original(value);};
+  $('cancelRemove').addEventListener('click',onCancel);
+  $('confirmRemove').addEventListener('click',onConfirm);
+  $('removeOverlay').addEventListener('click',onOverlayClick);
+  document.addEventListener('keydown',onKey,true);
+ });
+}
 function renderAllotments(){
  // Show teachers alphabetically; count unique classes and unique class-section pairs,
  // not the number of subject assignments.
@@ -597,7 +671,7 @@ $('teacherList').addEventListener('click',async function(e){
 $('allotList').addEventListener('click',async function(e){
  var b=e.target.closest('[data-remove]');if(!b)return;
  try{requireAdmin();var a=S.assignments.find(function(x){return x.id===b.dataset.remove;});if(!a)return;
- if(!confirm('Remove this allotment? The teacher graph for this academic year will be recalculated without its marks.'))return;
+ if(!await confirmRemoveAllotment(a))return;
  await db.collection('years').doc(S.year).collection('teacherAssignments').doc(a.id).update({active:false,removedAt:firebase.firestore.FieldValue.serverTimestamp(),removedBy:user.uid});
  await reloadAfterEdit('Allotment removed (archived in Firestore).');}catch(ex){adminStatus('Could not remove allotment: '+ex.message);}
 });
