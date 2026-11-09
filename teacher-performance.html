@@ -647,33 +647,46 @@ function improvementForTeacher(teacherId,records){
  return null;
 }
 
+
 function renderGraph(){
- var selected=$('exam').value||'overall';
- var rows=S.teachers.map(function(t){
-  var perStudent=new Map();
-  S.results.forEach(function(r){
-   if(r.teacherId!==t.id||(selected!=='overall'&&r.exam!==selected))return;
-   if(!perStudent.has(r.studentKey))perStudent.set(r.studentKey,new Map());
-   var perExam=perStudent.get(r.studentKey);
-   if(!perExam.has(r.exam))perExam.set(r.exam,[]);
-   perExam.get(r.exam).push(r.percent);
-  });
-  // Only students with at least one valid mark for the selected exam contribute.
-  // The same child in two subjects still counts as one student.
-  var values=Array.from(perStudent.values()).map(function(exams){
-   return mean(Array.from(exams.values()).map(mean));
-  });
-  return{name:String(t.name||'Unnamed Teacher'),value:mean(values),count:values.length};
- }).filter(function(item){return item.count>0&&item.value!==null;});
- rows.sort(function(a,b){return b.value-a.value||a.name.localeCompare(b.name,undefined,{sensitivity:'base'});});
+ var selected=$('exam').value||'overall',records=selectedComparisonRecords(selected),rows=comparisonRows(records);
  $('bars').innerHTML=rows.length?rows.map(function(row){
-  var value=Math.max(0,Math.min(100,row.value));
-  return '<div class="bar-row"><div><div class="teacher-name">'+esc(row.name)+'</div>'+
-    '<div class="detail">'+row.count+' Student'+(row.count===1?'':'s')+'</div></div>'+
-    '<div class="track" aria-label="'+esc(row.name)+' performance '+value.toFixed(1)+' percent">'+
-    '<div class="fill" style="width:'+value.toFixed(3)+'%"></div></div>'+
-    '<div class="percent">'+value.toFixed(1)+'%</div></div>';
- }).join(''):'<div class="empty">No eligible examination results found for this selection.</div>';
+  var score=Math.max(0,Math.min(100,row.value)),band=performanceBand(score);
+  return '<div class="bar-row '+band.css+'"><div>'+
+    '<button type="button" class="teacher-visit teacher-name" data-open-teacher="'+esc(row.id)+'" aria-label="View '+esc(row.name)+' performance details">'+esc(row.name)+'</button>'+
+    '<div class="detail">'+row.count+' Student'+(row.count===1?'':'s')+'</div>'+
+    '<span class="perf-tag '+band.css+'">'+esc(band.name)+'</span></div>'+
+    '<div class="track" aria-label="'+esc(row.name)+' performance '+score.toFixed(1)+' percent"><div class="fill" style="width:'+score.toFixed(3)+'%"></div></div>'+
+    '<div class="percent">'+score.toFixed(1)+'%</div></div>';
+ }).join(''):'<div class="empty">No valid student marks for the selected examination, class and subject.</div>';
+ renderRankings(rows);
+ if(S.selectedTeacherId)renderTeacherDetails();
+}
+function renderRankings(rows){
+ var top=rows.slice(0,3);
+ $('topTeachers').innerHTML=top.length?top.map(function(row,i){
+  var band=performanceBand(row.value);
+  return '<div class="analytical-row '+band.css+'"><div>'+
+   '<span class="hint">'+(i+1)+'. </span><button type="button" data-open-teacher="'+esc(row.id)+'">'+esc(row.name)+'</button>'+
+   '<div class="detail">'+row.count+' Student'+(row.count===1?'':'s')+' · '+esc(band.name)+'</div></div>'+
+   '<strong>'+row.value.toFixed(1)+'%</strong></div>';
+ }).join(''):'<p class="hint">No results for this selection.</p>';
+ var all=selectedComparisonRecords('overall');
+ var improved=S.teachers.map(function(t){
+  return{teacher:t,change:improvementForTeacher(t.id,all)};
+ }).filter(function(item){
+  return item.change&&item.change.delta>0;
+ }).sort(function(a,b){
+  return b.change.delta-a.change.delta||
+   String(a.teacher.name).localeCompare(String(b.teacher.name));
+ }).slice(0,3);
+ $('improvedTeachers').innerHTML=improved.length?improved.map(function(item,i){
+  var x=item.change,from=esc(S.examLabels.get(x.earlier)||x.earlier),to=esc(S.examLabels.get(x.later)||x.later);
+  return '<div class="analytical-row"><div><span class="hint">'+(i+1)+'. </span>'+
+   '<button type="button" data-open-teacher="'+esc(item.teacher.id)+'">'+esc(item.teacher.name)+'</button>'+
+   '<div class="detail">'+from+' → '+to+' · '+x.count+' matched students</div></div>'+
+   '<strong class="diff-positive">+'+x.delta.toFixed(1)+' pp</strong></div>';
+ }).join(''):'<p class="hint">No comparable improvement yet. At least two examinations with 3 matched students and subjects are needed.</p>';
 }
 function populateAdmin(){
  if(!allowed())return;
