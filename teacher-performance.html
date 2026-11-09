@@ -688,6 +688,101 @@ function renderRankings(rows){
    '<strong class="diff-positive">+'+x.delta.toFixed(1)+' pp</strong></div>';
  }).join(''):'<p class="hint">No comparable improvement yet. At least two examinations with 3 matched students and subjects are needed.</p>';
 }
+
+function shortExamName(id){
+ var m=String(id).match(/^(fa|sa):(\d+)$/);
+ if(m)return m[1].toUpperCase()+' '+m[2];
+ var full=String(S.examLabels.get(id)||id);
+ return full.length>14?full.slice(0,12)+'…':full;
+}
+function drawTeacherTrend(teacherId){
+ var all=selectedComparisonRecords('overall').filter(function(r){return r.teacherId===teacherId;});
+ var points=orderedExamKeys().map(function(id){
+  var summary=scoreSummary(all.filter(function(r){return r.exam===id;}),teacherId);
+  return{id:id,value:summary.value,count:summary.count};
+ }).filter(function(p){return p.count>0&&p.value!==null;});
+ var target=$('detailTrend');
+ if(!points.length){target.innerHTML='<p class="hint">No examination marks available.</p>';return;}
+ var width=600,xLeft=45,xRight=557,yTop=32,yBottom=172;
+ var xs=points.map(function(p,i){return points.length===1?(xLeft+xRight)/2:xLeft+i*(xRight-xLeft)/(points.length-1);});
+ function y(v){return yBottom-Math.max(0,Math.min(100,v))*(yBottom-yTop)/100;}
+ var grid=[0,25,50,75,100].map(function(p){
+  var yy=y(p);
+  return '<line x1="'+xLeft+'" y1="'+yy+'" x2="'+xRight+'" y2="'+yy+'" stroke="#dce6ef" stroke-dasharray="3 4"/>'+
+   '<text x="'+(xLeft-10)+'" y="'+(yy+4)+'" text-anchor="end" font-size="11" fill="#58738b">'+p+'</text>';
+ }).join('');
+ var path=points.map(function(p,i){return xs[i].toFixed(1)+','+y(p.value).toFixed(1);}).join(' ');
+ var line=points.length>1?'<polyline points="'+path+'" fill="none" stroke="#2077b2" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round"/>':'';
+ var dots=points.map(function(p,i){
+  var x=xs[i],yy=y(p.value),short=shortExamName(p.id),full=String(S.examLabels.get(p.id)||p.id);
+  return '<circle cx="'+x+'" cy="'+yy+'" r="5" fill="#1877b1" stroke="#fff" stroke-width="2"><title>'+esc(full)+' · '+p.value.toFixed(1)+'% · '+p.count+' students</title></circle>'+
+   '<text x="'+x+'" y="'+Math.max(yTop-10,yy-12)+'" font-size="11" font-weight="700" fill="#1d527c" text-anchor="middle">'+p.value.toFixed(1)+'%</text>'+
+   '<text x="'+x+'" y="'+(yBottom+23)+'" font-size="11" fill="#46617b" text-anchor="middle">'+esc(short)+'</text>'+
+   '<text x="'+x+'" y="'+(yBottom+39)+'" font-size="10" fill="#708295" text-anchor="middle">n='+p.count+'</text>';
+ }).join('');
+ target.innerHTML='<svg class="trend-svg" viewBox="0 0 '+width+' 232" role="img" aria-label="Examination averages for '+esc(S.teachers.find(function(t){return t.id===teacherId;})?.name||'teacher')+'">'+
+  grid+line+dots+'</svg>';
+ var first=points[0],last=points[points.length-1],diff=last.value-first.value;
+ target.innerHTML+='<div class="trend-note">'+(points.length<2?'Only one examination has marks. Improvement cannot yet be calculated.':
+  'First → latest exam average: <strong class="'+(diff>=0?'diff-positive':'diff-negative')+'">'+(diff>=0?'+':'')+diff.toFixed(1)+' percentage points</strong>.')+
+  '<br>Each exam includes only students with valid marks; cohorts can differ. The most-improved ranking separately uses matched students and subjects.</div>';
+}
+function drawStudentDistribution(values){
+ var total=values.length,groups=[
+  {label:'90–100%',from:90,to:101,color:'#119b70'},
+  {label:'75–89%',from:75,to:90,color:'#2875c7'},
+  {label:'60–74%',from:60,to:75,color:'#baa019'},
+  {label:'40–59%',from:40,to:60,color:'#d68a36'},
+  {label:'Below 40%',from:-1,to:40,color:'#cc5865'}
+ ];
+ var counts=groups.map(function(g){return values.filter(function(v){return v>=g.from&&v<g.to;}).length;});
+ var max=Math.max(1,...counts);
+ $('detailDistribution').innerHTML=groups.map(function(g,i){
+  var count=counts[i],wide=Math.max(0,100*count/max);
+  return '<div class="distribution-row"><span>'+esc(g.label)+'</span>'+
+   '<div class="distribution-track" role="img" aria-label="'+count+' students scored '+esc(g.label)+'"><div class="distribution-fill" style="background:'+g.color+';width:'+wide.toFixed(2)+'%"></div></div>'+
+   '<strong>'+count+'</strong></div>';
+ }).join('')+'<p class="trend-note">Total: <strong>'+total+'</strong> students with valid marks. Each student appears once after averaging the selected subjects and exams.</p>';
+}
+function renderTeacherDetails(){
+ var id=S.selectedTeacherId;
+ if(!id){$('teacherDetail').hidden=true;return;}
+ var t=S.teachers.find(function(v){return v.id===id;});
+ var records=selectedComparisonRecords($('exam').value||'overall').filter(function(r){return r.teacherId===id;});
+ var totals=scoreSummary(records,id);
+ if(!t||!totals.count){S.selectedTeacherId=null;$('teacherDetail').hidden=true;return;}
+ $('teacherDetail').hidden=false;
+ $('detailTitle').textContent=t.name+' — Detailed Performance';
+ var category=performanceBand(totals.value);
+ $('detailSummary').innerHTML='<span class="detail-score">'+totals.value.toFixed(1)+'%</span> · '+totals.count+' Student'+(totals.count===1?'':'s')+
+   ' · <span class="perf-tag '+category.css+'">'+esc(category.name)+'</span>';
+ var sections=new Map();
+ records.forEach(function(r){
+  var k=JSON.stringify([r.classId,r.sectionId,key(r.subject)]);
+  if(!sections.has(k))sections.set(k,{cid:r.classId,sid:r.sectionId,subject:r.subject,items:[]});
+  sections.get(k).items.push(r);
+ });
+ var rows=Array.from(sections.values()).map(function(g){
+  var x=scoreSummary(g.items,id);
+  return{cid:g.cid,sid:g.sid,subject:g.subject,average:x.value,count:x.count};
+ }).sort(function(a,b){
+  var collator=new Intl.Collator('en',{numeric:true,sensitivity:'base'});
+  return collator.compare(className(a.cid),className(b.cid))||
+   collator.compare(sectionName(a.cid,a.sid),sectionName(b.cid,b.sid))||collator.compare(a.subject,b.subject);
+ });
+ $('detailSections').innerHTML='<div class="detail-table-wrap"><table class="detail-table"><thead><tr><th>Class</th><th>Section</th><th>Subject</th><th>Students</th><th>Average</th></tr></thead><tbody>'+
+  rows.map(function(row){
+   return '<tr><td>'+esc(className(row.cid))+'</td><td>'+esc(sectionName(row.cid,row.sid))+'</td><td>'+esc(row.subject)+'</td><td>'+row.count+'</td><td><strong>'+row.average.toFixed(1)+'%</strong></td></tr>';
+  }).join('')+'</tbody></table></div>';
+ drawTeacherTrend(id);
+ drawStudentDistribution(totals.values);
+}
+function openTeacherDetails(id){
+ if(!S.teachers.some(function(t){return t.id===id;}))return;
+ S.selectedTeacherId=id;renderTeacherDetails();
+ if(!$('teacherDetail').hidden)$('teacherDetail').scrollIntoView({behavior:'smooth',block:'start'});
+}
+
 function populateAdmin(){
  if(!allowed())return;
  choose('allotTeacher',S.teachers.map(function(t){return{id:t.id,name:t.name};}),'Select teacher','');
@@ -904,7 +999,16 @@ async function init(){
  }catch(e){status('Firebase initialization failed: '+e.message,'error');}
 }
 $('auditSearch').addEventListener('input',renderExamAudits);
-$('year').addEventListener('change',async function(){S.year=this.value;localStorage.setItem('sp_selectedYear',S.year);if(S.year)await loadYear();});
+['bars','topTeachers','improvedTeachers'].forEach(function(id){
+ $(id).addEventListener('click',function(e){
+  var button=e.target.closest('[data-open-teacher]');
+  if(button)openTeacherDetails(button.dataset.openTeacher);
+ });
+});
+$('closeDetail').addEventListener('click',function(){S.selectedTeacherId=null;$('teacherDetail').hidden=true;});
+$('filterClass').addEventListener('change',function(){updateComparisonSubjects();renderGraph();});
+$('filterSubject').addEventListener('change',renderGraph);
+$('year').addEventListener('change',async function(){S.selectedTeacherId=null;S.year=this.value;localStorage.setItem('sp_selectedYear',S.year);if(S.year)await loadYear();});
 $('exam').addEventListener('change',renderGraph);
 $('adminButton').addEventListener('click',function(){if(!allowed())return;$('adminPanel').hidden=false;$('adminPanel').scrollIntoView({behavior:'smooth',block:'start'});});
 $('closeAdmin').addEventListener('click',function(){$('adminPanel').hidden=true;});
