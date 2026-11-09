@@ -110,8 +110,14 @@ ul.clean li{display:flex;align-items:center;justify-content:space-between;gap:10
 <div class="multi-toolbar"><button type="button" id="selectAllSections">Select all</button><button type="button" id="clearSections">Clear</button><span class="hint">Choose multiple sections</span></div>
 <div id="sectionOptions"></div><button id="doneSections" class="done" type="button">Done</button>
 </div></div><div class="section-chips" id="selectedSectionChips" aria-live="polite"></div></div>
-<div class="field"><label for="allotSubject">Subject</label><select id="allotSubject" required></select></div>
-<div class="full"><button class="primary" type="submit">Save Allotment to Selected Sections</button></div>
+<div class="field full"><label for="subjectPickerButton">Subjects (select one or more)</label>
+<div class="multi-picker" id="subjectPicker">
+<button id="subjectPickerButton" class="multi-trigger" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="subjectPickerMenu" disabled><span id="subjectPickerText" class="selected-label">Select sections first</span><span class="chevron" aria-hidden="true">▾</span></button>
+<div id="subjectPickerMenu" class="multi-menu" hidden>
+<div class="multi-toolbar"><button type="button" id="selectAllSubjects">Select all</button><button type="button" id="clearSubjects">Clear</button><span class="hint">Choose multiple subjects</span></div>
+<div id="subjectOptions"></div><button id="doneSubjects" class="done" type="button">Done</button>
+</div></div><div class="section-chips" id="selectedSubjectChips" aria-live="polite"></div></div>
+<div class="full"><button class="primary" type="submit">Save Allotments to Selected Sections &amp; Subjects</button></div>
 </div>
 </form>
 <h3 style="margin-top:23px">Existing Allotments</h3><ul class="clean" id="allotList"></ul>
@@ -128,7 +134,7 @@ var ADMIN='messiah.sastry@stpatricksschool.com';
 var GROUP={'Nursery':'nursery-lkg-ukg','LKG':'nursery-lkg-ukg','UKG':'nursery-lkg-ukg','1st Class':'class-1-2','2nd Class':'class-1-2','3rd Class':'class-3-5','4th Class':'class-3-5','5th Class':'class-3-5','6th Class':'class-6-9','7th Class':'class-6-9','8th Class':'class-6-9','9th Class':'class-6-9','10th Class':'class-10'};
 var $=function(id){return document.getElementById(id);};
 var db,auth,user,isAdmin=false,loadId=0;
-var S={year:'',teachers:[],classes:[],assignments:[],selectedSections:new Set(),examsBySection:new Map(),groupCache:new Map(),rosterCache:new Map(),marksCache:new Map(),results:[],allExamKeys:[],examLabels:new Map()};
+var S={year:'',teachers:[],classes:[],assignments:[],selectedSections:new Set(),selectedSubjects:new Set(),availableSubjects:[],examsBySection:new Map(),groupCache:new Map(),rosterCache:new Map(),marksCache:new Map(),results:[],allExamKeys:[],examLabels:new Map()};
 var modernSelects=new Map(),activePicker=null,subjectLoadSeq=0;
 function key(v){return String(v==null?'':v).normalize('NFKC').trim().toLowerCase().replace(/\s+/g,' ');}
 function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c];});}
@@ -149,6 +155,7 @@ function choose(id,items,label,selected){
 function closePickers(){
  modernSelects.forEach(function(info){info.menu.hidden=true;info.button.setAttribute('aria-expanded','false');});
  $('sectionPickerMenu').hidden=true;$('sectionPickerButton').setAttribute('aria-expanded','false');
+ $('subjectPickerMenu').hidden=true;$('subjectPickerButton').setAttribute('aria-expanded','false');
 $('teacherSelectMenu').hidden=true;$('teacherSelectButton').setAttribute('aria-expanded','false');
 activePicker=null;
 }
@@ -166,7 +173,7 @@ function renderModernOptions(info,search){
  }).join(''):'<div class="modern-options-empty">No matching options.</div>';
 }
 function upgradeSelects(){
- ['year','exam','allotClass','allotSubject'].forEach(function(id){
+ ['year','exam','allotClass'].forEach(function(id){
   var select=$(id),wrapper=document.createElement('div');wrapper.className='modern-select';select.parentNode.insertBefore(wrapper,select);wrapper.appendChild(select);
   var button=document.createElement('button');button.type='button';button.className='modern-trigger';button.id=id+'Trigger';button.setAttribute('aria-haspopup','listbox');button.setAttribute('aria-expanded','false');
   button.innerHTML='<span class="selected-label"></span><span class="chevron" aria-hidden="true">▾</span>';wrapper.appendChild(button);
@@ -382,8 +389,8 @@ function populateAdmin(){
  if(!allowed())return;
  choose('allotTeacher',S.teachers.map(function(t){return{id:t.id,name:t.name};}),'Select teacher','');
  choose('allotClass',S.classes,'Select class','');
- S.selectedSections.clear();renderSections();
- choose('allotSubject',[],'Select section first','');
+ S.selectedSections.clear();S.selectedSubjects.clear();S.availableSubjects=[];
+ renderSections();renderSubjects();
  $('teacherList').innerHTML=S.teachers.map(function(t){return'<li><span>'+esc(t.name)+'</span><button type="button" class="small-btn" data-rename="'+esc(t.id)+'">Rename</button></li>';}).join('')||'<li>No teachers added.</li>';
  renderAllotments();
 }
@@ -398,20 +405,41 @@ function renderSections(){
  $('selectedSectionChips').innerHTML=selected.map(function(x){return '<span class="section-chip">'+esc(x.name)+'</span>';}).join('');
  $('sectionOptions').innerHTML=sections.length?sections.map(function(x){return '<label class="multi-option"><input type="checkbox" data-section-id="'+esc(x.id)+'"'+(S.selectedSections.has(x.id)?' checked':'')+'><span>'+esc(x.name)+'</span></label>';}).join(''):'<div class="modern-options-empty">No sections available. Select a class.</div>';
 }
+function renderSubjects(){
+ var available=S.availableSubjects,chosen=available.filter(function(name){return S.selectedSubjects.has(key(name));});
+ $('subjectPickerButton').disabled=!available.length;
+ $('subjectPickerText').textContent=chosen.length?chosen.length+' subject'+(chosen.length===1?'':'s')+' selected':available.length?'Select subjects':'No subjects available';
+ $('selectedSubjectChips').innerHTML=chosen.map(function(name){return '<span class="section-chip">'+esc(name)+'</span>';}).join('');
+ $('subjectOptions').innerHTML=available.length?available.map(function(name){
+ return '<label class="multi-option"><input type="checkbox" data-subject-name="'+esc(name)+'"'+(S.selectedSubjects.has(key(name))?' checked':'')+'><span>'+esc(name)+'</span></label>';
+ }).join(''):'<div class="modern-options-empty">Select a class and sections to load subjects.</div>';
+}
 async function fillSections(){
- S.selectedSections.clear();closePickers();renderSections();choose('allotSubject',[],'Select sections first','');adminStatus('');
+ ++subjectLoadSeq;S.selectedSections.clear();S.selectedSubjects.clear();S.availableSubjects=[];
+ closePickers();renderSections();renderSubjects();adminStatus('');
 }
 async function fillSubjects(){
  var request=++subjectLoadSeq,c=$('allotClass').value,ids=Array.from(S.selectedSections);
- choose('allotSubject',[],'Loading subjects...','');if(!c||!ids.length){choose('allotSubject',[],'Select sections first','');return;}
+ S.availableSubjects=[];renderSubjects();
+ if(!c||!ids.length){S.selectedSubjects.clear();renderSubjects();return;}
  try{
-  var lists=await concurrent(ids,6,async function(sid){var exams=await effectiveExams(c,sid);return Array.from(new Set(exams.flatMap(function(e){return e.subjects.map(function(sub){return String(sub.name||'').trim();});}).filter(Boolean)));});
-  if(request!==subjectLoadSeq)return;
-  var common=lists[0].filter(function(n){return lists.every(function(items){return items.some(function(x){return key(x)===key(n);});});});
-  common.sort(function(a,b){return a.localeCompare(b);});
-  choose('allotSubject',common.map(function(n){return{id:n,name:n};}),'Select subject','');
-  adminStatus(common.length?'':'No common subject is configured for every selected section. Select fewer sections or allot them separately.');
- }catch(e){if(request===subjectLoadSeq)adminStatus('Cannot load subjects: '+e.message);}
+ var lists=await concurrent(ids,6,async function(sid){
+ var exams=await effectiveExams(c,sid);
+ return Array.from(new Set(exams.flatMap(function(e){return e.subjects.map(function(sub){return String(sub.name||'').trim();});}).filter(Boolean)));
+ });
+ if(request!==subjectLoadSeq)return;
+ var common=lists[0].filter(function(n){return lists.every(function(items){return items.some(function(x){return key(x)===key(n);});});});
+ common.sort(function(a,b){return a.localeCompare(b,undefined,{numeric:true});});
+ S.availableSubjects=common;
+ var allowedKeys=new Set(common.map(key));
+ S.selectedSubjects=new Set(Array.from(S.selectedSubjects).filter(function(k){return allowedKeys.has(k);}));
+ renderSubjects();
+ adminStatus(common.length?'':'No common subject is configured for every selected section. Select fewer sections or allot them separately.');
+ }catch(e){if(request===subjectLoadSeq){S.selectedSubjects.clear();S.availableSubjects=[];renderSubjects();adminStatus('Cannot load subjects: '+e.message);}}
+}
+function updateSelectedSubject(name,checked){
+ var matched=S.availableSubjects.find(function(s){return key(s)===key(name);});if(!matched)return;
+ if(checked)S.selectedSubjects.add(key(matched));else S.selectedSubjects.delete(key(matched));renderSubjects();
 }
 function updateSelectedSections(id,checked){
  var cl=getClass($('allotClass').value);if(!cl||!cl.sections.some(function(s){return s.id===id;}))return;
@@ -446,6 +474,16 @@ $('sectionOptions').addEventListener('change',function(ev){if(ev.target.matches(
 $('selectAllSections').addEventListener('click',function(){var c=getClass($('allotClass').value);S.selectedSections=new Set((c?.sections||[]).map(function(x){return x.id;}));renderSections();fillSubjects();});
 $('clearSections').addEventListener('click',function(){S.selectedSections.clear();renderSections();fillSubjects();});
 $('doneSections').addEventListener('click',closePickers);
+$('subjectPickerButton').addEventListener('click',function(){
+ if(this.disabled)return;var wasOpen=!$('subjectPickerMenu').hidden;closePickers();
+ if(!wasOpen){$('subjectPickerMenu').hidden=false;this.setAttribute('aria-expanded','true');activePicker='subjects';}
+});
+$('subjectOptions').addEventListener('change',function(ev){
+ if(ev.target.matches('[data-subject-name]'))updateSelectedSubject(ev.target.dataset.subjectName,ev.target.checked);
+});
+$('selectAllSubjects').addEventListener('click',function(){S.selectedSubjects=new Set(S.availableSubjects.map(key));renderSubjects();});
+$('clearSubjects').addEventListener('click',function(){S.selectedSubjects.clear();renderSubjects();});
+$('doneSubjects').addEventListener('click',closePickers);
 $('teacherForm').addEventListener('submit',async function(e){
  e.preventDefault();
  try{requireAdmin();var name=$('teacherName').value.trim();if(name.length<2)throw new Error('Enter a valid teacher name.');
@@ -458,19 +496,30 @@ $('allotForm').addEventListener('submit',async function(e){
  e.preventDefault();
  try{
  requireAdmin();
- var teacherId=$('allotTeacher').value,classId=$('allotClass').value,sectionIds=Array.from(S.selectedSections),subject=$('allotSubject').value;
+ var teacherId=$('allotTeacher').value,classId=$('allotClass').value,sectionIds=Array.from(S.selectedSections);
+ var subjects=S.availableSubjects.filter(function(name){return S.selectedSubjects.has(key(name));});
  if(!S.teachers.some(function(t){return t.id===teacherId;}))throw new Error('Select a teacher.');
  if(!classId||!sectionIds.length||sectionIds.some(function(sid){return !getSection(classId,sid);}))throw new Error('Select a class and at least one valid section.');
- if(!subject)throw new Error('Select a subject.');
- var checks=await concurrent(sectionIds,6,async function(sid){return (await effectiveExams(classId,sid)).some(function(ex){return !!subConfig(ex,subject);});});
- if(checks.some(function(ok){return !ok;}))throw new Error('The selected subject is not configured for all selected sections.');
- var duplicates=sectionIds.filter(function(sid){return S.assignments.some(function(a){return a.classId===classId&&a.sectionId===sid&&key(a.subject)===key(subject);});});
- if(duplicates.length)throw new Error('Already allotted: '+duplicates.map(function(sid){return sectionName(classId,sid);}).join(', ')+'. Remove existing allotments first.');
- if(sectionIds.length>400)throw new Error('Too many sections. Please save in smaller groups.');
+ if(!subjects.length)throw new Error('Select at least one subject.');
+ var combinations=sectionIds.flatMap(function(sid){return subjects.map(function(subject){return{sectionId:sid,subject:subject};});});
+ if(combinations.length>400)throw new Error('Too many section/subject combinations. Please save smaller groups.');
+ var checks=await concurrent(sectionIds,6,async function(sid){
+ var exams=await effectiveExams(classId,sid);
+ return subjects.every(function(subject){return exams.some(function(ex){return !!subConfig(ex,subject);});});
+ });
+ if(checks.some(function(ok){return !ok;}))throw new Error('Some selected subjects are not configured for every selected section.');
+ var duplicates=combinations.filter(function(pair){
+ return S.assignments.some(function(a){return a.classId===classId&&a.sectionId===pair.sectionId&&key(a.subject)===key(pair.subject);});
+ });
+ if(duplicates.length)throw new Error('Already allotted: '+duplicates.map(function(pair){
+ return sectionName(classId,pair.sectionId)+' — '+pair.subject;
+ }).join(', ')+'. Remove the existing allotments first.');
  var batch=db.batch(),collection=db.collection('years').doc(S.year).collection('teacherAssignments');
- sectionIds.forEach(function(sectionId){batch.set(collection.doc(),{teacherId:teacherId,classId:classId,sectionId:sectionId,subject:subject,active:true,createdAt:firebase.firestore.FieldValue.serverTimestamp(),createdBy:user.uid});});
+ combinations.forEach(function(pair){
+ batch.set(collection.doc(),{teacherId:teacherId,classId:classId,sectionId:pair.sectionId,subject:pair.subject,active:true,createdAt:firebase.firestore.FieldValue.serverTimestamp(),createdBy:user.uid});
+ });
  await batch.commit();
- await reloadAfterEdit('Saved '+sectionIds.length+' section allotment'+(sectionIds.length===1?'':'s')+' successfully.');
+ await reloadAfterEdit('Saved '+combinations.length+' allotment'+(combinations.length===1?'':'s')+' across '+sectionIds.length+' section'+(sectionIds.length===1?'':'s')+' and '+subjects.length+' subject'+(subjects.length===1?'':'s')+'.');
  }catch(ex){adminStatus('Could not save allotment: '+ex.message);}
 });
 $('teacherList').addEventListener('click',async function(e){
