@@ -1,12 +1,14 @@
 'use strict';
 // Isolated Zoom meeting API. All Zoom credentials remain server-side.
 const crypto = require('node:crypto');
-const admin = require('firebase-admin');
+const {getApps, initializeApp} = require('firebase-admin/app');
+const {getFirestore, Timestamp, FieldValue} = require('firebase-admin/firestore');
 const {onRequest} = require('firebase-functions/v2/https');
 const {defineSecret} = require('firebase-functions/params');
+const {teacherUid: uidFrom} = require('./auth');
 
-if (!admin.apps.length) admin.initializeApp();
-const db = admin.firestore();
+if (!getApps().length) initializeApp();
+const db = getFirestore();
 const REGION = 'asia-south1';
 const CLIENT_ID = defineSecret('ZOOM_CLIENT_ID');
 const CLIENT_SECRET = defineSecret('ZOOM_CLIENT_SECRET');
@@ -17,9 +19,8 @@ const ORIGINS = new Set([
 ]);
 const NEED_CREATE = 'meeting:write:meeting';
 const NEED_UPDATE = 'meeting:update:meeting';
-const stamp = () => admin.firestore.FieldValue.serverTimestamp();
-const removeField = () => admin.firestore.FieldValue.delete();
-const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+const stamp = () => FieldValue.serverTimestamp();
+const removeField = () => FieldValue.delete();
 
 function cors(req, res) {
   const origin = String(req.headers.origin || '');
@@ -40,15 +41,6 @@ function cors(req, res) {
 }
 function problem(res, status, code, message) {
   return res.status(status).json({error: code, message});
-}
-async function uidFrom(req) {
-  const m = /^Bearer (.+)$/i.exec(String(req.headers.authorization || ''));
-  if (!m || m[1].length > 8192) return null;
-  try {
-    const decoded = await admin.auth().verifyIdToken(m[1], true);
-    if (!decoded.uid || !decoded.email || decoded.firebase?.sign_in_provider === 'anonymous') return null;
-    return decoded.uid;
-  } catch (_) { return null; }
 }
 function secretKey() {
   const key = Buffer.from(KEY.value(), 'base64');
@@ -80,19 +72,28 @@ function zoomErrorMessage(status) {
   if (status === 400) return 'Zoom rejected the meeting details. Check the class date and duration.';
   return 'Zoom could not complete this request. Retry the class meeting generation.';
 }
-async function refreshToken(uid, current) {
+async function refreshToken(uid) {
   const credRef = db.collection('zoomTeacherCredentials').doc(uid);
   const lock = crypto.randomBytes(16).toString('hex');
   const now = Date.now();
   // Zoom rotates refresh tokens. A per-teacher transaction lock stops two
   // simultaneous classes from spending the same refresh token.
-  await db.runTransaction(async tx => {
+  const selected = await db.runTransaction(async tx => {
     const snap = await tx.get(credRef);
     if (!snap.exists || snap.get('status') !== 'connected') throw new Error('ZOOM_RECONNECT');
+    // Reload under the lock. Another request may already have rotated the
+    // refresh token after access() read its earlier credential snapshot.
+    const tokens = unseal(snap.get('encryptedTokens'));
+    if ((snap.get('accessExpiresAt')?.toMillis() || 0) > Date.now() + 90000) {
+      return {tokens, fresh: true};
+    }
     const until = snap.get('refreshLockUntil');
     if (until && until.toMillis() > now) throw new Error('ZOOM_BUSY');
-    tx.update(credRef, {refreshLock: lock, refreshLockUntil: admin.firestore.Timestamp.fromMillis(now + 60000)});
+    tx.update(credRef, {refreshLock: lock, refreshLockUntil: Timestamp.fromMillis(now + 60000)});
+    return {tokens, fresh: false};
   });
+  if (selected.fresh) return selected.tokens;
+  const current = selected.tokens;
   try {
     const auth = Buffer.from(CLIENT_ID.value().trim() + ':' + CLIENT_SECRET.value().trim()).toString('base64');
     const response = await fetch('https://zoom.us/oauth/token', {
@@ -116,7 +117,7 @@ async function refreshToken(uid, current) {
       if (!snap.exists || snap.get('refreshLock') !== lock) throw new Error('ZOOM_BUSY');
       tx.update(credRef, {
         encryptedTokens: seal(data),
-        accessExpiresAt: admin.firestore.Timestamp.fromMillis(Date.now() + Math.max(60, Number(fresh.expires_in) || 3600) * 1000),
+        accessExpiresAt: Timestamp.fromMillis(Date.now() + Math.max(60, Number(fresh.expires_in) || 3600) * 1000),
         refreshLock: removeField(), refreshLockUntil: removeField()
       });
     });
@@ -135,7 +136,7 @@ async function access(uid) {
   const c = await credential(uid);
   if (!c) throw new Error('ZOOM_NOT_CONNECTED');
   if ((c.snap.get('accessExpiresAt')?.toMillis() || 0) > Date.now() + 90000) return c.tokens;
-  return refreshToken(uid, c.tokens);
+  return refreshToken(uid);
 }
 function classDetails(m) {
   const start = m.startAt?.toMillis?.();
@@ -220,7 +221,7 @@ exports.zoomCreateMeeting = onRequest({
       if (m.zoomJoinUrl && m.zoomMeetingId && m.zoomProvisionedRevision === m.revision) return {ready: true};
       const lock = m.zoomProvisioning;
       if (lock && lock.until?.toMillis?.() > Date.now()) throw new Error('CLASS_BUSY');
-      tx.update(ref, {zoomProvisioning: {claim, until: admin.firestore.Timestamp.fromMillis(Date.now() + 120000)}});
+      tx.update(ref, {zoomProvisioning: {claim, until: Timestamp.fromMillis(Date.now() + 120000)}});
       return {ready: false, revision: m.revision, m, detail};
     });
     if (result.ready) return res.json({success: true, alreadyReady: true});
