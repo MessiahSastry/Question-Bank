@@ -1131,6 +1131,44 @@ async function generateCertificatesForExam(classId, className, sectionId, sectio
     ctx.font = "46px 'Segoe UI'";
     ctx.fillText(`(${className} / ${sectionName})`,1214,880);
 
+    // Print this student's real total / the configured examination maximum above the rank trophy.
+    // If the examination maximum is not configured reliably, do not print an incorrect value.
+    if (Number.isFinite(stu.totalMarks) && Number.isFinite(stu.maxMarks) && stu.maxMarks > 0) {
+      const accent = rank === 1 ? "#C69A29" : rank === 2 ? "#8996A6" : "#B47A4B";
+      const badgeX = 1790, badgeY = 404, badgeW = 420, badgeH = 166, radius = 24;
+      const numberText = n => Number(n.toFixed(2)).toLocaleString('en-IN', { maximumFractionDigits: 2 });
+      ctx.save();
+      ctx.shadowColor = "rgba(15, 61, 107, 0.16)";
+      ctx.shadowBlur = 15;
+      ctx.shadowOffsetY = 6;
+      ctx.beginPath();
+      ctx.moveTo(badgeX + radius, badgeY);
+      ctx.lineTo(badgeX + badgeW - radius, badgeY);
+      ctx.quadraticCurveTo(badgeX + badgeW, badgeY, badgeX + badgeW, badgeY + radius);
+      ctx.lineTo(badgeX + badgeW, badgeY + badgeH - radius);
+      ctx.quadraticCurveTo(badgeX + badgeW, badgeY + badgeH, badgeX + badgeW - radius, badgeY + badgeH);
+      ctx.lineTo(badgeX + radius, badgeY + badgeH);
+      ctx.quadraticCurveTo(badgeX, badgeY + badgeH, badgeX, badgeY + badgeH - radius);
+      ctx.lineTo(badgeX, badgeY + radius);
+      ctx.quadraticCurveTo(badgeX, badgeY, badgeX + radius, badgeY);
+      ctx.closePath();
+      ctx.fillStyle = "rgba(255, 255, 255, 0.96)";
+      ctx.fill();
+      ctx.shadowColor = "transparent";
+      ctx.lineWidth = 5;
+      ctx.strokeStyle = accent;
+      ctx.stroke();
+      ctx.textAlign = "center";
+      ctx.textBaseline = "alphabetic";
+      ctx.fillStyle = "#0f3d6b";
+      ctx.font = "bold 31px 'Segoe UI', Arial, sans-serif";
+      ctx.fillText("TOTAL MARKS", badgeX + badgeW / 2, badgeY + 57);
+      ctx.font = "bold 64px 'Segoe UI', Arial, sans-serif";
+      ctx.fillStyle = accent;
+      ctx.fillText(numberText(stu.totalMarks) + " / " + numberText(stu.maxMarks), badgeX + badgeW / 2, badgeY + 132, badgeW - 32);
+      ctx.restore();
+    }
+
     // Rank badge
     let rankImg = rank === 1 ? rank1Img : rank === 2 ? rank2Img : rank === 3 ? rank3Img : null;
     if (rankImg && rankImg.complete && rankImg.naturalWidth > 0) {
@@ -1216,6 +1254,31 @@ async function generateCertificatesForExam(classId, className, sectionId, sectio
           .map(s => nkey(s.name))
       );
 
+      // Use the examination's configured subject maxima as the denominator.
+      // Missing student marks do not reduce the examination maximum.
+      const configuredSubjects = (Array.isArray(struct?.subjects) && struct.subjects.length)
+        ? struct.subjects : (Array.isArray(exam.subjects) ? exam.subjects : []);
+      let maxMarksForCertificate = 0;
+      let completeMaxConfiguration = configuredSubjects.length > 0;
+      let includedSubjects = 0;
+      for (const subject of configuredSubjects) {
+        if (!subject || excludeSet.has(nkey(subject.name))) continue;
+        includedSubjects++;
+        let subjectMaximum = Number(subject.max ?? subject.subjectMax);
+        if (!Number.isFinite(subjectMaximum) || subjectMaximum <= 0) {
+          const subtopics = Array.isArray(subject.subtopics) ? subject.subtopics : [];
+          const valid = subtopics.length > 0 && subtopics.every(st => Number.isFinite(Number(st?.max)) && Number(st.max) > 0);
+          subjectMaximum = valid ? subtopics.reduce((sum, st) => sum + Number(st.max), 0) : NaN;
+        }
+        if (!Number.isFinite(subjectMaximum) || subjectMaximum <= 0) {
+          completeMaxConfiguration = false;
+          break;
+        }
+        maxMarksForCertificate += subjectMaximum;
+      }
+      if (!includedSubjects) completeMaxConfiguration = false;
+      const certificateMax = completeMaxConfiguration ? maxMarksForCertificate : null;
+
       for (const stu of students) {
         const mDoc = await db.collection('years').doc(academicYear)
           .collection('classes').doc(classId)
@@ -1245,6 +1308,7 @@ async function generateCertificatesForExam(classId, className, sectionId, sectio
         });
 
         stu.totalMarks = totalMarks;
+        stu.maxMarks = certificateMax; // maximum printed on the certificate
         stu.__perSubjectTotals = perMap; // store for tie-break use
       }
 
