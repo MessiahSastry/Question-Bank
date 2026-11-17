@@ -410,7 +410,7 @@ function writtenNotice(s){
 }
 function graphPanel(s,id,title,subjects=null){
  const single=subjects?.length===1?' data-single-subject="'+esc(subjects[0])+'"':'';
- return'<div class="panel"><div class="row between"><h2>'+esc(title)+'</h2><button class="btn" type="button" data-action="png" data-metric="'+s.metric+'">Download PNG report</button></div><div id="'+id+'" class="chart" data-graph="'+s.metric+'"'+single+'></div><p class="small">'+esc(basisNote(s))+'</p><p class="small">PNG report includes present, absent and failed counts, plus failed-student names. Long reports download as a ZIP of PNG pages.</p></div>';
+ return'<div class="panel"><div class="row between"><h2>'+esc(title)+'</h2><button class="btn" type="button" data-action="png" data-metric="'+s.metric+'"'+single+'>Download PNG graph</button></div><div id="'+id+'" class="chart" data-graph="'+s.metric+'"'+single+'></div><p class="small">'+esc(basisNote(s))+'</p><p class="small">PNG includes only the subject graph, school, class, section, academic year, exam details and P/A/F counts. No student names or full report pages.</p></div>';
 }
 function comparisonSection(s){
  return'<h2>'+esc(metricName(s))+' — examination comparison</h2><p class="small">'+esc(basisNote(s))+'</p><p class="small">Change: '+esc(s.exams[0].name)+' → '+esc(s.exams.at(-1).name)+'. Changes are differences in percentage points.</p>'+plainTable(['Subject',...s.exams.map(exam=>exam.name),'Change'],averageRows(s))+
@@ -457,7 +457,7 @@ function reportHTML(original,print=false){
  if(!print)html+='<div class="actions no-print"><button class="btn primary" type="button" data-action="pdf">Download PDF</button><button class="btn" type="button" data-action="print">Print / Save PDF</button></div>';
  html+='</div>';
  ['total','written'].forEach((metric,index)=>{
-  const s=asMetric(original,metric);html+='<div class="panel'+(print&&index>0?' print-break':'')+'"><h2>'+(index+1)+'. '+esc(metricName(s))+' — subject graph</h2><p class="small">'+esc(basisNote(s))+'</p>';
+  const s=asMetric(original,metric);html+='<div class="panel'+(print&&index>0?' print-break':'')+'"><div class="row between"><h2>'+(index+1)+'. '+esc(metricName(s))+' — subject graph</h2>'+(print?'':'<button class="btn no-print" type="button" data-action="png" data-metric="'+metric+'">Download PNG graph</button>')+'</div><p class="small">'+esc(basisNote(s))+'</p>';
   if(print){
    for(const subjects of balancedChunks(s.subjects,6))for(const exams of chunks(s.exams,3))html+='<div class="print-chart chart-static"><p class="small">'+exams.map(exam=>esc(examCode(exam,s.exams.indexOf(exam)))+' = '+esc(exam.name)).join(' · ')+'</p>'+verticalSVG(s,subjects,1200,exams)+'</div>';
   }else html+='<div id="reportGraph-'+metric+'" class="chart" data-graph="'+metric+'"></div>';
@@ -483,7 +483,7 @@ function renderView(){
   '<div class="stat"><span>Present</span><strong>'+a.n+' / '+s.students.length+'</strong><span>'+a.passed+' passed</span></div>'+
   '<button class="stat bad" type="button" data-own-filter="low"><span>Failed — view names</span><strong>'+a.below+'</strong><span>Below '+PASS+'%</span></button>'+
   '<button class="stat" type="button" data-own-filter="absent"><span>Absent — view names</span><strong>'+a.absent+'</strong><span>AB and not-entered marks</span></button></div>'+
-  '<div class="columns"><div class="panel"><h2>Marks distribution</h2><div id="distributionChart" class="chart chart-static"></div></div><div class="panel"><h2>'+esc(state.own)+' — selected exams</h2><div id="ownChart" class="chart" data-graph="total" data-single-subject="'+esc(state.own)+'"></div><p class="small">'+esc(basisNote(s))+'</p></div></div>'+
+  '<div class="columns"><div class="panel"><h2>Marks distribution</h2><div id="distributionChart" class="chart chart-static"></div></div><div class="panel"><div class="row between"><h2>'+esc(state.own)+' — selected exams</h2><button class="btn" type="button" data-action="png" data-metric="total" data-single-subject="'+esc(state.own)+'">Download PNG graph</button></div><div id="ownChart" class="chart" data-graph="total" data-single-subject="'+esc(state.own)+'"></div><p class="small">'+esc(basisNote(s))+'</p></div></div>'+
   '<div class="panel"><div class="row between"><h2>Students in my subject</h2>'+selectHTML('ownFilter','Show',[['all','All students'],['low','Failed / below pass'],['near','Within 3 marks of passing'],['declined','Marks declined'],['absent','Absent / not entered'],['issues','Other mark issues'],['top','Top 5 latest results']],state.filter)+'</div>'+
   table(['Roll','Student',...s.exams.map(exam=>exam.name),'Change','Other selected subjects'],ownRows(s))+'</div>';
  }else if(state.tab==='subjects'){
@@ -931,89 +931,62 @@ function dataBytes(url){const binary=atob(url.slice(url.indexOf(',')+1)),bytes=n
 function downloadBlob(blob,name){
  const url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download=name;document.body.appendChild(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);
 }
-function pngPages(s){
- const width=1600,height=2200,margin=44,usable=width-margin*2,pages=[];let out='',y=0,sectionTitle='';
- function line(value,size=23,weight='normal',colour='#20364e'){
-  const lines=wrapChars(value,Math.max(12,Math.floor(usable/(size*.60))));
-  lines.forEach(value=>{out+=svgText(margin,y+size,value,'font-weight="'+weight+'" style="fill:'+colour+'"',size);y+=size+8;});
- }
- function begin(){
-  out='';y=22;line("St. Patrick's School",36,'bold','#0f3d6b');line(metricName(s)+' — subject performance',28,'bold');
-  line(s.context.className+' — '+s.context.sectionName+' | '+s.context.year+' | '+s.students.length+' students',23);
-  line('Exams: '+s.exams.map(exam=>exam.name).join(' → '),20);y+=12;
- }
- function finish(){const finalHeight=Math.max(400,Math.min(height,y+95));out+=svgText(margin,finalHeight-23,'Pass mark '+PASS+'% | AB includes not entered | '+s.generated,'',17);pages.push({body:out,height:finalHeight});}
- function next(){finish();begin();}
- function ensure(need){if(y+need>height-65)next();}
- function heading(value){sectionTitle=value;ensure(75);y+=9;line(value,27,'bold','#0f3d6b');y+=8;}
- function drawTable(headers,rows,widths){
-  const total=widths.reduce((sum,value)=>sum+value,0),columns=widths.map(value=>value/total*usable);
-  function row(values,head=false){
-   const wrapped=values.map((value,index)=>wrapChars(value,Math.max(4,Math.floor((columns[index]-22)/(22*.59))))),rh=Math.max(...wrapped.map(lines=>lines.length))*29+20;
-   if(y+rh>height-65){next();if(!head){line(sectionTitle+' — continued',25,'bold','#0f3d6b');y+=8;drawHead();}}
-   out+='<rect x="'+margin+'" y="'+y+'" width="'+usable+'" height="'+rh+'" fill="'+(head?'#edf4fc':'white')+'"/>';
-   let x=margin;wrapped.forEach((lines,index)=>{lines.forEach((value,k)=>{out+=svgText(x+10,y+30+k*29,value,head?'font-weight="bold"':'',22);});x+=columns[index];});
-   y+=rh;out+='<line x1="'+margin+'" y1="'+y+'" x2="'+(width-margin)+'" y2="'+y+'" stroke="#d9e4ef"/>';
+function graphExportSVG(s,subjects=s.subjects){
+ // Export the same subject bars, averages and full-class P/A/F counts as the on-screen chart.
+ // Compose them in a clean standalone SVG rather than capturing the entire report page.
+ const width=1600,margin=62,usable=width-margin*2;
+ let out='<rect x="0" y="0" width="'+width+'" height="15" fill="#0f3d6b"/>';
+ let y=74;
+ function centered(value,size=24,weight='normal',colour='#20364e',spacing=10){
+  const maxChars=Math.max(20,Math.floor(usable/(size*.60)));
+  for(const part of wrapChars(value,maxChars)){
+   out+=svgText(width/2,y,part,'text-anchor="middle" font-weight="'+weight+'" style="fill:'+colour+'"',size);
+   y+=size+spacing;
   }
-  function drawHead(){row(headers,true);}
-  drawHead();if(!rows.length){ensure(60);line('No results in this selection.',22);return;}rows.forEach(values=>row(values));
  }
- begin();
- line(basisNote(s),19);y+=9;
- for(const subjects of balancedChunks(s.subjects,8))for(const exams of chunks(s.exams,3)){
-  const source=verticalSVG(s,subjects,1400,exams),match=source.match(/viewBox="0 0 ([\d.]+) ([\d.]+)"/),inner=source.slice(source.indexOf('>')+1,source.lastIndexOf('</svg>')),factor=usable/Number(match[1]),h=Number(match[2])*factor;
-  ensure(h+105);line(exams.map(exam=>examCode(exam,s.exams.indexOf(exam))+' = '+exam.name).join(' · '),21);y+=4;
-  out+='<g transform="translate('+margin+' '+y+') scale('+factor+')">'+inner+'</g>';y+=h+12;
- }
- heading('Present, absent and failed counts — whole class');
- drawTable(DETAIL_HEADERS,detailRows(s),[270,285,170,135,130,130,130,142]);
-  ensure(350);
- heading('Failed-student lists by subject');
-
- failureGroups(s).forEach(group=>{
-  ensure(260);
-  heading(group.title);
-
-  if(group.rows.length){
-   drawTable(
-    ['Roll','Student','Marks','Percentage'],
-    group.rows,
-    [110,870,270,262]
-   );
-  }else{
-   line(group.empty,23);
+ centered("St. Patrick's School",46,'bold','#0f3d6b',12);
+ centered('Academic Performance Analysis — '+metricName(s),31,'bold','#20364e',12);
+ centered('Class: '+(s.context.className||'—')+'    |    Section: '+(s.context.sectionName||'—')+'    |    Academic Year: '+(s.context.year||'—'),24);
+ centered('Students: '+s.students.length+'    |    Pass mark: '+PASS+'%    |    Graph averages: '+(s.basis==='matched'?'Matched students':'All valid marks'),21,'normal','#536a81',7);
+ y+=18;
+ out+='<line x1="'+margin+'" y1="'+y+'" x2="'+(width-margin)+'" y2="'+y+'" stroke="#d9e4ef" stroke-width="2"/>';
+ y+=30;
+ for(const group of balancedChunks(subjects,7)){
+  // Limit bars per group so the percentage and P/A/F labels remain legible.
+  const perGroup=group.length>=6?2:group.length>=4?3:4;
+  for(const examGroup of chunks(s.exams,perGroup)){
+   centered('Examination: '+examGroup.map(exam=>examCode(exam,s.exams.indexOf(exam))+' = '+exam.name).join('  |  '),23,'bold','#0f3d6b',9);
+   y+=10;
+   const chart=verticalSVG(s,group,usable,examGroup);
+   const dims=chart.match(/viewBox="0 0 ([\d.]+) ([\d.]+)"/);
+   if(!dims)throw new Error('Graph dimensions are unavailable.');
+   const chartHeight=Number(dims[2]);
+   const inner=chart.slice(chart.indexOf('>')+1,chart.lastIndexOf('</svg>'));
+   out+='<g transform="translate('+margin+' '+y+')">'+inner+'</g>';
+   y+=chartHeight+23;
   }
- });
- finish();
- return pages.map((page,index)=>svg(width,page.height,page.body+svgText(width-margin,page.height-23,'Page '+(index+1)+' of '+pages.length,'text-anchor="end"',17),metricName(s)+' report — page '+(index+1)));
-}
-function zipStored(files){
- const encoder=new TextEncoder(),parts=[],central=[];let offset=0,centralSize=0;
- const crcTable=new Uint32Array(256);for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=(c&1)?0xedb88320^(c>>>1):c>>>1;crcTable[n]=c>>>0;}
- function crc(bytes){let c=0xffffffff;for(const byte of bytes)c=crcTable[(c^byte)&255]^(c>>>8);return(c^0xffffffff)>>>0;}
- const now=new Date(),dosTime=(now.getHours()<<11)|(now.getMinutes()<<5)|(now.getSeconds()>>1),dosDate=((now.getFullYear()-1980)<<9)|((now.getMonth()+1)<<5)|now.getDate();
- for(const file of files){
-  const name=encoder.encode(file.name),bytes=file.bytes,checksum=crc(bytes),local=new Uint8Array(30+name.length),lv=new DataView(local.buffer);
-  lv.setUint32(0,0x04034b50,true);lv.setUint16(4,20,true);lv.setUint16(10,dosTime,true);lv.setUint16(12,dosDate,true);lv.setUint32(14,checksum,true);lv.setUint32(18,bytes.length,true);lv.setUint32(22,bytes.length,true);lv.setUint16(26,name.length,true);local.set(name,30);
-  parts.push(local,bytes);
-  const directory=new Uint8Array(46+name.length),dv=new DataView(directory.buffer);
-  dv.setUint32(0,0x02014b50,true);dv.setUint16(4,20,true);dv.setUint16(6,20,true);dv.setUint16(12,dosTime,true);dv.setUint16(14,dosDate,true);dv.setUint32(16,checksum,true);dv.setUint32(20,bytes.length,true);dv.setUint32(24,bytes.length,true);dv.setUint16(28,name.length,true);dv.setUint32(42,offset,true);directory.set(name,46);
-  central.push(directory);centralSize+=directory.length;offset+=local.length+bytes.length;
  }
- const end=new Uint8Array(22),ev=new DataView(end.buffer);ev.setUint32(0,0x06054b50,true);ev.setUint16(8,files.length,true);ev.setUint16(10,files.length,true);ev.setUint32(12,centralSize,true);ev.setUint32(16,offset,true);
- return new Blob([...parts,...central,end],{type:'application/zip'});
+ out+='<line x1="'+margin+'" y1="'+y+'" x2="'+(width-margin)+'" y2="'+y+'" stroke="#d9e4ef" stroke-width="2"/>';
+ y+=36;
+ centered('P = Present (including zero marks)    |    A = Absent / not entered    |    F = Failed (below '+PASS+'%)',20,'normal','#536a81',6);
+ centered('P / A / F counts cover the entire selected class and section for each examination.',19,'normal','#536a81',6);
+ centered('Generated: '+s.generated,18,'normal','#536a81',6);
+ return svg(width,y+28,out,'Subject performance graph — '+metricName(s));
 }
-async function exportPNG(metric='total'){
- if(!state.ready||state.exporting)return;const s=snapshot(metric);state.exporting=true;closeSelectMenu();syncControls();
+async function exportPNG(metric='total',singleSubject=''){
+ if(!state.ready||state.exporting)return;
+ const s=snapshot(metric),subjects=singleSubject?[singleSubject]:s.subjects;
+ if(!subjects.length||!s.exams.length){status('Select at least one subject and examination.','warning');return;}
+ state.exporting=true;closeSelectMenu();syncControls();
  try{
-  const sources=pngPages(s),images=[];status('Preparing '+sources.length+' PNG report page(s)...');
-  for(let i=0;i<sources.length;i++){const image=await svgPNG(sources[i],1.4);images.push({name:filename(s,'png',String(i+1).padStart(2,'0')),bytes:dataBytes(image.data)});}
-  if(images.length===1)downloadBlob(new Blob([images[0].bytes],{type:'image/png'}),filename(s,'png'));
-  else downloadBlob(zipStored(images),filename(s,'zip','PNG_pages'));
-  status(images.length===1?'PNG report downloaded, including counts and the failed-student list.':images.length+' PNG pages downloaded together in a ZIP, including the complete failed-student list.');
+  status('Preparing subject graph PNG...');
+  const chart=graphExportSVG(s,subjects),image=await svgPNG(chart,2);
+  downloadBlob(new Blob([dataBytes(image.data)],{type:'image/png'}),filename(s,'png',singleSubject?singleSubject+'_Subject_Graph':'Subject_Graph'));
+  status('Subject graph PNG downloaded. It contains the school and class details, exam labels, percentages and P/A/F counts only.');
  }catch(error){status('Image export failed: '+error.message,'error');}
  finally{state.exporting=false;syncControls();}
 }
+
 function pdfText(value){return String(value??'').replace(/[‘’]/g,"'").replace(/[“”]/g,'"').replace(/[–—]/g,'-').replace(/→/g,' to ').replace(/↓/g,' down ').replace(/↑/g,' up ').replace(/≥/g,'>=').replace(/…/g,'...').replace(/·/g,' | ');}
 function needsUnicodePrint(s){return[s.context.className,s.context.sectionName,s.context.year,...s.subjects,...s.exams.map(exam=>exam.name),...s.students.flatMap(student=>[nameOf(student),String(student.roll??'')])].some(value=>/[^\x20-\x7E\u00A0-\u00FF]/.test(pdfText(value)));}
 async function exportPDF(){
@@ -1230,7 +1203,7 @@ document.addEventListener('click',event=>{
  else if(button.dataset.studentId){state.studentId=button.dataset.studentId;state.tab='students';renderView();$('studentDetail')?.scrollIntoView({behavior:'smooth',block:'nearest'});}
  else if(button.dataset.action==='pdf')exportPDF();
  else if(button.dataset.action==='print')printReport();
- else if(button.dataset.action==='png')exportPNG(button.dataset.metric||'total');
+ else if(button.dataset.action==='png')exportPNG(button.dataset.metric||'total',button.dataset.singleSubject||'');
 });
 $('allSubjectsBtn').addEventListener('click',()=>{if(state.initialising||state.exporting)return;state.allSubjects=true;state.selectedSubjects=state.subjects.slice();if(!state.own)state.own=state.selectedSubjects[0];renderChoices();renderView();});
 $('pdfBtn').addEventListener('click',exportPDF);
