@@ -931,10 +931,49 @@ function dataBytes(url){const binary=atob(url.slice(url.indexOf(',')+1)),bytes=n
 function downloadBlob(blob,name){
  const url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download=name;document.body.appendChild(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);
 }
+function exportVerticalSVG(s,subjects,exam,width){
+ // PNG-only chart: wider bars, less whitespace and large, readable labels.
+ // Keep the dashboard's on-screen chart unchanged.
+ const left=88,right=24,top=126,bottom=600;
+ const plot=width-left-right,group=plot/Math.max(1,subjects.length);
+ const barWidth=group*.86;
+ const longest=Math.max(1,...subjects.map(subject=>wrapChars(subject,Math.max(7,Math.floor(group/17))).length));
+ const height=bottom+110+longest*35;
+ let out=svgText(8,36,'Average marks (%)','font-weight="600"',26);
+ for(const tick of [0,25,50,75,100]){
+  const y=bottom-(bottom-top)*tick/100;
+  out+='<line x1="'+left+'" y1="'+y+'" x2="'+(width-right)+'" y2="'+y+'" stroke="#d9e4ef" stroke-width="2"/>';
+  out+=svgText(left-17,y+9,tick,'text-anchor="end"',26);
+ }
+ const examIndex=s.exams.findIndex(item=>item.id===exam.id);
+ subjects.forEach((subject,i)=>{
+  const cx=left+group*(i+.5),x=cx-barWidth/2;
+  const point=series(s,subject).values[examIndex],a=stats(s,exam,subject);
+  if(point?.value===null||!point||!Number.isFinite(point.value)){
+   out+=svgText(cx,bottom-40,'N/A','text-anchor="middle" font-weight="600"',28);
+  }else{
+   const barHeight=(bottom-top)*Math.max(0,Math.min(100,point.value))/100,y=bottom-barHeight;
+   out+='<rect x="'+x+'" y="'+y+'" width="'+barWidth+'" height="'+barHeight+'" rx="8" fill="'+shade(subject,examIndex,s.exams.length)+'"><title>'+esc(subject+' | '+exam.name+' | '+fmt(point.value)+'% | Present '+a.n+' | Absent '+a.absent+' | Failed '+a.below)+'</title></rect>';
+   out+=svgText(cx,y-48,fmt(point.value)+'%','text-anchor="middle" font-weight="700"',34);
+   const counts='P'+a.n+' A'+a.absent+' F'+a.below;
+   const countSize=Math.min(26,Math.max(17,Math.floor((barWidth-6)/(counts.length*.57))));
+   out+=svgText(cx,y-13,counts,'text-anchor="middle" font-weight="500"',countSize);
+   const insideSize=Math.min(31,Math.max(21,Math.floor(barWidth*.20)));
+   if(barHeight>subject.length*insideSize*.60+24&&barWidth>=54){
+    out+='<text transform="translate('+cx+' '+(y+barHeight/2)+') rotate(-90)" text-anchor="middle" dominant-baseline="middle" font-family="Segoe UI,Arial,sans-serif" font-size="'+insideSize+'" font-weight="700" fill="'+barLabelColour(subject)+'">'+esc(subject)+'</text>';
+   }
+  }
+  out+=svgText(cx,bottom+38,examCode(exam,examIndex),'text-anchor="middle"',25);
+  wrapChars(subject,Math.max(7,Math.floor(group/17))).forEach((part,k)=>{
+   out+=svgText(cx,bottom+93+k*35,part,'text-anchor="middle" font-weight="700"',28);
+  });
+ });
+ out+=svgText(left+plot/2,height-13,'Subjects','text-anchor="middle"',24);
+ return svg(width,height,out,metricName(s)+' — '+exam.name+' — subject comparison');
+}
 function graphExportSVG(s,subjects=s.subjects){
- // Export the same subject bars, averages and full-class P/A/F counts as the on-screen chart.
- // Compose them in a clean standalone SVG rather than capturing the entire report page.
- const width=1600,margin=62,usable=width-margin*2;
+ // Export only graphs and their essential metadata, not the full report or student lists.
+ const width=1600,margin=48,usable=width-margin*2;
  let out='<rect x="0" y="0" width="'+width+'" height="15" fill="#0f3d6b"/>';
  let y=74;
  function centered(value,size=24,weight='normal',colour='#20364e',spacing=10){
@@ -944,34 +983,34 @@ function graphExportSVG(s,subjects=s.subjects){
    y+=size+spacing;
   }
  }
- centered("St. Patrick's School",46,'bold','#0f3d6b',12);
- centered('Academic Performance Analysis — '+metricName(s),31,'bold','#20364e',12);
- centered('Class: '+(s.context.className||'—')+'    |    Section: '+(s.context.sectionName||'—')+'    |    Academic Year: '+(s.context.year||'—'),24);
- centered('Students: '+s.students.length+'    |    Pass mark: '+PASS+'%    |    Graph averages: '+(s.basis==='matched'?'Matched students':'All valid marks'),21,'normal','#536a81',7);
+ centered("St. Patrick's School",48,'bold','#0f3d6b',12);
+ centered('Academic Performance Analysis — '+metricName(s),35,'bold','#20364e',12);
+ centered('Class: '+(s.context.className||'—')+'    |    Section: '+(s.context.sectionName||'—')+'    |    Academic Year: '+(s.context.year||'—'),29);
+ centered('Students: '+s.students.length+'    |    Pass mark: '+PASS+'%    |    Graph averages: '+(s.basis==='matched'?'Matched students':'All valid marks'),25,'normal','#536a81',9);
  y+=18;
  out+='<line x1="'+margin+'" y1="'+y+'" x2="'+(width-margin)+'" y2="'+y+'" stroke="#d9e4ef" stroke-width="2"/>';
  y+=30;
  for(const group of balancedChunks(subjects,7)){
-  // Limit bars per group so the percentage and P/A/F labels remain legible.
-  const perGroup=group.length>=6?2:group.length>=4?3:4;
-  for(const examGroup of chunks(s.exams,perGroup)){
-   centered('Examination: '+examGroup.map(exam=>examCode(exam,s.exams.indexOf(exam))+' = '+exam.name).join('  |  '),23,'bold','#0f3d6b',9);
-   y+=10;
-   const chart=verticalSVG(s,group,usable,examGroup);
+  // One examination per chart to keep percentages and P/A/F counts readable.
+  // All selected examinations are still included in a single PNG.
+  for(const exam of s.exams){
+   centered('Examination: '+examCode(exam,s.exams.indexOf(exam))+' = '+exam.name,30,'bold','#0f3d6b',10);
+   y+=8;
+   const chart=exportVerticalSVG(s,group,exam,usable);
    const dims=chart.match(/viewBox="0 0 ([\d.]+) ([\d.]+)"/);
    if(!dims)throw new Error('Graph dimensions are unavailable.');
    const chartHeight=Number(dims[2]);
    const inner=chart.slice(chart.indexOf('>')+1,chart.lastIndexOf('</svg>'));
    out+='<g transform="translate('+margin+' '+y+')">'+inner+'</g>';
-   y+=chartHeight+23;
+   y+=chartHeight+28;
   }
  }
  out+='<line x1="'+margin+'" y1="'+y+'" x2="'+(width-margin)+'" y2="'+y+'" stroke="#d9e4ef" stroke-width="2"/>';
- y+=36;
- centered('P = Present (including zero marks)    |    A = Absent / not entered    |    F = Failed (below '+PASS+'%)',20,'normal','#536a81',6);
- centered('P / A / F counts cover the entire selected class and section for each examination.',19,'normal','#536a81',6);
- centered('Generated: '+s.generated,18,'normal','#536a81',6);
- return svg(width,y+28,out,'Subject performance graph — '+metricName(s));
+ y+=38;
+ centered('P = Present    |    A = Absent / not entered    |    F = Failed (below '+PASS+'%)',26,'normal','#536a81',8);
+ centered('Counts cover the selected class and section for each examination.',23,'normal','#536a81',7);
+ centered('Generated: '+s.generated,21,'normal','#536a81',6);
+ return svg(width,y+32,out,'Subject performance graph — '+metricName(s));
 }
 async function exportPNG(metric='total',singleSubject=''){
  if(!state.ready||state.exporting)return;
