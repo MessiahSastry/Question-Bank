@@ -151,7 +151,7 @@
         <p class="hint" style="margin-top:17px">Your teacher will check your name before admitting you in Zoom.</p>
       </section>
       <section class="panel" aria-labelledby="joinTitle">
-        <h2 id="joinTitle">Join Your Class</h2><p id="sdkPilotLabel" class="notice warning" hidden><strong>Meeting SDK test:</strong> Please allow microphone access when Chrome asks. After the class connects, switching apps or minimizing the browser will attempt to disconnect Zoom and require rejoining. This is a test, not verified attendance.</p><p id="joinHelp" class="muted small">Confirm your name first. Joining opens 10 minutes before class.</p>
+        <h2 id="joinTitle">Join Your Class</h2><p id="sdkPilotLabel" class="notice warning" hidden><strong>Online class:</strong> Please allow microphone access when Chrome asks. After the class connects, switching apps or minimizing the browser will attempt to disconnect Zoom and require rejoining. Your teacher confirms attendance using Zoom records.</p><p id="joinHelp" class="muted small">Confirm your name first. Joining opens 10 minutes before class.</p>
         <button id="joinAppBtn" class="btn full" type="button" disabled>Join Online Class</button>
         <button id="copyNameBtn" class="btn quiet full" style="margin-top:13px" type="button" disabled>Copy My Zoom Name</button>
         <div id="joinStatus" class="message" role="status" aria-live="polite"></div>
@@ -188,7 +188,7 @@
   const state={user:null,signingIn:false,authAttempted:false,meeting:null,scope:null,scopeKey:'',contextRequest:0,stopMeeting:null,loading:true,cachedOnly:true,loadError:'',contextError:'',contextBusy:false,offline:navigator.onLine===false,lookupBusy:false,lookupRequest:0,lookupPhone:'',candidates:new Map(),selected:null,confirmed:false,identityVersion:0,confirmation:null,joinBusy:false,joinAction:0,cooldownUntil:0,launched:false};
   let db=null,auth=null;
   const serverOptions={source:'server'};
-  const sdkState={joining:false,inMeeting:false,leftForSwitch:false,loader:null,guardEnabled:false,guardTimer:null};
+  const sdkState={joining:false,inMeeting:false,sessionActive:false,reconnecting:false,status:0,leftForSwitch:false,loader:null,guardEnabled:false,guardTimer:null,listenerAttached:false};
   const sdkVersion='6.10.0';
   async function loadMeetingSdk(){
     if(window.ZoomMtg)return window.ZoomMtg;
@@ -206,8 +206,9 @@
           await new Promise((resolve,reject)=>{
             const el=document.createElement('script');
             el.src=url;el.async=false;
-            el.onload=resolve;
-            el.onerror=()=>reject(uiError('Zoom Meeting SDK could not load. Check your internet connection and retry.'));
+            const timeout=setTimeout(()=>{el.remove();reject(uiError('Zoom is taking too long to load. Check your connection and retry.'));},20000);
+            el.onload=()=>{clearTimeout(timeout);resolve();};
+            el.onerror=()=>{clearTimeout(timeout);el.remove();reject(uiError('Zoom Meeting SDK could not load. Check your internet connection and retry.'));};
             document.head.appendChild(el);
           });
         }
@@ -252,14 +253,31 @@
     if(!sdkPilot||!sdkState.inMeeting||!sdkState.guardEnabled)return;
     sdkState.leftForSwitch=true;
     sdkState.inMeeting=false;
+    sdkState.sessionActive=false;sdkState.reconnecting=false;
     sdkState.guardEnabled=false;
     if(sdkState.guardTimer){clearTimeout(sdkState.guardTimer);sdkState.guardTimer=null;}
     try{window.ZoomMtg?.leaveMeeting({confirm:false});}catch(_){}
     // Mobile background execution can be delayed; disconnection is best effort.
   }
+  function onSdkMeetingStatus(data){
+    sdkState.status=Number(data?.status);
+    if(sdkState.status===4){
+      sdkState.reconnecting=true;sdkState.sessionActive=true;
+      message('joinStatus','Zoom is reconnecting. Keep this page open while your connection recovers.','warning');
+    }else if(sdkState.status===2){
+      sdkState.inMeeting=true;sdkState.sessionActive=true;sdkState.reconnecting=false;
+      message('joinStatus','Zoom connected in CampusConnect. Keep this class page open.','success');
+      if(sdkState.guardEnabled&&document.hidden)leaveSdkOnSwitch();
+    }else if(sdkState.status===3){
+      sdkState.inMeeting=false;sdkState.sessionActive=false;sdkState.reconnecting=false;sdkState.guardEnabled=false;
+      if(sdkState.guardTimer){clearTimeout(sdkState.guardTimer);sdkState.guardTimer=null;}
+      message('joinStatus','Zoom disconnected or the meeting ended. Rejoin if your class is still open.','warning');
+    }
+    render();
+  }
   async function openEmbeddedZoom(student,user,identityToken){
     sdkState.leftForSwitch=false;
-    sdkState.guardEnabled=false;
+    sdkState.status=0;sdkState.guardEnabled=false;
     // Browser permission prompts must not be mistaken for leaving the class.
     await checkSdkMicrophone();
     if(!identityMatches(identityToken))throw uiError('Please confirm your student name again.');
@@ -271,6 +289,7 @@
       try{
         response=await fetch('https://stpatricks-questionbank.web.app/zoom/sdk/signature',{
           method:'POST',mode:'cors',cache:'no-store',
+          signal:AbortSignal.timeout(20000),
           headers:{Authorization:'Bearer '+credential,'Content-Type':'application/json'},
           body:JSON.stringify({
             meetingId,studentId:student.id,
@@ -282,6 +301,8 @@
       if(!response.ok)throw uiError(data.message||'Zoom SDK authorization could not be completed.');
       if(!data.signature||!/^\d{9,13}$/.test(String(data.meetingNumber)))throw uiError('Zoom SDK authorization response is incomplete.');
       const sdk=await loadMeetingSdk();
+      assertJoinIdentity(identityToken);
+      if(!sdkState.listenerAttached){sdk.inMeetingServiceListener('onMeetingStatus',onSdkMeetingStatus);sdkState.listenerAttached=true;}
       if(sdkState.leftForSwitch||document.hidden||!identityMatches(identityToken))throw uiError('You left the class page. Return and rejoin.');
       message('joinStatus','Joining Zoom inside CampusConnect…');
       await new Promise((resolve,reject)=>{
@@ -292,7 +313,7 @@
             leaveOnPageUnload:true,
             patchJsMedia:true,
             success:()=>{
-              if(sdkState.leftForSwitch||document.hidden){failure();return;}
+              if(sdkState.leftForSwitch||document.hidden||!identityMatches(identityToken)||!timeGate().open){failure();return;}
               sdk.join({
                 signature:data.signature,
                 meetingNumber:String(data.meetingNumber),
@@ -306,21 +327,26 @@
           });
         }catch(_){failure();}
       });
-      if(sdkState.leftForSwitch||document.hidden){
-        leaveSdkOnSwitch();
+      if(sdkState.status===3||sdkState.leftForSwitch||document.hidden||!identityMatches(identityToken)||!timeGate().open){
+        try{sdk.leaveMeeting({confirm:false});}catch(_){}
+        sdkState.inMeeting=false;sdkState.sessionActive=false;
         throw uiError('You moved away from the class. Return and rejoin.');
       }
-      sdkState.inMeeting=true;
+      sdkState.sessionActive=true;
+      sdkState.inMeeting=sdkState.status===2;
       // Give Android a short window for SDK video/audio permission UI to settle.
       if(sdkState.guardTimer)clearTimeout(sdkState.guardTimer);
       sdkState.guardTimer=setTimeout(()=>{
         sdkState.guardTimer=null;
-        if(sdkState.inMeeting&&!sdkState.leftForSwitch)sdkState.guardEnabled=true;
+        if(sdkState.sessionActive&&!sdkState.leftForSwitch){sdkState.guardEnabled=true;if(document.hidden&&sdkState.inMeeting)leaveSdkOnSwitch();}
       },12000);
       state.launched=true;
-      message('joinStatus','Zoom connected in CampusConnect. Keep this class page open.','success');
+      message('joinStatus',sdkState.inMeeting?'Zoom connected in CampusConnect. Keep this class page open.':'Zoom is opening. Wait for your teacher to admit you.','success');
     }catch(e){
-      if(sdkState.leftForSwitch){try{window.ZoomMtg?.leaveMeeting({confirm:false});}catch(_){}}
+      const connected=sdkState.inMeeting||sdkState.sessionActive||sdkState.leftForSwitch;
+      sdkState.inMeeting=false;sdkState.sessionActive=false;sdkState.reconnecting=false;sdkState.guardEnabled=false;
+      if(sdkState.guardTimer){clearTimeout(sdkState.guardTimer);sdkState.guardTimer=null;}
+      if(connected){try{window.ZoomMtg?.leaveMeeting({confirm:false});}catch(_){}}
       throw e;
     }finally{
       sdkState.joining=false;
@@ -364,7 +390,7 @@ function uiError(text){const e=new Error(text);e.userMessage=text;return e;}
     if(m.status==='cancelled')return {code:'cancelled',title:'This class has been cancelled.',detail:'Please wait for your teacher’s next update.',open:false};
     if(m.status&& !['scheduled','completed'].includes(m.status))return {code:'unavailable',title:'This class is unavailable.',detail:'Please contact your teacher.',open:false};
     const start=ms(m.startAt);if(!Number.isFinite(start))return {code:'invalid',title:'The class time is unavailable.',detail:'Please contact your teacher for the correct schedule.',open:false};
-    if(m.status==='completed'||now>=endOf(m))return {code:'ended',title:'The scheduled class has ended.',detail:'Joining is closed for this session.',open:false};
+    if(m.status==='completed'||m.zoomActualEndedAt||now>=endOf(m))return {code:'ended',title:'The scheduled class has ended.',detail:'Joining is closed for this session.',open:false};
     if(m.zoomMeetingId&&Number(m.zoomProvisionedRevision)!==Number(m.revision))return {code:'updating',title:'Teacher is updating this Zoom meeting.',detail:'The meeting link is being prepared. Please check again shortly.',open:false};
     const openAt=start-10*60000;
     if(now<openAt)return {code:'upcoming',title:'Joining opens in '+countdownText(openAt-now),detail:'Join opens at '+formatDateTime(openAt)+'. You can confirm your name now.',open:false};
@@ -398,7 +424,7 @@ function identityMatches(token){
     normalizePhone($('parentPhone').value)===state.lookupPhone &&
     captureIdentity()===token;
 }
-  function canJoin(){return eligibleForLookup()&&!state.cachedOnly&&timeGate().open&&state.confirmed&&!!state.selected&&!state.lookupBusy&&!state.joinBusy&&Date.now()>=state.cooldownUntil;}
+  function canJoin(){return (!sdkPilot||!sdkState.sessionActive&&!sdkState.reconnecting)&&eligibleForLookup()&&!state.cachedOnly&&timeGate().open&&state.confirmed&&!!state.selected&&!state.lookupBusy&&!state.joinBusy&&Date.now()>=state.cooldownUntil;}
   function closeConfirmation(){state.confirmation=null;if($('identityDialog').open)$('identityDialog').close();}
   function invalidateIdentity(clearCandidates=true){
     state.confirmed=false;state.selected=null;state.identityVersion++;state.joinAction++;state.launched=false;closeConfirmation();
@@ -437,10 +463,10 @@ StudentDropdown.refresh();
     $('confirmBtn').disabled=!lookupAllowed||!state.selected||state.joinBusy||state.lookupBusy;
     $('lookupBox').hidden=state.confirmed;$('verifiedBox').hidden=!state.confirmed;
     if(state.confirmed&&state.selected){$('verifiedName').textContent=state.selected.name;$('verifiedDetail').textContent=`${m.class} · ${m.section}${state.selected.roll?' · Roll '+state.selected.roll:''}`;}
-    $('changeStudentBtn').disabled=state.joinBusy;
+    $('changeStudentBtn').disabled=state.joinBusy||sdkState.sessionActive;
     let links=null;try{if(m)links=zoomLinks(m.zoomJoinUrl||m.zoomWebUrl,state.selected?state.selected.name:'');}catch(_){}
     const join=canJoin();$('joinAppBtn').disabled=!join||!links;
-    $('joinAppBtn').innerHTML=state.joinBusy?'<span class="spinner" aria-hidden="true"></span> Preparing Zoom…':state.launched?'Rejoin Online Class':'Join Online Class';
+    $('joinAppBtn').innerHTML=state.joinBusy?'<span class="spinner" aria-hidden="true"></span> Preparing Zoom…':sdkPilot&&sdkState.reconnecting?'Reconnecting to Zoom…':sdkPilot&&sdkState.sessionActive?'Zoom class open':state.launched?'Rejoin Online Class':'Join Online Class';
     $('joinAppBtn').setAttribute('aria-busy',String(state.joinBusy));
     $('copyNameBtn').disabled=!state.confirmed||!state.selected||state.joinBusy;
     $('joinHelp').textContent=state.confirmed
@@ -595,7 +621,7 @@ $('studentSel').replaceChildren(new Option('Select your own name',''));
     state.confirmed=true;closeConfirmation();message('lookupStatus','');message('joinStatus',timeGate().open?'Your name is confirmed. You can join when you are ready.':'Your name is confirmed. Please wait until joining opens.','success');render();
   }
   function rejectIdentity(){closeConfirmation();state.confirmed=false;state.selected=null;state.identityVersion++;$('studentSel').value='';render();$('studentSel').focus();}
-  function changeStudent(){if(state.joinBusy)return;invalidateIdentity(false);message('lookupStatus','Select the correct student name below.');render();$('studentSel').focus();}
+  function changeStudent(){if(state.joinBusy||sdkState.sessionActive)return;invalidateIdentity(false);message('lookupStatus','Select the correct student name below.');render();$('studentSel').focus();}
   function assertJoinIdentity(token){if(!identityMatches(token))throw uiError('Please select and confirm your student name again.');if(!eligibleForLookup()||!timeGate().open||state.cachedOnly)throw uiError(timeGate().open?'The latest class details could not be verified. Please try again.':timeGate().title);}
   function clickId(){return window.crypto&&typeof window.crypto.randomUUID==='function'?window.crypto.randomUUID():Date.now().toString(36)+'-'+Math.random().toString(36).slice(2);}
   async function joinClass(mode='app'){
