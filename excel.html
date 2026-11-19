@@ -1195,61 +1195,126 @@ async function sendSA1ToLEAP() {
   if (new Set(validIds).size !== validIds.length)
     throw Error('Duplicate Child IDs; SA-1 transfer cancelled.');
 
-  // Keep the FA1/FA2-derived SA1 proposals in a separate Firestore
-  // collection. Never write them into students/{id}/marks/{SA1}.
-  // Actual SA1 scores continue to take priority on every transfer.
-  const draftCollection = secRef.collection('leapDrafts');
-  const createdAtMs = Date.now();
-  const drafts = records.map((record, index) => ({
-    studentId: students[index].id,
-    record
-  })).filter(({record}) =>
-    record.subjects.some(subject => subject.source !== 'actual')
-  );
+  // School-awarded marks remain separate from actual SA1 records.
+  // Actual SA1 results always supersede awards at transfer time.
+  const awardsRef = secRef.collection('leapDrafts');
+  const candidates = records.map((record, i) => ({
+    studentId: students[i].id, record
+  })).filter(x => x.record.subjects.some(s => s.source !== 'actual'));
 
-  if (drafts.length) {
-    statusDiv.textContent =
-      'Saving ' + drafts.length +
-      ' provisional SA-1 student records separately in Firebase...';
+  const priorAwards = await Promise.all(candidates.map(async x => ({
+    ...x,
+    snap: await awardsRef.doc('SA1_' + x.studentId).get({source:'server'})
+  })));
 
-    const expiresAt = firebase.firestore.Timestamp.fromMillis(
-      createdAtMs + 4 * 60 * 60 * 1000
+  function validAward(s) {
+    const spec = specs.find(([name]) => name === s?.name);
+    if (!spec) return false;
+    const [first, second] = spec[1];
+    return Number.isInteger(s.total) &&
+      s.total >= 0 && s.total <= first + second &&
+      Array.isArray(s.parts) && s.parts.length === 2 &&
+      Number.isInteger(s.parts[0]) &&
+      Number.isInteger(s.parts[1]) &&
+      s.parts[0] >= 0 && s.parts[0] <= first &&
+      s.parts[1] >= 0 && s.parts[1] <= second &&
+      s.parts[0] + s.parts[1] === s.total;
+  }
+
+  const pending = [];
+  for (const entry of priorAwards) {
+    const data = entry.snap.exists ? entry.snap.data() : null;
+    const approved = data?.purpose === 'SCHOOL_AWARDED_SA1_FROM_FA1_FA2' &&
+      data?.awardStatus === 'finalised' &&
+      typeof data?.awardedByUid === 'string' &&
+      data.awardedByUid.length > 0;
+    const oldSubjects = approved && Array.isArray(data.awardedSubjects)
+      ? data.awardedSubjects.filter(validAward) : [];
+    const unapproved = [];
+
+    for (const s of entry.record.subjects) {
+      if (s.source === 'actual') continue;
+      const previous = oldSubjects.find(p => p.name === s.name);
+      if (previous) {
+        s.total = previous.total;
+        s.parts = [...previous.parts];
+        s.source = 'awarded';
+      } else if (s.source === 'estimated') {
+        unapproved.push(s);
+      }
+    }
+    if (unapproved.length) pending.push({
+      studentId: entry.studentId,
+      record: entry.record,
+      oldSubjects,
+      unapproved
+    });
+  }
+
+  if (pending.length) {
+    const user = auth.currentUser;
+    if (!user?.uid)
+      throw Error('An authorised school login is required to finalise SA-1.');
+
+    const total = pending.reduce((sum,x) => sum + x.unapproved.length, 0);
+    const approved = window.confirm(
+      'SCHOOL SA-1 AWARD\n\n' +
+      className + ' - ' + sectionName + '\n\n' +
+      'FA-1/FA-2-based SA-1 marks for ' + total + ' subjects across ' +
+      pending.length + ' students are ready.\n\n' +
+      'Confirm that the SCHOOL HAS AWARDED these scores as its SA-1 ' +
+      'results. This approval is recorded with your login and date. ' +
+      'They will be stored separately from actual SA-1 marks, ' +
+      'which always take priority later.\n\n' +
+      'OK = school approves. Cancel = do not transfer.'
     );
-    const writes = await Promise.allSettled(drafts.map(({studentId,record}) =>
-      draftCollection.doc('SA1_' + studentId).set({
-        schema: 1,
-        purpose: 'LEAP_PROVISIONAL_DRAFT_ONLY',
-        officialMarks: false,
+    if (!approved)
+      throw Error('School SA-1 award not confirmed. No marks transferred.');
+
+    // Commit the class award atomically. Do not partly approve a class.
+    const batch = db.batch();
+    for (const item of pending) {
+      const merged = new Map(item.oldSubjects.map(s => [s.name,s]));
+      for (const s of item.unapproved) {
+        merged.set(s.name, {
+          name: s.name, total: s.total, parts: [...s.parts],
+          method: 'FA1_FA2_AVERAGE_MINIMUM_40_PERCENT'
+        });
+      }
+      batch.set(awardsRef.doc('SA1_' + item.studentId), {
+        schema: 2,
+        purpose: 'SCHOOL_AWARDED_SA1_FROM_FA1_FA2',
+        awardStatus: 'finalised',
         academicYear: String(academicYear || ''),
         exam: 'SA1',
-        roll: record.roll,
+        roll: item.record.roll,
         inputExams: ['FA1', 'FA2'],
-        subjects: record.subjects
-          .filter(s => s.source !== 'actual')
-          .map(s => ({
-            name: s.name,
-            source: s.source,
-            total: s.total,
-            parts: s.parts,
-            maximum: s.parts.length === 2
-              ? leapSA1Specs(grade).find(([name]) => name === s.name)[1]
-                  .reduce((a,b) => a+b, 0)
-              : null
-          })),
-        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-        expiresAt
-      })
-    ));
-
-    const failures = writes.filter(result => result.status === 'rejected');
-    if (failures.length) {
-      throw Error(
-        'SA-1 drafts could not all be saved to Firebase (' +
-        failures.length + '/' + drafts.length + ' failed). ' +
-        'Check Firestore permissions. SA-1 transfer stopped.'
-      );
+        awardedByUid: user.uid,
+        awardedAt: firebase.firestore.FieldValue.serverTimestamp(),
+        awardedSubjects: [...merged.values()]
+        // No expiry: finalised scores must not disappear after four hours.
+      });
     }
+    try {
+      await batch.commit();
+    } catch (error) {
+      throw Error('Saving school-awarded SA-1 marks failed: ' +
+        (error?.message || String(error)) +
+        '. No data sent to LEAP.');
+    }
+    for (const item of pending)
+      for (const s of item.unapproved)
+        s.source = 'awarded';
   }
+
+  // Actual, awarded and missing scores are distinguished in every packet.
+  counts.actual = 0;
+  counts.estimated = 0;
+  counts.missing = 0;
+  counts.awarded = 0;
+  for (const record of records)
+    for (const subject of record.subjects)
+      counts[subject.source]++;
 
   const packet = {
     schema:1, nonce:crypto.randomUUID(), createdAt:Date.now(),
@@ -1266,7 +1331,7 @@ async function sendSA1ToLEAP() {
 
   statusDiv.textContent =
     'SA-1: ' + counts.actual + ' actual subject scores, ' +
-    counts.estimated + ' review-only estimates, ' +
+    counts.awarded + ' school-awarded FA1/FA2 scores, ' +
     counts.missing + ' unavailable. Connecting to LEAP...';
 
   let finished = false;
@@ -1279,7 +1344,7 @@ async function sendSA1ToLEAP() {
     finished = true;
     cleanup();
     statusDiv.textContent =
-      'SA-1 transferred. Only actual SA-1 marks can be auto-filled.';
+      'SA-1 transferred. Actual and school-awarded marks can be filled.';
     window.location.assign('https://cse.ap.gov.in/loadccemarksentry');
   };
   document.addEventListener('sp-leap-outgoing-received', received);
