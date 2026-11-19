@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         St Patricks LEAP Automation
 // @namespace    stpatricks-leap
-// @version      1.2.5
+// @version      1.2.6
 // @description  FA and school-awarded SA1 marks entry with actual-SA1 priority
 // @match        https://messiahsastry.github.io/Question-Bank/excel.html*
 // @match        https://cse.ap.gov.in/loadccemarksentry*
@@ -113,11 +113,7 @@
 
   info.textContent =
     `${packet.className} - ${packet.sectionName} - ` +
-    `${packet.exam}: ${packet.records.length} students. ` +
-    (packet.exam === 'SA1'
-      ? 'Actual SA-1 marks or school-awarded FA-1/FA-2 marks can be filled. ' +
-        'Any unawarded estimates remain blocked. Check student, attendance and marks before Save.'
-      : 'Select a student, tap Get Details, then Fill Marks and verify before saving.');
+    `${packet.records.length} students.`;
 
   const clear = document.createElement('button');
 
