@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         St Patricks LEAP Automation
 // @namespace    stpatricks-leap
-// @version      1.2.0
+// @version      1.2.1
 // @description  Teacher-verified FA/SA1 entry with provisional-estimate safeguards
 // @match        https://messiahsastry.github.io/Question-Bank/excel.html*
 // @match        https://cse.ap.gov.in/loadccemarksentry*
@@ -356,13 +356,9 @@ function fillActualSA1(record) {
     return {subject, inputs, attendance, yes};
   });
 
-  if (!confirm('SA1 attendance verification for ' + record.name +
-    ': Confirm this student ATTENDED EVERY subject listed. ' +
-    'Cancel if absent for any paper. Existing LEAP marks will be replaced.')) {
-    fillStatus.textContent =
-      'SA1 not filled. Verify attendance for each subject manually.';
-    return;
-  }
+  // SA1 records with actual exam marks are marked Attended = Yes.
+  // The school is responsible for recording genuine attendance and
+  // entering marks only after the student completes the examination.
 
   for (const p of plans) {
     if (!p.attendance.isConnected)
