@@ -1012,12 +1012,242 @@ async function prepareLeapPreviousMarks() {
   return result;
 }
 
+// ---------- SA-1: actual scores and provisional FA1/FA2 estimates ----------
+
+function leapIsSA1(name) {
+  return /^(?:SA|SUMMATIVEASSESSMENT)(?:1|I)$/.test(
+    String(name || '').toUpperCase().replace(/[^A-Z0-9]/g, '')
+  );
+}
+
+function leapSA1Specs(grade) {
+  if (grade <= 2) return [
+    ['Mathematics', [40, 40]],
+    ['Telugu', [40, 40]],
+    ['English', [40, 40]]
+  ];
+  if (grade <= 5) return [
+    ['Mathematics', [20, 60]],
+    ['EVS', [20, 60]],
+    ['Telugu', [20, 60]],
+    ['English', [20, 60]]
+  ];
+  if (grade <= 7) return [
+    ['Mathematics', [20, 60]],
+    ['General Science', [20, 60]],
+    ['Social Studies', [20, 60]],
+    ['Telugu', [20, 60]],
+    ['Hindi', [20, 60]],
+    ['English', [20, 60]]
+  ];
+  if (grade <= 9) return [
+    ['Mathematics', [20, 60]],
+    ['Physical Science', [10, 30]],
+    ['Biological Science', [10, 30]],
+    ['Social Studies', [20, 60]],
+    ['Composite Telugu', [20, 40]],
+    ['Hindi', [20, 60]],
+    ['English', [20, 60]]
+  ];
+  throw Error('Class 10 SA-1 requires a separately verified LEAP format.');
+}
+
+// Read each score using the source exam's maximum marks.
+// Paired subjects such as Math 1 and Math 2 require both components.
+function leapSA1Rate(examObj, marks, subject) {
+  if (!examObj || !marks) return null;
+  const norm = x => String(x || '').toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
+  const choices = {
+    MATHEMATICS: [['Mathematics'], ['Math'], ['Math 1', 'Math 2']],
+    TELUGU: [['Telugu'], ['Composite Telugu'],
+      ['Composite Telugu (Sanskrit)']],
+    COMPOSITETELUGU: [['Composite Telugu'], ['Telugu'],
+      ['Composite Telugu (Sanskrit)']],
+    ENGLISH: [['English'], ['English 1', 'English 2']],
+    HINDI: [['Hindi']],
+    EVS: [['EVS'], ['Environmental Studies'], ['Environmental Science']],
+    GENERALSCIENCE: [['General Science'], ['Science'],
+      ['Physical Science', 'Biological Science'],
+      ['Physical Science', 'Biology'],
+      ['Physics', 'Chemistry', 'Biology']],
+    PHYSICALSCIENCE: [['Physical Science'],
+      ['Physics', 'Chemistry'], ['Physics']],
+    BIOLOGICALSCIENCE: [['Biological Science'], ['Biology']],
+    SOCIALSTUDIES: [['Social Studies'], ['Social'], ['Social Science']]
+  };
+
+  for (const set of (choices[norm(subject)] || [[subject]])) {
+    const rates = set.map(want => {
+      const config = (examObj.subjects || [])
+        .find(s => norm(s.name) === norm(want));
+      if (!config) return null;
+      const value = marks[config.name];
+      const maximum = Number(config.max || 50);
+      if (typeof value !== 'number' || !Number.isFinite(value) ||
+          !Number.isFinite(maximum) || maximum <= 0 ||
+          value < 0 || value > maximum) return null;
+      return value / maximum;
+    });
+    if (rates.length && rates.every(rate => rate !== null))
+      return rates.reduce((a,b) => a+b, 0) / rates.length;
+  }
+  return null;
+}
+
+function leapSA1Parts(total, caps) {
+  const maxTotal = caps[0] + caps[1];
+  if (!Number.isInteger(total) || total < 0 || total > maxTotal)
+    throw Error('Invalid SA-1 total.');
+  const first = Math.max(0, Math.min(
+    caps[0], Math.round(total * caps[0] / maxTotal)
+  ));
+  return [first, total - first];
+}
+
+async function sendSA1ToLEAP() {
+  if (!selectedExamObj || !students.length)
+    throw Error('Select a class, section and SA-1 first.');
+  const grade = Number(String(className).match(/\d+/)?.[0]);
+  if (!(grade >= 1 && grade <= 9))
+    throw Error('Only Classes 1-9 SA-1 formats have been verified.');
+
+  const specs = leapSA1Specs(grade);
+  const secRef = db.collection('years').doc(academicYear)
+    .collection('classes').doc(classId)
+    .collection('sections').doc(sectionId);
+
+  statusDiv.textContent =
+    'Reading actual SA-1 marks and FA-1/FA-2 history from the server...';
+
+  const faExams = [1,2].map(n =>
+    exams.find(e => leapFANumber(e.name) === n) || null
+  );
+
+  async function fetchMarks(examObj) {
+    if (!examObj) return new Map();
+    const results = await Promise.all(students.map(stu =>
+      secRef.collection('students').doc(stu.id)
+        .collection('marks').doc(examObj.id)
+        .get({source:'server'})
+    ));
+    return new Map(students.map((stu,i) => [
+      stu.id, results[i].exists ? results[i].data() : {}
+    ]));
+  }
+
+  const [saMarks, fa1Marks, fa2Marks] = await Promise.all([
+    fetchMarks(selectedExamObj),
+    fetchMarks(faExams[0]),
+    fetchMarks(faExams[1])
+  ]);
+
+  for (const stu of students) {
+    marksMap[stu.id] ||= {};
+    marksMap[stu.id][selectedExamObj.id] = saMarks.get(stu.id) || {};
+  }
+
+  const counts = {actual:0, estimated:0, missing:0};
+  const records = students.map(stu => {
+    const childId = getLeapChildId(stu);
+    if (childId && !/^\d{10}$/.test(childId))
+      throw Error('Invalid Child ID for roll ' + stu.roll);
+
+    const subjects = specs.map(([name, caps]) => {
+      const targetMax = caps[0] + caps[1];
+      const actualRate = leapSA1Rate(
+        selectedExamObj, saMarks.get(stu.id), name
+      );
+
+      let source, total;
+      if (actualRate !== null) {
+        source = 'actual';
+        total = Math.round(actualRate * targetMax);
+      } else {
+        const fa1Rate = leapSA1Rate(
+          faExams[0], fa1Marks.get(stu.id), name
+        );
+        const fa2Rate = leapSA1Rate(
+          faExams[1], fa2Marks.get(stu.id), name
+        );
+        if (fa1Rate !== null && fa2Rate !== null) {
+          source = 'estimated';
+          // 40% minimum is for review-only estimates, NOT actual results.
+          total = Math.round(
+            Math.max(.40, (fa1Rate + fa2Rate) / 2) * targetMax
+          );
+        } else {
+          source = 'missing';
+          total = 0;
+        }
+      }
+      counts[source]++;
+      return {
+        name, language:'NA', source, total,
+        parts: leapSA1Parts(total, caps)
+      };
+    });
+
+    return {childId, roll:stu.roll, name:stu.name, subjects};
+  });
+
+  const validIds = records.map(r=>r.childId).filter(Boolean);
+  if (new Set(validIds).size !== validIds.length)
+    throw Error('Duplicate Child IDs; SA-1 transfer cancelled.');
+
+  const packet = {
+    schema:1, nonce:crypto.randomUUID(), createdAt:Date.now(),
+    year:String(academicYear || ''), exam:'SA1', grade,
+    className, sectionName, records
+  };
+
+  document.getElementById('sp-leap-outgoing')?.remove();
+  const payload = document.createElement('script');
+  payload.type = 'application/json';
+  payload.id = 'sp-leap-outgoing';
+  payload.textContent = JSON.stringify(packet);
+  document.body.appendChild(payload);
+
+  statusDiv.textContent =
+    'SA-1: ' + counts.actual + ' actual subject scores, ' +
+    counts.estimated + ' review-only estimates, ' +
+    counts.missing + ' unavailable. Connecting to LEAP...';
+
+  let finished = false;
+  const cleanup = () => {
+    document.removeEventListener('sp-leap-outgoing-received', received);
+    payload.remove();
+  };
+  const received = () => {
+    if (payload.dataset.received !== packet.nonce) return;
+    finished = true;
+    cleanup();
+    statusDiv.textContent =
+      'SA-1 transferred. Only actual SA-1 marks can be auto-filled.';
+    window.location.assign('https://cse.ap.gov.in/loadccemarksentry');
+  };
+  document.addEventListener('sp-leap-outgoing-received', received);
+  document.dispatchEvent(new Event('sp-leap-outgoing-ready'));
+  setTimeout(() => {
+    if (!finished) {
+      cleanup();
+      statusDiv.textContent =
+        'LEAP receiver not connected. No SA-1 marks were changed.';
+    }
+  }, 5000);
+}
+
 // ---------- Send to LEAP ----------
 
 sendToLeapBtn.onclick = async () => {
   try {
     if (!selectedExamObj || !students.length)
       throw Error('Select a class, section and exam first.');
+
+    if (leapIsSA1(selectedExamObj.name)) {
+      await sendSA1ToLEAP();
+      return;
+    }
 
        const examNumber =
       leapFANumber(selectedExamObj.name);
