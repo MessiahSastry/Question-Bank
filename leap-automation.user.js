@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         St Patricks LEAP Automation
 // @namespace    stpatricks-leap
-// @version      1.2.3
+// @version      1.2.4
 // @description  FA and school-awarded SA1 marks entry with actual-SA1 priority
 // @match        https://messiahsastry.github.io/Question-Bank/excel.html*
 // @match        https://cse.ap.gov.in/loadccemarksentry*
@@ -339,6 +339,30 @@ async function fillActualSA1(record) {
     return {select, yes};
   }
 
+  // Writing language is the instruction/answer language for each subject:
+  // Telugu -> Telugu, Hindi -> Hindi, everything else -> English.
+  function requiredWritingLanguage(name) {
+    const code = subjectCode(name);
+    return code === 'TEL' ? 'TELUGU' :
+      code === 'HINDI' ? 'HINDI' : 'ENGLISH';
+  }
+
+  function writingLanguage(row, subjectName) {
+    const expected = requiredWritingLanguage(subjectName);
+    const select = row.cells[3]?.querySelector('select');
+    if (!select || select.disabled)
+      return null;
+    const option = Array.from(select.options).find(option =>
+      !option.disabled &&
+      (normal(option.textContent) === expected ||
+        normal(option.value) === expected)
+    );
+    if (!option)
+      throw Error('SA1 writing language ' + expected +
+        ' is not available for ' + subjectName);
+    return {select, option, expected};
+  }
+
   // Validate every score and row BEFORE editing the LEAP form.
   const plans = record.subjects.map(subject => {
     const caps = sa1SubjectMaxima(packet.grade, subject.name);
@@ -392,6 +416,31 @@ async function fillActualSA1(record) {
         '). Do not Save; check the LEAP form.');
     }
 
+    // Attendance can also unlock the writing-language dropdown.
+    // Set it before entering marks because LEAP may redraw the row.
+    let languageReady = false;
+    for (let attempt = 0; attempt < 6; attempt++) {
+      row = subjectRow(subject.name);
+      const language = writingLanguage(row, subject.name);
+      if (language) {
+        if (language.select.value !== language.option.value)
+          changeValue(language.select, language.option.value);
+        await new Promise(resolve => setTimeout(resolve, 90));
+        row = subjectRow(subject.name);
+        const confirmed = writingLanguage(row, subject.name);
+        if (confirmed &&
+            normal(confirmed.select.selectedOptions[0]?.textContent) ===
+              confirmed.expected) {
+          languageReady = true;
+          break;
+        }
+      }
+      await new Promise(resolve => setTimeout(resolve, 180));
+    }
+    if (!languageReady)
+      throw Error('SA1 writing language was not accepted for ' +
+        subject.name + '. Do not Save; check the LEAP form.');
+
     // Validate the maximum shown by the portal, not only our class format.
     for (let i = 0; i < caps.length; i++) {
       const td = row.cells[i + 4];
@@ -424,6 +473,12 @@ async function fillActualSA1(record) {
     const values = subject.parts.map((_,i) =>
       row.cells[i + 4]?.querySelector('input:not([type="hidden"])')
     );
+    const language = writingLanguage(row, subject.name);
+    if (!language ||
+        normal(language.select.selectedOptions[0]?.textContent) !==
+          language.expected)
+      throw Error('SA1 writing language not retained for ' +
+        subject.name + '. Do not Save.');
     if (select.value !== yes.value ||
         values.some((input,i) =>
           !input || !input.isConnected ||
@@ -443,7 +498,7 @@ async function fillActualSA1(record) {
     (awardedCount ? '\nSchool-awarded from FA1/FA2: ' + awardedCount : '') +
     (below.length ? '\nBelow 40% (actual marks unchanged): ' +
       below.map(p => p.subject.name).join(', ') : '') +
-    '\nCheck attendance and marks, then press Save in LEAP.';
+    '\nWriting languages selected. Check all entries, then press Save in LEAP.';
 }
 
 fillBtn.onclick = async () => {
