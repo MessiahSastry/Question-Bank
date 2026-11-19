@@ -1195,6 +1195,62 @@ async function sendSA1ToLEAP() {
   if (new Set(validIds).size !== validIds.length)
     throw Error('Duplicate Child IDs; SA-1 transfer cancelled.');
 
+  // Keep the FA1/FA2-derived SA1 proposals in a separate Firestore
+  // collection. Never write them into students/{id}/marks/{SA1}.
+  // Actual SA1 scores continue to take priority on every transfer.
+  const draftCollection = secRef.collection('leapDrafts');
+  const createdAtMs = Date.now();
+  const drafts = records.map((record, index) => ({
+    studentId: students[index].id,
+    record
+  })).filter(({record}) =>
+    record.subjects.some(subject => subject.source !== 'actual')
+  );
+
+  if (drafts.length) {
+    statusDiv.textContent =
+      'Saving ' + drafts.length +
+      ' provisional SA-1 student records separately in Firebase...';
+
+    const expiresAt = firebase.firestore.Timestamp.fromMillis(
+      createdAtMs + 4 * 60 * 60 * 1000
+    );
+    const writes = await Promise.allSettled(drafts.map(({studentId,record}) =>
+      draftCollection.doc('SA1_' + studentId).set({
+        schema: 1,
+        purpose: 'LEAP_PROVISIONAL_DRAFT_ONLY',
+        officialMarks: false,
+        academicYear: String(academicYear || ''),
+        exam: 'SA1',
+        roll: record.roll,
+        inputExams: ['FA1', 'FA2'],
+        subjects: record.subjects
+          .filter(s => s.source !== 'actual')
+          .map(s => ({
+            name: s.name,
+            source: s.source,
+            total: s.total,
+            parts: s.parts,
+            maximum: s.parts.length === 2
+              ? leapSA1Specs(grade).find(([name]) => name === s.name)[1]
+                  .reduce((a,b) => a+b, 0)
+              : null
+          })),
+        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+        expiresAt
+      })
+    ));
+
+    const failures = writes.filter(result => result.status === 'rejected');
+    if (failures.length) {
+      throw Error(
+        'SA-1 drafts could not all be saved to Firebase (' +
+        failures.length + '/' + drafts.length + ' failed). ' +
+        'Check Firestore permissions. SA-1 transfer stopped.'
+      );
+    }
+  }
+
   const packet = {
     schema:1, nonce:crypto.randomUUID(), createdAt:Date.now(),
     year:String(academicYear || ''), exam:'SA1', grade,
