@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         St Patricks LEAP Automation
 // @namespace    stpatricks-leap
-// @version      1.1.2
-// @description  Transfers FA marks from St Patricks School app to LEAP and assists teacher-verified entry
+// @version      1.2.0
+// @description  Teacher-verified FA/SA1 entry with provisional-estimate safeguards
 // @match        https://messiahsastry.github.io/Question-Bank/excel.html*
 // @match        https://cse.ap.gov.in/loadccemarksentry*
 // @match        https://cse.ap.gov.in/save*
@@ -26,7 +26,7 @@
   function valid(p) {
     return p && p.schema === 1 &&
       typeof p.nonce === 'string' &&
-      /^FA[1-4]$/.test(p.exam) &&
+      /^(?:FA[1-4]|SA1)$/.test(p.exam) &&
       Number.isInteger(p.grade) &&
       p.grade >= 1 && p.grade <= 10 &&
       Number.isFinite(p.createdAt) &&
@@ -39,7 +39,9 @@
         Array.isArray(r.subjects) &&
         r.subjects.every(s =>
           Array.isArray(s.parts) &&
-          s.parts.length === 4 &&
+          s.parts.length === (p.exam === 'SA1' ? 2 : 4) &&
+          (p.exam !== 'SA1' ||
+            ['actual', 'estimated', 'missing'].includes(s.source)) &&
           s.parts.every(n =>
             Number.isInteger(n) && n >= 0
           )
@@ -112,7 +114,10 @@
   info.textContent =
     `${packet.className} - ${packet.sectionName} - ` +
     `${packet.exam}: ${packet.records.length} students. ` +
-    'Select a student, tap Get Details, then Fill Marks and verify before saving.';
+    (packet.exam === 'SA1'
+      ? 'Actual SA1 marks can be filled after attendance confirmation. ' +
+        'FA1/FA2 estimates are provisional and cannot be saved by this helper.'
+      : 'Select a student, tap Get Details, then Fill Marks and verify before saving.');
 
   const clear = document.createElement('button');
 
@@ -204,10 +209,14 @@ previewBtn.onclick = () => {
 
   for (const s of r.subjects) {
     const total = s.parts.reduce((a, b) => a + b, 0);
+    const max = packet.exam === 'SA1'
+      ? sa1SubjectMaxima(packet.grade, s.name).reduce((a,b)=>a+b,0)
+      : 50;
     lines.push(
       s.name + ': ' +
       s.parts.join(' + ') +
-      ' = ' + total + '/50'
+      ' = ' + total + '/' + max +
+      (packet.exam === 'SA1' ? ' (' + s.source + ')' : '')
     );
   }
 
@@ -273,6 +282,114 @@ function changeValue(el, value) {
 
   el.dispatchEvent(new Event('input', { bubbles:true }));
   el.dispatchEvent(new Event('change', { bubbles:true }));
+}
+
+
+function sa1SubjectMaxima(grade, name) {
+  if (grade <= 2) return [40, 40];
+  if (grade <= 7) return [20, 60];
+  const code = subjectCode(name);
+  if (code === 'PHY' || code === 'BIO') return [10, 30];
+  if (code === 'TEL') return [20, 40];
+  return [20, 60];
+}
+
+// SA1 estimates are review-only. Actual SA1 scores are required for entry.
+function fillActualSA1(record) {
+  if (packet.grade >= 10)
+    throw Error('Class 10 SA1 format needs separate verification.');
+
+  const provisional = record.subjects.filter(s => s.source !== 'actual');
+  if (provisional.length) {
+    fillStatus.textContent =
+      '⚠ SA1 official filling blocked: actual marks missing for ' +
+      record.name + '.\n' +
+      provisional.map(s => {
+        const caps = sa1SubjectMaxima(packet.grade, s.name);
+        return s.name + ': ' +
+          (s.source === 'estimated'
+            ? s.parts.join(' + ') + ' = ' + s.total + '/' +
+              (caps[0] + caps[1]) + ' (FA1/FA2 draft only)'
+            : 'No reliable FA1 and FA2 scores available');
+      }).join('\n') +
+      '\nEnter verified SA1 marks in the school app and send again.';
+    return;
+  }
+
+  const rows = Array.from(document.querySelectorAll('table tr'))
+    .filter(tr => tr.cells && tr.cells.length >= 6);
+
+  const plans = record.subjects.map(subject => {
+    const matching = rows.filter(tr =>
+      subjectCode(tr.cells[1]?.textContent) === subjectCode(subject.name)
+    );
+    if (matching.length !== 1)
+      throw Error('SA1 subject row not uniquely found: ' + subject.name);
+    const row = matching[0];
+    const caps = sa1SubjectMaxima(packet.grade, subject.name);
+
+    const inputs = caps.map((max, i) => {
+      const td = row.cells[i + 4];
+      const input = td?.querySelector('input:not([type="hidden"])');
+      if (!input || input.readOnly || input.disabled)
+        throw Error('SA1 field unavailable: ' + subject.name);
+      const displayMax = td.textContent.match(/\/\s*(\d+)/);
+      const fieldMax = input.max
+        ? Number(input.max)
+        : displayMax ? Number(displayMax[1]) : NaN;
+      if (fieldMax !== max)
+        throw Error('SA1 field maximum mismatch: ' + subject.name +
+          ' (expected ' + max + ')');
+      if (!Number.isInteger(subject.parts[i]) ||
+          subject.parts[i] < 0 || subject.parts[i] > max)
+        throw Error('Invalid SA1 marks: ' + subject.name);
+      return input;
+    });
+    if (subject.parts[0] + subject.parts[1] !== subject.total)
+      throw Error('SA1 total mismatch: ' + subject.name);
+    const attendance = row.cells[2]?.querySelector('select');
+    const yes = attendance && Array.from(attendance.options).find(o =>
+      normal(o.textContent) === 'YES'
+    );
+    if (!attendance || attendance.disabled || !yes)
+      throw Error('SA1 attendance field unavailable: ' + subject.name);
+    return {subject, inputs, attendance, yes};
+  });
+
+  if (!confirm('SA1 attendance verification for ' + record.name +
+    ': Confirm this student ATTENDED EVERY subject listed. ' +
+    'Cancel if absent for any paper. Existing LEAP marks will be replaced.')) {
+    fillStatus.textContent =
+      'SA1 not filled. Verify attendance for each subject manually.';
+    return;
+  }
+
+  for (const p of plans) {
+    if (!p.attendance.isConnected)
+      throw Error('SA1 table refreshed. Select the student again.');
+    changeValue(p.attendance, p.yes.value);
+    p.inputs.forEach((input, i) => {
+      if (!input.isConnected)
+        throw Error('SA1 form refreshed. Select the student again.');
+      changeValue(input, p.subject.parts[i]);
+    });
+  }
+
+  for (const p of plans) {
+    if (p.attendance.value !== p.yes.value ||
+        p.inputs.some((input,i) => Number(input.value) !== p.subject.parts[i]))
+      throw Error('SA1 values not accepted for ' + p.subject.name);
+  }
+
+  const below = plans.filter(p => {
+    const caps = sa1SubjectMaxima(packet.grade, p.subject.name);
+    return p.subject.total < Math.ceil((caps[0]+caps[1]) * .4);
+  });
+  fillStatus.textContent = '✓ Verified SA1 scores filled for ' + record.name +
+    '.\nSubjects: ' + plans.length +
+    (below.length ? '\nBelow 40% (actual marks unchanged): ' +
+      below.map(p=>p.subject.name).join(', ') : '') +
+    '\nReview the values and attendance before pressing Save in LEAP.';
 }
 
 fillBtn.onclick = () => {
@@ -344,6 +461,11 @@ const section = houseMap[sectionName] ||
       );
 
     const record = unique[0];
+
+    if (packet.exam === 'SA1') {
+      fillActualSA1(record);
+      return;
+    }
 
     // Find the subject rows in the loaded LEAP table.
     const rows = Array.from(
@@ -840,7 +962,8 @@ detailsBtn.onclick = async () => {
       'Examination',
       [
         exam,
-        'FORMATIVEASSESSMENT' + examNumber
+        (packet.exam === 'SA1' ? 'SUMMATIVEASSESSMENT' :
+          'FORMATIVEASSESSMENT') + examNumber
       ]
     );
 
