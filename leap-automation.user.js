@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         St Patricks LEAP Automation
 // @namespace    stpatricks-leap
-// @version      1.2.1
-// @description  Teacher-verified FA/SA1 entry with provisional-estimate safeguards
+// @version      1.2.2
+// @description  FA and school-awarded SA1 marks entry with actual-SA1 priority
 // @match        https://messiahsastry.github.io/Question-Bank/excel.html*
 // @match        https://cse.ap.gov.in/loadccemarksentry*
 // @match        https://cse.ap.gov.in/save*
@@ -41,7 +41,7 @@
           Array.isArray(s.parts) &&
           s.parts.length === (p.exam === 'SA1' ? 2 : 4) &&
           (p.exam !== 'SA1' ||
-            ['actual', 'estimated', 'missing'].includes(s.source)) &&
+            ['actual', 'awarded', 'estimated', 'missing'].includes(s.source)) &&
           s.parts.every(n =>
             Number.isInteger(n) && n >= 0
           )
@@ -115,8 +115,8 @@
     `${packet.className} - ${packet.sectionName} - ` +
     `${packet.exam}: ${packet.records.length} students. ` +
     (packet.exam === 'SA1'
-      ? 'Actual SA1 marks can be filled after attendance confirmation. ' +
-        'FA1/FA2 estimates are provisional and cannot be saved by this helper.'
+      ? 'Actual SA-1 marks or school-awarded FA-1/FA-2 marks can be filled. ' +
+        'Any unawarded estimates remain blocked. Check student, attendance and marks before Save.'
       : 'Select a student, tap Get Details, then Fill Marks and verify before saving.');
 
   const clear = document.createElement('button');
@@ -299,10 +299,12 @@ function fillActualSA1(record) {
   if (packet.grade >= 10)
     throw Error('Class 10 SA1 format needs separate verification.');
 
-  const provisional = record.subjects.filter(s => s.source !== 'actual');
+  const provisional = record.subjects.filter(
+    s => s.source !== 'actual' && s.source !== 'awarded'
+  );
   if (provisional.length) {
     fillStatus.textContent =
-      '⚠ SA1 official filling blocked: actual marks missing for ' +
+      '⚠ SA1 filling blocked: school-awarded or actual marks missing for ' +
       record.name + '.\n' +
       provisional.map(s => {
         const caps = sa1SubjectMaxima(packet.grade, s.name);
@@ -312,7 +314,7 @@ function fillActualSA1(record) {
               (caps[0] + caps[1]) + ' (FA1/FA2 draft only)'
             : 'No reliable FA1 and FA2 scores available');
       }).join('\n') +
-      '\nEnter verified SA1 marks in the school app and send again.';
+      '\nComplete the school-awarded SA1 finalisation or enter actual SA1 marks, then Send to LEAP again.';
     return;
   }
 
@@ -381,8 +383,10 @@ function fillActualSA1(record) {
     const caps = sa1SubjectMaxima(packet.grade, p.subject.name);
     return p.subject.total < Math.ceil((caps[0]+caps[1]) * .4);
   });
-  fillStatus.textContent = '✓ Verified SA1 scores filled for ' + record.name +
+  const awardedCount = plans.filter(p => p.subject.source === 'awarded').length;
+  fillStatus.textContent = '✓ SA1 scores filled for ' + record.name +
     '.\nSubjects: ' + plans.length +
+    (awardedCount ? '\nSchool-awarded from FA1/FA2: ' + awardedCount : '') +
     (below.length ? '\nBelow 40% (actual marks unchanged): ' +
       below.map(p=>p.subject.name).join(', ') : '') +
     '\nReview the values and attendance before pressing Save in LEAP.';
