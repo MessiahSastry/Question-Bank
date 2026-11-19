@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         St Patricks LEAP Automation
 // @namespace    stpatricks-leap
-// @version      1.2.4
+// @version      1.2.5
 // @description  FA and school-awarded SA1 marks entry with actual-SA1 priority
 // @match        https://messiahsastry.github.io/Question-Bank/excel.html*
 // @match        https://cse.ap.gov.in/loadccemarksentry*
@@ -488,17 +488,9 @@ async function fillActualSA1(record) {
         '. Do not Save; check the LEAP form.');
   }
 
-  const below = plans.filter(p => {
-    const caps = sa1SubjectMaxima(packet.grade, p.subject.name);
-    return p.subject.total < Math.ceil((caps[0] + caps[1]) * .4);
-  });
-  const awardedCount = plans.filter(p => p.subject.source === 'awarded').length;
-  fillStatus.textContent = '✓ SA1 marks filled for ' + record.name +
-    '.\nSubjects: ' + plans.length +
-    (awardedCount ? '\nSchool-awarded from FA1/FA2: ' + awardedCount : '') +
-    (below.length ? '\nBelow 40% (actual marks unchanged): ' +
-      below.map(p => p.subject.name).join(', ') : '') +
-    '\nWriting languages selected. Check all entries, then press Save in LEAP.';
+  fillStatus.textContent = '✓ ' +
+    packet.exam.replace(/^(FA|SA)([1-4])$/, '$1-$2') +
+    ' marks filled for ' + record.name + '.';
 }
 
 fillBtn.onclick = async () => {
@@ -702,10 +694,9 @@ const section = houseMap[sectionName] ||
       });
     }
 
-    fillStatus.textContent =
-      '✓ Marks filled for ' + record.name +
-      '\nSubjects: ' + plans.length +
-      '\nCheck the entries and tap Save in LEAP.';
+    fillStatus.textContent = '✓ ' +
+      packet.exam.replace(/^(FA|SA)([1-4])$/, '$1-$2') +
+      ' marks filled for ' + record.name + '.';
 
   } catch (error) {
     fillStatus.textContent =
