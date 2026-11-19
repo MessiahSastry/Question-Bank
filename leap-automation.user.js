@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         St Patricks LEAP Automation
 // @namespace    stpatricks-leap
-// @version      1.2.2
+// @version      1.2.3
 // @description  FA and school-awarded SA1 marks entry with actual-SA1 priority
 // @match        https://messiahsastry.github.io/Question-Bank/excel.html*
 // @match        https://cse.ap.gov.in/loadccemarksentry*
@@ -295,18 +295,18 @@ function sa1SubjectMaxima(grade, name) {
 }
 
 // SA1 estimates are review-only. Actual SA1 scores are required for entry.
-function fillActualSA1(record) {
+async function fillActualSA1(record) {
   if (packet.grade >= 10)
     throw Error('Class 10 SA1 format needs separate verification.');
 
-  const provisional = record.subjects.filter(
+  const unawarded = record.subjects.filter(
     s => s.source !== 'actual' && s.source !== 'awarded'
   );
-  if (provisional.length) {
+  if (unawarded.length) {
     fillStatus.textContent =
       '⚠ SA1 filling blocked: school-awarded or actual marks missing for ' +
       record.name + '.\n' +
-      provisional.map(s => {
+      unawarded.map(s => {
         const caps = sa1SubjectMaxima(packet.grade, s.name);
         return s.name + ': ' +
           (s.source === 'estimated'
@@ -314,85 +314,139 @@ function fillActualSA1(record) {
               (caps[0] + caps[1]) + ' (FA1/FA2 draft only)'
             : 'No reliable FA1 and FA2 scores available');
       }).join('\n') +
-      '\nComplete the school-awarded SA1 finalisation or enter actual SA1 marks, then Send to LEAP again.';
+      '\nFinalise school-awarded SA1 marks or enter actual marks, then transfer again.';
     return;
   }
 
-  const rows = Array.from(document.querySelectorAll('table tr'))
-    .filter(tr => tr.cells && tr.cells.length >= 6);
-
-  const plans = record.subjects.map(subject => {
-    const matching = rows.filter(tr =>
-      subjectCode(tr.cells[1]?.textContent) === subjectCode(subject.name)
-    );
-    if (matching.length !== 1)
-      throw Error('SA1 subject row not uniquely found: ' + subject.name);
-    const row = matching[0];
-    const caps = sa1SubjectMaxima(packet.grade, subject.name);
-
-    const inputs = caps.map((max, i) => {
-      const td = row.cells[i + 4];
-      const input = td?.querySelector('input:not([type="hidden"])');
-      if (!input || input.readOnly || input.disabled)
-        throw Error('SA1 field unavailable: ' + subject.name);
-      const displayMax = td.textContent.match(/\/\s*(\d+)/);
-      const fieldMax = input.max
-        ? Number(input.max)
-        : displayMax ? Number(displayMax[1]) : NaN;
-      if (fieldMax !== max)
-        throw Error('SA1 field maximum mismatch: ' + subject.name +
-          ' (expected ' + max + ')');
-      if (!Number.isInteger(subject.parts[i]) ||
-          subject.parts[i] < 0 || subject.parts[i] > max)
-        throw Error('Invalid SA1 marks: ' + subject.name);
-      return input;
-    });
-    if (subject.parts[0] + subject.parts[1] !== subject.total)
-      throw Error('SA1 total mismatch: ' + subject.name);
-    const attendance = row.cells[2]?.querySelector('select');
-    const yes = attendance && Array.from(attendance.options).find(o =>
-      normal(o.textContent) === 'YES'
-    );
-    if (!attendance || attendance.disabled || !yes)
-      throw Error('SA1 attendance field unavailable: ' + subject.name);
-    return {subject, inputs, attendance, yes};
-  });
-
-  // SA1 records with actual exam marks are marked Attended = Yes.
-  // The school is responsible for recording genuine attendance and
-  // entering marks only after the student completes the examination.
-
-  for (const p of plans) {
-    if (!p.attendance.isConnected)
-      throw Error('SA1 table refreshed. Select the student again.');
-    changeValue(p.attendance, p.yes.value);
-    p.inputs.forEach((input, i) => {
-      if (!input.isConnected)
-        throw Error('SA1 form refreshed. Select the student again.');
-      changeValue(input, p.subject.parts[i]);
-    });
+  function subjectRow(name) {
+    const found = Array.from(document.querySelectorAll('table tr'))
+      .filter(tr =>
+        tr.cells && tr.cells.length >= 6 &&
+        subjectCode(tr.cells[1]?.textContent) === subjectCode(name)
+      );
+    if (found.length !== 1)
+      throw Error('SA1 subject row not uniquely found: ' + name);
+    return found[0];
   }
 
-  for (const p of plans) {
-    if (p.attendance.value !== p.yes.value ||
-        p.inputs.some((input,i) => Number(input.value) !== p.subject.parts[i]))
-      throw Error('SA1 values not accepted for ' + p.subject.name);
+  function subjectAttendance(row, name) {
+    const select = row.cells[2]?.querySelector('select');
+    const yes = select && Array.from(select.options).find(o =>
+      normal(o.textContent) === 'YES'
+    );
+    if (!select || select.disabled || !yes)
+      throw Error('SA1 attendance option unavailable: ' + name);
+    return {select, yes};
+  }
+
+  // Validate every score and row BEFORE editing the LEAP form.
+  const plans = record.subjects.map(subject => {
+    const caps = sa1SubjectMaxima(packet.grade, subject.name);
+    if (!Array.isArray(subject.parts) || subject.parts.length !== 2 ||
+        subject.parts.some((value, i) =>
+          !Number.isInteger(value) || value < 0 || value > caps[i]
+        ) ||
+        subject.parts[0] + subject.parts[1] !== subject.total)
+      throw Error('Invalid SA1 marks: ' + subject.name);
+    const row = subjectRow(subject.name);
+    subjectAttendance(row, subject.name);
+    return {subject, caps};
+  });
+
+  // The LEAP page may disable the marks inputs until attendance is Yes.
+  // Select attendance first, then reacquire inputs after the page updates.
+  for (const plan of plans) {
+    const {subject, caps} = plan;
+    let row = subjectRow(subject.name);
+    let {select, yes} = subjectAttendance(row, subject.name);
+
+    if (select.value !== yes.value)
+      changeValue(select, yes.value);
+
+    let inputs = [];
+    let ready = false;
+    for (let attempt = 0; attempt < 6; attempt++) {
+      await new Promise(resolve => setTimeout(resolve, 180));
+      row = subjectRow(subject.name);
+      inputs = caps.map((_, i) => row.cells[i + 4]
+        ?.querySelector('input:not([type="hidden"])'));
+      const selected = row.cells[2]?.querySelector('select');
+      if (selected && normal(selected.selectedOptions[0]?.textContent) === 'YES' &&
+          inputs.every(input =>
+            input && input.isConnected && !input.readOnly && !input.disabled
+          )) {
+        ready = true;
+        break;
+      }
+    }
+
+    if (!ready) {
+      const state = inputs.map((input,i) =>
+        !input ? 'column ' + (i+1) + ': not found' :
+          'column ' + (i+1) +
+          (input.disabled ? ': disabled' :
+           input.readOnly ? ': read-only' : ': ready')
+      ).join(', ');
+      throw Error('SA1 marks fields did not become editable for ' +
+        subject.name + ' after selecting attendance Yes (' + state +
+        '). Do not Save; check the LEAP form.');
+    }
+
+    // Validate the maximum shown by the portal, not only our class format.
+    for (let i = 0; i < caps.length; i++) {
+      const td = row.cells[i + 4];
+      const input = inputs[i];
+      const displayed = td.textContent.match(/\/\s*(\d+)/);
+      const portalMax = input.max
+        ? Number(input.max)
+        : displayed ? Number(displayed[1]) : NaN;
+      if (portalMax !== caps[i])
+        throw Error('SA1 field maximum mismatch: ' + subject.name +
+          ' (expected ' + caps[i] + ', portal: ' + portalMax + ')');
+    }
+
+    // Reacquire each input in case LEAP redraws the row on change.
+    for (let i = 0; i < caps.length; i++) {
+      row = subjectRow(subject.name);
+      const input = row.cells[i + 4]
+        ?.querySelector('input:not([type="hidden"])');
+      if (!input || !input.isConnected || input.readOnly || input.disabled)
+        throw Error('SA1 marks input changed unexpectedly: ' + subject.name);
+      changeValue(input, subject.parts[i]);
+      await new Promise(resolve => setTimeout(resolve, 40));
+    }
+  }
+
+  // Verify all subjects again using fresh DOM references.
+  for (const {subject} of plans) {
+    const row = subjectRow(subject.name);
+    const {select, yes} = subjectAttendance(row, subject.name);
+    const values = subject.parts.map((_,i) =>
+      row.cells[i + 4]?.querySelector('input:not([type="hidden"])')
+    );
+    if (select.value !== yes.value ||
+        values.some((input,i) =>
+          !input || !input.isConnected ||
+          Number(input.value) !== subject.parts[i]
+        ))
+      throw Error('SA1 values not accepted for ' + subject.name +
+        '. Do not Save; check the LEAP form.');
   }
 
   const below = plans.filter(p => {
     const caps = sa1SubjectMaxima(packet.grade, p.subject.name);
-    return p.subject.total < Math.ceil((caps[0]+caps[1]) * .4);
+    return p.subject.total < Math.ceil((caps[0] + caps[1]) * .4);
   });
   const awardedCount = plans.filter(p => p.subject.source === 'awarded').length;
-  fillStatus.textContent = '✓ SA1 scores filled for ' + record.name +
+  fillStatus.textContent = '✓ SA1 marks filled for ' + record.name +
     '.\nSubjects: ' + plans.length +
     (awardedCount ? '\nSchool-awarded from FA1/FA2: ' + awardedCount : '') +
     (below.length ? '\nBelow 40% (actual marks unchanged): ' +
-      below.map(p=>p.subject.name).join(', ') : '') +
-    '\nReview the values and attendance before pressing Save in LEAP.';
+      below.map(p => p.subject.name).join(', ') : '') +
+    '\nCheck attendance and marks, then press Save in LEAP.';
 }
 
-fillBtn.onclick = () => {
+fillBtn.onclick = async () => {
   try {
     const selects = Array.from(
       document.querySelectorAll('select')
@@ -463,7 +517,7 @@ const section = houseMap[sectionName] ||
     const record = unique[0];
 
     if (packet.exam === 'SA1') {
-      fillActualSA1(record);
+      await fillActualSA1(record);
       return;
     }
 
