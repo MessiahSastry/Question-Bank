@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         St Patricks LEAP Automation
 // @namespace    stpatricks-leap
-// @version      1.2.6
+// @version      1.2.7
 // @description  FA and school-awarded SA1 marks entry with actual-SA1 priority
 // @match        https://messiahsastry.github.io/Question-Bank/excel.html*
 // @match        https://cse.ap.gov.in/loadccemarksentry*
@@ -278,6 +278,8 @@ function changeValue(el, value) {
 
   el.dispatchEvent(new Event('input', { bubbles:true }));
   el.dispatchEvent(new Event('change', { bubbles:true }));
+  if (el.tagName === 'INPUT')
+    el.dispatchEvent(new Event('keyup', { bubbles:true }));
 }
 
 
@@ -286,11 +288,53 @@ function sa1SubjectMaxima(grade, name) {
   if (grade <= 7) return [20, 60];
   const code = subjectCode(name);
   if (code === 'PHY' || code === 'BIO') return [10, 30];
-  if (code === 'TEL') return [20, 40];
+  if (code === 'TEL' && normal(name) === 'COMPOSITETELUGU')
+    return [20, 40];
   return [20, 60];
 }
 
-// SA1 estimates are review-only. Actual SA1 scores are required for entry.
+// Preserve the exact source rate when Telugu and Composite Telugu differ.
+function sa1MarksForRow(subject, rowName, grade) {
+  const sourceCaps = sa1SubjectMaxima(grade, subject.name);
+  const caps = sa1SubjectMaxima(grade, rowName);
+  const sourceMax = sourceCaps[0] + sourceCaps[1];
+  if (!['actual', 'awarded'].includes(subject.source) ||
+      !Number.isInteger(subject.total) ||
+      !Array.isArray(subject.parts) || subject.parts.length !== 2 ||
+      subject.parts.some((value, i) =>
+        !Number.isInteger(value) || value < 0 || value > sourceCaps[i]
+      ) ||
+      subject.parts[0] + subject.parts[1] !== subject.total)
+    throw Error('Invalid SA1 marks: ' + subject.name);
+
+  if (subject.source === 'actual' && subject.sourceRate !== undefined &&
+      (!Number.isFinite(subject.sourceRate) || subject.sourceRate < 0 ||
+        subject.sourceRate > 1 ||
+        Math.round(subject.sourceRate * sourceMax) !== subject.total))
+    throw Error('Invalid SA1 source score: ' + subject.name);
+
+  if (sourceCaps.every((maximum, i) => maximum === caps[i]))
+    return {...subject, parts:[...subject.parts]};
+
+  if (subjectCode(subject.name) !== 'TEL' ||
+      subjectCode(rowName) !== 'TEL' || grade < 8 || grade > 9)
+    throw Error('SA1 subject format mismatch: ' + subject.name);
+
+  if (subject.source === 'actual' && subject.sourceRate === undefined)
+    throw Error('Telugu format changed. Return to the School App and ' +
+      'Send to LEAP again before filling.');
+
+  const rate = subject.source === 'actual'
+    ? subject.sourceRate : subject.total / sourceMax;
+  const maximum = caps[0] + caps[1];
+  const total = Math.round(rate * maximum);
+  const first = Math.max(0, Math.min(
+    caps[0], Math.round(total * caps[0] / maximum)
+  ));
+  return {...subject, total, parts:[first, total - first]};
+}
+
+// Only actual or school-awarded SA1 scores can be entered.
 async function fillActualSA1(record) {
   if (packet.grade >= 10)
     throw Error('Class 10 SA1 format needs separate verification.');
@@ -335,60 +379,83 @@ async function fillActualSA1(record) {
     return {select, yes};
   }
 
-  // Writing language is the instruction/answer language for each subject:
-  // Telugu -> Telugu, Hindi -> Hindi, everything else -> English.
-  function requiredWritingLanguage(name) {
-    const code = subjectCode(name);
-    return code === 'TEL' ? 'TELUGU' :
-      code === 'HINDI' ? 'HINDI' : 'ENGLISH';
-  }
-
   function writingLanguage(row, subjectName) {
-    const expected = requiredWritingLanguage(subjectName);
-    const select = row.cells[3]?.querySelector('select');
-    if (!select || select.disabled)
+    const rowName = row.cells[1]?.textContent || subjectName;
+    const code = subjectCode(rowName);
+    const expected = normal(rowName) === 'COMPOSITETELUGU' ? 'NA' :
+      code === 'TEL' ? 'TELUGU' :
+      code === 'HINDI' ? 'HINDI' : 'ENGLISH';
+    const cell = row.cells[3];
+    const select = cell?.querySelector('select');
+    const matches = value => {
+      const key = normal(value);
+      return key === expected ||
+        (expected === 'NA' && key === 'NOTAPPLICABLE');
+    };
+    const accepts = option => option &&
+      (matches(option.textContent) || matches(option.value));
+
+    // Composite Telugu may show fixed NA instead of a dropdown.
+    if (!select) {
+      const fixed = cell?.querySelector('input:not([type="hidden"])');
+      if (expected === 'NA' &&
+          (matches(cell?.textContent) ||
+            (fixed && (fixed.disabled || fixed.readOnly) &&
+              matches(fixed.value))))
+        return {select:null, option:null, expected, accepted:true};
       return null;
+    }
+    const accepted = !!accepts(select.selectedOptions[0]);
+    if (select.disabled)
+      return expected === 'NA' && accepted
+        ? {select:null, option:null, expected, accepted:true} : null;
+
     const option = Array.from(select.options).find(option =>
-      !option.disabled &&
-      (normal(option.textContent) === expected ||
-        normal(option.value) === expected)
+      !option.disabled && accepts(option)
     );
     if (!option)
       throw Error('SA1 writing language ' + expected +
-        ' is not available for ' + subjectName);
-    return {select, option, expected};
+        ' is not available for ' + rowName);
+    return {select, option, expected, accepted};
   }
 
-  // Validate every score and row BEFORE editing the LEAP form.
-  const plans = record.subjects.map(subject => {
-    const caps = sa1SubjectMaxima(packet.grade, subject.name);
-    if (!Array.isArray(subject.parts) || subject.parts.length !== 2 ||
-        subject.parts.some((value, i) =>
-          !Number.isInteger(value) || value < 0 || value > caps[i]
-        ) ||
-        subject.parts[0] + subject.parts[1] !== subject.total)
-      throw Error('Invalid SA1 marks: ' + subject.name);
-    const row = subjectRow(subject.name);
-    subjectAttendance(row, subject.name);
+  function validateMaxima(row, caps, name) {
+    for (let i = 0; i < caps.length; i++) {
+      const td = row.cells[i + 4];
+      const input = td?.querySelector('input:not([type="hidden"])');
+      const displayed = td?.textContent.match(/\/\s*(\d+)/);
+      const printedMax = displayed ? Number(displayed[1]) : NaN;
+      const inputMax = input?.max ? Number(input.max) : NaN;
+      const portalMax = Number.isFinite(inputMax) ? inputMax : printedMax;
+      if (!input || !input.isConnected || portalMax !== caps[i] ||
+          (Number.isFinite(printedMax) && printedMax !== caps[i]))
+        throw Error('SA1 field maximum mismatch: ' + name +
+          ' (expected ' + caps[i] + ', portal: ' + portalMax + ')');
+    }
+  }
+
+  // Check all rows and maxima before changing attendance or marks.
+  const plans = record.subjects.map(source => {
+    const row = subjectRow(source.name);
+    const rowName = row.cells[1]?.textContent || source.name;
+    const caps = sa1SubjectMaxima(packet.grade, rowName);
+    const subject = sa1MarksForRow(source, rowName, packet.grade);
+    subjectAttendance(row, source.name);
+    validateMaxima(row, caps, rowName);
     return {subject, caps};
   });
 
-  // The LEAP page may disable the marks inputs until attendance is Yes.
-  // Select attendance first, then reacquire inputs after the page updates.
-  for (const plan of plans) {
-    const {subject, caps} = plan;
+  for (const {subject, caps} of plans) {
     let row = subjectRow(subject.name);
     let {select, yes} = subjectAttendance(row, subject.name);
-
     if (select.value !== yes.value)
       changeValue(select, yes.value);
 
-    let inputs = [];
     let ready = false;
     for (let attempt = 0; attempt < 6; attempt++) {
       await new Promise(resolve => setTimeout(resolve, 180));
       row = subjectRow(subject.name);
-      inputs = caps.map((_, i) => row.cells[i + 4]
+      const inputs = caps.map((_, i) => row.cells[i + 4]
         ?.querySelector('input:not([type="hidden"])'));
       const selected = row.cells[2]?.querySelector('select');
       if (selected && normal(selected.selectedOptions[0]?.textContent) === 'YES' &&
@@ -399,34 +466,22 @@ async function fillActualSA1(record) {
         break;
       }
     }
-
-    if (!ready) {
-      const state = inputs.map((input,i) =>
-        !input ? 'column ' + (i+1) + ': not found' :
-          'column ' + (i+1) +
-          (input.disabled ? ': disabled' :
-           input.readOnly ? ': read-only' : ': ready')
-      ).join(', ');
+    if (!ready)
       throw Error('SA1 marks fields did not become editable for ' +
-        subject.name + ' after selecting attendance Yes (' + state +
-        '). Do not Save; check the LEAP form.');
-    }
+        subject.name + ' after selecting attendance Yes. Do not Save.');
 
-    // Attendance can also unlock the writing-language dropdown.
-    // Set it before entering marks because LEAP may redraw the row.
     let languageReady = false;
     for (let attempt = 0; attempt < 6; attempt++) {
       row = subjectRow(subject.name);
       const language = writingLanguage(row, subject.name);
       if (language) {
-        if (language.select.value !== language.option.value)
+        if (language.select &&
+            language.select.value !== language.option.value)
           changeValue(language.select, language.option.value);
         await new Promise(resolve => setTimeout(resolve, 90));
         row = subjectRow(subject.name);
         const confirmed = writingLanguage(row, subject.name);
-        if (confirmed &&
-            normal(confirmed.select.selectedOptions[0]?.textContent) ===
-              confirmed.expected) {
+        if (confirmed?.accepted) {
           languageReady = true;
           break;
         }
@@ -437,20 +492,9 @@ async function fillActualSA1(record) {
       throw Error('SA1 writing language was not accepted for ' +
         subject.name + '. Do not Save; check the LEAP form.');
 
-    // Validate the maximum shown by the portal, not only our class format.
-    for (let i = 0; i < caps.length; i++) {
-      const td = row.cells[i + 4];
-      const input = inputs[i];
-      const displayed = td.textContent.match(/\/\s*(\d+)/);
-      const portalMax = input.max
-        ? Number(input.max)
-        : displayed ? Number(displayed[1]) : NaN;
-      if (portalMax !== caps[i])
-        throw Error('SA1 field maximum mismatch: ' + subject.name +
-          ' (expected ' + caps[i] + ', portal: ' + portalMax + ')');
-    }
-
-    // Reacquire each input in case LEAP redraws the row on change.
+    row = subjectRow(subject.name);
+    validateMaxima(row, caps, subject.name);
+    // Language and attendance changes may have replaced the input nodes.
     for (let i = 0; i < caps.length; i++) {
       row = subjectRow(subject.name);
       const input = row.cells[i + 4]
@@ -462,22 +506,20 @@ async function fillActualSA1(record) {
     }
   }
 
-  // Verify all subjects again using fresh DOM references.
-  for (const {subject} of plans) {
+  for (const {subject, caps} of plans) {
     const row = subjectRow(subject.name);
     const {select, yes} = subjectAttendance(row, subject.name);
+    validateMaxima(row, caps, subject.name);
     const values = subject.parts.map((_,i) =>
       row.cells[i + 4]?.querySelector('input:not([type="hidden"])')
     );
     const language = writingLanguage(row, subject.name);
-    if (!language ||
-        normal(language.select.selectedOptions[0]?.textContent) !==
-          language.expected)
+    if (!language?.accepted)
       throw Error('SA1 writing language not retained for ' +
         subject.name + '. Do not Save.');
     if (select.value !== yes.value ||
         values.some((input,i) =>
-          !input || !input.isConnected ||
+          !input || !input.isConnected || input.disabled || input.readOnly ||
           Number(input.value) !== subject.parts[i]
         ))
       throw Error('SA1 values not accepted for ' + subject.name +
