@@ -2091,43 +2091,63 @@ async function fetchEffectiveExamsWrapper(
   window.__omrEffectiveExams = list;
   return list;
 }
-// Loaders
+// Load the complete class catalog rather than a hard-coded name allowlist.
+// The selected class from Students is a default, not a restriction.
 async function loadClasses(){
+  const snap = await schoolYearRef().collection('classes').get();
+  const rows = snap.docs.map(doc => ({
+    id: doc.id,
+    name: String((doc.data() || {}).name || doc.id).trim()
+  })).filter(row => row.name).sort((a,b) =>
+    a.name.localeCompare(b.name,undefined,{numeric:true,sensitivity:'base'})
+  );
 
-  const root = schoolYearRef()
-    .collection('classes');
-
-  const snap = await root.get();
-  // Restrict to 3rd–10th in label, keep original ids
-  const desired = new Set(['3rd Class','4th Class','5th Class','6th Class','7th Class','8th Class','9th Class','10th Class']);
-  const rows = snap.docs
-    .map(d => ({ id:d.id, name:(d.data().name||d.id) }))
-    .filter(x => desired.has(x.name))
-    .sort((a,b)=> (parseInt(a.name) || 0) - (parseInt(b.name) || 0));
- el('classSel').innerHTML =
-  '<option value="">Select Class</option>' +
-  rows.map(r=>`<option value="${r.id}" data-name="${r.name}">${r.name}</option>`).join('');
-refreshCdrop('classSel','cdrop-class');
+  el('classSel').innerHTML =
+    '<option value="">Select Class</option>' +
+    rows.map(row =>
+      `<option value="${escapeHtml(row.id)}" data-name="${escapeHtml(row.name)}">${escapeHtml(row.name)}</option>`
+    ).join('');
+  refreshCdrop('classSel','cdrop-class');
+  return rows;
 }
 
 async function loadSections(classId){
-   el('subjectSel').innerHTML = ''; el('subjectSel').disabled = true; refreshCdrop('subjectSel','cdrop-subject');
-  el('examSel').innerHTML = ''; el('examSel').disabled = true; refreshCdrop('examSel','cdrop-exam');
+  el('subjectSel').innerHTML = '';
+  el('subjectSel').disabled = true;
+  refreshCdrop('subjectSel','cdrop-subject');
+  el('examSel').innerHTML = '';
+  el('examSel').disabled = true;
+  refreshCdrop('examSel','cdrop-exam');
   el('btnKey').disabled = true;
   el('btnScan').disabled = true;
   el('btnViewReports').disabled = true;
   el('btnDownloadExcel').disabled = true;
+  el('btnExamSettings').disabled = true;
 
-  if(!classId){ el('sectionSel').innerHTML=''; return; }
-  const root = schoolYearRef()
-    .collection('classes')
-    .doc(classId)
-    .collection('sections');
-  const snap = await root.orderBy('name').get();
-  el('sectionSel').innerHTML =
-  '<option value="">Select Section</option>' +
-  snap.docs.map(d=>`<option value="${d.id}" data-name="${(d.data().name||d.id)}">${d.data().name||d.id}</option>`).join('');
-refreshCdrop('sectionSel','cdrop-section');
+  const selector=el('sectionSel');
+  selector.innerHTML = '<option value="">Select Section</option>';
+  if(!classId){
+    refreshCdrop('sectionSel','cdrop-section');
+    return [];
+  }
+
+  // A query ordered by "name" omits sections whose documents lack that field.
+  // Get every section and sort client-side, using the document ID as a fallback.
+  const snap=await schoolYearRef().collection('classes').doc(classId)
+    .collection('sections').get();
+  const rows=snap.docs.map(doc=>({
+    id:doc.id,
+    name:String((doc.data() || {}).name || doc.id).trim()
+  })).filter(row=>row.name).sort((a,b)=>
+    a.name.localeCompare(b.name,undefined,{numeric:true,sensitivity:'base'})
+  );
+  selector.innerHTML =
+    '<option value="">Select Section</option>' +
+    rows.map(row=>
+      `<option value="${escapeHtml(row.id)}" data-name="${escapeHtml(row.name)}">${escapeHtml(row.name)}</option>`
+    ).join('');
+  refreshCdrop('sectionSel','cdrop-section');
+  return rows;
 }
 
 async function loadExamsEffective(){
@@ -11060,93 +11080,47 @@ el('reportSearch').oninput = event => {
     const savedSectionName =
       localStorage.getItem('sp_selectedSectionName') || '';
 
-    // ---------------------------------------------
-    // OPENED FROM STUDENTS PAGE
-    // ---------------------------------------------
-    if (
-      savedClassId &&
-      savedSectionId
-    ){
+    // Always show every class and section available in the selected year.
+    // Saved values from Students are used only to preselect the current
+    // classroom, never to replace the dropdown with a single option.
+    await loadClasses();
+    const classSelector=el('classSel');
+    const sectionSelector=el('sectionSel');
+    const savedClassOption=Array.from(classSelector.options)
+      .find(option=>option.value===savedClassId);
 
-      current.classId =
-        savedClassId;
+    if(savedClassOption){
+      classSelector.value=savedClassId;
+      current.classId=savedClassId;
+      current.className=savedClassOption.dataset.name || savedClassName || savedClassId;
+      refreshCdrop('classSel','cdrop-class');
 
-      current.className =
-        savedClassName || savedClassId;
+      await loadSections(savedClassId);
+      const savedSectionOption=Array.from(sectionSelector.options)
+        .find(option=>option.value===savedSectionId && savedSectionId);
 
-      current.sectionId =
-        savedSectionId;
-
-      current.sectionName =
-        savedSectionName || savedSectionId;
-
-
-      // CLASS
-      const classSel =
-        el('classSel');
-
-      classSel.innerHTML = `
-        <option
-          value="${savedClassId}"
-          data-name="${savedClassName}"
-          selected
-        >
-          ${savedClassName || savedClassId}
-        </option>
-      `;
-
-      classSel.value =
-        savedClassId;
-
-      refreshCdrop(
-        'classSel',
-        'cdrop-class'
-      );
-
-
-      // SECTION
-      const sectionSel =
-        el('sectionSel');
-
-      sectionSel.innerHTML = `
-        <option
-          value="${savedSectionId}"
-          data-name="${savedSectionName}"
-          selected
-        >
-          ${savedSectionName || savedSectionId}
-        </option>
-      `;
-
-      sectionSel.value =
-        savedSectionId;
-
-      refreshCdrop(
-        'sectionSel',
-        'cdrop-section'
-      );
-
-
-      // Now load OMR exams belonging to this
-      // class + section.
-      await loadExamsEffective();
-
-
-      el('pickStatus').textContent =
-        `${current.className} – ${current.sectionName} loaded. Choose Exam.`;
-
-    }
-
-    // ---------------------------------------------
-    // OMR OPENED DIRECTLY
-    // ---------------------------------------------
-    else {
-
-      await loadClasses();
-
+      if(savedSectionOption){
+        sectionSelector.value=savedSectionId;
+        current.sectionId=savedSectionId;
+        current.sectionName=savedSectionOption.dataset.name || savedSectionName || savedSectionId;
+        refreshCdrop('sectionSel','cdrop-section');
+        await loadExamsEffective();
+        el('pickStatus').textContent =
+          `${current.className} – ${current.sectionName} loaded. Choose Exam.`;
+      }else{
+        current.sectionId=null;
+        current.sectionName=null;
+        el('pickStatus').textContent =
+          `${current.className} loaded. Choose Section, then Exam.`;
+      }
+    }else{
+      current.classId=null;
+      current.className=null;
+      current.sectionId=null;
+      current.sectionName=null;
+      await loadSections(null);
       el('pickStatus').textContent =
         'Select Class and Section. Then select an exam.';
-
     }
 
   }
