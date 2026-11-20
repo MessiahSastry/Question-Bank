@@ -748,13 +748,32 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
       <div class="toolbar" style="justify-content:flex-end; gap:8px; margin-bottom:10px;">
         <button class="btn" id="btnKeyDownload"><i class="fa fa-file-pdf"></i> Download Key PDF</button>
         <button class="btn" id="btnKeyImport"><i class="fa fa-file-import"></i> Import CSV</button>
+        <button class="btn" id="btnKeyCopy"><i class="fa fa-copy"></i> Copy Key to Other Sections</button>
         <button class="btn primary" id="btnKeySave"><i class="fa fa-save"></i> Save Key</button>
       </div>
       <div id="keyContent">(Key grid appears after template is saved)</div>
     </div>
    </dialog>
 
-   <!-- Answer Key Summary (CampusConnect) -->
+   <dialog id="dlgKeyCopy" class="modal">
+  <header>
+    <div class="title"><div class="h1">Copy Answer Key to Other Sections</div>
+      <div class="sub">Copy saved keys to other sections of the same class</div></div>
+    <button class="icon-btn modal-close" id="btnKeyCopyClose" type="button" aria-label="Close"><i class="fa fa-xmark"></i></button>
+  </header>
+  <div class="content">
+    <div id="keyCopySource" class="status"></div>
+    <div class="sectionTitle" style="margin-top:14px;">Select Destination Sections</div>
+    <div id="keyCopySections" style="margin-top:10px;"></div>
+    <p class="status">Only saved answers (including Either, Multiple Correct and Add Score) are copied. Save source edits first. Scans and student marks are not copied.</p>
+    <div class="toolbar" style="justify-content:flex-end;margin-top:14px;">
+      <button class="btn" type="button" id="btnKeyCopyCancel">Cancel</button>
+      <button class="btn primary" type="button" id="btnKeyCopyConfirm">Copy to Selected Sections</button>
+    </div>
+  </div>
+</dialog>
+
+<!-- Answer Key Summary (CampusConnect) -->
   <dialog id="dlgKeySummary" class="modal">
     <header>
       <div class="title">
@@ -1480,6 +1499,37 @@ function currentExamRef(){
     return teacherCustomExamsRef().doc(docId);
   }
   return schoolExamsRef().doc(current.examId);
+}
+
+// A saved answer key is section-scoped. The old global key is a read-only
+// fallback for legacy exams. Keep scoped keys on the existing exam document
+// to preserve Firestore rules and not change existing result paths.
+function omrSectionKeyId(sectionId){
+  return [currentSchoolId || 'school',academicYear,current.classId,sectionId]
+    .map(safeResultIdPart).join('__');
+}
+function readOmrSectionKey(data,sectionId){
+  data=data && typeof data==='object' ? data : {};
+  const keys=data.answerKeysBySection && typeof data.answerKeysBySection==='object'
+    ? data.answerKeysBySection : {};
+  const id=omrSectionKeyId(sectionId);
+  const key=Object.prototype.hasOwnProperty.call(keys,id) ? keys[id] : data.answerKey;
+  return cloneOmrData(key && typeof key==='object' ? key : {});
+}
+function omrScopedKeyWrite(sectionId,key){
+  const id=omrSectionKeyId(sectionId);
+  return {
+    values:{
+      answerKeysBySection:{[id]:cloneOmrData(key)},
+      answerKeyVersionsBySection:{[id]:firebase.firestore.FieldValue.increment(1)},
+      updatedAt:firebase.firestore.FieldValue.serverTimestamp()
+    },
+    options:{mergeFields:[
+      new firebase.firestore.FieldPath('answerKeysBySection',id),
+      new firebase.firestore.FieldPath('answerKeyVersionsBySection',id),
+      'updatedAt'
+    ]}
+  };
 }
 
 // One common physical OMR template per school + academic year + class + school exam.
@@ -3044,7 +3094,7 @@ el('subtopicSel').addEventListener('change', (e)=>{
         }
       });
 
-      answerKey = d.answerKey || {};
+      answerKey = readOmrSectionKey(d,current.sectionId);
       tpl.commonMasterRois = null;
       tpl.rois = null;
 
@@ -3495,22 +3545,101 @@ el('btnKeySave').onclick = async ()=>{
     alert('The answer key is locked because this exam already has saved scans. Delete the affected scans before changing the key, so old and new scoring cannot be mixed.');
     return;
   }
-  await currentExamRef().set({
-
-  answerKey,
-
-  answerKeyVersion:
-    firebase.firestore.FieldValue.increment(1),
-
-  updatedAt:
-    firebase.firestore
-      .FieldValue
-      .serverTimestamp()
-
-}, {
-  merge:true
-});
+  const save=omrScopedKeyWrite(current.sectionId,answerKey);
+  await currentExamRef().set(save.values,save.options);
   alert('Answer Key saved.');
+};
+
+// Copy only saved keys. Custom exams are teacher-owned and section-specific.
+el('btnKeyCopy').onclick=()=>{
+  if(!current.examId||!current.classId||!current.sectionId||!tpl.sections.length){
+    alert('Choose class, section, exam and subject first.');return;
+  }
+  if(current.isCustomExam){
+    alert('Copying to other sections is supported for common school exams only.');return;
+  }
+  const exam=el('examSel').selectedOptions[0]?.textContent||current.examId;
+  el('keyCopySource').textContent=
+    `Source: ${current.className||current.classId} / ${current.sectionName||current.sectionId} / ${exam} / ${tpl.sections.map(s=>s.name).join(', ')}`;
+  const host=el('keyCopySections');host.innerHTML='';
+  Array.from(el('sectionSel').options)
+    .filter(o=>o.value&&String(o.value)!==String(current.sectionId))
+    .forEach(o=>{
+      const label=document.createElement('label');
+      label.style.cssText='display:flex;align-items:center;gap:10px;padding:12px;margin-bottom:6px;border:1px solid #aeb7c5;border-radius:9px;cursor:pointer;';
+      const box=document.createElement('input');
+      box.type='checkbox';box.className='key-copy-target';box.value=o.value;
+      box.dataset.name=o.dataset.name||o.textContent.trim();
+      const text=document.createElement('span');text.textContent=box.dataset.name;
+      label.append(box,text);host.appendChild(label);
+    });
+  el('btnKeyCopyConfirm').disabled=!host.children.length;
+  if(!host.children.length)host.textContent='No other sections found in this class.';
+  el('dlgKeyCopy').showModal();
+};
+el('btnKeyCopyCancel').onclick=()=>el('dlgKeyCopy').close();
+el('btnKeyCopyClose').onclick=()=>el('dlgKeyCopy').close();
+
+el('btnKeyCopyConfirm').onclick=async()=>{
+  const targets=Array.from(el('keyCopySections').querySelectorAll('.key-copy-target:checked'))
+    .map(x=>({id:x.value,name:x.dataset.name||x.value}));
+  if(!targets.length){alert('Select at least one destination section.');return;}
+  const button=el('btnKeyCopyConfirm');button.disabled=true;
+  const completed=[];
+  try{
+    const ref=currentExamRef(),snap=await ref.get();
+    if(!snap.exists)throw Error('Save the source answer key first.');
+    const data=snap.data()||{},source=readOmrSectionKey(data,current.sectionId);
+    const selected={};
+    for(const section of tpl.sections){
+      const key=source[section.name];
+      if(!key||typeof key!=='object')throw Error(`No saved key for ${section.name}. Click Save Key first.`);
+      const allowed='ABCDEF'.slice(0,Number(section.options)||4).split('');
+      for(let q=1;q<=Number(section.count);q++){
+        const raw=key[q],entry=getOmrKeyDetails(raw);
+        if((!entry.options.length&&!entry.addScore)||
+           entry.options.some(v=>!allowed.includes(v))||
+           (entry.either&&entry.options.length<2)||
+           (raw&&!Array.isArray(raw)&&raw.multiple&&entry.options.length<2)){
+          throw Error(`Incomplete saved key: ${section.name}, question ${q}. Save Key first.`);
+        }
+      }
+      selected[section.name]=cloneOmrData(key);
+    }
+    if(!Object.keys(selected).length)throw Error('No subject keys available.');
+    const results=await ref.collection('results').where('classId','==',current.classId).get();
+    const ids=new Set(targets.map(t=>String(t.id))),locked=new Set();
+    results.docs.forEach(doc=>{
+      const d=doc.data()||{};
+      if(ids.has(String(d.sectionId))&&(!d.academicYear||String(d.academicYear)===String(academicYear))){
+        locked.add(String(d.sectionId));
+      }
+    });
+    if(locked.size)throw Error('Cannot copy over sections with saved OMR scans: '+
+      targets.filter(t=>locked.has(String(t.id))).map(t=>t.name).join(', '));
+    const changed=targets.filter(target=>{
+      const key=readOmrSectionKey(data,target.id);
+      return Object.keys(selected).some(subject=>{
+        const old=key[subject]||{};
+        return Object.keys(old).length>0&&JSON.stringify(old)!==JSON.stringify(selected[subject]);
+      });
+    });
+    if(changed.length&&!confirm('Replace existing subject keys in: '+
+       changed.map(t=>t.name).join(', ')+'?'))return;
+    for(const target of targets){
+      const key=readOmrSectionKey(data,target.id);
+      Object.entries(selected).forEach(([subject,answers])=>{key[subject]=cloneOmrData(answers);});
+      const write=omrScopedKeyWrite(target.id,key);
+      await ref.set(write.values,write.options);
+      completed.push(target.name);
+    }
+    el('dlgKeyCopy').close();
+    alert('Answer key copied to '+completed.join(', ')+'. Student marks and scans are unchanged.');
+  }catch(err){
+    console.error('OMR key copy failed:',err);
+    alert('Copy failed: '+(err.message||String(err))+
+      (completed.length?' Already copied to '+completed.join(', '):''));
+  }finally{button.disabled=false;}
 };
 
 // CSV import: expects rows like: Section, QNo, Answers (e.g., "A" or "A;C")
