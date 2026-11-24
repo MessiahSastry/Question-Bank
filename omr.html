@@ -7534,6 +7534,8 @@ let omrAudioContext = null;
 
 // Fingerprint of the last successfully SAVED sheet
 let lastSavedSheetFingerprint = null;
+let lastDeclinedSheetFingerprint = null;
+const scanReplacementApprovals = new WeakMap();
 
 // Time from which no valid OMR anchors were visible
 let sheetMissingSince = null;
@@ -9493,6 +9495,7 @@ ctx.drawImage(
   ){
 
     lastSavedSheetFingerprint = null;
+    lastDeclinedSheetFingerprint = null;
 
     detectionHistory = [];
 
@@ -9629,6 +9632,12 @@ if (
 }
 
 
+if (lastDeclinedSheetFingerprint && sheetFingerprint === lastDeclinedSheetFingerprint){
+  el('cameraHint').textContent = 'Existing scan kept. Remove this sheet and place the next OMR.';
+  detectionHistory = [];
+  return;
+}
+
 // New sheet detected
 el('cameraHint').textContent =
   `Scan complete — Roll ${roll}, ${Number(score.total || 0).toFixed(2)} marks.`;
@@ -9730,6 +9739,35 @@ catch (err){
     out._previewDataUrl = previewDataUrl;
     out.questionDetails = buildQuestionDetails(out);
 
+    // Check saved results before opening the review; save checks again for safety.
+    if (!out.rollNeedsEdit && Number(out.roll) > 0){
+      let duplicate = null;
+      try {
+        duplicate = (await findExistingOmrScan(out)).duplicateSnap;
+      } catch (err){
+        console.warn('Early duplicate check unavailable; save will check again.', err);
+      }
+      if (!isCameraOpen){ isScanBusy = false; return; }
+      if (duplicate){
+        if (dlg.open) dlg.close();
+        const replace = await appConfirm({
+          title:'OMR Already Scanned',
+          subtitle:`Roll ${out.roll}`,
+          message:'This OMR sheet has already been scanned and saved for this examination. Do you want to replace the existing scan with the new scan?',
+          confirmText:'Yes, Replace',
+          cancelText:'No, Keep Existing'
+        });
+        if (!replace){
+          lastDeclinedSheetFingerprint = sheetFingerprint;
+          detectionHistory = [];
+          el('cameraHint').textContent = 'Existing scan kept. Remove this sheet and place the next OMR.';
+          if (isCameraOpen && !dlg.open) dlg.showModal();
+          isScanBusy = false;
+          return;
+        }
+        scanReplacementApprovals.set(out, duplicate);
+      }
+    }
     showScanReview(out, previewDataUrl);
   }
 
@@ -10234,6 +10272,26 @@ async function uploadScanPreview(out){
 // ===== SAVE SCAN RESULT INTO FIRESTORE (student → marks → examId) =====
 // Only the mapped OMR component is replaced. Manual/descriptive and computed
 // components remain intact, so scanning before or after manual entry is safe.
+async function findExistingOmrScan(out){
+  const resultId = [currentSchoolId, academicYear, out.classId, out.sectionId, out.roll]
+    .map(safeResultIdPart)
+    .join('__');
+  const resultRef = currentExamRef().collection('results').doc(resultId);
+  const legacyRef = currentExamRef().collection('results').doc(String(out.roll));
+  const [existingSnap, legacySnap] = await Promise.all([
+    resultRef.get(),
+    legacyRef.path === resultRef.path ? Promise.resolve(null) : legacyRef.get()
+  ]);
+  const legacyMatches = legacySnap && legacySnap.exists &&
+    String((legacySnap.data() || {}).classId) === String(out.classId) &&
+    String((legacySnap.data() || {}).sectionId) === String(out.sectionId);
+  const duplicateSnap = existingSnap.exists
+    ? existingSnap
+    : (legacyMatches ? legacySnap : null);
+
+  return {resultRef, duplicateSnap};
+}
+
 async function saveScanToFirestore(out) {
   if (!out || Number(out.roll) <= 0) {
     throw new Error('Enter a Roll Number greater than 0 before saving.');
@@ -10251,27 +10309,22 @@ async function saveScanToFirestore(out) {
   }
 
   const marksRef = student.ref.collection('marks').doc(out.examId);
-  const resultId = [currentSchoolId, academicYear, out.classId, out.sectionId, out.roll]
-    .map(safeResultIdPart)
-    .join('__');
-  const resultRef = currentExamRef().collection('results').doc(resultId);
-  const legacyRef = currentExamRef().collection('results').doc(String(out.roll));
-  const [existingSnap, legacySnap] = await Promise.all([
-    resultRef.get(),
-    legacyRef.path === resultRef.path ? Promise.resolve(null) : legacyRef.get()
-  ]);
-  const legacyMatches = legacySnap && legacySnap.exists &&
-    String((legacySnap.data() || {}).classId) === String(out.classId) &&
-    String((legacySnap.data() || {}).sectionId) === String(out.sectionId);
-  const duplicateSnap = existingSnap.exists
-    ? existingSnap
-    : (legacyMatches ? legacySnap : null);
+  const {resultRef, duplicateSnap} = await findExistingOmrScan(out);
 
   if (duplicateSnap){
-    const replace = window.confirm(
-      `Roll ${out.roll} already has a saved scan for this exam. Replace it? The old scan will be kept in history.`
-    );
-    if (!replace) return {saved:false, cancelled:true};
+    const approved = scanReplacementApprovals.get(out);
+    const sameApprovedScan = approved && approved.ref.path === duplicateSnap.ref.path &&
+      JSON.stringify(approved.data()) === JSON.stringify(duplicateSnap.data());
+    if (!sameApprovedScan){
+      const replace = await appConfirm({
+        title:'OMR Already Scanned',
+        subtitle:`Roll ${out.roll}`,
+        message:'This OMR sheet has already been scanned and saved for this examination. Do you want to replace it? The old scan will be kept in history.',
+        confirmText:'Yes, Replace',
+        cancelText:'No, Keep Existing'
+      });
+      if (!replace) return {saved:false, cancelled:true};
+    }
   }
 
   let uploaded = {imageUrl:null, imagePath:null};
