@@ -7529,6 +7529,7 @@ let alignmentCandidate = null;
 let lastFullReadTime = 0;
 let lastReadFeedback = '';
 let omrAudioContext = null;
+let omrRecordedShutter = null;
 
 // ===== DUPLICATE SHEET PROTECTION =====
 
@@ -7600,40 +7601,23 @@ function playOmrSuccessSound(){
     if (!omrAudioContext) return;
 
     const play = () => {
-      const startAt = omrAudioContext.currentTime + 0.015;
-      // Two short, filtered mechanical transients emulate a camera shutter.
+      // Recorded camera shutter supplied by the school (optimized MP3).
       const ctx = omrAudioContext;
-      const clicks = [
-        {offset:0, duration:0.055, frequency:2200, volume:0.48},
-        {offset:0.065, duration:0.045, frequency:1350, volume:0.34}
-      ];
-
-      clicks.forEach(click => {
-        const length = Math.max(1, Math.ceil(ctx.sampleRate * click.duration));
-        const buffer = ctx.createBuffer(1, length, ctx.sampleRate);
-        const samples = buffer.getChannelData(0);
-        for (let i = 0; i < length; i++){
-          const t = i / ctx.sampleRate;
-          samples[i] = (Math.random() * 2 - 1) * Math.exp(-t / 0.009);
-        }
-
+      if (!omrRecordedShutter){
+        const bytes = Uint8Array.from(atob('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'), c => c.charCodeAt(0));
+        omrRecordedShutter = ctx.decodeAudioData(bytes.buffer).catch(err => {
+          omrRecordedShutter = null;
+          console.warn('OMR shutter decode failed:', err);
+          return null;
+        });
+      }
+      omrRecordedShutter.then(buffer => {
+        if (!buffer) return;
         const source = ctx.createBufferSource();
-        const filter = ctx.createBiquadFilter();
-        const gain = ctx.createGain();
         source.buffer = buffer;
-        filter.type = 'bandpass';
-        filter.frequency.value = click.frequency;
-        filter.Q.value = 0.7;
-        gain.gain.value = click.volume;
-        source.connect(filter);
-        filter.connect(gain);
-        gain.connect(ctx.destination);
-        source.start(startAt + click.offset);
-        source.onended = () => {
-          source.disconnect();
-          filter.disconnect();
-          gain.disconnect();
-        };
+        source.connect(ctx.destination);
+        source.onended = () => source.disconnect();
+        source.start();
       });
 
       if (navigator.vibrate){
