@@ -7599,26 +7599,39 @@ function playOmrSuccessSound(){
 
     const play = () => {
       const startAt = omrAudioContext.currentTime + 0.015;
-      const notes = [
-        {frequency:880,  offset:0,    duration:0.075},
-        {frequency:1175, offset:0.09, duration:0.12}
+      // Two short, filtered mechanical transients emulate a camera shutter.
+      const ctx = omrAudioContext;
+      const clicks = [
+        {offset:0, duration:0.055, frequency:2200, volume:0.48},
+        {offset:0.065, duration:0.045, frequency:1350, volume:0.34}
       ];
 
-      notes.forEach(note => {
-        const oscillator = omrAudioContext.createOscillator();
-        const gain = omrAudioContext.createGain();
-        const noteStart = startAt + note.offset;
-        const noteEnd = noteStart + note.duration;
+      clicks.forEach(click => {
+        const length = Math.max(1, Math.ceil(ctx.sampleRate * click.duration));
+        const buffer = ctx.createBuffer(1, length, ctx.sampleRate);
+        const samples = buffer.getChannelData(0);
+        for (let i = 0; i < length; i++){
+          const t = i / ctx.sampleRate;
+          samples[i] = (Math.random() * 2 - 1) * Math.exp(-t / 0.009);
+        }
 
-        oscillator.type = 'sine';
-        oscillator.frequency.setValueAtTime(note.frequency, noteStart);
-        gain.gain.setValueAtTime(0.0001, noteStart);
-        gain.gain.exponentialRampToValueAtTime(0.18, noteStart + 0.012);
-        gain.gain.exponentialRampToValueAtTime(0.0001, noteEnd);
-        oscillator.connect(gain);
-        gain.connect(omrAudioContext.destination);
-        oscillator.start(noteStart);
-        oscillator.stop(noteEnd + 0.02);
+        const source = ctx.createBufferSource();
+        const filter = ctx.createBiquadFilter();
+        const gain = ctx.createGain();
+        source.buffer = buffer;
+        filter.type = 'bandpass';
+        filter.frequency.value = click.frequency;
+        filter.Q.value = 0.7;
+        gain.gain.value = click.volume;
+        source.connect(filter);
+        filter.connect(gain);
+        gain.connect(ctx.destination);
+        source.start(startAt + click.offset);
+        source.onended = () => {
+          source.disconnect();
+          filter.disconnect();
+          gain.disconnect();
+        };
       });
 
       if (navigator.vibrate){
