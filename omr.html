@@ -7523,6 +7523,8 @@ let hiddenCanvas = null;
 let scanLoopId = null;
 let isScanBusy = false;     // true = review dialog open / saving
 let isCameraOpen = false;
+let cameraStartGeneration = 0;
+let cameraStarting = false;
 let noRollStartTime = null; // timer for "no OMR sheet found"
 let detectionHistory = [];  // recent detections for stability gating
 let alignmentCandidate = null;
@@ -9190,14 +9192,27 @@ async function startCameraAutoScan() {
     return;
   }
 
-  // If camera already open, just show dialog again
-  if (isCameraOpen && stream) {
-    dlg.showModal();
+  // Open the dialog before waiting for permission, playback or autofocus.
+  if (cameraStarting) return;
+  if (isCameraOpen && stream && stream.getVideoTracks().some(track => track.readyState === 'live')) {
+    if (!dlg.open) dlg.showModal();
     return;
   }
+  if (stream) stopCameraStream();
+  const generation = ++cameraStartGeneration;
+  cameraStarting = true;
+  isScanBusy = false;
+  btnCap.style.display = 'none';
+  btnCancel.onclick = () => { stopCameraStream(); if (dlg.open) dlg.close(); };
+  dlg.oncancel = () => stopCameraStream();
+  statusEl.textContent = 'Starting camera… Allow camera access if prompted.';
 
   try {
-    stream = await navigator.mediaDevices.getUserMedia({
+    if (!dlg.open) dlg.showModal();
+    video.muted = true;
+    video.autoplay = true;
+    video.setAttribute('playsinline', '');
+    const newStream = await navigator.mediaDevices.getUserMedia({
 
   audio: false,
 
@@ -9223,9 +9238,18 @@ async function startCameraAutoScan() {
 });
 
 
+if (generation !== cameraStartGeneration){
+  newStream.getTracks().forEach(track => track.stop());
+  return;
+}
+stream = newStream;
 video.srcObject = stream;
-
-await video.play();
+statusEl.textContent = 'Camera connected. Starting live preview…';
+await Promise.race([
+  video.play(),
+  new Promise((_, reject) => setTimeout(() => reject(new Error('Camera preview did not start. Close other camera apps and try again.')), 10000))
+]);
+if (generation !== cameraStartGeneration) return;
 
 
 // ------------------------------------------
@@ -9253,13 +9277,10 @@ try {
       caps.focusMode.includes('continuous')
     ) {
 
-      await track.applyConstraints({
-
-        advanced: [{
-          focusMode: 'continuous'
-        }]
-
-      });
+      // Autofocus must never delay opening the live scanner.
+      track.applyConstraints({
+        advanced: [{focusMode: 'continuous'}]
+      }).catch(focusErr => console.warn('Continuous autofocus not supported:', focusErr));
 
     }
   }
@@ -9314,9 +9335,14 @@ statusEl.textContent =
   'Place the complete A4 sheet inside the white frame and align all four black registration squares with the blue boxes.';
 
 
-dlg.showModal();
+if (!dlg.open) dlg.showModal();
+  cameraStarting = false;
   } catch (err) {
-    alert('Camera error: ' + err.message);
+    if (generation !== cameraStartGeneration) return;
+    stopCameraStream();
+    if (dlg.open) dlg.close();
+    console.error('OMR camera startup failed:', err);
+    alert('Camera error: ' + (err.message || err.name || 'Unable to start camera') + '. Check browser camera permission and close other camera apps.');
     return;
   }
 
@@ -9837,6 +9863,9 @@ scanLoopId =
 }
 
 function stopCameraStream() {
+  cameraStartGeneration++;
+  cameraStarting = false;
+  isScanBusy = false;
   isCameraOpen = false;
  if (scanLoopId) {
 
@@ -9961,10 +9990,17 @@ el('btnScan').onclick = async () => {
     alert(`Answer key is incomplete (${missingKey.length} question(s)). Set the key before scanning. First missing: ${missingKey.slice(0, 5).join(', ')}.`);
     return;
   }
-  // Unlock Web Audio during this direct user gesture so the success beep is
-  // permitted later when automatic recognition completes.
-  prepareOmrScanSound();
-  await scanAndSaveOnce();
+  // Audio is optional and must never block camera startup.
+  try { prepareOmrScanSound(); } catch (err) { console.warn('OMR audio unavailable:', err); }
+  try {
+    await scanAndSaveOnce();
+  } catch (err){
+    console.error('Scan & Save startup failed:', err);
+    stopCameraStream();
+    const cameraDialog = el('dlgCamera');
+    if (cameraDialog && cameraDialog.open) cameraDialog.close();
+    alert('Unable to start OMR scanner: ' + (err.message || err));
+  }
 };
 
 // ===== SCORING (per-question status + totals, used by scanner & overlay) =====
