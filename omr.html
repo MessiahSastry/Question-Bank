@@ -1233,6 +1233,9 @@ function cloneOmrData(value){
 // Convert the one common physical answer grid into the currently selected
 // subject. The coordinates stay identical; only the logical section name and
 // unused questions/options are changed for scoring.
+let commonTemplateReadError = '';
+let commonTemplateLegacySubject = null;
+
 function buildActiveRoisFromCommon(){
   const master = tpl.commonMasterRois;
   if (!master || !Array.isArray(master.sections) || !master.sections.length) return null;
@@ -1240,6 +1243,7 @@ function buildActiveRoisFromCommon(){
   if (!Array.isArray(tpl.sections) || tpl.sections.length !== 1) return null;
 
   const target = tpl.sections[0];
+  if (commonTemplateLegacySubject && commonTemplateLegacySubject !== target.name) return null;
   const base = master.sections[0];
   if (!base || !Array.isArray(base.bubbles)) return null;
 
@@ -1263,6 +1267,82 @@ function buildActiveRoisFromCommon(){
   }];
   active.sourceMode = 'common-school-omr';
   return active;
+}
+
+function validCommonRois(rois){
+  return !!(rois && rois.markerMode === 'black-square-v3' && rois.roll &&
+    Array.isArray(rois.sections) && rois.sections.length === 1 &&
+    Array.isArray(rois.sections[0].bubbles) && rois.sections[0].bubbles.length);
+}
+
+async function reloadCommonOmrTemplate(examData){
+  const ref = commonOmrTemplateRef();
+  const section = current.sectionId;
+  const subject = (current.selectedSubjects || [])[0];
+  const stillSelected = () => !current.isCustomExam && current.examId &&
+    commonOmrTemplateRef().path === ref.path && current.sectionId === section;
+  let readError = '';
+  let data = null;
+  try {
+    const snap = await ref.get();
+    if (snap.exists) data = snap.data() || {};
+  } catch (err){
+    readError = String(err.code || err.message || 'read failed');
+  }
+  if (!stillSelected()) return;
+  if (validCommonRois(data && data.rois)){
+    tpl.commonMasterRois = data.rois;
+    commonTemplateLegacySubject = null;
+    commonTemplateReadError = '';
+    if (Number(data.rollDigits)) tpl.rollDigits = Number(data.rollDigits);
+    if (Number(data.bubbleSizeMm)) tpl.bubbleSizeMm = Number(data.bubbleSizeMm);
+    return;
+  }
+  // Reuse an older saved layout only if its class, section, exam and subject
+  // match exactly. Never borrow another class's grid or invent coordinates.
+  if (!examData && subject){
+    try {
+      const snap = await currentExamRef().get();
+      if (snap.exists) examData = snap.data() || {};
+    } catch (err){ console.warn('Legacy OMR lookup failed:', err); }
+  }
+  if (!stillSelected() || subject !== (current.selectedSubjects || [])[0]) return;
+  if (!tpl.commonMasterRois || commonTemplateLegacySubject){
+    tpl.commonMasterRois = null;
+    commonTemplateLegacySubject = null;
+    if (examData && subject && String(examData.classId) === String(current.classId) &&
+        String(examData.sectionId) === String(section) &&
+        String(examData.examId) === String(current.examId) &&
+        validCommonRois(examData.rois) && examData.rois.sections[0].name === subject){
+      tpl.commonMasterRois = examData.rois;
+      commonTemplateLegacySubject = subject;
+    }
+  }
+  commonTemplateReadError = readError || (data ? 'invalid-layout' : 'not-found');
+}
+
+function commonOmrProblem(){
+  const master = tpl.commonMasterRois;
+  if (commonTemplateLegacySubject && commonTemplateLegacySubject !== (current.selectedSubjects || [])[0])
+    return 'No Common OMR is available for this subject. The saved older layout belongs to another subject.';
+  if (!master){
+    if (commonTemplateReadError.includes('permission-denied'))
+      return 'Firebase denied access to the Common OMR template. The administrator must check Firestore read permissions for omrCommonTemplates.';
+    if (commonTemplateReadError === 'invalid-layout')
+      return 'The saved Common OMR template contains invalid or unsupported layout data. The Exam Coordinator must verify the saved template.';
+    if (commonTemplateReadError && commonTemplateReadError !== 'not-found')
+      return 'Could not load Common OMR from Firebase: ' + commonTemplateReadError + '. Check the connection and try again.';
+    return 'No saved Common OMR template found for ' + (current.className || current.classId) + ', ' + academicYear + ', this exam. The Exam Coordinator must generate the Common OMR once for this class and exam.';
+  }
+  if ((current.selectedSubjects || []).length !== 1)
+    return 'Select exactly one subject when using the Common OMR.';
+  const base = master.sections && master.sections[0];
+  const target = tpl.sections && tpl.sections[0];
+  if (base && target && Array.isArray(base.bubbles)){
+    const count = Math.max(0, ...base.bubbles.map(b => Number(b.q) || 0));
+    return 'Common OMR has ' + count + ' questions and ' + (Number(base.options) || 4) + ' options; selected subject requires ' + target.count + ' questions and ' + target.options + ' options. Check Exam Settings against the printed sheet.';
+  }
+  return 'Common OMR layout is incomplete. Ask the Exam Coordinator to check the template.';
 }
 
 function markScannerNotReady(){
@@ -3125,6 +3205,8 @@ el('subtopicSel').addEventListener('change', (e)=>{
 
       answerKey = readOmrSectionKey(d,current.sectionId);
       tpl.commonMasterRois = null;
+      commonTemplateLegacySubject = null;
+      commonTemplateReadError = '';
       tpl.rois = null;
 
       if (current.isCustomExam){
@@ -3157,20 +3239,7 @@ el('subtopicSel').addEventListener('change', (e)=>{
           window.refreshOmrSubjectSelection();
         }
 
-        try {
-          const commonDoc = await commonOmrTemplateRef().get();
-          if (commonDoc.exists){
-            const commonData = commonDoc.data() || {};
-            tpl.commonMasterRois = (
-              commonData.rois && commonData.rois.markerMode === 'black-square-v3'
-            ) ? commonData.rois : null;
-            if (Number(commonData.rollDigits)) tpl.rollDigits = Number(commonData.rollDigits);
-            if (Number(commonData.bubbleSizeMm)) tpl.bubbleSizeMm = Number(commonData.bubbleSizeMm);
-          }
-        }
-        catch (error){
-          console.warn('Could not load common OMR template:', error);
-        }
+        await reloadCommonOmrTemplate(d);
 
         refreshScannerReadiness();
         el('tplStatus').textContent = tpl.commonMasterRois
@@ -5439,6 +5508,8 @@ function loadOmrSingleInkLogo(src,ink){
       }
       else {
         tpl.commonMasterRois = rois;
+        commonTemplateLegacySubject = null;
+        commonTemplateReadError = '';
         tpl.rois = buildActiveRoisFromCommon();
       }
 
@@ -10000,10 +10071,21 @@ el('btnScan').onclick = async event => {
     // Recompute the active common OMR template instead of relying on stale
     // disabled-button state left behind by asynchronous template loading.
     refreshScannerReadiness();
+    if (!tpl.rois && !current.isCustomExam){
+      const requestedPath = commonOmrTemplateRef().path;
+      const requestedSection = current.sectionId;
+      const requestedSubject = current.selectedSubjects.join('|');
+      el('pickStatus').textContent = 'Checking saved Common OMR template…';
+      // Unlock sound before the asynchronous database read.
+      try { prepareOmrScanSound(); } catch (err){ console.warn(err); }
+      await reloadCommonOmrTemplate();
+      if (!current.examId || current.isCustomExam || commonOmrTemplateRef().path !== requestedPath || current.sectionId !== requestedSection || current.selectedSubjects.join('|') !== requestedSubject) return;
+      refreshScannerReadiness();
+    }
     if (!tpl.rois){
       showScannerStartMessage(current.isCustomExam
         ? 'Generate the Custom OMR before scanning.'
-        : 'Common OMR template is missing or incompatible with the selected subject settings. Check Exam Settings and the Common OMR template.');
+        : commonOmrProblem());
       return;
     }
     if (!areOmrPartsReady()){
