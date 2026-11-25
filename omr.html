@@ -1256,17 +1256,18 @@ function buildActiveRoisFromCommon(){
   const masterMaxQuestion = masterQuestions.size ? Math.max(...masterQuestions) : 0;
   const masterOptions = Math.max(2, Math.min(6, Number(base.options) || 4));
 
-  if (wantedCount > masterMaxQuestion || wantedOptions > masterOptions) return null;
+  if (!Number.isInteger(wantedCount) || wantedCount < 1 || wantedCount > masterMaxQuestion || wantedOptions > masterOptions) return null;
 
   const allowed = new Set(['A','B','C','D','E','F'].slice(0, wantedOptions));
+  const requiredBubbles = base.bubbles.filter(b => Number(b.q) >= 1 && Number(b.q) <= wantedCount && allowed.has(String(b.opt)));
+  const bubbleIds = new Set(requiredBubbles.map(b => Number(b.q) + ':' + b.opt));
+  if (bubbleIds.size !== wantedCount * wantedOptions || requiredBubbles.length !== bubbleIds.size) return null;
   const active = cloneOmrData(master);
   active.sections = [{
     ...cloneOmrData(base),
     name: target.name,
     options: wantedOptions,
-    bubbles: base.bubbles.filter(b =>
-      Number(b.q) <= wantedCount && allowed.has(String(b.opt))
-    ).map(cloneOmrData)
+    bubbles: requiredBubbles.map(cloneOmrData)
   }];
   active.sourceMode = 'common-school-omr';
   return active;
@@ -9703,7 +9704,7 @@ const {
     // Create identity of THIS sheet
 const sheetFingerprint =
   buildSheetFingerprint(
-    current.examId,
+    JSON.stringify([current.examId,current.classId,current.sectionId,omrScanScope(current)]),
     roll,
     answers
   );
@@ -9872,7 +9873,7 @@ catch (err){
         const replace = await appConfirm({
           title:'OMR Already Scanned',
           subtitle:`Roll ${out.roll}`,
-          message:'This OMR sheet has already been scanned and saved for this examination. Do you want to replace the existing scan with the new scan?',
+          message:'This OMR sheet has already been scanned and saved for this subject and test. Do you want to replace the existing scan with the new scan?',
           confirmText:'Yes, Replace',
           cancelText:'No, Keep Existing'
         });
@@ -10439,24 +10440,39 @@ async function uploadScanPreview(out){
 // ===== SAVE SCAN RESULT INTO FIRESTORE (student → marks → examId) =====
 // Only the mapped OMR component is replaced. Manual/descriptive and computed
 // components remain intact, so scanning before or after manual entry is safe.
+// Scan identity includes subjects and mapped test types, not just roll.
+function omrScanScope(out){
+  const subjects = Array.isArray(out.selectedSubjects) && out.selectedSubjects.length
+    ? out.selectedSubjects : [out.subjectName].filter(Boolean);
+  return JSON.stringify(subjects.map(name => [
+    omrNorm(name),
+    omrNorm((out.partBySubject || {})[name] || (subjects.length === 1 ? out.subtopicName : '') || '')
+  ]).sort((a,b) => a[0].localeCompare(b[0])));
+}
+function sameOmrScanScope(a,b){
+  return omrScanScope(a) !== '[]' && omrScanScope(a) === omrScanScope(b);
+}
 async function findExistingOmrScan(out){
-  const resultId = [currentSchoolId, academicYear, out.classId, out.sectionId, out.roll]
-    .map(safeResultIdPart)
-    .join('__');
-  const resultRef = currentExamRef().collection('results').doc(resultId);
-  const legacyRef = currentExamRef().collection('results').doc(String(out.roll));
-  const [existingSnap, legacySnap] = await Promise.all([
-    resultRef.get(),
-    legacyRef.path === resultRef.path ? Promise.resolve(null) : legacyRef.get()
+  const baseId = [currentSchoolId, academicYear, out.classId, out.sectionId, out.roll]
+    .map(safeResultIdPart).join('__');
+  const results = currentExamRef().collection('results');
+  const resultRef = results.doc(baseId + '__scope_' + simpleHash(omrScanScope(out)));
+  const [existingSnap, oldSnap, legacySnap] = await Promise.all([
+    resultRef.get(), results.doc(baseId).get(), results.doc(String(out.roll)).get()
   ]);
-  const legacyMatches = legacySnap && legacySnap.exists &&
-    String((legacySnap.data() || {}).classId) === String(out.classId) &&
-    String((legacySnap.data() || {}).sectionId) === String(out.sectionId);
-  const duplicateSnap = existingSnap.exists
-    ? existingSnap
-    : (legacyMatches ? legacySnap : null);
-
-  return {resultRef, duplicateSnap};
+  const matches = snap => {
+    if (!snap || !snap.exists) return false;
+    const data = snap.data() || {};
+    return String(data.classId) === String(out.classId) &&
+      String(data.sectionId) === String(out.sectionId) &&
+      (!data.academicYear || String(data.academicYear) === String(academicYear)) &&
+      sameOmrScanScope(data,out);
+  };
+  if (existingSnap.exists && !matches(existingSnap)) throw new Error('Saved scan identity mismatch. Contact the Exam Coordinator.');
+  if (existingSnap.exists) return {resultRef, duplicateSnap:existingSnap};
+  // Retain the old document and its history if it belongs to this exact test.
+  const duplicateSnap = [oldSnap,legacySnap].find(matches) || null;
+  return {resultRef:duplicateSnap ? duplicateSnap.ref : resultRef, duplicateSnap};
 }
 
 async function saveScanToFirestore(out) {
@@ -10486,7 +10502,7 @@ async function saveScanToFirestore(out) {
       const replace = await appConfirm({
         title:'OMR Already Scanned',
         subtitle:`Roll ${out.roll}`,
-        message:'This OMR sheet has already been scanned and saved for this examination. Do you want to replace it? The old scan will be kept in history.',
+        message:'This OMR sheet has already been scanned and saved for this subject and test. Do you want to replace it? The old scan will be kept in history.',
         confirmText:'Yes, Replace',
         cancelText:'No, Keep Existing'
       });
@@ -11012,7 +11028,8 @@ async function loadReportsFromFirestore(showDialog=true){
     .filter(scan =>
       String(scan.classId) === String(current.classId) &&
       String(scan.sectionId) === String(current.sectionId) &&
-      (!scan.academicYear || String(scan.academicYear) === String(academicYear))
+      (!scan.academicYear || String(scan.academicYear) === String(academicYear)) &&
+      (!(current.selectedSubjects || []).length || sameOmrScanScope(scan,current))
     );
   const scanByStudent = new Map();
   scans.forEach(scan => {
