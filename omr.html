@@ -636,7 +636,7 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
   <button class="btn" id="btnCreateCustomExam" disabled><i class="fa fa-circle-plus"></i> Create Custom Exam</button>
   <button class="btn" id="btnExamSettings" disabled><i class="fa fa-sliders"></i> Exam Settings</button>
   <button class="btn" id="btnKey" disabled><i class="fa fa-key"></i> Set Answer Key</button>
-  <button class="btn primary" id="btnScan" disabled><i class="fa fa-camera"></i> Scan &amp; Save</button>
+  <button class="btn primary" type="button" id="btnScan"><i class="fa fa-camera"></i> Scan &amp; Save</button>
   <button class="btn" id="btnViewReports" disabled><i class="fa fa-list"></i> View Reports</button>
   <button class="btn" id="btnDownloadExcel" disabled style="display:none;"><i class="fa fa-file-excel"></i> Download Excel</button>
 </div>
@@ -1265,9 +1265,17 @@ function buildActiveRoisFromCommon(){
   return active;
 }
 
+function markScannerNotReady(){
+  const button = el('btnScan');
+  if (button){
+    button.disabled = false;
+    button.title = 'Click to check scanner requirements';
+  }
+}
+
 function refreshScannerReadiness(){
   if (!current.examId){
-    el('btnScan').disabled = true;
+    markScannerNotReady();
     return false;
   }
 
@@ -1276,7 +1284,8 @@ function refreshScannerReadiness(){
   }
 
   const ready = !!tpl.rois && areOmrPartsReady();
-  el('btnScan').disabled = !ready;
+  el('btnScan').disabled = false;
+  el('btnScan').title = ready ? 'Open OMR camera' : 'Click to check scanner requirements';
   return ready;
 }
 
@@ -2119,7 +2128,7 @@ async function loadSections(classId){
   el('examSel').disabled = true;
   refreshCdrop('examSel','cdrop-exam');
   el('btnKey').disabled = true;
-  el('btnScan').disabled = true;
+  markScannerNotReady();
   el('btnViewReports').disabled = true;
   el('btnDownloadExcel').disabled = true;
   el('btnExamSettings').disabled = true;
@@ -2164,7 +2173,7 @@ async function loadExamsEffective(){
   refreshCdrop('subjectSel','cdrop-subject');
 
     el('btnKey').disabled = true;
-  el('btnScan').disabled = true;
+  markScannerNotReady();
   el('btnViewReports').disabled = true;
   el('btnDownloadExcel').disabled = true;
   btnES = el('btnExamSettings');
@@ -2305,7 +2314,7 @@ async function loadSubjectsFromExam(examId){
   examCommonSubtopics = [];
 
   el('btnKey').disabled = true;
-  el('btnScan').disabled = true;
+  markScannerNotReady();
   el('btnViewReports').disabled = true;
   el('btnDownloadExcel').disabled = true;
 
@@ -2446,7 +2455,7 @@ async function loadSubjectsFromExam(examId){
 
   // No OMR action until at least one subject is selected
   el('btnKey').disabled = true;
-  el('btnScan').disabled = true;
+  markScannerNotReady();
   el('btnViewReports').disabled = true;
   el('btnDownloadExcel').disabled = true;
 
@@ -2498,7 +2507,7 @@ async function loadSubjectsFromExam(examId){
     el('btnKey').disabled =
       !hasSelection;
 
-        el('btnScan').disabled = true;
+        markScannerNotReady();
 
     el('btnViewReports').disabled =
       !hasSelection;
@@ -2845,7 +2854,7 @@ el('pickStatus').innerHTML =
     el('header-exam').textContent = '';
     el('subjectSel').innerHTML=''; el('subjectSel').disabled=true;
     el('btnKey').disabled = true;
-    el('btnScan').disabled = true;
+    markScannerNotReady();
     el('btnViewReports').disabled = true;
     el('btnDownloadExcel').disabled = true;
     current.isCustomExam = false;
@@ -3030,7 +3039,7 @@ el('subtopicSel').addEventListener('change', (e)=>{
         // A custom exam owns its own printed sheet. Any layout-setting change
         // requires that custom sheet to be generated again.
         tpl.rois = null;
-        el('btnScan').disabled = true;
+        markScannerNotReady();
       }
       else {
         // A common school exam uses the Academic In-charge's permanent common
@@ -9342,7 +9351,7 @@ if (!dlg.open) dlg.showModal();
     stopCameraStream();
     if (dlg.open) dlg.close();
     console.error('OMR camera startup failed:', err);
-    alert('Camera error: ' + (err.message || err.name || 'Unable to start camera') + '. Check browser camera permission and close other camera apps.');
+    showScannerStartMessage('Camera error: ' + (err.message || err.name || 'Unable to start camera') + '. Check browser camera permission and close other camera apps.');
     return;
   }
 
@@ -9969,37 +9978,63 @@ async function scanAndSaveOnce() {
   await startCameraAutoScan();
 }
 
-// Scan & Save button – just starts the continuous scanner
-el('btnScan').onclick = async () => {
-  if (!current.examId) {
-    alert('Pick Class / Section / Exam first');
-    return;
-  }
+// Always respond to the click, even if setup is not yet complete.
+function showScannerStartMessage(message){
+  const status = el('pickStatus');
+  if (status) status.textContent = message;
+  try { alert(message); }
+  catch (err){ console.warn('Could not display scanner message:', err); }
+}
 
-  const missingKey = [];
-  (Array.isArray(tpl.sections) ? tpl.sections : []).forEach(section => {
-    const sectionKey = answerKey[section.name] || {};
-    for (let question = 1; question <= Number(section.count || 0); question++){
-      const details = getOmrKeyDetails(sectionKey[question]);
-      if (!details.options.length && !details.addScore){
-        missingKey.push(`${section.name} Q${question}`);
-      }
-    }
-  });
-  if (missingKey.length){
-    alert(`Answer key is incomplete (${missingKey.length} question(s)). Set the key before scanning. First missing: ${missingKey.slice(0, 5).join(', ')}.`);
-    return;
-  }
-  // Audio is optional and must never block camera startup.
-  try { prepareOmrScanSound(); } catch (err) { console.warn('OMR audio unavailable:', err); }
+el('btnScan').onclick = async event => {
+  event.preventDefault();
   try {
-    await scanAndSaveOnce();
+    if (!currentTeacherId || !current.classId || !current.sectionId || !current.examId){
+      showScannerStartMessage('Select Class, Section and Exam before scanning.');
+      return;
+    }
+    if (!Array.isArray(current.selectedSubjects) || !current.selectedSubjects.length){
+      showScannerStartMessage('Select the Subject before scanning.');
+      return;
+    }
+    // Recompute the active common OMR template instead of relying on stale
+    // disabled-button state left behind by asynchronous template loading.
+    refreshScannerReadiness();
+    if (!tpl.rois){
+      showScannerStartMessage(current.isCustomExam
+        ? 'Generate the Custom OMR before scanning.'
+        : 'Common OMR template is missing or incompatible with the selected subject settings. Check Exam Settings and the Common OMR template.');
+      return;
+    }
+    if (!areOmrPartsReady()){
+      showScannerStartMessage('Select the Test Type for every selected subject before scanning.');
+      return;
+    }
+    const missingKey = [];
+    (Array.isArray(tpl.sections) ? tpl.sections : []).forEach(section => {
+      const sectionKey = (answerKey && answerKey[section.name]) || {};
+      for (let question = 1; question <= Number(section.count || 0); question++){
+        const details = getOmrKeyDetails(sectionKey[question]);
+        if (!details.options.length && !details.addScore){
+          missingKey.push(section.name + ' Q' + question);
+        }
+      }
+    });
+    if (missingKey.length){
+      showScannerStartMessage('Answer key is incomplete (' + missingKey.length + ' question(s)). Set the key before scanning. First missing: ' + missingKey.slice(0, 5).join(', ') + '.');
+      return;
+    }
+    // Start the camera directly from the click, independently of sound.
+    el('pickStatus').textContent = 'Opening OMR camera…';
+    const opening = startCameraAutoScan();
+    try { prepareOmrScanSound(); } catch (err){ console.warn('OMR audio unavailable:', err); }
+    await opening;
   } catch (err){
     console.error('Scan & Save startup failed:', err);
     stopCameraStream();
     const cameraDialog = el('dlgCamera');
     if (cameraDialog && cameraDialog.open) cameraDialog.close();
-    alert('Unable to start OMR scanner: ' + (err.message || err));
+    showScannerStartMessage('Unable to start OMR scanner: ' + (err.message || err));
   }
 };
 
