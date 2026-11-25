@@ -3616,6 +3616,73 @@ function downloadAnswerKeyPdf(){
 
 el('btnKeyDownload').onclick = downloadAnswerKeyPdf;
 
+// Key changes affect only the selected subjects, never the whole exam.
+function omrKeySubjectNames(scan){
+  const names = new Set();
+  const add = value => { if (typeof value === 'string' && value.trim()) names.add(omrNorm(value)); };
+  (Array.isArray(scan.selectedSubjects) ? scan.selectedSubjects : []).forEach(add);
+  add(scan.subjectName);
+  Object.keys(scan.answers || {}).forEach(add);
+  Object.keys((scan.score && scan.score.perSection) || {}).forEach(add);
+  (Array.isArray(scan.questionDetails) ? scan.questionDetails : []).forEach(row => add(row && row.subject));
+  Object.keys(scan.partBySubject || {}).forEach(add);
+  return names;
+}
+function omrScanAffectsSubjects(scan,subjects,sectionId,year){
+  if(String(scan.sectionId)!==String(sectionId) ||
+     (scan.academicYear && String(scan.academicYear)!==String(year))) return false;
+  const names=omrKeySubjectNames(scan);
+  // Unidentified legacy scans cannot be assumed to belong to a different subject.
+  return !names.size || subjects.some(subject=>names.has(omrNorm(subject)));
+}
+function omrCanonicalKey(key){
+  return JSON.stringify(Object.keys(key||{}).sort((a,b)=>Number(a)-Number(b)||a.localeCompare(b)).map(q=>{
+    const details=getOmrKeyDetails(key[q]);
+    return [q,details.options.slice().sort(),details.either,details.addScore];
+  }).filter(row=>row[1].length||row[2]||row[3]));
+}
+function changedOmrKeySubjects(previous,selected){
+  return Object.keys(selected).filter(name=>omrCanonicalKey(previous[name])!==omrCanonicalKey(selected[name]));
+}
+async function omrLockedKeySubjects(resultDocs,sectionId,year,changed){
+  if(!changed.length)return [];
+  const scoped=resultDocs.filter(doc=>{
+    const scan=doc.data()||{};
+    return String(scan.sectionId)===String(sectionId)&&(!scan.academicYear||String(scan.academicYear)===String(year));
+  });
+  const locked=new Set();
+  const check=scan=>changed.forEach(name=>{
+    if(omrScanAffectsSubjects(scan,[name],sectionId,year))locked.add(name);
+  });
+  scoped.forEach(doc=>check(doc.data()||{}));
+  // Older saves reused one result document per student/exam, archiving the
+  // previous subject in history. Check those records as well before changing
+  // an existing key; otherwise an earlier subject's marks may be missed.
+  if(locked.size<changed.length){
+    for(let i=0;i<scoped.length&&locked.size<changed.length;i+=8){
+      const histories=await Promise.all(scoped.slice(i,i+8).map(doc=>doc.ref.collection('history').get()));
+      histories.forEach(history=>history.docs.forEach(doc=>check(doc.data()||{})));
+    }
+  }
+  return [...locked];
+}
+function omrSelectedKeyPatch(sections,key){
+  const patch={};
+  sections.forEach(section=>{
+    const name=section.name;
+    const picked={};
+    for(let q=1;q<=Number(section.count);q++){
+      const raw=(key[name]||{})[q];
+      if(raw!==undefined)picked[q]=cloneOmrData(raw);
+    }
+    patch[name]=picked;
+  });
+  return patch;
+}
+function mergeOmrKeyPatch(previous,selected){
+  return {...previous,...cloneOmrData(selected)};
+}
+
 el('btnKeySave').onclick = async ()=>{
   if(!current.examId) return alert('Pick Class/Section/Exam first');
 
@@ -3631,21 +3698,40 @@ el('btnKeySave').onclick = async ()=>{
       }
     }
   }
-  const savedResults = await currentExamRef().collection('results')
-    .where('classId', '==', current.classId)
-    .get();
-  const hasCurrentResults = savedResults.docs.some(doc => {
-    const data = doc.data() || {};
-    return String(data.sectionId) === String(current.sectionId) &&
-      (!data.academicYear || String(data.academicYear) === String(academicYear));
-  });
-  if (hasCurrentResults){
-    alert('The answer key is locked because this exam already has saved scans. Delete the affected scans before changing the key, so old and new scoring cannot be mixed.');
-    return;
-  }
-  const save=omrScopedKeyWrite(current.sectionId,answerKey);
-  await currentExamRef().set(save.values,save.options);
-  alert('Answer Key saved.');
+  if(!tpl.sections.length)return alert('Select a subject first.');
+  const button=el('btnKeySave');
+  button.disabled=true;
+  try{
+    const ref=currentExamRef(),sectionId=current.sectionId,classId=current.classId,year=academicYear;
+    const patch=omrSelectedKeyPatch(tpl.sections,answerKey);
+    const snap=await ref.get();
+    const previous=readOmrSectionKey(snap.exists?snap.data():{},sectionId);
+    const changed=changedOmrKeySubjects(previous,patch);
+    if(!changed.length){alert('Answer key is already saved. No changes needed.');return;}
+    const savedResults=await ref.collection('results').where('classId','==',classId).get();
+    const locked=await omrLockedKeySubjects(savedResults.docs,sectionId,year,changed);
+    if(locked.length){
+      alert('Answer key locked for '+locked.join(', ')+': this subject already has saved scans. Existing marks are protected. Other subjects can still be saved. Do not delete scans to change the key.');
+      return;
+    }
+    if(current.examId!==ref.id && !current.isCustomExam || current.classId!==classId || current.sectionId!==sectionId || academicYear!==year)throw Error('Selection changed. Reopen the answer key.');
+    // Read the latest section key inside a transaction so saving one subject
+    // cannot overwrite a different teacher's subject key.
+    const merged=await db.runTransaction(async transaction=>{
+      const latest=await transaction.get(ref);
+      const latestKey=readOmrSectionKey(latest.exists?latest.data():{},sectionId);
+      if(changed.some(name=>omrCanonicalKey(latestKey[name])!==omrCanonicalKey(previous[name])))throw Error('Another teacher changed this subject key. Reopen and review it.');
+      const next=mergeOmrKeyPatch(latestKey,Object.fromEntries(changed.map(name=>[name,patch[name]])));
+      const save=omrScopedKeyWrite(sectionId,next);
+      transaction.set(ref,save.values,save.options);
+      return next;
+    });
+    answerKey=merged;
+    alert('Answer key saved for '+changed.join(', ')+'. Other subjects and existing marks are unchanged.');
+  }catch(err){
+    console.error('OMR subject key save failed:',err);
+    alert('Could not save answer key safely: '+(err.message||err));
+  }finally{button.disabled=false;}
 };
 
 // Copy only saved keys. Custom exams are teacher-owned and section-specific.
@@ -3705,34 +3791,35 @@ el('btnKeyCopyConfirm').onclick=async()=>{
       selected[section.name]=cloneOmrData(key);
     }
     if(!Object.keys(selected).length)throw Error('No subject keys available.');
-    const results=await ref.collection('results').where('classId','==',current.classId).get();
-    const ids=new Set(targets.map(t=>String(t.id))),locked=new Set();
-    results.docs.forEach(doc=>{
-      const d=doc.data()||{};
-      if(ids.has(String(d.sectionId))&&(!d.academicYear||String(d.academicYear)===String(academicYear))){
-        locked.add(String(d.sectionId));
-      }
-    });
-    if(locked.size)throw Error('Cannot copy over sections with saved OMR scans: '+
-      targets.filter(t=>locked.has(String(t.id))).map(t=>t.name).join(', '));
-    const changed=targets.filter(target=>{
-      const key=readOmrSectionKey(data,target.id);
-      return Object.keys(selected).some(subject=>{
-        const old=key[subject]||{};
-        return Object.keys(old).length>0&&JSON.stringify(old)!==JSON.stringify(selected[subject]);
-      });
-    });
-    if(changed.length&&!confirm('Replace existing subject keys in: '+
-       changed.map(t=>t.name).join(', ')+'?'))return;
+    const classId=current.classId,year=academicYear,examId=current.examId,sourceSection=current.sectionId;
+    const results=await ref.collection('results').where('classId','==',classId).get();
+    const plans=[],blocked=[];
     for(const target of targets){
-      const key=readOmrSectionKey(data,target.id);
-      Object.entries(selected).forEach(([subject,answers])=>{key[subject]=cloneOmrData(answers);});
-      const write=omrScopedKeyWrite(target.id,key);
-      await ref.set(write.values,write.options);
-      completed.push(target.name);
+      const previous=readOmrSectionKey(data,target.id);
+      const changed=changedOmrKeySubjects(previous,selected);
+      const locked=await omrLockedKeySubjects(results.docs,target.id,year,changed);
+      const allowed=changed.filter(name=>!locked.includes(name));
+      if(locked.length)blocked.push(target.name+': '+locked.join(', '));
+      if(allowed.length)plans.push({target,previous,allowed});
+    }
+    const overwrite=plans.filter(plan=>plan.allowed.some(name=>Object.keys(plan.previous[name]||{}).length));
+    if(overwrite.length&&!confirm('Replace existing subject keys in: '+overwrite.map(plan=>plan.target.name).join(', ')+'?'))return;
+    if(current.classId!==classId||academicYear!==year||current.examId!==examId||current.sectionId!==sourceSection)throw Error('Selection changed. Reopen the answer key.');
+    for(const plan of plans){
+      await db.runTransaction(async transaction=>{
+        const latest=await transaction.get(ref);
+        const key=readOmrSectionKey(latest.exists?latest.data():{},plan.target.id);
+        if(plan.allowed.some(name=>omrCanonicalKey(key[name])!==omrCanonicalKey(plan.previous[name])))throw Error('A destination subject key changed. Reopen and try again.');
+        const patch=Object.fromEntries(plan.allowed.map(name=>[name,selected[name]]));
+        const write=omrScopedKeyWrite(plan.target.id,mergeOmrKeyPatch(key,patch));
+        transaction.set(ref,write.values,write.options);
+      });
+      completed.push(plan.target.name+' ('+plan.allowed.join(', ')+')');
     }
     el('dlgKeyCopy').close();
-    alert('Answer key copied to '+completed.join(', ')+'. Student marks and scans are unchanged.');
+    alert((completed.length?'Answer key copied to '+completed.join('; ')+'. ':'No new keys copied. ')+
+      (blocked.length?'Protected subjects skipped: '+blocked.join('; ')+'. ':'')+
+      'Existing student marks and scans are unchanged.');
   }catch(err){
     console.error('OMR key copy failed:',err);
     alert('Copy failed: '+(err.message||String(err))+
