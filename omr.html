@@ -3625,7 +3625,12 @@ function omrKeySubjectNames(scan){
   Object.keys(scan.answers || {}).forEach(add);
   Object.keys((scan.score && scan.score.perSection) || {}).forEach(add);
   (Array.isArray(scan.questionDetails) ? scan.questionDetails : []).forEach(row => add(row && row.subject));
-  Object.keys(scan.partBySubject || {}).forEach(add);
+  // partBySubject can contain mappings for subjects that were not scanned.
+  // Never use it as positive evidence of an actual scan for those subjects.
+  if(!names.size){
+    const mapped=Object.keys(scan.partBySubject || {});
+    if(mapped.length===1)add(mapped[0]);
+  }
   return names;
 }
 function omrScanAffectsSubjects(scan,subjects,sectionId,year){
@@ -3702,7 +3707,7 @@ el('btnKeySave').onclick = async ()=>{
   const button=el('btnKeySave');
   button.disabled=true;
   try{
-    const ref=currentExamRef(),sectionId=current.sectionId,classId=current.classId,year=academicYear;
+    const ref=currentExamRef(),sectionId=current.sectionId,classId=current.classId,year=academicYear,examId=current.examId;
     const patch=omrSelectedKeyPatch(tpl.sections,answerKey);
     const snap=await ref.get();
     const previous=readOmrSectionKey(snap.exists?snap.data():{},sectionId);
@@ -3714,7 +3719,7 @@ el('btnKeySave').onclick = async ()=>{
       alert('Answer key locked for '+locked.join(', ')+': this subject already has saved scans. Existing marks are protected. Other subjects can still be saved. Do not delete scans to change the key.');
       return;
     }
-    if(current.examId!==ref.id && !current.isCustomExam || current.classId!==classId || current.sectionId!==sectionId || academicYear!==year)throw Error('Selection changed. Reopen the answer key.');
+    if(current.examId!==examId || current.classId!==classId || current.sectionId!==sectionId || academicYear!==year)throw Error('Selection changed. Reopen the answer key.');
     // Read the latest section key inside a transaction so saving one subject
     // cannot overwrite a different teacher's subject key.
     const merged=await db.runTransaction(async transaction=>{
