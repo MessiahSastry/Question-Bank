@@ -657,6 +657,8 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
           </select>
         </label>
         <button class="btn" id="btnGenerate"><i class="fa fa-file-export"></i> Generate OMR (PDF)</button>
+        <button type="button" class="btn" id="btnAdoptCommon" style="display:none">Use Existing OMR School-wide</button>
+        <span id="commonCapacityControls" style="display:none;align-items:center;gap:6px;flex-wrap:wrap"><label>Questions <input id="commonQuestionCapacity" type="number" min="1" max="200" value="60" style="width:70px"></label><label>Options <select id="commonOptionCapacity"><option>2</option><option>3</option><option selected>4</option><option>5</option><option>6</option></select></label></span>
         <span class="status" id="tplStatus">No template yet.</span>
       </div>
       <div class="hr"></div>
@@ -1235,6 +1237,7 @@ function cloneOmrData(value){
 // unused questions/options are changed for scoring.
 let commonTemplateReadError = '';
 let commonTemplateLegacySubject = null;
+let commonTemplateSource = '';
 
 function buildActiveRoisFromCommon(){
   const master = tpl.commonMasterRois;
@@ -1277,9 +1280,9 @@ function validCommonRois(rois){
 
 async function reloadCommonOmrTemplate(examData){
   const ref = commonOmrTemplateRef();
-  const section = current.sectionId;
+  const section = current.sectionId, classId = current.classId, examId = current.examId;
   const subject = (current.selectedSubjects || [])[0];
-  const stillSelected = () => !current.isCustomExam && current.examId &&
+  const stillSelected = () => !current.isCustomExam && current.examId === examId && current.classId === classId &&
     commonOmrTemplateRef().path === ref.path && current.sectionId === section;
   let readError = '';
   let data = null;
@@ -1290,7 +1293,16 @@ async function reloadCommonOmrTemplate(examData){
     readError = String(err.code || err.message || 'read failed');
   }
   if (!stillSelected()) return;
+  let source = 'school-wide';
+  if (!data && !readError){
+    try {
+      const old = await legacyCommonOmrTemplateRef().get();
+      if (old.exists){ data = old.data() || {}; source = 'class-exam'; }
+    } catch (err){ readError = String(err.code || err.message || 'read failed'); }
+  }
+  if (!stillSelected()) return;
   if (validCommonRois(data && data.rois)){
+    commonTemplateSource = source;
     tpl.commonMasterRois = data.rois;
     commonTemplateLegacySubject = null;
     commonTemplateReadError = '';
@@ -1316,6 +1328,7 @@ async function reloadCommonOmrTemplate(examData){
         validCommonRois(examData.rois) && examData.rois.sections[0].name === subject){
       tpl.commonMasterRois = examData.rois;
       commonTemplateLegacySubject = subject;
+      commonTemplateSource = 'legacy-subject';
     }
   }
   commonTemplateReadError = readError || (data ? 'invalid-layout' : 'not-found');
@@ -1332,7 +1345,7 @@ function commonOmrProblem(){
       return 'The saved Common OMR template contains invalid or unsupported layout data. The Exam Coordinator must verify the saved template.';
     if (commonTemplateReadError && commonTemplateReadError !== 'not-found')
       return 'Could not load Common OMR from Firebase: ' + commonTemplateReadError + '. Check the connection and try again.';
-    return 'No saved Common OMR template found for ' + (current.className || current.classId) + ', ' + academicYear + ', this exam. The Exam Coordinator must generate the Common OMR once for this class and exam.';
+    return 'No school-wide Common OMR template found. The Exam Coordinator must generate or adopt one Common OMR for the entire school once.';
   }
   if ((current.selectedSubjects || []).length !== 1)
     return 'Select exactly one subject when using the Common OMR.';
@@ -1384,6 +1397,9 @@ function syncExamModeUi(){
   }
 
   if (!generate) return;
+  const showCommon = !current.isCustomExam && canManageCommonOmr();
+  el('commonCapacityControls').style.display = showCommon ? 'inline-flex' : 'none';
+  el('btnAdoptCommon').style.display = showCommon ? '' : 'none';
 
   // Every teacher may generate an OMR
   // for his/her own Custom Exam.
@@ -1621,16 +1637,15 @@ function omrScopedKeyWrite(sectionId,key){
   };
 }
 
-// One common physical OMR template per school + academic year + class + school exam.
-// Section and subject are intentionally NOT part of the key.
+// Permanent school-wide physical grid, independent of class, exam and year.
 function commonOmrTemplateRef(){
-  if (!current.examId || !current.classId){
-    throw new Error('Class and exam are required for the common OMR template.');
-  }
-  const id = [currentSchoolId, academicYear, current.classId, current.examId]
-    .map(safeResultIdPart)
-    .join('__');
-  return db.collection('omrCommonTemplates').doc(id);
+  return db.collection('omrCommonTemplates').doc([currentSchoolId,'school-wide-v1'].map(safeResultIdPart).join('__'));
+}
+function legacyCommonOmrTemplateRef(){
+  return db.collection('omrCommonTemplates').doc([currentSchoolId,academicYear,current.classId,current.examId].map(safeResultIdPart).join('__'));
+}
+function classOmrConfigId(){
+  return [currentSchoolId,academicYear,current.classId].map(safeResultIdPart).join('__');
 }
 
 // Keep the scanner-owned Subject -> Subtopic mapping available to the
@@ -2679,7 +2694,7 @@ async function loadSubjectsFromExam(examId){
           // Common school exams keep the physical master sheet unchanged.
           el('tplStatus').textContent = tpl.commonMasterRois
             ? 'Common OMR loaded. Configure this subject and scan.'
-            : 'Common OMR has not been generated for this school exam yet.';
+            : 'School-wide Common OMR has not been generated yet.';
         }
       }
 
@@ -3147,7 +3162,7 @@ el('subtopicSel').addEventListener('change', (e)=>{
       }
       else {
         el('tplStatus').textContent =
-          'Subject settings saved. Common OMR has not been generated for this school exam yet.';
+          'Subject settings saved. School-wide Common OMR has not been generated yet.';
       }
     }
 
@@ -3177,6 +3192,9 @@ el('subtopicSel').addEventListener('change', (e)=>{
         payload.rois = tpl.rois || null;
       }
 
+      if (!current.isCustomExam){
+        payload.sectionConfigsByClass = {[classOmrConfigId()]:cloneOmrData(tpl.sectionConfigs || {})};
+      }
       await docRef.set(payload, {merge:true});
     }
 
@@ -3195,9 +3213,11 @@ el('subtopicSel').addEventListener('change', (e)=>{
         d.sectionConfigs && typeof d.sectionConfigs === 'object'
       ) ? cloneOmrData(d.sectionConfigs) : {};
 
+      const scopedConfigs = d.sectionConfigsByClass && d.sectionConfigsByClass[classOmrConfigId()];
+      if (!current.isCustomExam && scopedConfigs && typeof scopedConfigs === 'object') tpl.sectionConfigs = cloneOmrData(scopedConfigs);
       // Backward compatibility: preserve older section settings as per-subject configs.
       const legacySections = Array.isArray(d.sections) ? d.sections : [];
-      legacySections.forEach(section => {
+      (scopedConfigs && !current.isCustomExam ? [] : legacySections).forEach(section => {
         if (section && section.name && !tpl.sectionConfigs[section.name]){
           tpl.sectionConfigs[section.name] = cloneOmrData(section);
         }
@@ -3205,6 +3225,7 @@ el('subtopicSel').addEventListener('change', (e)=>{
 
       answerKey = readOmrSectionKey(d,current.sectionId);
       tpl.commonMasterRois = null;
+      commonTemplateSource = '';
       commonTemplateLegacySubject = null;
       commonTemplateReadError = '';
       tpl.rois = null;
@@ -3244,7 +3265,7 @@ el('subtopicSel').addEventListener('change', (e)=>{
         refreshScannerReadiness();
         el('tplStatus').textContent = tpl.commonMasterRois
           ? 'Common OMR loaded. Select your Subject, set the Answer Key, then Scan.'
-          : 'No Common OMR saved for this school exam yet. Generate it once for all subjects.';
+          : 'No school-wide Common OMR saved. Generate or adopt one once.';
       }
 
       if (!doc.exists && !current.isCustomExam){
@@ -3842,7 +3863,24 @@ function loadOmrSingleInkLogo(src,ink){
   });
 }
         // ===== PDF GENERATION (single-colour OMR layout + existing ROIs) =====
-            el('btnGenerate').onclick = async () => {
+            el('btnAdoptCommon').onclick = async () => {
+  if (!canManageCommonOmr() || current.isCustomExam) return;
+  if (!current.examId || !current.classId) return alert('Select a class and exam whose existing printed Common OMR is correct.');
+  try {
+    const old = await legacyCommonOmrTemplateRef().get();
+    const data = old.exists ? old.data() : null;
+    if (!validCommonRois(data && data.rois)) return alert('No valid older Common OMR exists for this class and exam. Select one that already works or generate a school-wide sheet.');
+    const base = data.rois.sections[0];
+    const count = Math.max(...base.bubbles.map(b => Number(b.q) || 0));
+    const options = Number(base.options) || 4;
+    if (!await appConfirm({title:'School-wide Common OMR',message:'Use this existing '+count+'-question, '+options+'-option layout for the whole school? Confirm only if it matches your printed sheets.',confirmText:'Use School-wide',cancelText:'Cancel'})) return;
+    await commonOmrTemplateRef().set({schoolId:currentSchoolId,scope:'school-wide',markerMode:'black-square-v3',rollDigits:Number(data.rollDigits)||Number(data.rois.roll.cols)||4,bubbleSizeMm:Number(data.bubbleSizeMm)||5.5,questionCapacity:count,optionCapacity:options,rois:data.rois,generatedBy:currentTeacherId,updatedAt:firebase.firestore.FieldValue.serverTimestamp()});
+    await reloadCommonOmrTemplate();
+    refreshScannerReadiness();
+    el('tplStatus').textContent='Existing OMR published school-wide. No reprinting needed for matching sheets.';
+  } catch(err){ alert('Could not publish school-wide template: '+(err.message||err)); }
+};
+el('btnGenerate').onclick = async () => {
 
       console.log('Generate OMR clicked');
 
@@ -3858,22 +3896,14 @@ function loadOmrSingleInkLogo(src,ink){
           );
         }
 
-      if (!current.examId) {
-        alert('Pick Class/Section/Exam first');
-        return;
-      }
-      if (
-        !Array.isArray(current.selectedSubjects) ||
-        !current.selectedSubjects.length
-      ){
-        return alert('Please select at least one Subject.');
-      }
-
-      if (!tpl.sections.length) {
-        return alert(current.isCustomExam
-          ? 'Open Exam Settings and configure your Custom Exam first'
-          : 'Select one subject and configure the Common OMR layout first');
-      }
+      const printingCustom = current.isCustomExam;
+      if (printingCustom && (!current.examId || !tpl.sections.length || !current.selectedSubjects.length)) return alert('Select Class/Section/Exam/Subject and configure your Custom Exam first.');
+      const capacity = Number(el('commonQuestionCapacity').value);
+      const options = Number(el('commonOptionCapacity').value);
+      if (!printingCustom && (!Number.isInteger(capacity) || capacity < 1 || capacity > 200 || !Number.isInteger(options) || options < 2 || options > 6)) return alert('Enter a valid Common OMR capacity.');
+      const printSections = printingCustom ? cloneOmrData(tpl.sections) : [{name:'Common OMR',displayName:'',count:capacity,options,mark:1,negative:0}];
+      const printRollDigits = printingCustom ? tpl.rollDigits : 4;
+      const printBubbleSize = printingCustom ? tpl.bubbleSizeMm : 5.5;
 
       if (!current.isCustomExam){
 
@@ -3901,8 +3931,8 @@ function loadOmrSingleInkLogo(src,ink){
         'Common OMR',
 
       message:
-        `This will create or replace the Common OMR for ${examName}.\n\n` +
-        `The same physical OMR sheet will be used by all subject teachers for scanning.`,
+        `This will create or replace the school-wide Common OMR (${capacity} questions, ${options} options).\n\n` +
+        `All classes, sections, subjects and examinations will use this physical layout. If the layout changes, old printed sheets may no longer match. Use Existing OMR School-wide instead to preserve an existing printed layout.`,
 
       cancelText:
         'Cancel',
@@ -3956,7 +3986,7 @@ function loadOmrSingleInkLogo(src,ink){
 
       // Friendly exam name from dropdown
       const examSel = document.getElementById('examSel');
-      const examLabel = examSel && examSel.selectedOptions[0]
+      const examLabel = !printingCustom ? 'Common OMR Answer Sheet' : examSel && examSel.selectedOptions[0]
         ? examSel.selectedOptions[0].textContent.trim()
         : (current.examId || 'Exam');
 
@@ -3994,7 +4024,7 @@ function loadOmrSingleInkLogo(src,ink){
       doc.setFont('helvetica','normal');
       doc.setFontSize(8);
       doc.setTextColor(23,98,167);
-      doc.text(`Academic Year: ${academicYear}`,cx,titleY+11.3,{align:'center'});
+      doc.text(printingCustom ? `Academic Year: ${academicYear}` : 'For all classes and examinations',cx,titleY+11.3,{align:'center'});
 
       // Exam name in the selected single colour
       doc.setFont('helvetica', 'bold');
@@ -4147,7 +4177,7 @@ function loadOmrSingleInkLogo(src,ink){
 
            // ---------- ROLL NUMBER GRID (vertical 0–9 like sample) ----------
            const rollTop = infoTop + infoH + 6;
-      const cols    = tpl.rollDigits;
+      const cols    = printRollDigits;
       const colW    = 10;
       const rowH    = 6;
 
@@ -4407,7 +4437,7 @@ function loadOmrSingleInkLogo(src,ink){
       // TEST EVALBEE-STYLE VERTICAL-FIRST FLOW
       // ------------------------------------------
       const requestedBubbleDiameterMm =
-        Math.max(4, Math.min(8, Number(tpl.bubbleSizeMm) || 5.5));
+        Math.max(4, Math.min(8, Number(printBubbleSize) || 5.5));
 
       // Keep every visual element around an answer bubble in the same
       // physical scale. Previously only the circle diameter changed, while
@@ -4458,7 +4488,7 @@ function loadOmrSingleInkLogo(src,ink){
         Math.max(0.8, 1.0 * answerBubbleScale);
 
       const totalPrintedQuestions =
-        tpl.sections.reduce(
+        printSections.reduce(
           (sum, sec) => sum + (Number(sec.count) || 0),
           0
         );
@@ -4512,7 +4542,7 @@ function loadOmrSingleInkLogo(src,ink){
         const testMaxOptions =
           Math.max(
             4,
-            ...tpl.sections.map(
+            ...printSections.map(
               sec => Number(sec.options) || 4
             )
           );
@@ -4552,7 +4582,7 @@ function loadOmrSingleInkLogo(src,ink){
         let testColumn = 0;
         let testY = 0;
 
-        for (const sec of tpl.sections){
+        for (const sec of printSections){
 
           const totalBlocks =
             Math.ceil(
@@ -4740,7 +4770,7 @@ function loadOmrSingleInkLogo(src,ink){
       const flowMaxOptions =
         Math.max(
           4,
-          ...tpl.sections.map(
+          ...printSections.map(
             sec => Number(sec.options) || 4
           )
         );
@@ -4794,7 +4824,7 @@ function loadOmrSingleInkLogo(src,ink){
       // ==========================================
 
       const totalFlowBlocks =
-        tpl.sections.reduce(
+        printSections.reduce(
           (sum, sec) =>
             sum +
             Math.ceil(
@@ -4879,7 +4909,7 @@ function loadOmrSingleInkLogo(src,ink){
       }
 
 
-      tpl.sections.forEach(sec => {
+      printSections.forEach(sec => {
 
         const secCount =
           Number(sec.count) || 0;
@@ -4892,7 +4922,7 @@ function loadOmrSingleInkLogo(src,ink){
           );
 
 
-        const printName = current.isCustomExam
+        const printName = printingCustom
           ? (
               Object.prototype.hasOwnProperty.call(sec, 'displayName')
                 ? String(sec.displayName ?? '').trim()
@@ -5083,7 +5113,7 @@ function loadOmrSingleInkLogo(src,ink){
       }
 
 
-      tpl.sections.forEach((sec) => {
+      printSections.forEach((sec) => {
 
         const optCount =
           Number(sec.options) || 4;
@@ -5486,7 +5516,7 @@ function loadOmrSingleInkLogo(src,ink){
       // would also create incomplete scanner ROIs and wrong results.
       const incompleteSectionIndex =
         rois.sections.findIndex((sectionRoi, index) => {
-          const expected = Number(tpl.sections[index] && tpl.sections[index].count) || 0;
+          const expected = Number(printSections[index] && printSections[index].count) || 0;
           const printed = new Set(
             (sectionRoi.bubbles || []).map(bubble => Number(bubble.q))
           ).size;
@@ -5494,7 +5524,7 @@ function loadOmrSingleInkLogo(src,ink){
         });
 
       if (incompleteSectionIndex >= 0){
-        const section = tpl.sections[incompleteSectionIndex] || {};
+        const section = printSections[incompleteSectionIndex] || {};
         throw new Error(
           `The answer grid for ${section.displayName || section.name || 'a subject'} ` +
           'does not fit on one A4 sheet. Reduce the bubble size or question count.'
@@ -5508,6 +5538,7 @@ function loadOmrSingleInkLogo(src,ink){
       }
       else {
         tpl.commonMasterRois = rois;
+        commonTemplateSource = 'school-wide';
         commonTemplateLegacySubject = null;
         commonTemplateReadError = '';
         tpl.rois = buildActiveRoisFromCommon();
@@ -5581,15 +5612,13 @@ function loadOmrSingleInkLogo(src,ink){
           }, {merge:true});
         }
         else {
-          const firstSection = Array.isArray(tpl.sections) && tpl.sections[0] ? tpl.sections[0] : null;
+          const firstSection = printSections[0];
           await commonOmrTemplateRef().set({
             schoolId:currentSchoolId,
-            academicYear,
-            classId:current.classId,
-            examId:current.examId,
+            scope:'school-wide',
             markerMode:'black-square-v3',
-            rollDigits:tpl.rollDigits,
-            bubbleSizeMm:tpl.bubbleSizeMm,
+            rollDigits:printRollDigits,
+            bubbleSizeMm:printBubbleSize,
             questionCapacity:firstSection ? Number(firstSection.count || 0) : 0,
             optionCapacity:firstSection ? Number(firstSection.options || 4) : 4,
             rois,
@@ -5601,7 +5630,7 @@ function loadOmrSingleInkLogo(src,ink){
         refreshScannerReadiness();
         document.getElementById('tplStatus').textContent = current.isCustomExam
           ? 'Custom OMR generated & saved. Ready to scan.'
-          : 'Common OMR generated & saved for all subjects. Ready to scan.';
+          : 'School-wide Common OMR saved. Ready for all classes and exams.';
       }
       catch (err) {
         console.error('Could not save OMR ROIs:', err);
@@ -10073,13 +10102,14 @@ el('btnScan').onclick = async event => {
     refreshScannerReadiness();
     if (!tpl.rois && !current.isCustomExam){
       const requestedPath = commonOmrTemplateRef().path;
+      const requestedClass = current.classId, requestedExam = current.examId;
       const requestedSection = current.sectionId;
       const requestedSubject = current.selectedSubjects.join('|');
       el('pickStatus').textContent = 'Checking saved Common OMR template…';
       // Unlock sound before the asynchronous database read.
       try { prepareOmrScanSound(); } catch (err){ console.warn(err); }
       await reloadCommonOmrTemplate();
-      if (!current.examId || current.isCustomExam || commonOmrTemplateRef().path !== requestedPath || current.sectionId !== requestedSection || current.selectedSubjects.join('|') !== requestedSubject) return;
+      if (!current.examId || current.isCustomExam || current.classId !== requestedClass || current.examId !== requestedExam || commonOmrTemplateRef().path !== requestedPath || current.sectionId !== requestedSection || current.selectedSubjects.join('|') !== requestedSubject) return;
       refreshScannerReadiness();
     }
     if (!tpl.rois){
