@@ -1238,6 +1238,11 @@ function cloneOmrData(value){
 let commonTemplateReadError = '';
 let commonTemplateLegacySubject = null;
 let commonTemplateSource = '';
+let commonTemplateSelectionKey = '';
+const confirmedSharedLayouts = new Set();
+function commonSelectionKey(){
+  return JSON.stringify([currentSchoolId,academicYear,current.classId,current.sectionId,current.examId,current.selectedSubjects || []]);
+}
 
 function buildActiveRoisFromCommon(){
   const master = tpl.commonMasterRois;
@@ -1280,59 +1285,71 @@ function validCommonRois(rois){
 }
 
 async function reloadCommonOmrTemplate(examData){
-  const ref = commonOmrTemplateRef();
-  const section = current.sectionId, classId = current.classId, examId = current.examId;
+  const key = commonSelectionKey();
   const subject = (current.selectedSubjects || [])[0];
-  const stillSelected = () => !current.isCustomExam && current.examId === examId && current.classId === classId &&
-    commonOmrTemplateRef().path === ref.path && current.sectionId === section;
+  const stillSelected = () => !current.isCustomExam && commonSelectionKey() === key;
   let readError = '';
-  let data = null;
-  try {
-    const snap = await ref.get();
-    if (snap.exists) data = snap.data() || {};
-  } catch (err){
-    readError = String(err.code || err.message || 'read failed');
-  }
-  if (!stillSelected()) return;
-  let source = 'school-wide';
-  if (!data && !readError){
-    try {
-      const old = await legacyCommonOmrTemplateRef().get();
-      if (old.exists){ data = old.data() || {}; source = 'class-exam'; }
-    } catch (err){ readError = String(err.code || err.message || 'read failed'); }
-  }
-  if (!stillSelected()) return;
-  if (validCommonRois(data && data.rois)){
-    commonTemplateSource = source;
+  let invalid = false;
+  const apply = (data,source,legacySubject = null) => {
+    if (!stillSelected()) return;
     tpl.commonMasterRois = data.rois;
-    commonTemplateLegacySubject = null;
+    commonTemplateSource = source;
+    commonTemplateLegacySubject = legacySubject;
     commonTemplateReadError = '';
+    commonTemplateSelectionKey = key;
     if (Number(data.rollDigits)) tpl.rollDigits = Number(data.rollDigits);
     if (Number(data.bubbleSizeMm)) tpl.bubbleSizeMm = Number(data.bubbleSizeMm);
-    return;
-  }
-  // Reuse an older saved layout only if its class, section, exam and subject
-  // match exactly. Never borrow another class's grid or invent coordinates.
-  if (!examData && subject){
-    try {
-      const snap = await currentExamRef().get();
-      if (snap.exists) examData = snap.data() || {};
-    } catch (err){ console.warn('Legacy OMR lookup failed:', err); }
-  }
-  if (!stillSelected() || subject !== (current.selectedSubjects || [])[0]) return;
-  if (!tpl.commonMasterRois || commonTemplateLegacySubject){
-    tpl.commonMasterRois = null;
-    commonTemplateLegacySubject = null;
-    if (examData && subject && String(examData.classId) === String(current.classId) &&
-        String(examData.sectionId) === String(section) &&
-        String(examData.examId) === String(current.examId) &&
-        validCommonRois(examData.rois) && examData.rois.sections[0].name === subject){
-      tpl.commonMasterRois = examData.rois;
-      commonTemplateLegacySubject = subject;
-      commonTemplateSource = 'legacy-subject';
+  };
+  // Original coordinates always take precedence over any newly published
+  // school-wide sheet. Do not change or overwrite the existing class/exam doc.
+  try {
+    const original = await legacyCommonOmrTemplateRef().get();
+    if (!stillSelected()) return;
+    if (original.exists){
+      const data = original.data() || {};
+      if (validCommonRois(data.rois)){ apply(data,'class-exam'); return; }
+      invalid = true;
     }
+  } catch(err){ readError = String(err.code || err.message || 'read failed'); }
+  if (!stillSelected()) return;
+  // A denied/unreadable original is not evidence that it does not exist.
+  // Refuse to substitute a different grid when the original cannot be checked.
+  if (!readError && !invalid && subject){
+    try {
+      if (!examData){
+        const snap = await currentExamRef().get();
+        if (snap.exists) examData = snap.data() || {};
+      }
+      if (!stillSelected()) return;
+      if (examData && String(examData.classId) === String(current.classId) &&
+          String(examData.sectionId) === String(current.sectionId) &&
+          String(examData.examId) === String(current.examId) &&
+          validCommonRois(examData.rois) && examData.rois.sections[0].name === subject){
+        apply(examData,'legacy-subject',subject); return;
+      }
+    } catch(err){ readError = String(err.code || err.message || 'read failed'); }
   }
-  commonTemplateReadError = readError || (data ? 'invalid-layout' : 'not-found');
+  if (!stillSelected()) return;
+  // Only if the original is absent, allow the shared grid. The teacher must
+  // confirm that the actual printed paper matches before scanning.
+  if (!readError && !invalid){
+    try {
+      const shared = await commonOmrTemplateRef().get();
+      if (!stillSelected()) return;
+      if (shared.exists){
+        const data = shared.data() || {};
+        if (validCommonRois(data.rois)){ apply(data,'school-wide'); return; }
+        invalid = true;
+      }
+    } catch(err){ readError = String(err.code || err.message || 'read failed'); }
+  }
+  if (!stillSelected()) return;
+  tpl.commonMasterRois = null;
+  tpl.rois = null;
+  commonTemplateSource = '';
+  commonTemplateLegacySubject = null;
+  commonTemplateSelectionKey = key;
+  commonTemplateReadError = readError || (invalid ? 'invalid-layout' : 'not-found');
 }
 
 function commonOmrProblem(){
@@ -1346,7 +1363,7 @@ function commonOmrProblem(){
       return 'The saved Common OMR template contains invalid or unsupported layout data. The Exam Coordinator must verify the saved template.';
     if (commonTemplateReadError && commonTemplateReadError !== 'not-found')
       return 'Could not load Common OMR from Firebase: ' + commonTemplateReadError + '. Check the connection and try again.';
-    return 'No school-wide Common OMR template found. The Exam Coordinator must generate or adopt one Common OMR for the entire school once.';
+    return 'No original or school-wide OMR template found. Do not generate a different sheet for completed examinations. The Exam Coordinator can adopt a matching existing template; if none is available, recover the original PDF layout first.';
   }
   if ((current.selectedSubjects || []).length !== 1)
     return 'Select exactly one subject when using the Common OMR.';
@@ -3227,6 +3244,7 @@ el('subtopicSel').addEventListener('change', (e)=>{
       answerKey = readOmrSectionKey(d,current.sectionId);
       tpl.commonMasterRois = null;
       commonTemplateSource = '';
+      commonTemplateSelectionKey = '';
       commonTemplateLegacySubject = null;
       commonTemplateReadError = '';
       tpl.rois = null;
@@ -3265,7 +3283,7 @@ el('subtopicSel').addEventListener('change', (e)=>{
 
         refreshScannerReadiness();
         el('tplStatus').textContent = tpl.commonMasterRois
-          ? 'Common OMR loaded. Select your Subject, set the Answer Key, then Scan.'
+          ? (commonTemplateSource === 'class-exam' ? 'Original class/exam OMR loaded. Existing printed sheets retained.' : 'School-wide OMR loaded. Confirm that the printed sheet matches before scanning.')
           : 'No school-wide Common OMR saved. Generate or adopt one once.';
       }
 
@@ -5532,18 +5550,9 @@ el('btnGenerate').onclick = async () => {
         );
       }
 
-      // Save ROIs locally first. A common school exam keeps this as the
-      // permanent master grid and derives a subject-specific logical view.
-      if (current.isCustomExam){
-        tpl.rois = rois;
-      }
-      else {
-        tpl.commonMasterRois = rois;
-        commonTemplateSource = 'school-wide';
-        commonTemplateLegacySubject = null;
-        commonTemplateReadError = '';
-        tpl.rois = buildActiveRoisFromCommon();
-      }
+      // Do not replace the active original grid when producing a new shared PDF.
+      // The saved template is reloaded only after Firebase confirms the write.
+      if (printingCustom) tpl.rois = rois;
 
            // ---------- CREATE PDF BLOB ----------
       const pdfBlob = doc.output('blob');
@@ -5628,6 +5637,7 @@ el('btnGenerate').onclick = async () => {
           }, {merge:true});
         }
 
+        if (!printingCustom && current.examId && current.classId && !current.isCustomExam) await reloadCommonOmrTemplate();
         refreshScannerReadiness();
         document.getElementById('tplStatus').textContent = current.isCustomExam
           ? 'Custom OMR generated & saved. Ready to scan.'
@@ -10101,7 +10111,7 @@ el('btnScan').onclick = async event => {
     // Recompute the active common OMR template instead of relying on stale
     // disabled-button state left behind by asynchronous template loading.
     refreshScannerReadiness();
-    if (!tpl.rois && !current.isCustomExam){
+    if (!current.isCustomExam && (!tpl.rois || commonTemplateSelectionKey !== commonSelectionKey())){
       const requestedPath = commonOmrTemplateRef().path;
       const requestedClass = current.classId, requestedExam = current.examId;
       const requestedSection = current.sectionId;
@@ -10136,6 +10146,17 @@ el('btnScan').onclick = async event => {
     if (missingKey.length){
       showScannerStartMessage('Answer key is incomplete (' + missingKey.length + ' question(s)). Set the key before scanning. First missing: ' + missingKey.slice(0, 5).join(', ') + '.');
       return;
+    }
+    if (!current.isCustomExam && commonTemplateSource === 'school-wide'){
+      const master = tpl.commonMasterRois;
+      const base = master.sections[0];
+      const count = Math.max(...base.bubbles.map(b => Number(b.q) || 0));
+      const confirmationKey = commonSelectionKey() + ':' + simpleHash(JSON.stringify(master));
+      if (!confirmedSharedLayouts.has(confirmationKey)){
+        const accepted = await appConfirm({title:'Confirm Printed OMR Layout',subtitle:'Original class/exam template not found',message:'The school-wide layout has ' + count + ' printed questions and ' + base.options + ' options. Continue only if the physical sheet has exactly the same bubble positions and layout. If unsure, cancel and ask the Exam Coordinator to verify the original printed sheet.',confirmText:'Layout Matches — Scan',cancelText:'Cancel'});
+        if (!accepted || commonSelectionKey() + ':' + simpleHash(JSON.stringify(tpl.commonMasterRois)) !== confirmationKey) return;
+        confirmedSharedLayouts.add(confirmationKey);
+      }
     }
     // Start the camera directly from the click, independently of sound.
     el('pickStatus').textContent = 'Opening OMR camera…';
