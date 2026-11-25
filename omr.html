@@ -8009,6 +8009,150 @@ function registerStableDetection(candidate) {
 // - photocopies
 // - different printers
 
+// Locate the printed circle edge, not the darkness at its centre.
+// This keeps blank rings, folds and neighbouring options from becoming marks.
+const OMR_RING_DIRECTIONS = Array.from({length:16},(_,i) => [
+  Math.cos(i*Math.PI/8), Math.sin(i*Math.PI/8)
+]);
+function omrBubbleKey(x,y){ return Math.round(x*1000)+':'+Math.round(y*1000); }
+function omrBubblePoint(x,y,anchors){
+  const calibrated = anchors && anchors.bubbleCenters;
+  return (calibrated && calibrated.get(omrBubbleKey(x,y))) || mapPageMmToPixel(x,y,anchors);
+}
+function omrRingEvidence(sample,x,y,r){
+  let sum=0, edges=0;
+  const quadrants=[0,0,0,0];
+  for(let i=0;i<OMR_RING_DIRECTIONS.length;i++){
+    const [dx,dy]=OMR_RING_DIRECTIONS[i];
+    const rim=Math.min(sample(x+dx*r*.91,y+dy*r*.91),sample(x+dx*r,y+dy*r),sample(x+dx*r*1.08,y+dy*r*1.08));
+    const paper=sample(x+dx*r*1.32,y+dy*r*1.32);
+    const contrast=Math.max(0,Math.min(90,paper-rim));
+    sum+=contrast;
+    if(contrast>=15){edges++;quadrants[Math.floor(i/4)]++;}
+  }
+  const coverage=quadrants.filter(n=>n>=2).length;
+  const score=sum/16 * (edges/16) * (coverage/4);
+  return {score,verified:edges>=9 && coverage>=3 && score>=11};
+}
+function calibrateOmrBubbleCenters(ctx,rois,anchors,defaultRollDigits){
+  if(!rois || !anchors || !Array.isArray(rois.sections)) return {ok:false,reason:'OMR layout is missing.'};
+  const w=ctx.canvas.width,h=ctx.canvas.height;
+  const pixels=ctx.getImageData(0,0,w,h).data;
+  const sample=(x,y)=>{
+    x=Math.round(x);y=Math.round(y);
+    if(x<0||y<0||x>=w||y>=h)return 255;
+    return pixels[(y*w+x)*4];
+  };
+  const scale=getPageScaleFromAnchors(anchors).scaleAvg;
+  if(!Number.isFinite(scale)||scale<=0)return {ok:false,reason:'Invalid image scale.'};
+  const groups=[];
+  const mm=25.4/300;
+  const make=(x,y,r)=>{
+    if(!Number.isFinite(x)||!Number.isFinite(y)||!Number.isFinite(r)||r<=0)return null;
+    const p=mapPageMmToPixel(x,y,anchors);
+    return {key:omrBubbleKey(x,y),x:p.x,y:p.y,r:r*scale};
+  };
+  for(const section of rois.sections){
+    const rows=new Map();
+    for(const b of (section.bubbles||[])){
+      const x=b.xMm??(b.cx!=null?b.cx*mm:NaN);
+      const y=b.yMm??(b.cy!=null?b.cy*mm:NaN);
+      const r=b.rMm??(b.r!=null?b.r*mm:2.1);
+      const p=make(x,y,r);
+      if(!p)return {ok:false,reason:'Invalid stored bubble positions.'};
+      if(!rows.has(b.q))rows.set(b.q,[]);
+      rows.get(b.q).push(p);
+    }
+    groups.push(...rows.values());
+  }
+  const roll=rois.roll;
+  if(roll){
+    const x=roll.xMm??roll.x,y=roll.yMm??roll.y;
+    const cw=roll.colWmm??(roll.colW||10),rh=roll.rowHmm??(roll.rowH||6);
+    const gap=roll.gapMm??3,cols=roll.cols||defaultRollDigits||4;
+    for(let c=0;c<cols;c++){
+      const column=[];
+      for(let digit=0;digit<10;digit++){
+        const p=make(x+c*(cw+gap)+cw/2,y+digit*rh,2.2);
+        if(!p)return {ok:false,reason:'Invalid roll-number layout.'};
+        column.push(p);
+      }
+      // Small groups allow for local curvature in the roll-number grid.
+      groups.push(column.slice(0,5),column.slice(5));
+    }
+  }
+  if(!groups.length)return {ok:false,reason:'No bubbles in saved layout.'};
+  const centers=new Map();
+  let total=0,verifiedTotal=0;
+  for(const group of groups){
+    const minR=Math.min(...group.map(p=>p.r));
+    // Never search far enough to jump to an adjacent printed option.
+    let spacing=Infinity;
+    for(let i=0;i<group.length;i++)for(let j=i+1;j<group.length;j++){
+      spacing=Math.min(spacing,Math.hypot(group[i].x-group[j].x,group[i].y-group[j].y));
+    }
+    const limit=Math.max(1,Math.min(minR*.88,spacing*.32,12));
+    const evaluate=(dx,dy)=>{
+      let value=0,verified=0;
+      for(const p of group){
+        const e=omrRingEvidence(sample,p.x+dx,p.y+dy,p.r);
+        value+=e.score;
+        if(e.verified)verified++;
+      }
+      return {dx,dy,verified,value:value/group.length+verified/group.length*12-Math.hypot(dx,dy)*.14};
+    };
+    let best=evaluate(0,0);
+    const step=2;
+    for(let dy=-Math.floor(limit);dy<=limit;dy+=step){
+      for(let dx=-Math.floor(limit);dx<=limit;dx+=step){
+        if(Math.hypot(dx,dy)>limit)continue;
+        const e=evaluate(dx,dy);
+        if(e.value>best.value)best=e;
+      }
+    }
+    const coarse=best;
+    for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){
+      const x=coarse.dx+dx,y=coarse.dy+dy;
+      if(Math.hypot(x,y)>limit)continue;
+      const e=evaluate(x,y);
+      if(e.value>best.value)best=e;
+    }
+    let groupVerified=0;
+    for(const p of group){
+      let chosen={x:p.x+best.dx,y:p.y+best.dy};
+      let evidence=omrRingEvidence(sample,chosen.x,chosen.y,p.r);
+      const origin={...chosen};
+      const fineLimit=Math.min(2,Math.floor(p.r*.25));
+      for(let dy=-fineLimit;dy<=fineLimit;dy++)for(let dx=-fineLimit;dx<=fineLimit;dx++){
+        if(Math.hypot(best.dx+dx,best.dy+dy)>limit)continue;
+        const e=omrRingEvidence(sample,origin.x+dx,origin.y+dy,p.r);
+        if(e.score>evidence.score+1.5){
+          chosen={x:origin.x+dx,y:origin.y+dy};evidence=e;
+        }
+      }
+      centers.set(p.key,{...chosen,verified:evidence.verified});
+      if(evidence.verified)groupVerified++;
+    }
+    if(groupVerified<Math.ceil(group.length*.70)){
+      return {ok:false,reason:'Printed bubble positions are unclear or do not match the saved OMR layout.'};
+    }
+    total+=group.length;verifiedTotal+=groupVerified;
+  }
+  if(verifiedTotal/total<.85)return {ok:false,reason:'Too many unclear printed bubbles. Flatten the paper and improve lighting.'};
+  anchors.bubbleCenters=centers;
+  return {ok:true,coverage:verifiedTotal/total};
+}
+
+function registerVerifiedOmrRead(history,candidate,frameTime,now){
+  const last=history[history.length-1];
+  if(last && frameTime===last.frameTime)return false;
+  if(last && (now-last.now>3500 || last.fingerprint!==candidate.fingerprint || Math.abs(last.total-candidate.total)>.001))history.length=0;
+  history.push({...candidate,frameTime,now});
+  if(history.length<3)return false;
+  history.length=0;
+  return true;
+}
+
 function getBubbleFillMetrics(ctx, cx, cy, r){
 
   const canvasW = ctx.canvas.width;
@@ -8564,7 +8708,7 @@ async function decodeRoll(
 
 
       const pt =
-        mapPageMmToPixel(
+        omrBubblePoint(
           centerMmX,
           centerMmY,
           anchors
@@ -8587,7 +8731,7 @@ async function decodeRoll(
 
       // Roll digits use the same strict centre-only rule. This prevents the
       // printed ring from being mistaken for a shaded digit.
-      const filled =
+      const filled = pt.verified !== false && (
         (
           metrics.centerFillRatio >= 0.54 &&
           metrics.fillRatio >= 0.38 &&
@@ -8600,9 +8744,9 @@ async function decodeRoll(
           metrics.fillRatio >= 0.32 &&
           metrics.centerContrast >= 48 &&
           metrics.contrast >= 32
-        );
+        ));
 
-
+      if (pt.verified === false && metrics.centerFillRatio >= .32 && metrics.centerContrast >= 22) return null;
       candidates.push({
 
         digit:r,
@@ -8818,6 +8962,7 @@ function decodeAnswersFromFrame(
 
   const answers = {};
   const uncertain = [];
+  let alignmentUncertain = 0;
 
   if (
     !rois ||
@@ -8938,7 +9083,7 @@ function decodeAnswersFromFrame(
 
 
         const pt =
-          mapPageMmToPixel(
+          omrBubblePoint(
             xMm,
             yMm,
             anchors
@@ -8961,6 +9106,7 @@ function decodeAnswersFromFrame(
 
         measured.push({
           opt:b.opt,
+          alignmentVerified:pt.verified !== false,
           fillRatio:metrics.fillRatio,
           centerFillRatio:metrics.centerFillRatio,
           contrast:metrics.contrast,
@@ -8970,7 +9116,10 @@ function decodeAnswersFromFrame(
       }
 
       classifyQuestionBubbles(measured).forEach(result => {
-        if (result.filled){
+        if (result.filled && !result.alignmentVerified){
+          alignmentUncertain++;
+        }
+        else if (result.filled){
           chosen.push(result.opt);
         }
         else if (result.uncertain){
@@ -9000,7 +9149,8 @@ function decodeAnswersFromFrame(
 
   lastBubbleRecognitionMeta = {
     uncertainCount:uncertain.length,
-    uncertain
+    uncertain,
+    alignmentUncertain
   };
   return answers;
 }
@@ -9120,7 +9270,7 @@ function drawAnswerOverlayFromROIs(
 
       if (xMm == null || yMm == null) continue;
 
-      const point = mapPageMmToPixel(xMm, yMm, anchors);
+      const point = omrBubblePoint(xMm, yMm, anchors);
       // Keep the review ring close to the printed bubble. Oversized rings
       // overlapped adjacent options and made a correct read look inaccurate.
       const radius = rMm * pageScale.scaleAvg * 1.02;
@@ -9438,6 +9588,7 @@ if (!dlg.open) dlg.showModal();
 
   const cvs = hiddenCanvas;
   const ctx = cvs.getContext('2d', {willReadFrequently:true});
+  const verifiedReads = [];
 
   // Escape/back must stop the physical camera too, not only hide the dialog.
   dlg.oncancel = () => {
@@ -9561,6 +9712,7 @@ ctx.drawImage(
     if (!anchors) {
 
   alignmentCandidate = null;
+  verifiedReads.length = 0;
   lastReadFeedback = '';
 
   // Count a sheet as removed only when none of its four markers is visible.
@@ -9641,6 +9793,7 @@ el('cameraHint').textContent =
 const normalized = rectifyOmrFrame(ctx, anchors);
 
 if (!normalized){
+  verifiedReads.length = 0;
   lastReadFeedback =
     'The sheet could not be straightened. Realign all four registration boxes.';
   el('cameraHint').textContent = lastReadFeedback;
@@ -9650,6 +9803,13 @@ if (!normalized){
 const readCanvas = normalized.canvas;
 const readCtx = normalized.ctx;
 const readAnchors = normalized.anchors;
+const frameTime = video.currentTime;
+const calibration = calibrateOmrBubbleCenters(readCtx,tpl.rois,readAnchors,tpl.rollDigits);
+if(!calibration.ok){
+  verifiedReads.length=0;
+  el('cameraHint').textContent = calibration.reason + ' Keep the sheet flat and hold the camera steady.';
+  return;
+}
 
 const analysis = await analyzeNormalizedOmr(
   readCtx,
@@ -9666,6 +9826,11 @@ const {
   recognitionMeta,
   recognitionWarnings
 } = analysis;
+if(recognitionMeta && recognitionMeta.alignmentUncertain){
+  verifiedReads.length=0;
+  el('cameraHint').textContent='Possible mark at an unclear bubble position. Hold the sheet flat and steady.';
+  return;
+}
 
     // We have a roll – reset "no OMR" timer
     noRollStartTime = null;
@@ -9680,8 +9845,11 @@ const sheetFingerprint =
   );
 
 
-// The four page anchors were verified before this one full-page read.
-// Accept this normalized result immediately for EvalBee-like speed.
+// Accept only three consecutive, separately captured, calibrated reads.
+if(!registerVerifiedOmrRead(verifiedReads,{fingerprint:sheetFingerprint,total:Number(score.total||0)},frameTime,Date.now())){
+  el('cameraHint').textContent='Verifying answers — '+verifiedReads.length+'/3 matching reads. Hold steady.';
+  return;
+}
 const stable = {
 
   roll,
@@ -9909,6 +10077,7 @@ catch (err){
       );
 
       isScanBusy = false;
+      verifiedReads.length = 0;
       lastReadFeedback =
         'The sheet aligned, but recognition encountered an error. Hold it steady and try again.';
 
