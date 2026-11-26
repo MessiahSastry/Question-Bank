@@ -11426,14 +11426,19 @@ function omrReportRow(student, marks, scans, subjects){
       : (hasMarks ? sumSubjectParts(subjectName, parts)
         : roundMark(subjectScans.reduce((sum,scan) => sum + scan.score.total, 0)));
     breakdown[subjectName] = {
-      total:subjectTotal, parts, hasMarks, hasData:hasMarks || !!subjectScans.length,
+      // A stored mark can be descriptive/internal or a legacy placeholder.
+      // It is not proof that this student's OMR paper has been scanned.
+      total:subjectScans.length ? subjectTotal : null,
+      parts, hasMarks, hasData:!!subjectScans.length,
       scans:subjectScans, counts:omrSumScanCounts(subjectScans)
     };
     const cfg = getExamSubjectDefinition(subjectName);
-    if (!cfg || cfg.excludeFromTotal !== true) total += subjectTotal;
+    if (subjectScans.length && (!cfg || cfg.excludeFromTotal !== true)) total += subjectTotal;
   });
+  const isComplete = subjects.length > 0 && Object.values(breakdown).every(item => item.hasData);
   return {
-    student, marks, scans:selectedScans, breakdown, total:roundMark(total),
+    student, marks, scans:selectedScans, breakdown,
+    total:isComplete ? roundMark(total) : null, isComplete,
     hasData:Object.values(breakdown).some(item => item.hasData),
     counts:omrSumScanCounts(selectedScans), rank:null
   };
@@ -11494,8 +11499,8 @@ async function loadReportsFromFirestore(showDialog=true){
     student, marksSnaps[index].exists ? marksSnaps[index].data() || {} : {},
     scans.filter(scan => omrScanBelongsToStudent(scan,student)), subjects
   ));
-  const scores = [...new Set(rows.filter(row => row.hasData).map(row => row.total))].sort((a,b) => b-a);
-  rows.forEach(row => { if (row.hasData) row.rank = scores.indexOf(row.total) + 1; });
+  const scores = [...new Set(rows.filter(row => row.isComplete).map(row => row.total))].sort((a,b) => b-a);
+  rows.forEach(row => { if (row.isComplete) row.rank = scores.indexOf(row.total) + 1; });
   reportState.subjects = subjects;
   reportState.rows = rows;
   reportState.filtered = rows.slice();
@@ -11510,11 +11515,15 @@ function omrCountText(counts, key){
   return counts ? String(Number(counts[key] || 0)) : '—';
 }
 
+function omrReportTotalText(row){
+  return row.isComplete ? row.total.toFixed(2) : (row.hasData ? 'Incomplete' : 'Not scanned');
+}
+
 function renderReportTable(){
   const rows = reportState.filtered;
   const subjects = reportState.subjects;
   const maximum = getReportMaximum();
-  const savedRows = rows.filter(row => row.hasData);
+  const savedRows = rows.filter(row => row.isComplete);
   const average = savedRows.length ? savedRows.reduce((sum,row) => sum + row.total, 0) / savedRows.length : 0;
   const highest = savedRows.length ? Math.max(...savedRows.map(row => row.total)) : 0;
   const exam = selectedEffectiveExam();
@@ -11523,8 +11532,8 @@ function renderReportTable(){
   el('reportSubtitle').textContent = `${current.className || ''} ${current.sectionName || ''} · ${subjects.join(' + ')}`;
   el('reportMax').textContent = roundMark(maximum).toFixed(2);
   el('reportCount').textContent = String(savedRows.length);
-  el('reportAverage').textContent = roundMark(average).toFixed(2);
-  el('reportHighest').textContent = roundMark(highest).toFixed(2);
+  el('reportAverage').textContent = savedRows.length ? roundMark(average).toFixed(2) : '—';
+  el('reportHighest').textContent = savedRows.length ? roundMark(highest).toFixed(2) : '—';
   const countHeaders = name => `<th>${escapeHtml(name)} ✓</th><th>${escapeHtml(name)} ✕</th><th>${escapeHtml(name)} Blank</th>`;
   const countCells = counts => `<td style="color:#15803d">${omrCountText(counts,'correct')}</td><td style="color:#b91c1c">${omrCountText(counts,'wrong')}</td><td>${omrCountText(counts,'unanswered')}</td>`;
   el('reportHead').innerHTML = `<tr><th>Rank</th><th>Roll</th><th>Student</th>${subjects.map(name => `<th>${escapeHtml(name)}</th>${multiple ? countHeaders(name) : ''}`).join('')}<th>Total</th>${multiple ? '' : countHeaders('')}</tr>`;
@@ -11534,15 +11543,16 @@ function renderReportTable(){
       <td>${row.rank || '—'}</td><td>${escapeHtml(row.student.roll || '')}</td><td>${escapeHtml(row.student.name || '')}</td>
       ${subjects.map(name => {
         const item = row.breakdown[name];
-        return `<td>${item.hasData ? item.total.toFixed(2) + (!item.scans.length ? '<div class="status">OMR not scanned</div>' : '') : '<span class="status">Not scanned</span>'}</td>${multiple ? countCells(item.counts) : ''}`;
+        return `<td>${item.hasData ? item.total.toFixed(2) : '<span class="status">Not scanned</span>'}</td>${multiple ? countCells(item.counts) : ''}`;
       }).join('')}
-      <td><strong>${row.hasData ? row.total.toFixed(2) : 'Not scanned'}</strong></td>${multiple ? '' : countCells(row.counts)}</tr>`;
+      <td><strong>${omrReportTotalText(row)}</strong></td>${multiple ? '' : countCells(row.counts)}</tr>`;
   }).join('');
   el('reportBody').querySelectorAll('[data-report-index]').forEach(row => {
     row.addEventListener('click', () => openReportDetail(Number(row.dataset.reportIndex)));
   });
-  const missing = rows.length - savedRows.length;
-  el('reportStatus').textContent = `${savedRows.length} report(s)${missing ? `; ${missing} not scanned` : ''}. Tap a student for details.` +
+  const missing = rows.filter(row => !row.hasData).length;
+  const partial = rows.filter(row => row.hasData && !row.isComplete).length;
+  el('reportStatus').textContent = `${savedRows.length} report(s)${partial ? `; ${partial} partially scanned` : ''}${missing ? `; ${missing} not scanned` : ''}. Tap a student for details.` +
     (reportState.historyUnavailable ? ' Some older scan details could not be loaded.' : '');
   el('reportTableWrap').style.display = rows.length ? 'block' : 'none';
 }
@@ -11559,9 +11569,9 @@ function openReportDetail(index, scanIndex=0){
   reportState.detailScanIndex = scanIndex;
   const scan = currentReportScan();
   const maximum = getReportMaximum();
-  const percentage = maximum && row.hasData ? (row.total / maximum * 100).toFixed(1) + '%' : '—';
+  const percentage = maximum && row.isComplete ? (row.total / maximum * 100).toFixed(1) + '%' : '—';
   el('detailTitle').textContent = `Roll No : ${row.student.roll || ''}`;
-  el('detailSubtitle').textContent = `${row.student.name || 'Student'} · ${row.hasData ? `Rank ${row.rank}` : 'Not scanned'}`;
+  el('detailSubtitle').textContent = `${row.student.name || 'Student'} · ${row.isComplete ? `Rank ${row.rank}` : (row.hasData ? 'Partially scanned' : 'Not scanned')}`;
 
   const subjectRows = reportState.subjects.map(subjectName => {
     const item = row.breakdown[subjectName];
@@ -11578,7 +11588,7 @@ function openReportDetail(index, scanIndex=0){
   const adjustmentNote = row.scans.some(item => item.manualScoreAdjustment)
     ? '<div class="warning-box" style="margin-bottom:10px;">The teacher adjusted one or more scanned section marks during review.</div>' : '';
   el('detailSummary').innerHTML = `${adjustmentNote}<div class="report-summary-grid">
-    <div class="report-stat"><strong>${row.hasData ? row.total.toFixed(2) : 'Not scanned'}</strong><span>TOTAL MARKS</span></div>
+    <div class="report-stat"><strong>${omrReportTotalText(row)}</strong><span>TOTAL MARKS</span></div>
     <div class="report-stat"><strong>${percentage}</strong><span>PERCENTAGE</span></div>
     <div class="report-stat"><strong>${omrCountText(row.counts,'correct')}</strong><span>CORRECT</span></div>
     <div class="report-stat"><strong>${omrCountText(row.counts,'wrong')}</strong><span>WRONG</span></div>
@@ -11692,9 +11702,9 @@ function exportReportsXlsx(){
       record[`${subjectName} Wrong`] = item.counts ? item.counts.wrong : '';
       record[`${subjectName} Unanswered`] = item.counts ? item.counts.unanswered : '';
     });
-    record['Total Marks'] = row.hasData ? row.total : 'Not scanned';
+    record['Total Marks'] = row.isComplete ? row.total : omrReportTotalText(row);
     record['Maximum Marks'] = roundMark(maximum);
-    record['Percentage'] = row.hasData && maximum ? roundMark(row.total / maximum * 100) : '';
+    record['Percentage'] = row.isComplete && maximum ? roundMark(row.total / maximum * 100) : '';
     record.Correct = row.counts ? row.counts.correct : '';
     record.Wrong = row.counts ? row.counts.wrong : '';
     record.Unanswered = row.counts ? row.counts.unanswered : '';

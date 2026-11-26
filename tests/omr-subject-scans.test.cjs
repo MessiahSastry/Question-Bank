@@ -345,3 +345,78 @@ test('saving after deletion creates a fresh independent scan without changing an
   assert.equal(h.prompts.length,0);assert.equal(h.rows(['English 2']).counts.correct,18);
   assert.equal(h.rows(['English 1']).counts.correct,20);
 });
+
+for(const subject of ['Math 1','Math 2','English 1','English 2']){
+  test(`${subject}: a stored 1.00 without an OMR scan is not a result`,async()=>{
+    const h=harness();h.select(subject);
+    h.store.set(h.marksPath,{[subject]:1,__subs:{[subject]:{Descriptive:1}}});
+    const before=clone([...h.store]);
+    const rows=await h.ctx.loadReportsFromFirestore(false),row=rows[0];
+    assert.equal(row.hasData,false);
+    assert.equal(row.isComplete,false);
+    assert.equal(row.total,null);
+    assert.equal(row.rank,null);
+    assert.equal(row.counts,null);
+    assert.equal(row.breakdown[subject].total,null);
+    assert.equal(h.elements.get('reportCount').textContent,'0');
+    assert.equal(h.elements.get('reportAverage').textContent,'—');
+    assert.match(h.elements.get('reportBody').innerHTML,/Not scanned/);
+    assert.doesNotMatch(h.elements.get('reportBody').innerHTML,/1\.00/);
+    h.ctx.openReportDetail(0);
+    assert.match(h.elements.get('detailSummary').innerHTML,/<strong>Not scanned<\/strong><span>TOTAL MARKS/);
+    assert.equal(h.elements.get('btnDetailEdit').disabled,true);
+    assert.equal(h.elements.get('btnDetailDelete').disabled,true);
+    h.ctx.exportReportsXlsx();
+    const summary=h.exports[0].book.sheets[0].rows[0];
+    assert.equal(summary[`${subject} Total`],'Not scanned');
+    assert.equal(summary[`${subject} - Descriptive`],1);
+    assert.equal(summary['Total Marks'],'Not scanned');
+    assert.equal(summary.Percentage,'');
+    assert.equal(summary.Rank,'');
+    assert.deepEqual([...h.store],before);
+  });
+}
+
+test('unscanned stored marks are excluded from report count, class average, highest and ranking',async()=>{
+  const h=harness();h.select('Math 1');
+  const students='years/2026-27/classes/class7/sections/A/students/';
+  h.store.set(h.marksPath,{'Math 1':34});
+  h.seedLegacy(h.scan('Math 1',34,21,19));
+  h.store.set(students+'student2',{roll:2,name:'Student Two'});
+  h.store.set(students+'student2/marks/SA1',{'Math 1':31});
+  h.store.set(h.root+'/results/student-two',{
+    ...h.scan('Math 1',31,18,22),schemaVersion:5,roll:'2',studentId:'student2'
+  });
+  // A high unscanned mark makes a highest/rank regression visible too.
+  h.store.set(students+'student3',{roll:3,name:'Student Three'});
+  h.store.set(students+'student3/marks/SA1',{'Math 1':99});
+  const before=clone([...h.store]);
+  const rows=await h.ctx.loadReportsFromFirestore(false);
+  assert.equal(rows[0].rank,1);assert.equal(rows[1].rank,2);assert.equal(rows[2].rank,null);
+  assert.equal(h.elements.get('reportCount').textContent,'2');
+  assert.equal(h.elements.get('reportAverage').textContent,'32.50');
+  assert.equal(h.elements.get('reportHighest').textContent,'34.00');
+  assert.match(h.elements.get('reportStatus').textContent,/1 not scanned/);
+  assert.doesNotMatch(h.elements.get('reportBody').innerHTML,/99\.00/);
+  assert.deepEqual([...h.store],before);
+});
+
+test('an incomplete multi-paper report has no final total, percentage or rank',async()=>{
+  const h=harness();h.select('Math 1','English 2');
+  h.store.set(h.marksPath,{'Math 1':34,'English 2':1});
+  h.seedLegacy(h.scan('Math 1',34,21,19));
+  const rows=await h.ctx.loadReportsFromFirestore(false),row=rows[0];
+  assert.equal(row.hasData,true);assert.equal(row.isComplete,false);
+  assert.equal(row.total,null);assert.equal(row.rank,null);
+  assert.equal(row.breakdown['Math 1'].total,34);
+  assert.equal(row.breakdown['English 2'].total,null);
+  assert.match(h.elements.get('reportBody').innerHTML,/<strong>Incomplete<\/strong>/);
+  assert.doesNotMatch(h.elements.get('reportBody').innerHTML,/35\.00|1\.00/);
+  assert.equal(h.elements.get('reportCount').textContent,'0');
+  assert.match(h.elements.get('reportStatus').textContent,/1 partially scanned/);
+  h.ctx.exportReportsXlsx();
+  const summary=h.exports[0].book.sheets[0].rows[0];
+  assert.equal(summary['English 2 Total'],'Not scanned');
+  assert.equal(summary['Total Marks'],'Incomplete');
+  assert.equal(summary.Percentage,'');assert.equal(summary.Rank,'');
+});
