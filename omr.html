@@ -951,6 +951,7 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
     </header>
     <div class="content">
       <div id="detailSummary"></div>
+      <div id="detailScanChoices" style="margin:12px 0;"></div>
       <div id="detailImageWrap" style="display:none;text-align:center;margin:12px 0;">
         <img id="detailImage" alt="Scanned OMR" style="max-width:100%;max-height:58vh;object-fit:contain;border:1px solid #e5e7eb;border-radius:12px;" />
       </div>
@@ -1448,12 +1449,6 @@ function getExamMaximum(){
     .filter(subject => !subject.excludeFromTotal)
     .map(subject => subject.name);
   return names.reduce((sum, name) => sum + (getSubjectMaximum(name) || 0), 0);
-}
-
-function getResultDocumentId(roll){
-  return [currentSchoolId, academicYear, current.classId, current.sectionId, roll]
-    .map(safeResultIdPart)
-    .join('__');
 }
 
 // ===== CAMPUSCONNECT / TEACHER CONTEXT =====
@@ -7888,7 +7883,7 @@ function registerAlignedMarkerFrame(anchors, now){
 
 // Build a stable identity for one scanned OMR.
 // Uses:
-// exam + roll + actual marked answers
+// academic year + class + section + exam + paper/part + roll + marked answers
 function buildSheetFingerprint(
   examId,
   roll,
@@ -7896,6 +7891,10 @@ function buildSheetFingerprint(
 ){
 
   const parts = [
+    String(currentSchoolId || ''),
+    String(academicYear || ''),
+    String(current.classId || ''),
+    String(current.sectionId || ''),
     String(examId || ''),
     String(roll || '')
   ];
@@ -7909,7 +7908,8 @@ function buildSheetFingerprint(
   sectionNames.forEach(secName => {
 
     parts.push(
-      'SEC:' + secName
+      'SEC:' + secName,
+      'PART:' + String((current.partBySubject || {})[secName] || '')
     );
 
     const sec =
@@ -10091,19 +10091,19 @@ catch (err){
 
     // Check saved results before opening the review; save checks again for safety.
     if (!out.rollNeedsEdit && Number(out.roll) > 0){
-      let duplicate = null;
+      let lookup = null;
       try {
-        duplicate = (await findExistingOmrScan(out)).duplicateSnap;
+        lookup = await findExistingOmrScan(out);
       } catch (err){
         console.warn('Early duplicate check unavailable; save will check again.', err);
       }
       if (!isCameraOpen){ isScanBusy = false; return; }
-      if (duplicate){
+      if (lookup && lookup.duplicates.length){
         if (dlg.open) dlg.close();
         const replace = await appConfirm({
           title:'OMR Already Scanned',
-          subtitle:`Roll ${out.roll}`,
-          message:'This OMR sheet has already been scanned and saved for this examination. Do you want to replace the existing scan with the new scan?',
+          subtitle:`Roll ${out.roll} · ${omrDuplicateNames(lookup)}`,
+          message:'A scan is already saved for this paper and OMR part. Replace it with the new scan?',
           confirmText:'Yes, Replace',
           cancelText:'No, Keep Existing'
         });
@@ -10115,7 +10115,7 @@ catch (err){
           isScanBusy = false;
           return;
         }
-        scanReplacementApprovals.set(out, duplicate);
+        scanReplacementApprovals.set(out, omrDuplicateToken(lookup));
       }
     }
     showScanReview(out, previewDataUrl);
@@ -10670,28 +10670,169 @@ async function uploadScanPreview(out){
 // ===== SAVE SCAN RESULT INTO FIRESTORE (student → marks → examId) =====
 // Only the mapped OMR component is replaced. Manual/descriptive and computed
 // components remain intact, so scanning before or after manual entry is safe.
-async function findExistingOmrScan(out){
-  const resultId = [currentSchoolId, academicYear, out.classId, out.sectionId, out.roll]
-    .map(safeResultIdPart)
-    .join('__');
-  const resultRef = currentExamRef().collection('results').doc(resultId);
-  const legacyRef = currentExamRef().collection('results').doc(String(out.roll));
-  const [existingSnap, legacySnap] = await Promise.all([
-    resultRef.get(),
-    legacyRef.path === resultRef.path ? Promise.resolve(null) : legacyRef.get()
-  ]);
-  const legacyMatches = legacySnap && legacySnap.exists &&
-    String((legacySnap.data() || {}).classId) === String(out.classId) &&
-    String((legacySnap.data() || {}).sectionId) === String(out.sectionId);
-  const duplicateSnap = existingSnap.exists
-    ? existingSnap
-    : (legacyMatches ? legacySnap : null);
+function omrSubjectEntry(values, subjectName){
+  const key = Object.keys(values || {}).find(name => omrNorm(name) === omrNorm(subjectName));
+  return key === undefined ? undefined : values[key];
+}
 
-  return {resultRef, duplicateSnap};
+function omrScanPart(scan, subjectName){
+  const mapped = omrSubjectEntry(scan.partBySubject, subjectName);
+  if (mapped) return String(mapped);
+  const names = omrKeySubjectNames(scan);
+  if (names.size === 1 && scan.subtopicName) return String(scan.subtopicName);
+  const questionParts = [...new Set((Array.isArray(scan.questionDetails) ? scan.questionDetails : [])
+    .filter(row => omrNorm(row.subject) === omrNorm(subjectName) && row.part)
+    .map(row => String(row.part)))];
+  if (questionParts.length === 1) return questionParts[0];
+  // Recover an unambiguous old mapping from the exam definition, never from
+  // the currently selected paper/part. Unidentified old scans stay untouched.
+  const parts = getSubjectParts(subjectName);
+  if (!parts.length) return '';
+  const omrParts = parts.filter(part => getPartMode(part) === 'omr');
+  if (omrParts.length === 1) return omrParts[0].name;
+  const editable = parts.filter(part => getPartMode(part) !== 'computed');
+  return editable.length === 1 ? editable[0].name : null;
+}
+
+function omrScanScopes(out){
+  const names = Array.isArray(out.selectedSubjects) && out.selectedSubjects.length
+    ? out.selectedSubjects : [out.subjectName].filter(Boolean);
+  const seen = new Set();
+  return names.filter(name => {
+    const normalized = omrNorm(name);
+    if (!normalized || seen.has(normalized)) return false;
+    seen.add(normalized);
+    return true;
+  }).map(name => {
+    const definition = getExamSubjectDefinition(name);
+    const subjectName = definition ? definition.name : name;
+    const partName = omrScanPart(out, subjectName);
+    if (partName === null) throw new Error(`Choose the OMR part for ${subjectName} before saving.`);
+    return {subjectName, partName};
+  });
+}
+
+function omrScopeKey(subjectName, partName){
+  return JSON.stringify([omrNorm(subjectName), omrNorm(partName)]);
+}
+
+function omrLegacyResultId(out){
+  return [currentSchoolId, academicYear, out.classId, out.sectionId, String(Number(out.roll))]
+    .map(safeResultIdPart).join('__');
+}
+
+function omrSubjectResultRef(out, scope){
+  // URI encoding preserves Unicode and punctuation without collapsing paper
+  // names. English 1, English 2 and each OMR part have different identities.
+  const id = 'v6__' + omrLegacyResultId(out) + '__' +
+    encodeURIComponent(omrScopeKey(scope.subjectName, scope.partName));
+  return currentExamRef().collection('results').doc(id);
+}
+
+function omrSameContext(scan, out){
+  return String(scan.classId) === String(out.classId) &&
+    String(scan.sectionId) === String(out.sectionId) &&
+    Number(scan.roll) === Number(out.roll) &&
+    (!scan.schoolId || String(scan.schoolId) === String(currentSchoolId)) &&
+    (!scan.academicYear || String(scan.academicYear) === String(academicYear));
+}
+
+function omrMatchesScope(scan, scope){
+  return omrKeySubjectNames(scan).has(omrNorm(scope.subjectName)) &&
+    omrScanPart(scan, scope.subjectName) !== null &&
+    omrNorm(omrScanPart(scan, scope.subjectName)) === omrNorm(scope.partName);
+}
+
+function omrScanTime(scan){
+  const value = scan.updatedAt || scan.capturedAt;
+  if (value && typeof value.toMillis === 'function') return value.toMillis();
+  if (value && Number.isFinite(value.seconds)) return value.seconds * 1000;
+  return Date.parse(value) || 0;
+}
+
+function omrPreferScan(next, previous){
+  if (!previous) return true;
+  const nextScoped = Number(next.schemaVersion) >= 6;
+  const previousScoped = Number(previous.schemaVersion) >= 6;
+  if (nextScoped !== previousScoped) return nextScoped;
+  if (omrScanTime(next) !== omrScanTime(previous)) return omrScanTime(next) > omrScanTime(previous);
+  return !next._fromHistory && !!previous._fromHistory;
+}
+
+function omrProjectScan(scan, scope){
+  const subjectName = scope.subjectName;
+  const details = (Array.isArray(scan.questionDetails) ? scan.questionDetails : [])
+    .filter(row => omrNorm(row.subject) === omrNorm(subjectName) &&
+      (!row.part || omrNorm(row.part) === omrNorm(scope.partName)));
+  const sectionScore = omrSubjectEntry(scan.score && scan.score.perSection, subjectName);
+  const total = sectionScore !== undefined ? roundMark(sectionScore)
+    : (omrKeySubjectNames(scan).size === 1 ? roundMark(scan.score ? scan.score.total : scan.totalMarks) : 0);
+  const counts = details.length ? getResultCounts(details)
+    : (omrKeySubjectNames(scan).size === 1 && scan.counts ? {...scan.counts} : null);
+  return {
+    ...scan,
+    selectedSubjects:[subjectName], subjectName, subtopicName:scope.partName || null,
+    partBySubject:scope.partName ? {[subjectName]:scope.partName} : {},
+    answers:{[subjectName]:omrSubjectEntry(scan.answers, subjectName) || {}},
+    score:{total, perSection:{[subjectName]:total}}, totalMarks:total,
+    counts, questionDetails:details,
+    _scope:scope
+  };
+}
+
+function omrSnapshotVersion(snap){
+  return JSON.stringify(snap && snap.exists ? snap.data() : null);
+}
+
+function omrDuplicateToken(lookup){
+  return JSON.stringify(lookup.duplicates.map(plan => [
+    omrScopeKey(plan.scope.subjectName, plan.scope.partName),
+    plan.duplicateSnap.ref.path, omrSnapshotVersion(plan.duplicateSnap)
+  ]));
+}
+
+function omrDuplicateNames(lookup){
+  return lookup.duplicates.map(plan => plan.scope.partName
+    ? `${plan.scope.subjectName} — ${plan.scope.partName}` : plan.scope.subjectName).join(', ');
+}
+
+async function findExistingOmrScan(out){
+  const scopes = omrScanScopes(out);
+  if (!scopes.length) throw new Error('Select at least one subject before saving.');
+  const collection = currentExamRef().collection('results');
+  const legacyRefs = [...new Set([omrLegacyResultId(out), String(Number(out.roll)), String(out.roll)])]
+    .map(id => collection.doc(id));
+  const resultRefs = scopes.map(scope => omrSubjectResultRef(out, scope));
+  const [existingSnaps, legacySnaps] = await Promise.all([
+    Promise.all(resultRefs.map(ref => ref.get())),
+    Promise.all(legacyRefs.map(ref => ref.get()))
+  ]);
+  const legacy = legacySnaps.filter(snap => snap.exists && omrSameContext(snap.data(), out));
+  // Old versions replaced the previous paper's result. Its archived scan is
+  // still a real scan for that paper, and remains readable without migration.
+  const needsHistory = scopes.some((scope, index) => !existingSnaps[index].exists &&
+    !legacy.some(snap => omrMatchesScope(snap.data(), scope)));
+  const histories = needsHistory ? (await Promise.all(legacy.map(snap => snap.ref.collection('history').get())))
+    .flatMap(snap => snap.docs).filter(snap => omrSameContext(snap.data(), out)) : [];
+  const plans = scopes.map((scope, index) => {
+    const expectedSnap = existingSnaps[index];
+    let duplicateSnap = null;
+    if (expectedSnap.exists){
+      if (!expectedSnap.data().isDeleted) duplicateSnap = expectedSnap;
+    }
+    else {
+      [...legacy, ...histories].forEach(snap => {
+        if (!snap.data().isDeleted && omrMatchesScope(snap.data(), scope) &&
+            (!duplicateSnap || omrPreferScan(snap.data(), duplicateSnap.data()))) duplicateSnap = snap;
+      });
+    }
+    return {scope, resultRef:resultRefs[index], expectedSnap, duplicateSnap};
+  });
+  return {plans, duplicates:plans.filter(plan => plan.duplicateSnap)};
 }
 
 async function saveScanToFirestore(out) {
-  if (!out || Number(out.roll) <= 0) {
+  if (!out || !Number.isInteger(Number(out.roll)) || Number(out.roll) <= 0) {
     throw new Error('Enter a Roll Number greater than 0 before saving.');
   }
   if (!out.classId || !out.sectionId || !out.examId) {
@@ -10700,6 +10841,11 @@ async function saveScanToFirestore(out) {
   if (out.academicYear && String(out.academicYear) !== String(academicYear)){
     throw new Error(`This queued scan belongs to academic year ${out.academicYear}, not ${academicYear}.`);
   }
+  if (String(out.examId) !== String(current.examId) ||
+      String(out.classId) !== String(current.classId) ||
+      String(out.sectionId) !== String(current.sectionId)){
+    throw new Error('Selection changed. Choose the original class, section and exam before saving this scan.');
+  }
 
   const student = await findStudentByRoll(out.roll, out.classId, out.sectionId);
   if (!student) {
@@ -10707,17 +10853,16 @@ async function saveScanToFirestore(out) {
   }
 
   const marksRef = student.ref.collection('marks').doc(out.examId);
-  const {resultRef, duplicateSnap} = await findExistingOmrScan(out);
+  const lookup = await findExistingOmrScan(out);
 
-  if (duplicateSnap){
+  if (lookup.duplicates.length){
     const approved = scanReplacementApprovals.get(out);
-    const sameApprovedScan = approved && approved.ref.path === duplicateSnap.ref.path &&
-      JSON.stringify(approved.data()) === JSON.stringify(duplicateSnap.data());
+    const sameApprovedScan = approved === omrDuplicateToken(lookup);
     if (!sameApprovedScan){
       const replace = await appConfirm({
         title:'OMR Already Scanned',
-        subtitle:`Roll ${out.roll}`,
-        message:'This OMR sheet has already been scanned and saved for this examination. Do you want to replace it? The old scan will be kept in history.',
+        subtitle:`Roll ${out.roll} · ${omrDuplicateNames(lookup)}`,
+        message:'A scan is already saved for this paper and OMR part. Replace it? The previous scan will be kept in history.',
         confirmText:'Yes, Replace',
         cancelText:'No, Keep Existing'
       });
@@ -10737,64 +10882,64 @@ async function saveScanToFirestore(out) {
     ];
   }
 
-  const counts = getResultCounts(out.questionDetails);
-  const storedScore = {
-    total:roundMark(out.score && out.score.total),
-    perSection:{...(out.score && out.score.perSection || {})}
-  };
-  const resultData = {
-    schemaVersion:5,
-    scannerVersion:'5.0',
-    schoolId:currentSchoolId,
-    teacherId:currentTeacherId,
-    studentId:student.id,
-    studentName:student.name || '',
-    roll:String(out.roll),
-    examId:out.examId,
-    academicYear,
-    classId:out.classId,
-    sectionId:out.sectionId,
-    className:current.className || '',
-    sectionName:current.sectionName || '',
-    selectedSubjects:Array.isArray(out.selectedSubjects) ? out.selectedSubjects.slice() : [],
-    subjectName:out.subjectName || null,
-    subtopicName:out.subtopicName || null,
-    partBySubject:{...(out.partBySubject || {})},
-    totalMarks:storedScore.total,
-    answers:out.answers || {},
-    score:storedScore,
-    counts,
-    questionDetails:Array.isArray(out.questionDetails) ? out.questionDetails : [],
-    recognitionMeta:out.recognitionMeta || {uncertainCount:0, uncertain:[]},
-    recognitionWarnings:Array.isArray(out.recognitionWarnings) ? out.recognitionWarnings : [],
-    manualScoreAdjustment:!!out.manualScoreAdjustment,
-    answerKeyHash:simpleHash(JSON.stringify(answerKey)),
-    imageUrl:uploaded.imageUrl || (duplicateSnap && duplicateSnap.data().imageUrl) || null,
-    imagePath:uploaded.imagePath || (duplicateSnap && duplicateSnap.data().imagePath) || null,
-    capturedAt:out.capturedAt || new Date().toISOString(),
-    updatedAt:firebase.firestore.FieldValue.serverTimestamp()
-  };
-
-  const historyRef = duplicateSnap
-    ? resultRef.collection('history').doc()
-    : null;
+  const savedResults = lookup.plans.map(plan => {
+    const paper = omrProjectScan(out, plan.scope);
+    const previous = plan.duplicateSnap ? plan.duplicateSnap.data() : {};
+    return {
+      schemaVersion:6,
+      scannerVersion:'5.1',
+      schoolId:currentSchoolId,
+      teacherId:currentTeacherId,
+      studentId:student.id,
+      studentName:student.name || '',
+      roll:String(out.roll),
+      examId:out.examId,
+      academicYear,
+      classId:out.classId,
+      sectionId:out.sectionId,
+      className:current.className || '',
+      sectionName:current.sectionName || '',
+      selectedSubjects:paper.selectedSubjects,
+      subjectName:paper.subjectName,
+      subtopicName:paper.subtopicName,
+      partBySubject:paper.partBySubject,
+      totalMarks:paper.score.total,
+      answers:paper.answers,
+      score:paper.score,
+      counts:paper.counts,
+      questionDetails:paper.questionDetails,
+      recognitionMeta:out.recognitionMeta || {uncertainCount:0, uncertain:[]},
+      recognitionWarnings:Array.isArray(out.recognitionWarnings) ? out.recognitionWarnings : [],
+      manualScoreAdjustment:!!out.manualScoreAdjustment,
+      answerKeyHash:out.answerKeyHash || simpleHash(JSON.stringify(omrSubjectEntry(answerKey, paper.subjectName) || {})),
+      imageUrl:uploaded.imageUrl || out.imageUrl || previous.imageUrl || null,
+      imagePath:uploaded.imagePath || out.imagePath || previous.imagePath || null,
+      capturedAt:out.capturedAt || new Date().toISOString(),
+      updatedAt:firebase.firestore.FieldValue.serverTimestamp()
+    };
+  });
+  const historyRefs = lookup.plans.map(plan => plan.duplicateSnap ? plan.resultRef.collection('history').doc() : null);
 
   try {
     await db.runTransaction(async transaction => {
-      const [marksSnap, liveResultSnap] = await Promise.all([
+      const refs = new Map(lookup.plans.flatMap(plan => [plan.expectedSnap, plan.duplicateSnap])
+        .filter(Boolean).map(snap => [snap.ref.path, snap]));
+      const [marksSnap, liveSnaps] = await Promise.all([
         transaction.get(marksRef),
-        transaction.get(resultRef)
+        Promise.all([...refs.values()].map(snap => transaction.get(snap.ref)))
       ]);
-      if (liveResultSnap.exists && !duplicateSnap){
-        throw new Error('Another device saved this roll while you were reviewing it. Try Save again to choose whether to replace it.');
-      }
+      liveSnaps.forEach(snap => {
+        if (omrSnapshotVersion(snap) !== omrSnapshotVersion(refs.get(snap.ref.path))){
+          throw new Error('Another device changed this paper while you were reviewing it. Try Save again to review the latest scan.');
+        }
+      });
       const merged = mergeOmrIntoMarksData(marksSnap.exists ? marksSnap.data() : {}, out);
       const updateData = {
         __subs:merged.nextSubs,
         __meta:{
           lastOmrScanAt:new Date().toISOString(),
           lastOmrTeacherId:currentTeacherId,
-          scannerVersion:'5.0'
+          scannerVersion:'5.1'
         }
       };
       Object.entries(merged.subjectTotals).forEach(([subject, total]) => {
@@ -10802,20 +10947,20 @@ async function saveScanToFirestore(out) {
       });
 
       transaction.set(marksRef, updateData, {merge:true});
-      if (historyRef){
-        const replacedData = liveResultSnap.exists
-          ? liveResultSnap.data()
-          : duplicateSnap.data();
-        transaction.set(historyRef, {
-          ...replacedData,
-          replacedAt:firebase.firestore.FieldValue.serverTimestamp(),
-          replacedBy:currentTeacherId
-        });
-      }
-      transaction.set(resultRef, resultData, {merge:false});
-      if (duplicateSnap && duplicateSnap.ref.path !== resultRef.path){
-        transaction.delete(duplicateSnap.ref);
-      }
+      lookup.plans.forEach((plan, index) => {
+        if (historyRefs[index]){
+          const archived = omrProjectScan(plan.duplicateSnap.data(), plan.scope);
+          delete archived._scope;
+          transaction.set(historyRefs[index], {
+            ...archived,
+            replacedAt:firebase.firestore.FieldValue.serverTimestamp(),
+            replacedBy:currentTeacherId
+          });
+        }
+        transaction.set(plan.resultRef, savedResults[index], {merge:false});
+      });
+      // Keep old combined records intact: another subject may still depend on
+      // them or their history. New per-paper records take precedence in reports.
     });
   }
   catch (error){
@@ -10825,7 +10970,7 @@ async function saveScanToFirestore(out) {
     throw error;
   }
 
-  return {saved:true, student, resultRef, resultData};
+  return {saved:true, student, results:savedResults};
 }
 
 // ===== SCAN REVIEW (Cancel / Edit / Save) =====
@@ -11220,8 +11365,86 @@ async function syncOfflineQueueForCurrentSelection(){
   localStorage.setItem(key, JSON.stringify(remaining));
 }
 
+function omrReportSelectionKey(){
+  return JSON.stringify([currentSchoolId, academicYear, current.classId, current.sectionId,
+    current.examId, reportSubjectNames()]);
+}
+
+function omrReportScan(doc, fromHistory=false){
+  const data = doc.data() || {};
+  return {...data, _ref:doc.ref, _id:doc.id, _sourceData:data, _fromHistory:fromHistory};
+}
+
+function omrScanBelongsToStudent(scan, student){
+  return scan.studentId ? String(scan.studentId) === String(student.id)
+    : Number(scan.roll) === Number(student.roll);
+}
+
+function omrLatestSubjectScans(scans, subjects){
+  const latest = new Map();
+  scans.forEach(scan => subjects.forEach(subjectName => {
+    if (!omrKeySubjectNames(scan).has(omrNorm(subjectName))) return;
+    const partName = omrScanPart(scan, subjectName);
+    if (partName === null) return;
+    const key = omrScopeKey(subjectName, partName);
+    const previous = latest.get(key);
+    if (omrPreferScan(scan, previous)) latest.set(key, scan);
+  }));
+  // Deleted per-paper records suppress legacy copies and archived versions.
+  return Array.from(latest.entries()).filter(([,scan]) => !scan.isDeleted)
+    .map(([key,scan]) => {
+      const [normalized,partName] = JSON.parse(key);
+      const subjectName = subjects.find(name => omrNorm(name) === normalized);
+      return omrProjectScan(scan, {subjectName, partName:omrScanPart(scan, subjectName) || partName});
+    });
+}
+
+function omrKnownMark(value){
+  return value !== undefined && value !== null && value !== '' && Number.isFinite(Number(value));
+}
+
+function omrSumScanCounts(scans){
+  if (!scans.length || scans.some(scan => !scan.counts)) return null;
+  const known = scans;
+  return known.length ? known.reduce((counts,scan) => ({
+    correct:counts.correct + Number(scan.counts.correct || 0),
+    wrong:counts.wrong + Number(scan.counts.wrong || 0),
+    unanswered:counts.unanswered + Number(scan.counts.unanswered || 0)
+  }), {correct:0,wrong:0,unanswered:0}) : null;
+}
+
+function omrReportRow(student, marks, scans, subjects){
+  const selectedScans = omrLatestSubjectScans(scans, subjects);
+  const breakdown = {};
+  let total = 0;
+  subjects.forEach(subjectName => {
+    const subjectScans = selectedScans.filter(scan => omrNorm(scan.subjectName) === omrNorm(subjectName));
+    const parts = {...(omrSubjectEntry(marks.__subs, subjectName) || {})};
+    const mark = omrSubjectEntry(marks, subjectName);
+    const hasMarks = omrKnownMark(mark) || Object.values(parts).some(omrKnownMark);
+    const subjectTotal = omrKnownMark(mark) ? roundMark(mark)
+      : (hasMarks ? sumSubjectParts(subjectName, parts)
+        : roundMark(subjectScans.reduce((sum,scan) => sum + scan.score.total, 0)));
+    breakdown[subjectName] = {
+      total:subjectTotal, parts, hasMarks, hasData:hasMarks || !!subjectScans.length,
+      scans:subjectScans, counts:omrSumScanCounts(subjectScans)
+    };
+    const cfg = getExamSubjectDefinition(subjectName);
+    if (!cfg || cfg.excludeFromTotal !== true) total += subjectTotal;
+  });
+  return {
+    student, marks, scans:selectedScans, breakdown, total:roundMark(total),
+    hasData:Object.values(breakdown).some(item => item.hasData),
+    counts:omrSumScanCounts(selectedScans), rank:null
+  };
+}
+
 async function loadReportsFromFirestore(showDialog=true){
   if (!current.examId){ alert('Pick Class / Section / Exam first.'); return []; }
+  const selectionKey = omrReportSelectionKey();
+  const subjects = reportSubjectNames();
+  const examRef = currentExamRef();
+  const classId = current.classId, sectionId = current.sectionId, examId = current.examId;
   const dialog = el('dlgReports');
   if (showDialog && !dialog.open) dialog.showModal();
   el('reportStatus').textContent = 'Loading reports from Firestore…';
@@ -11229,188 +11452,221 @@ async function loadReportsFromFirestore(showDialog=true){
 
   await syncOfflineQueueForCurrentSelection();
   const [studentsSnap, resultsSnap] = await Promise.all([
-    studentsCollectionRef().orderBy('roll').get(),
-    currentExamRef().collection('results').where('classId', '==', current.classId).get()
+    studentsCollectionRef(classId,sectionId).orderBy('roll').get(),
+    examRef.collection('results').where('classId', '==', classId).get()
   ]);
   const students = studentsSnap.docs
     .map(doc => ({id:doc.id, ref:doc.ref, ...doc.data()}))
     .filter(student => student.isDeleted !== true);
   const marksSnaps = await Promise.all(students.map(student =>
-    student.ref.collection('marks').doc(current.examId).get()
+    student.ref.collection('marks').doc(examId).get()
   ));
-  const scans = resultsSnap.docs
-    .map(doc => ({...doc.data(), _ref:doc.ref, _id:doc.id}))
-    .filter(scan =>
-      String(scan.classId) === String(current.classId) &&
-      String(scan.sectionId) === String(current.sectionId) &&
-      (!scan.academicYear || String(scan.academicYear) === String(academicYear))
-    );
-  const scanByStudent = new Map();
-  scans.forEach(scan => {
-    const key = scan.studentId || `roll:${Number(scan.roll)}`;
-    const existing = scanByStudent.get(key);
-    if (!existing || Number(scan.schemaVersion || 0) >= Number(existing.schemaVersion || 0)) scanByStudent.set(key, scan);
-  });
+  const inContext = scan => String(scan.classId) === String(classId) &&
+    String(scan.sectionId) === String(sectionId) &&
+    (!scan.schoolId || String(scan.schoolId) === String(currentSchoolId)) &&
+    (!scan.academicYear || String(scan.academicYear) === String(academicYear));
+  const scans = resultsSnap.docs.map(doc => omrReportScan(doc)).filter(inContext);
 
-  const subjects = reportSubjectNames();
+  // Read archived papers only when an old combined result is missing one of
+  // the requested subjects. No existing results or marks are migrated/written.
+  const legacy = scans.filter(scan => Number(scan.schemaVersion || 0) < 6 && !scan.isDeleted &&
+    students.some(student => {
+      if (!omrScanBelongsToStudent(scan,student)) return false;
+      const own = scans.filter(item => omrScanBelongsToStudent(item,student));
+      return subjects.some(name => !own.some(item => omrKeySubjectNames(item).has(omrNorm(name))));
+    }));
+  let historyUnavailable = false;
+  for (let index=0; index<legacy.length; index+=8){
+    const histories = await Promise.all(legacy.slice(index,index+8).map(async scan => {
+      try {
+        const snap = await scan._ref.collection('history').get();
+        return snap.docs.map(doc => omrReportScan(doc,true)).filter(inContext);
+      } catch (error){
+        console.warn('Could not read older OMR paper details:', error);
+        historyUnavailable = true;
+        return [];
+      }
+    }));
+    scans.push(...histories.flat());
+  }
+  if (selectionKey !== omrReportSelectionKey()) throw new Error('Selection changed. Open reports again.');
+  const rows = students.map((student,index) => omrReportRow(
+    student, marksSnaps[index].exists ? marksSnaps[index].data() || {} : {},
+    scans.filter(scan => omrScanBelongsToStudent(scan,student)), subjects
+  ));
+  const scores = [...new Set(rows.filter(row => row.hasData).map(row => row.total))].sort((a,b) => b-a);
+  rows.forEach(row => { if (row.hasData) row.rank = scores.indexOf(row.total) + 1; });
   reportState.subjects = subjects;
-  const rows = [];
-  students.forEach((student, index) => {
-    const marksSnap = marksSnaps[index];
-    const scan = scanByStudent.get(student.id) || scanByStudent.get(`roll:${Number(student.roll)}`) || null;
-    if (!marksSnap.exists && !scan) return;
-    const marks = marksSnap.exists ? marksSnap.data() || {} : {};
-    const breakdown = {};
-    let total = 0;
-    subjects.forEach(subjectName => {
-      const parts = marks.__subs && marks.__subs[subjectName] && typeof marks.__subs[subjectName] === 'object'
-        ? {...marks.__subs[subjectName]}
-        : {};
-      const subjectTotal = Number.isFinite(Number(marks[subjectName]))
-        ? roundMark(marks[subjectName])
-        : sumSubjectParts(subjectName, parts);
-      breakdown[subjectName] = {total:subjectTotal, parts};
-      const cfg = getExamSubjectDefinition(subjectName);
-      if (!cfg || cfg.excludeFromTotal !== true) total += subjectTotal;
-    });
-    rows.push({
-      student,
-      marks,
-      scan,
-      breakdown,
-      total:roundMark(total),
-      counts:scan && scan.counts ? scan.counts : getResultCounts(scan && scan.questionDetails),
-      rank:0
-    });
-  });
-
-  const scores = [...new Set(rows.map(row => row.total))].sort((a,b) => b-a);
-  rows.forEach(row => { row.rank = scores.indexOf(row.total) + 1; });
   reportState.rows = rows;
   reportState.filtered = rows.slice();
+  reportState.selectionKey = selectionKey;
+  reportState.historyUnavailable = historyUnavailable;
+  el('reportSearch').value = '';
   renderReportTable();
   return rows;
+}
+
+function omrCountText(counts, key){
+  return counts ? String(Number(counts[key] || 0)) : '—';
 }
 
 function renderReportTable(){
   const rows = reportState.filtered;
   const subjects = reportState.subjects;
   const maximum = getReportMaximum();
-  const average = rows.length ? rows.reduce((sum,row) => sum + row.total, 0) / rows.length : 0;
-  const highest = rows.length ? Math.max(...rows.map(row => row.total)) : 0;
+  const savedRows = rows.filter(row => row.hasData);
+  const average = savedRows.length ? savedRows.reduce((sum,row) => sum + row.total, 0) / savedRows.length : 0;
+  const highest = savedRows.length ? Math.max(...savedRows.map(row => row.total)) : 0;
   const exam = selectedEffectiveExam();
+  const multiple = subjects.length > 1;
   el('reportTitle').textContent = exam && exam.name ? exam.name : 'OMR Reports';
-  el('reportSubtitle').textContent = `${current.className || ''} ${current.sectionName || ''} · Firestore records`;
+  el('reportSubtitle').textContent = `${current.className || ''} ${current.sectionName || ''} · ${subjects.join(' + ')}`;
   el('reportMax').textContent = roundMark(maximum).toFixed(2);
-  el('reportCount').textContent = String(rows.length);
+  el('reportCount').textContent = String(savedRows.length);
   el('reportAverage').textContent = roundMark(average).toFixed(2);
   el('reportHighest').textContent = roundMark(highest).toFixed(2);
-  el('reportHead').innerHTML = `<tr><th>Rank</th><th>Roll</th><th>Student</th>${subjects.map(name => `<th>${escapeHtml(name)}</th>`).join('')}<th>Total</th><th>✓</th><th>✕</th><th>Blank</th></tr>`;
+  const countHeaders = name => `<th>${escapeHtml(name)} ✓</th><th>${escapeHtml(name)} ✕</th><th>${escapeHtml(name)} Blank</th>`;
+  const countCells = counts => `<td style="color:#15803d">${omrCountText(counts,'correct')}</td><td style="color:#b91c1c">${omrCountText(counts,'wrong')}</td><td>${omrCountText(counts,'unanswered')}</td>`;
+  el('reportHead').innerHTML = `<tr><th>Rank</th><th>Roll</th><th>Student</th>${subjects.map(name => `<th>${escapeHtml(name)}</th>${multiple ? countHeaders(name) : ''}`).join('')}<th>Total</th>${multiple ? '' : countHeaders('')}</tr>`;
   el('reportBody').innerHTML = rows.map(row => {
     const originalIndex = reportState.rows.indexOf(row);
     return `<tr class="report-row-link" data-report-index="${originalIndex}">
-      <td>${row.rank}</td><td>${escapeHtml(row.student.roll || '')}</td><td>${escapeHtml(row.student.name || '')}</td>
-      ${subjects.map(name => `<td>${roundMark(row.breakdown[name] && row.breakdown[name].total).toFixed(2)}</td>`).join('')}
-      <td><strong>${row.total.toFixed(2)}</strong></td><td style="color:#15803d">${row.counts.correct || 0}</td>
-      <td style="color:#b91c1c">${row.counts.wrong || 0}</td><td>${row.counts.unanswered || 0}</td></tr>`;
+      <td>${row.rank || '—'}</td><td>${escapeHtml(row.student.roll || '')}</td><td>${escapeHtml(row.student.name || '')}</td>
+      ${subjects.map(name => {
+        const item = row.breakdown[name];
+        return `<td>${item.hasData ? item.total.toFixed(2) + (!item.scans.length ? '<div class="status">OMR not scanned</div>' : '') : '<span class="status">Not scanned</span>'}</td>${multiple ? countCells(item.counts) : ''}`;
+      }).join('')}
+      <td><strong>${row.hasData ? row.total.toFixed(2) : 'Not scanned'}</strong></td>${multiple ? '' : countCells(row.counts)}</tr>`;
   }).join('');
   el('reportBody').querySelectorAll('[data-report-index]').forEach(row => {
     row.addEventListener('click', () => openReportDetail(Number(row.dataset.reportIndex)));
   });
-  el('reportStatus').textContent = rows.length ? `${rows.length} report(s). Tap a student for details.` : 'No marks or scans were found for this selection.';
+  const missing = rows.length - savedRows.length;
+  el('reportStatus').textContent = `${savedRows.length} report(s)${missing ? `; ${missing} not scanned` : ''}. Tap a student for details.` +
+    (reportState.historyUnavailable ? ' Some older scan details could not be loaded.' : '');
   el('reportTableWrap').style.display = rows.length ? 'block' : 'none';
 }
 
-function openReportDetail(index){
+function currentReportScan(){
+  const row = reportState.rows[reportState.detailIndex];
+  return row && row.scans[reportState.detailScanIndex || 0] || null;
+}
+
+function openReportDetail(index, scanIndex=0){
   const row = reportState.rows[index];
   if (!row) return;
   reportState.detailIndex = index;
+  reportState.detailScanIndex = scanIndex;
+  const scan = currentReportScan();
   const maximum = getReportMaximum();
-  const percentage = maximum ? (row.total / maximum * 100) : 0;
+  const percentage = maximum && row.hasData ? (row.total / maximum * 100).toFixed(1) + '%' : '—';
   el('detailTitle').textContent = `Roll No : ${row.student.roll || ''}`;
-  el('detailSubtitle').textContent = `${row.student.name || 'Student'} · Rank ${row.rank}`;
+  el('detailSubtitle').textContent = `${row.student.name || 'Student'} · ${row.hasData ? `Rank ${row.rank}` : 'Not scanned'}`;
 
   const subjectRows = reportState.subjects.map(subjectName => {
-    const item = row.breakdown[subjectName] || {total:0,parts:{}};
+    const item = row.breakdown[subjectName];
     const max = getSubjectMaximum(subjectName) || 0;
     const partRows = Object.entries(item.parts || {}).map(([name,value]) =>
       `<tr><td>${escapeHtml(name)}</td><td>${roundMark(value).toFixed(2)}</td><td>${escapeHtml(getPartMode(getSubjectParts(subjectName).find(part => omrNorm(part.name) === omrNorm(name))))}</td></tr>`
     ).join('');
-    return `<section class="detail-card"><h3>${escapeHtml(subjectName)} — ${item.total.toFixed(2)} / ${roundMark(max).toFixed(2)}</h3>
-      ${partRows ? `<table class="report-table"><thead><tr><th>Part</th><th>Marks</th><th>Entry</th></tr></thead><tbody>${partRows}</tbody></table>` : ''}</section>`;
+    const status = item.scans.length
+      ? `Scanned · ✓ ${omrCountText(item.counts,'correct')} · ✕ ${omrCountText(item.counts,'wrong')} · Blank ${omrCountText(item.counts,'unanswered')}`
+      : (item.hasMarks ? 'Marks entered; OMR not scanned' : 'Not scanned');
+    return `<section class="detail-card"><h3>${escapeHtml(subjectName)} — ${item.hasData ? `${item.total.toFixed(2)} / ${roundMark(max).toFixed(2)}` : 'Not scanned'}</h3>
+      <div class="status">${status}</div>${partRows ? `<table class="report-table"><thead><tr><th>Part</th><th>Marks</th><th>Entry</th></tr></thead><tbody>${partRows}</tbody></table>` : ''}</section>`;
   }).join('');
-  const adjustmentNote = row.scan && row.scan.manualScoreAdjustment
-    ? '<div class="warning-box" style="margin-bottom:10px;">The teacher adjusted one or more scanned section marks during review.</div>'
-    : '';
+  const adjustmentNote = row.scans.some(item => item.manualScoreAdjustment)
+    ? '<div class="warning-box" style="margin-bottom:10px;">The teacher adjusted one or more scanned section marks during review.</div>' : '';
   el('detailSummary').innerHTML = `${adjustmentNote}<div class="report-summary-grid">
-    <div class="report-stat"><strong>${row.total.toFixed(2)}</strong><span>TOTAL MARKS</span></div>
-    <div class="report-stat"><strong>${percentage.toFixed(1)}%</strong><span>PERCENTAGE</span></div>
-    <div class="report-stat"><strong>${row.counts.correct || 0}</strong><span>CORRECT</span></div>
-    <div class="report-stat"><strong>${row.counts.wrong || 0}</strong><span>WRONG</span></div>
+    <div class="report-stat"><strong>${row.hasData ? row.total.toFixed(2) : 'Not scanned'}</strong><span>TOTAL MARKS</span></div>
+    <div class="report-stat"><strong>${percentage}</strong><span>PERCENTAGE</span></div>
+    <div class="report-stat"><strong>${omrCountText(row.counts,'correct')}</strong><span>CORRECT</span></div>
+    <div class="report-stat"><strong>${omrCountText(row.counts,'wrong')}</strong><span>WRONG</span></div>
   </div>${subjectRows}`;
+  el('detailScanChoices').innerHTML = row.scans.length
+    ? `<label class="label" for="detailScanSelect">Paper / OMR part to view, edit or delete</label><select id="detailScanSelect" class="select">${row.scans.map((item,i) => `<option value="${i}"${i === scanIndex ? ' selected' : ''}>${escapeHtml(item.subjectName + (item.subtopicName ? ' — ' + item.subtopicName : ''))}</option>`).join('')}</select>` : '';
+  const picker = el('detailScanSelect');
+  if (picker) picker.onchange = () => openReportDetail(index,Number(picker.value));
 
   const imageWrap = el('detailImageWrap');
-  if (row.scan && row.scan.imageUrl){
-    el('detailImage').src = row.scan.imageUrl;
+  if (scan && scan.imageUrl){
+    el('detailImage').src = scan.imageUrl;
     imageWrap.style.display = 'block';
-  }
-  else imageWrap.style.display = 'none';
-
-  const questions = row.scan && Array.isArray(row.scan.questionDetails) ? row.scan.questionDetails : [];
+  } else imageWrap.style.display = 'none';
+  const questions = scan && Array.isArray(scan.questionDetails) ? scan.questionDetails : [];
   el('detailQuestions').innerHTML = questions.length
-    ? `<h3>Question Details</h3><div class="report-table-wrap"><table class="report-table"><thead><tr><th>Subject</th><th>Q No</th><th>Attempted</th><th>Correct</th><th>Status</th><th>Marks</th></tr></thead><tbody>${questions.map(item => `<tr>
+    ? `<h3>${escapeHtml(scan.subjectName)} — Question Details</h3><div class="report-table-wrap"><table class="report-table"><thead><tr><th>Subject</th><th>Q No</th><th>Attempted</th><th>Correct</th><th>Status</th><th>Marks</th></tr></thead><tbody>${questions.map(item => `<tr>
        <td>${escapeHtml(item.subject)}</td><td>${item.question}</td><td>${escapeHtml(item.attempted || '—')}</td>
        <td>${escapeHtml(item.correct || '—')}</td><td class="status-${escapeHtml(item.status)}">${escapeHtml(item.status)}</td><td>${roundMark(item.marks).toFixed(2)}</td></tr>`).join('')}</tbody></table></div>`
-    : '<div class="status">No question-level scan data is available for this record.</div>';
+    : `<div class="status">${scan ? 'No question-level scan data is available for this paper.' : 'No OMR scan is available for the selected subjects.'}</div>`;
   el('btnDetailPrev').disabled = index <= 0;
   el('btnDetailNext').disabled = index >= reportState.rows.length - 1;
-  el('btnDetailEdit').disabled = !row.scan;
+  el('btnDetailEdit').disabled = !scan;
+  el('btnDetailDelete').disabled = !scan;
   if (!el('dlgReportDetail').open) el('dlgReportDetail').showModal();
+}
+
+async function deleteOmrScanForReport(row, scan){
+  if (reportState.selectionKey !== omrReportSelectionKey()) throw new Error('Selection changed. Open reports again.');
+  const scope = scan._scope;
+  const resultRef = omrSubjectResultRef(scan,scope);
+  const marksRef = row.student.ref.collection('marks').doc(current.examId);
+  const auditRef = currentExamRef().collection('deletedResults').doc();
+  await db.runTransaction(async transaction => {
+    const [marksSnap, sourceSnap, scopedSnap] = await Promise.all([
+      transaction.get(marksRef), transaction.get(scan._ref), transaction.get(resultRef)
+    ]);
+    if (!sourceSnap.exists || JSON.stringify(sourceSnap.data()) !== JSON.stringify(scan._sourceData) ||
+        (scan._ref.path !== resultRef.path && scopedSnap.exists)){
+      throw new Error('This paper changed since the report was opened. Reload reports before deleting it.');
+    }
+    const data = marksSnap.exists ? marksSnap.data() || {} : {};
+    const nextSubs = JSON.parse(JSON.stringify(data.__subs || {}));
+    const nextData = {...data, __subs:nextSubs};
+    const subjectName = scope.subjectName;
+    const subjectKey = Object.keys(data).find(name => omrNorm(name) === omrNorm(subjectName)) || subjectName;
+    const subsKey = Object.keys(nextSubs).find(name => omrNorm(name) === omrNorm(subjectName)) || subjectName;
+    if (getSubjectParts(subjectName).length){
+      const values = {...(nextSubs[subsKey] || {})};
+      const key = Object.keys(values).find(name => omrNorm(name) === omrNorm(scope.partName));
+      if (key !== undefined){
+        delete values[key];
+        if (Object.keys(values).length){
+          nextSubs[subsKey] = values;
+          nextData[subjectKey] = sumSubjectParts(subjectName,values);
+        } else {
+          delete nextSubs[subsKey];
+          delete nextData[subjectKey];
+        }
+      }
+    } else {
+      delete nextSubs[subsKey];
+      delete nextData[subjectKey];
+    }
+    nextData.__meta = {...(data.__meta || {}), lastOmrDeleteAt:new Date().toISOString(), lastOmrTeacherId:currentTeacherId};
+    transaction.set(marksRef,nextData,{merge:false});
+    const archived = Object.fromEntries(Object.entries(scan).filter(([key]) => !key.startsWith('_')));
+    transaction.set(auditRef,{...archived, deletedAt:firebase.firestore.FieldValue.serverTimestamp(), deletedBy:currentTeacherId});
+    // A per-paper tombstone prevents an older combined record/history from
+    // reappearing after deletion. Other papers and archived images are kept.
+    transaction.set(resultRef,{
+      schemaVersion:6, isDeleted:true, schoolId:currentSchoolId, academicYear,
+      classId:scan.classId, sectionId:scan.sectionId, examId:current.examId,
+      roll:String(scan.roll), studentId:row.student.id,
+      selectedSubjects:[subjectName], subjectName, subtopicName:scope.partName || null,
+      partBySubject:scope.partName ? {[subjectName]:scope.partName} : {},
+      updatedAt:firebase.firestore.FieldValue.serverTimestamp(), deletedBy:currentTeacherId
+    },{merge:false});
+  });
 }
 
 async function deleteCurrentReportScan(){
   const row = reportState.rows[reportState.detailIndex];
-  if (!row || !row.scan || !row.scan._ref){ alert('There is no saved scan to delete.'); return; }
-  if (!window.confirm(`Delete the scan for Roll ${row.student.roll}? Manual/descriptive marks will be kept.`)) return;
-  const scan = row.scan;
-  const marksRef = row.student.ref.collection('marks').doc(current.examId);
-  const auditRef = currentExamRef().collection('deletedResults').doc();
-
-  await db.runTransaction(async transaction => {
-    const marksSnap = await transaction.get(marksRef);
-    const data = marksSnap.exists ? marksSnap.data() || {} : {};
-    const nextSubs = JSON.parse(JSON.stringify(data.__subs || {}));
-    const nextData = {...data, __subs:nextSubs};
-    const subjects = Array.isArray(scan.selectedSubjects) && scan.selectedSubjects.length
-      ? scan.selectedSubjects
-      : [scan.subjectName].filter(Boolean);
-    subjects.forEach(subjectName => {
-      const parts = getSubjectParts(subjectName);
-      if (parts.length){
-        const partName = scan.partBySubject && scan.partBySubject[subjectName] || scan.subtopicName || inferOmrPartName(subjectName);
-        const values = {...(nextSubs[subjectName] || {})};
-        const key = Object.keys(values).find(name => omrNorm(name) === omrNorm(partName));
-        if (key) delete values[key];
-        nextSubs[subjectName] = values;
-        nextData[subjectName] = sumSubjectParts(subjectName, values);
-      }
-      else {
-        delete nextSubs[subjectName];
-        delete nextData[subjectName];
-      }
-    });
-    nextData.__meta = {
-      ...(data.__meta || {}),
-      lastOmrDeleteAt:new Date().toISOString(),
-      lastOmrTeacherId:currentTeacherId
-    };
-    transaction.set(marksRef, nextData, {merge:false});
-    const archived = {...scan};
-    delete archived._ref;
-    transaction.set(auditRef, {...archived, deletedAt:firebase.firestore.FieldValue.serverTimestamp(), deletedBy:currentTeacherId});
-    transaction.delete(scan._ref);
-  });
-  if (scan.imagePath) storage.ref().child(scan.imagePath).delete().catch(() => {});
+  const scan = currentReportScan();
+  if (!row || !scan || !scan._ref){ alert('There is no saved scan to delete.'); return; }
+  const paper = scan.subjectName + (scan.subtopicName ? ' — ' + scan.subtopicName : '');
+  if (!window.confirm(`Delete ${paper} scan for Roll ${row.student.roll}? Other subjects and manual/descriptive marks will be kept.`)) return;
+  await deleteOmrScanForReport(row,scan);
   el('dlgReportDetail').close();
   await loadReportsFromFirestore(false);
 }
@@ -11421,7 +11677,7 @@ function exportReportsXlsx(){
   const maximum = getReportMaximum();
   const summary = reportState.rows.map(row => {
     const record = {
-      Rank:row.rank,
+      Rank:row.rank || '',
       Roll:row.student.roll || '',
       Student:row.student.name || ''
     };
@@ -11430,29 +11686,33 @@ function exportReportsXlsx(){
       Object.entries(item.parts || {}).forEach(([part,value]) => {
         record[`${subjectName} - ${part}`] = roundMark(value);
       });
-      record[`${subjectName} Total`] = roundMark(item.total);
+      record[`${subjectName} Total`] = item.hasData ? roundMark(item.total) : 'Not scanned';
+      record[`${subjectName} Scan`] = item.scans.length ? 'Scanned' : 'Not scanned';
+      record[`${subjectName} Correct`] = item.counts ? item.counts.correct : '';
+      record[`${subjectName} Wrong`] = item.counts ? item.counts.wrong : '';
+      record[`${subjectName} Unanswered`] = item.counts ? item.counts.unanswered : '';
     });
-    record['Total Marks'] = row.total;
+    record['Total Marks'] = row.hasData ? row.total : 'Not scanned';
     record['Maximum Marks'] = roundMark(maximum);
-    record['Percentage'] = maximum ? roundMark(row.total / maximum * 100) : 0;
-    record.Correct = row.counts.correct || 0;
-    record.Wrong = row.counts.wrong || 0;
-    record.Unanswered = row.counts.unanswered || 0;
-    record['Captured At'] = timestampText(row.scan && (row.scan.updatedAt || row.scan.capturedAt));
+    record['Percentage'] = row.hasData && maximum ? roundMark(row.total / maximum * 100) : '';
+    record.Correct = row.counts ? row.counts.correct : '';
+    record.Wrong = row.counts ? row.counts.wrong : '';
+    record.Unanswered = row.counts ? row.counts.unanswered : '';
+    record['Captured At'] = row.scans.map(scan => `${scan.subjectName}${scan.subtopicName ? ' — ' + scan.subtopicName : ''}: ${timestampText(scan.updatedAt || scan.capturedAt)}`).join('; ');
     return record;
   });
   const details = [];
   const analytics = new Map();
   reportState.rows.forEach(row => {
-    const questions = row.scan && Array.isArray(row.scan.questionDetails) ? row.scan.questionDetails : [];
+    const questions = row.scans.flatMap(scan => Array.isArray(scan.questionDetails) ? scan.questionDetails : []);
     questions.forEach(item => {
       details.push({
         Roll:row.student.roll || '', Student:row.student.name || '', Subject:item.subject || '',
         Part:item.part || '', 'Q No':item.question, Attempted:item.attempted || '',
         'Correct Option':item.correct || '', Status:item.status || '', Marks:roundMark(item.marks)
       });
-      const key = `${item.subject}||${item.question}`;
-      const stat = analytics.get(key) || {Subject:item.subject, 'Q No':item.question, Correct:0, Wrong:0, Unanswered:0, Attempts:0};
+      const key = JSON.stringify([item.subject,item.part || '',item.question]);
+      const stat = analytics.get(key) || {Subject:item.subject, Part:item.part || '', 'Q No':item.question, Correct:0, Wrong:0, Unanswered:0, Attempts:0};
       if (item.status === 'correct'){ stat.Correct++; stat.Attempts++; }
       else if (item.status === 'wrong'){ stat.Wrong++; stat.Attempts++; }
       else if (item.status === 'unanswered') stat.Unanswered++;
@@ -11494,9 +11754,13 @@ el('btnDetailDelete').onclick = () => deleteCurrentReportScan().catch(error => a
 el('btnDetailEdit').onclick = () => {
   const row = reportState.rows[reportState.detailIndex];
   if (!row) return;
-  if (row.scan){
+  if (reportState.selectionKey !== omrReportSelectionKey()){
+    alert('Selection changed. Open reports again.'); return;
+  }
+  const scan = currentReportScan();
+  if (scan){
     const editable = {
-      ...row.scan,
+      ...scan,
       examId:current.examId,
       classId:current.classId,
       sectionId:current.sectionId,
@@ -11505,7 +11769,7 @@ el('btnDetailEdit').onclick = () => {
     };
     el('dlgReportDetail').close();
     if (el('dlgReports').open) el('dlgReports').close();
-    showScanReview(editable, row.scan.imageUrl || null);
+    showScanReview(editable, scan.imageUrl || null);
   }
 };
 el('reportSearch').oninput = event => {
@@ -11606,5 +11870,6 @@ el('reportSearch').oninput = event => {
   </script>
 </body>
 </html>
+
 
 

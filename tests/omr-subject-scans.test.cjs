@@ -1,0 +1,347 @@
+// Run: node --test tests/omr-subject-scans.test.cjs
+// Executes the scanner's real save/report functions against an in-memory
+// Firestore substitute. No school records, authentication or network are used.
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+const html = fs.readFileSync(path.join(__dirname,'../omr.html'),'utf8');
+const clone = value => value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+
+function section(start,end){
+  const a=html.indexOf(start), b=html.indexOf(end,a);
+  assert.ok(a>=0 && b>a,`Source section: ${start}`);
+  return html.slice(a,b);
+}
+const functions = [
+  section('function omrNorm(value){','function selectedEffectiveExam(){'),
+  section('function getExamSubjectDefinition(subjectName){','function getOmrPartCandidates(subjectName){'),
+  section('function getPartMaximum(subjectName, partName){','function getExamMaximum(){'),
+  section('function omrKeySubjectNames(scan){','function omrCanonicalKey(key){'),
+  section('function roundMark(value){','function buildQuestionDetails(out){'),
+  section('function getResultCounts(questionDetails){','function studentsCollectionRef('),
+  section('function omrSubjectEntry(values, subjectName){','// ===== SCAN REVIEW'),
+  section('// ===== FIRESTORE REPORTS =====','// ===== BOOT =====')
+].join('\n');
+
+function deepMerge(a,b){
+  const out={...a};
+  for(const [key,value] of Object.entries(b)){
+    out[key]=value && typeof value==='object' && !Array.isArray(value)
+      ? deepMerge(a && a[key] || {},value) : clone(value);
+  }
+  return out;
+}
+
+function harness(){
+  const store=new Map(), elements=new Map(), prompts=[], uploads=[], exports=[];
+  let seq=0, stamp=1, beforeTransaction=null;
+  const root='omrExams/SA1';
+  const studentPath='years/2026-27/classes/class7/sections/A/students/student1';
+  function ref(p){
+    return {path:p,id:p.split('/').at(-1),get:async()=>snap(p),collection:n=>collection(p+'/'+n)};
+  }
+  function snap(p){
+    const data=clone(store.get(p));
+    return {id:p.split('/').at(-1),exists:store.has(p),ref:ref(p),data:()=>clone(data)};
+  }
+  function collection(p,filters=[],sort=null){
+    return {
+      doc:id=>ref(p+'/'+(id || 'auto'+(++seq))),
+      where:(field,operator,value)=>{assert.equal(operator,'==');return collection(p,[...filters,[field,value]],sort);},
+      orderBy:field=>collection(p,filters,field),
+      get:async()=>{
+        const docs=[...store.keys()].filter(key=>key.startsWith(p+'/') && !key.slice(p.length+1).includes('/'))
+          .filter(key=>filters.every(([f,v])=>store.get(key)[f]===v)).map(snap);
+        if(sort)docs.sort((a,b)=>a.data()[sort]-b.data()[sort]);
+        return {docs,empty:!docs.length};
+      }
+    };
+  }
+  const db={runTransaction:async callback=>{
+    if(beforeTransaction){const hook=beforeTransaction;beforeTransaction=null;hook();}
+    const writes=[];
+    const result=await callback({
+      get:async r=>{assert.equal(writes.length,0,'All reads must precede writes');return snap(r.path);},
+      set:(r,data,options)=>writes.push([r.path,clone(data),!!(options && options.merge)]),
+      delete:r=>writes.push([r.path,undefined,false])
+    });
+    for(const [p,data,merge] of writes){
+      if(data===undefined)store.delete(p);
+      else store.set(p,merge?deepMerge(store.get(p)||{},data):data);
+    }
+    return result;
+  }};
+  const subjects=['Math 1','Math 2','English 1','English 2','Physics','Chemistry','Telugu','Hindi','తెలుగు 1','తెలుగు 2'];
+  const ctx={
+    console, currentSchoolId:'school',currentTeacherId:'teacher',academicYear:'2026-27',db,
+    current:{classId:'class7',sectionId:'A',examId:'SA1',className:'7th Class',sectionName:'A Section',selectedSubjects:['Math 1'],partBySubject:{'Math 1':'OMR'}},
+    examSubjects:subjects.map(name=>({name,max:100,subtopicsMode:'custom',subtopics:[{name:'OMR',max:60,entryMode:'omr'},{name:'Descriptive',max:40,entryMode:'manual'}]})),
+    examCommonSubtopics:[], tpl:{sections:[],omrPartBySubject:{}}, answerKey:{},scanReplacementApprovals:new WeakMap(),
+    selectedEffectiveExam:()=>({name:'Summative Assessment 1'}),
+    currentExamRef:()=>ref('omrExams/'+ctx.current.examId),
+    studentsCollectionRef:()=>collection(studentPath.slice(0,studentPath.lastIndexOf('/'))),
+    findStudentByRoll:async roll=>Number(roll)===1?{id:'student1',ref:ref(studentPath),roll:1,name:'Student One'}:null,
+    uploadScanPreview:async out=>{uploads.push(out);return {imageUrl:null,imagePath:null};},
+    storage:{ref:()=>({child:()=>({delete:async()=>{}})})},
+    firebase:{firestore:{FieldValue:{serverTimestamp:()=>({seconds:1800000000+(stamp++)})}}},
+    appConfirm:async options=>{prompts.push(options);return ctx.confirmResult;},confirmResult:true,
+    alert:message=>{throw new Error(message);},window:{confirm:()=>true},navigator:{onLine:true},
+    localStorage:{getItem:key=>ctx.localData[key] || null,setItem:(key,value)=>{ctx.localData[key]=value;}},localData:{},
+    el:id=>{
+      if(!elements.has(id))elements.set(id,{style:{},textContent:'',innerHTML:'',value:'',open:false,
+        querySelectorAll:()=>[],showModal(){this.open=true;},close(){this.open=false;}});
+      return elements.get(id);
+    },
+    showScanReview:(out,image)=>{ctx.lastReview={out,image};}
+  };
+  ctx.window.XLSX=ctx.XLSX={utils:{
+    book_new:()=>({sheets:[]}),json_to_sheet:rows=>({rows:clone(rows)}),
+    book_append_sheet:(book,sheet,name)=>book.sheets.push({name,...sheet})
+  },writeFile:(book,name)=>exports.push({book,name})};
+  vm.createContext(ctx);vm.runInContext(functions,ctx);
+  store.set(studentPath,{roll:1,name:'Student One'});
+  const state=()=>vm.runInContext('reportState',ctx);
+  const select=(...names)=>{
+    ctx.current.selectedSubjects=names;
+    ctx.current.partBySubject=Object.fromEntries(names.map(name=>[name,'OMR']));
+  };
+  function scan(names,total=21,correct=21,wrong=19,part='OMR'){
+    if(typeof names==='string')names=[names];
+    return {examId:ctx.current.examId,academicYear:ctx.academicYear,classId:ctx.current.classId,sectionId:ctx.current.sectionId,
+      roll:'1',selectedSubjects:names,subjectName:names.length===1?names[0]:null,partBySubject:Object.fromEntries(names.map(name=>[name,part])),
+      subtopicName:names.length===1?part:null,
+      answers:Object.fromEntries(names.map(name=>[name,{1:['A'],2:['B']}])),
+      score:{total:total*names.length,perSection:Object.fromEntries(names.map(name=>[name,total]))},
+      questionDetails:names.flatMap(name=>Array.from({length:correct+wrong},(_,i)=>({subject:name,part,question:i+1,
+        attempted:'A',correct:i<correct?'A':'B',status:i<correct?'correct':'wrong',marks:i<correct?1:0}))),
+      counts:{correct:correct*names.length,wrong:wrong*names.length,unanswered:0},capturedAt:'2026-11-26T10:00:00Z'};
+  }
+  const marksPath=studentPath+'/marks/SA1';
+  const seedLegacy=(out,id='school__2026-27__class7__A__1')=>{
+    const p=root+'/results/'+id;store.set(p,{...clone(out),schemaVersion:5,studentId:'student1'});return ref(p);
+  };
+  const rawScans=()=>[...store.keys()].filter(p=>p.startsWith(root+'/results/')&&!p.slice((root+'/results/').length).includes('/')).map(p=>ctx.omrReportScan(snap(p)));
+  return {ctx,store,select,scan,seedLegacy,marksPath,root,prompts,exports,elements,state,rawScans,ref,snap,
+    beforeTransaction:hook=>{beforeTransaction=hook;},
+    rows:subjects=>ctx.omrReportRow({id:'student1',roll:1,ref:ref(studentPath)},store.get(marksPath)||{},rawScans(),subjects),
+    resultRef:(name,part='OMR')=>ctx.omrSubjectResultRef(scan(name),{subjectName:name,partName:part})};
+}
+
+test('all inline JavaScript parses',()=>{
+  for(const [,script] of html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g))new vm.Script(script);
+});
+
+for(const [first,second] of [['Math 1','Math 2'],['English 1','English 2'],['Physics','Chemistry'],['తెలుగు 1','తెలుగు 2']]){
+  test(`${second} saves independently of legacy ${first}`,async()=>{
+    const h=harness();h.select(second);
+    const old=h.scan(first);old.partBySubject[second]='OMR';
+    const legacy=h.seedLegacy(old),before=clone(h.store.get(legacy.path));
+    h.store.set(h.marksPath,{[first]:34,__subs:{[first]:{OMR:21,Descriptive:13},[second]:{Descriptive:10}}});
+    const missing=h.rows([second]);
+    assert.equal(missing.counts,null);assert.equal(missing.scans.length,0);
+    assert.equal((await h.ctx.findExistingOmrScan(h.scan(second))).duplicates.length,0);
+    await h.ctx.saveScanToFirestore(h.scan(second,18,18,22));
+    assert.equal(h.prompts.length,0);
+    assert.deepEqual(h.store.get(legacy.path),before);
+    assert.equal(h.store.get(h.marksPath)[first],34);
+    assert.equal(h.store.get(h.marksPath)[second],28);
+    assert.equal(h.rows([first]).counts.correct,21);
+    assert.equal(h.rows([second]).counts.correct,18);
+    assert.deepEqual(h.store.get(h.resultRef(second).path).selectedSubjects,[second]);
+  });
+}
+
+test('missing Math 2 reproducer shows Not scanned with no borrowed 21/19 or rank',async()=>{
+  const h=harness();h.select('Math 2');h.seedLegacy(h.scan('Math 1'));
+  h.store.set(h.marksPath,{'Math 1':34});
+  const rows=await h.ctx.loadReportsFromFirestore(false);
+  assert.equal(rows[0].hasData,false);assert.equal(rows[0].counts,null);assert.equal(rows[0].rank,null);
+  assert.equal(h.elements.get('reportCount').textContent,'0');
+  assert.match(h.elements.get('reportBody').innerHTML,/Not scanned/);
+  assert.doesNotMatch(h.elements.get('reportBody').innerHTML,/>21<|>19</);
+  h.ctx.openReportDetail(0);
+  assert.equal(h.elements.get('btnDetailEdit').disabled,true);
+  assert.equal(h.elements.get('btnDetailDelete').disabled,true);
+  h.ctx.exportReportsXlsx();
+  const summary=h.exports[0].book.sheets[0].rows[0];
+  assert.equal(summary['Math 2 Total'],'Not scanned');assert.equal(summary.Correct,'');
+  assert.equal(h.exports[0].book.sheets[1].rows.length,0);
+});
+
+test('an actual scanned zero remains a zero and is ranked',async()=>{
+  const h=harness();h.select('English 2');
+  await h.ctx.saveScanToFirestore(h.scan('English 2',0,0,40));
+  const rows=await h.ctx.loadReportsFromFirestore(false);
+  assert.equal(rows[0].hasData,true);assert.equal(rows[0].total,0);assert.equal(rows[0].rank,1);
+  assert.equal(rows[0].counts.correct,0);assert.equal(rows[0].counts.wrong,40);
+  assert.equal(h.elements.get('reportCount').textContent,'1');
+});
+
+test('a multi-subject scan stores isolated records and Excel counts for every paper',async()=>{
+  const h=harness();h.select('Math 1','Math 2','English 1','English 2');
+  await h.ctx.saveScanToFirestore(h.scan(h.ctx.current.selectedSubjects,12,12,28));
+  assert.equal(h.rawScans().length,4);
+  for(const name of h.ctx.current.selectedSubjects){
+    const stored=h.store.get(h.resultRef(name).path);
+    assert.deepEqual(stored.selectedSubjects,[name]);assert.deepEqual(Object.keys(stored.score.perSection),[name]);
+    assert.equal(stored.questionDetails.length,40);assert.equal(stored.counts.correct,12);
+  }
+  await h.ctx.loadReportsFromFirestore(false);h.ctx.exportReportsXlsx();
+  assert.match(h.elements.get('reportHead').innerHTML,/English 1 ✓/);
+  assert.match(h.elements.get('reportHead').innerHTML,/English 2 ✓/);
+  const summary=h.exports[0].book.sheets[0].rows[0];
+  assert.equal(summary['English 1 Correct'],12);assert.equal(summary['English 2 Correct'],12);
+  assert.equal(h.exports[0].book.sheets[1].rows.length,160);
+});
+
+test('only the same subject and same part requests replacement; cancellation writes nothing',async()=>{
+  const h=harness();h.select('English 1');
+  await h.ctx.saveScanToFirestore(h.scan('English 1'));
+  const before=clone([...h.store]);h.ctx.confirmResult=false;
+  const saved=await h.ctx.saveScanToFirestore(h.scan('English 1',19,19,21));
+  assert.equal(saved.cancelled,true);assert.deepEqual([...h.store],before);
+  assert.match(h.prompts[0].subtitle,/English 1/);
+  h.select('English 2');await h.ctx.saveScanToFirestore(h.scan('English 2'));
+  assert.equal(h.prompts.length,1);
+});
+
+test('replacement archives only its own paper and retains other marks and descriptive components',async()=>{
+  const h=harness();h.select('English 1','English 2');
+  h.store.set(h.marksPath,{__subs:{'English 1':{Descriptive:20},'English 2':{Descriptive:15}}});
+  await h.ctx.saveScanToFirestore(h.scan(['English 1','English 2'],10,10,30));
+  const other=clone(h.store.get(h.resultRef('English 1').path));
+  h.select('English 2');await h.ctx.saveScanToFirestore(h.scan('English 2',25,25,15));
+  assert.deepEqual(h.store.get(h.resultRef('English 1').path),other);
+  assert.equal(h.store.get(h.marksPath)['English 1'],30);
+  assert.equal(h.store.get(h.marksPath)['English 2'],40);
+  const history=[...h.store.entries()].filter(([p])=>p.startsWith(h.resultRef('English 2').path+'/history/'));
+  assert.equal(history.length,1);assert.deepEqual(history[0][1].selectedSubjects,['English 2']);
+});
+
+test('two OMR parts of one subject save independently and deletion removes only the chosen part',async()=>{
+  const h=harness();h.select('English 1');
+  h.ctx.examSubjects.find(s=>s.name==='English 1').subtopics=[{name:'Paper A',max:40,entryMode:'omr'},{name:'Paper B',max:40,entryMode:'omr'},{name:'Descriptive',max:20,entryMode:'manual'}];
+  h.store.set(h.marksPath,{__subs:{'English 1':{Descriptive:10}}});
+  await h.ctx.saveScanToFirestore(h.scan('English 1',12,12,28,'Paper A'));
+  await h.ctx.saveScanToFirestore(h.scan('English 1',15,15,25,'Paper B'));
+  assert.equal(h.prompts.length,0);assert.equal(h.store.get(h.marksPath)['English 1'],37);
+  await h.ctx.loadReportsFromFirestore(false);
+  const row=h.state().rows[0],paperA=row.scans.find(s=>s.subtopicName==='Paper A');
+  await h.ctx.deleteOmrScanForReport(row,paperA);
+  assert.equal(h.store.get(h.marksPath)['English 1'],25);
+  assert.equal(h.rows(['English 1']).scans.length,1);
+  assert.equal(h.rows(['English 1']).counts.correct,15);
+});
+
+test('legacy combined scans are projected by subject and new records do not double-count them',async()=>{
+  const h=harness();h.select('Math 1','English 1');
+  const legacy=h.seedLegacy(h.scan(['Math 1','English 1'],20,20,20));
+  assert.equal(h.rows(['English 1']).counts.correct,20);
+  h.select('English 1');await h.ctx.saveScanToFirestore(h.scan('English 1',16,16,24));
+  assert.equal(h.rows(['English 1']).counts.correct,16);assert.equal(h.rows(['Math 1']).counts.correct,20);
+  assert.equal(h.rows(['Math 1','English 1']).counts.correct,36);
+  assert.ok(h.store.has(legacy.path));
+});
+
+test('old overwritten subject can be read from history without modifying marks or records',async()=>{
+  const h=harness();h.select('Math 1');
+  const legacy=h.seedLegacy(h.scan('English 1',10,10,30));
+  h.store.set(legacy.path+'/history/old',{...h.scan('Math 1',21,21,19),schemaVersion:5,studentId:'student1'});
+  h.store.set(h.marksPath,{'Math 1':34,'English 1':10});
+  const before=clone([...h.store]);
+  const lookup=await h.ctx.findExistingOmrScan(h.scan('Math 1'));
+  assert.equal(lookup.duplicates.length,1);assert.match(lookup.duplicates[0].duplicateSnap.ref.path,/history/);
+  const rows=await h.ctx.loadReportsFromFirestore(false);
+  assert.equal(rows[0].total,34);assert.equal(rows[0].counts.correct,21);
+  assert.deepEqual([...h.store],before);
+});
+
+test('deleting one paper from a legacy combined scan preserves the others and prevents resurrection',async()=>{
+  const h=harness();h.select('Math 1','English 1');
+  const legacy=h.seedLegacy(h.scan(['Math 1','English 1'],20,20,20));
+  h.store.set(h.marksPath,{'Math 1':30,'English 1':35,__subs:{'Math 1':{OMR:20,Descriptive:10},'English 1':{OMR:20,Descriptive:15}}});
+  await h.ctx.loadReportsFromFirestore(false);
+  const row=h.state().rows[0],english=row.scans.find(s=>s.subjectName==='English 1');
+  await h.ctx.deleteOmrScanForReport(row,english);
+  assert.equal(h.store.get(h.marksPath)['Math 1'],30);assert.equal(h.store.get(h.marksPath)['English 1'],15);
+  assert.equal(h.rows(['English 1']).counts,null);assert.equal(h.rows(['Math 1']).counts.correct,20);
+  assert.equal((await h.ctx.findExistingOmrScan(h.scan('English 1'))).duplicates.length,0);
+  assert.ok(h.store.has(legacy.path));
+});
+
+test('report edit uses the chosen paper, not the entire original multi-subject scan',async()=>{
+  const h=harness();h.select('Math 1','English 1');h.seedLegacy(h.scan(['Math 1','English 1'],20,20,20));
+  await h.ctx.loadReportsFromFirestore(false);
+  h.ctx.openReportDetail(0,1);h.elements.get('btnDetailEdit').onclick();
+  const out=h.ctx.lastReview.out;
+  assert.deepEqual(clone(out.selectedSubjects),['English 1']);
+  assert.deepEqual(Object.keys(out.score.perSection),['English 1']);
+  assert.ok(out.questionDetails.every(q=>q.subject==='English 1'));
+});
+
+test('concurrent same-paper changes abort the whole save and retain other papers',async()=>{
+  const h=harness();h.select('English 2');
+  const result=h.resultRef('English 2');
+  h.beforeTransaction(()=>h.store.set(result.path,{...h.scan('English 2',18,18,22),schemaVersion:6}));
+  await assert.rejects(()=>h.ctx.saveScanToFirestore(h.scan('English 2')),/Another device changed this paper/);
+  assert.equal(h.store.has(h.marksPath),false);
+  assert.equal(h.store.get(result.path).score.total,18);
+});
+
+test('offline queue sends each paper to its own record and keeps unmatched exams queued',async()=>{
+  const h=harness();h.select('English 2');
+  const otherExam={...h.scan('Math 1'),examId:'SA2'};
+  h.ctx.localData.omrOfflineQueue_school=JSON.stringify([h.scan('English 1'),h.scan('English 2'),otherExam]);
+  await h.ctx.syncOfflineQueueForCurrentSelection();
+  assert.equal(h.rawScans().length,2);assert.equal(h.prompts.length,0);
+  assert.equal(JSON.parse(h.ctx.localData.omrOfflineQueue_school).length,1);
+});
+
+test('different sections/years and unrelated part mappings never donate counts',async()=>{
+  const h=harness();h.select('English 2');
+  const old=h.scan('English 1');old.partBySubject['English 2']='OMR';
+  h.seedLegacy(old);h.seedLegacy({...h.scan('English 2'),sectionId:'B'},'other-section');
+  h.seedLegacy({...h.scan('English 2'),academicYear:'2025-26'},'other-year');
+  const rows=await h.ctx.loadReportsFromFirestore(false);
+  assert.equal(rows[0].counts,null);assert.equal(rows[0].hasData,false);
+});
+
+test('identity preserves paper punctuation and Unicode rather than collapsing names',()=>{
+  const h=harness();
+  const names=['English 1','English 2','English/A','English A','తెలుగు 1','తెలుగు 2'];
+  const refs=names.map(name=>h.resultRef(name).path);
+  assert.equal(new Set(refs).size,names.length);
+  assert.equal(h.resultRef('English 1','Paper A').path===h.resultRef('English 1','Paper B').path,false);
+});
+
+test('a stale delete cannot hide a newer paper saved by another device',async()=>{
+  const h=harness();h.select('English 1');h.seedLegacy(h.scan('English 1'));
+  await h.ctx.loadReportsFromFirestore(false);
+  const row=h.state().rows[0],scan=row.scans[0];
+  await h.ctx.saveScanToFirestore(h.scan('English 1',18,18,22));
+  const before=clone([...h.store]);
+  await assert.rejects(()=>h.ctx.deleteOmrScanForReport(row,scan),/paper changed/);
+  assert.deepEqual([...h.store],before);
+});
+
+test('legacy combined totals without question details are never borrowed by a single paper',()=>{
+  const h=harness();
+  const old=h.scan(['Math 1','English 1'],20,20,20);delete old.questionDetails;
+  h.seedLegacy(old);
+  const row=h.rows(['English 1']);
+  assert.equal(row.scans.length,1);assert.equal(row.counts,null);
+});
+
+test('saving after deletion creates a fresh independent scan without changing another paper',async()=>{
+  const h=harness();h.select('English 1','English 2');
+  h.seedLegacy(h.scan(['English 1','English 2'],20,20,20));
+  await h.ctx.loadReportsFromFirestore(false);
+  const row=h.state().rows[0];
+  await h.ctx.deleteOmrScanForReport(row,row.scans.find(scan=>scan.subjectName==='English 2'));
+  h.select('English 2');
+  await h.ctx.saveScanToFirestore(h.scan('English 2',18,18,22));
+  assert.equal(h.prompts.length,0);assert.equal(h.rows(['English 2']).counts.correct,18);
+  assert.equal(h.rows(['English 1']).counts.correct,20);
+});
