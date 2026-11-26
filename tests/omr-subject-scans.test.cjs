@@ -77,7 +77,7 @@ function harness(){
   const ctx={
     console, currentSchoolId:'school',currentTeacherId:'teacher',academicYear:'2026-27',db,
     current:{classId:'class7',sectionId:'A',examId:'SA1',className:'7th Class',sectionName:'A Section',selectedSubjects:['Math 1'],partBySubject:{'Math 1':'OMR'}},
-    examSubjects:subjects.map(name=>({name,max:100,subtopicsMode:'custom',subtopics:[{name:'OMR',max:60,entryMode:'omr'},{name:'Descriptive',max:40,entryMode:'manual'}]})),
+    examSubjects:subjects.map(name=>({name,max:100,subtopicsMode:'custom',subtopics:[{name:'OMR',max:40,entryMode:'omr'},{name:'Descriptive',max:40,entryMode:'manual'},{name:'Internal',max:20,entryMode:'computed'}]})),
     examCommonSubtopics:[], tpl:{sections:[],omrPartBySubject:{}}, answerKey:{},scanReplacementApprovals:new WeakMap(),
     selectedEffectiveExam:()=>({name:'Summative Assessment 1'}),
     currentExamRef:()=>ref('omrExams/'+ctx.current.examId),
@@ -254,7 +254,7 @@ test('old overwritten subject can be read from history without modifying marks o
   const lookup=await h.ctx.findExistingOmrScan(h.scan('Math 1'));
   assert.equal(lookup.duplicates.length,1);assert.match(lookup.duplicates[0].duplicateSnap.ref.path,/history/);
   const rows=await h.ctx.loadReportsFromFirestore(false);
-  assert.equal(rows[0].total,34);assert.equal(rows[0].counts.correct,21);
+  assert.equal(rows[0].total,21);assert.equal(rows[0].counts.correct,21);
   assert.deepEqual([...h.store],before);
 });
 
@@ -369,7 +369,7 @@ for(const subject of ['Math 1','Math 2','English 1','English 2']){
     h.ctx.exportReportsXlsx();
     const summary=h.exports[0].book.sheets[0].rows[0];
     assert.equal(summary[`${subject} Total`],'Not scanned');
-    assert.equal(summary[`${subject} - Descriptive`],1);
+    assert.equal(summary[`${subject} - Descriptive`],undefined);
     assert.equal(summary['Total Marks'],'Not scanned');
     assert.equal(summary.Percentage,'');
     assert.equal(summary.Rank,'');
@@ -419,4 +419,134 @@ test('an incomplete multi-paper report has no final total, percentage or rank',a
   assert.equal(summary['English 2 Total'],'Not scanned');
   assert.equal(summary['Total Marks'],'Incomplete');
   assert.equal(summary.Percentage,'');assert.equal(summary.Rank,'');
+});
+
+for(const subject of ['Math 1','Math 2','English 1','English 2']){
+  test(`${subject}: MCQ report uses 21/40 even when the full subject mark is 51/100`,async()=>{
+    const h=harness();h.select(subject);
+    h.seedLegacy(h.scan(subject,21,21,19));
+    h.store.set(h.marksPath,{[subject]:51,__subs:{[subject]:{OMR:21,Descriptive:20,Internal:10}}});
+    const before=clone([...h.store]);
+    const rows=await h.ctx.loadReportsFromFirestore(false),row=rows[0];
+    assert.equal(row.total,21);
+    assert.equal(row.breakdown[subject].total,21);
+    assert.equal(h.elements.get('reportMax').textContent,'40.00');
+    assert.equal(h.elements.get('reportAverage').textContent,'21.00');
+    assert.equal(h.elements.get('reportHighest').textContent,'21.00');
+    assert.doesNotMatch(h.elements.get('reportBody').innerHTML,/51\.00/);
+    h.ctx.openReportDetail(0);
+    assert.match(h.elements.get('detailSummary').innerHTML,/21\.00 \/ 40\.00/);
+    assert.match(h.elements.get('detailSummary').innerHTML,/52\.5%/);
+    assert.doesNotMatch(h.elements.get('detailSummary').innerHTML,/Descriptive|Internal|51\.00|100\.00/);
+    h.ctx.exportReportsXlsx();
+    const summary=h.exports[0].book.sheets[0].rows[0];
+    assert.equal(summary[`${subject} Total`],21);
+    assert.equal(summary['Total Marks'],21);
+    assert.equal(summary['Maximum Marks'],40);
+    assert.equal(summary.Percentage,52.5);
+    assert.equal(summary[`${subject} - Descriptive`],undefined);
+    assert.equal(summary[`${subject} - Internal`],undefined);
+    assert.deepEqual([...h.store],before);
+  });
+}
+
+test('MCQ ranks, average and highest ignore the ordering of overall subject marks',async()=>{
+  const h=harness();h.select('Math 1');
+  const students='years/2026-27/classes/class7/sections/A/students/';
+  h.seedLegacy(h.scan('Math 1',21,21,19));
+  h.store.set(h.marksPath,{'Math 1':51,__subs:{'Math 1':{OMR:21,Descriptive:20,Internal:10}}});
+  h.store.set(students+'student2',{roll:2,name:'Student Two'});
+  h.store.set(students+'student2/marks/SA1',{'Math 1':45,__subs:{'Math 1':{OMR:38,Descriptive:3,Internal:4}}});
+  h.store.set(h.root+'/results/student-two',{
+    ...h.scan('Math 1',38,38,2),roll:'2',studentId:'student2',schemaVersion:5
+  });
+  const before=clone([...h.store]);
+  const rows=await h.ctx.loadReportsFromFirestore(false);
+  assert.equal(rows[0].total,21);assert.equal(rows[0].rank,2);
+  assert.equal(rows[1].total,38);assert.equal(rows[1].rank,1);
+  assert.equal(h.elements.get('reportMax').textContent,'40.00');
+  assert.equal(h.elements.get('reportAverage').textContent,'29.50');
+  assert.equal(h.elements.get('reportHighest').textContent,'38.00');
+  assert.deepEqual([...h.store],before);
+});
+
+for(const maximum of [30,60]){
+  test(`an exam configured for ${maximum} MCQ marks uses ${maximum} automatically`,async()=>{
+    const h=harness();h.select('Physics');
+    const subject=h.ctx.examSubjects.find(s=>s.name==='Physics');
+    subject.subtopics[0].max=maximum;
+    subject.subtopics[1].max=100-maximum-20;
+    h.ctx.tpl.sectionConfigs={Physics:{name:'Physics',count:maximum,mark:1}};
+    h.seedLegacy(h.scan('Physics',maximum/2,maximum/2,maximum/2));
+    h.store.set(h.marksPath,{Physics:70});
+    await h.ctx.loadReportsFromFirestore(false);h.ctx.exportReportsXlsx();
+    assert.equal(h.elements.get('reportMax').textContent,maximum.toFixed(2));
+    const record=h.exports[0].book.sheets[0].rows[0];
+    assert.equal(record['Maximum Marks'],maximum);
+    assert.equal(record['Physics Maximum'],maximum);
+    assert.equal(record['Total Marks'],maximum/2);
+    assert.equal(record.Percentage,50);
+  });
+}
+
+test('two selected subjects aggregate their MCQ scores and MCQ maxima independently',async()=>{
+  const h=harness();h.select('English 1','English 2');
+  h.ctx.examSubjects.find(s=>s.name==='English 2').subtopics[0].max=30;
+  h.seedLegacy(h.scan('English 1',21,21,19),'english-one');
+  h.seedLegacy(h.scan('English 2',15,15,15),'english-two');
+  h.store.set(h.marksPath,{'English 1':51,'English 2':70});
+  const rows=await h.ctx.loadReportsFromFirestore(false);h.ctx.exportReportsXlsx();
+  assert.equal(rows[0].total,36);
+  assert.equal(h.elements.get('reportMax').textContent,'70.00');
+  const record=h.exports[0].book.sheets[0].rows[0];
+  assert.equal(record['English 1 Total'],21);assert.equal(record['English 2 Total'],15);
+  assert.equal(record['Maximum Marks'],70);assert.equal(record['Total Marks'],36);
+});
+
+test('a reviewed MCQ score is retained without recomputing it from the number correct',async()=>{
+  const h=harness();h.select('Math 1');
+  const scan=h.scan('Math 1',24,21,19);scan.manualScoreAdjustment=true;
+  h.seedLegacy(scan);h.store.set(h.marksPath,{'Math 1':54});
+  const rows=await h.ctx.loadReportsFromFirestore(false);
+  assert.equal(rows[0].total,24);assert.equal(rows[0].counts.correct,21);
+  assert.equal(h.elements.get('reportMax').textContent,'40.00');
+});
+
+test('a real MCQ zero stays zero even when descriptive and internal marks exist',async()=>{
+  const h=harness();h.select('Math 1');h.seedLegacy(h.scan('Math 1',0,0,40));
+  h.store.set(h.marksPath,{'Math 1':30,__subs:{'Math 1':{OMR:0,Descriptive:20,Internal:10}}});
+  const rows=await h.ctx.loadReportsFromFirestore(false);
+  assert.equal(rows[0].total,0);assert.equal(rows[0].rank,1);
+  assert.equal(h.elements.get('reportHighest').textContent,'0.00');
+});
+
+test('whole-paper custom OMR uses its template maximum when it has no split components',async()=>{
+  const h=harness();h.select('Physics');
+  h.ctx.examSubjects.find(s=>s.name==='Physics').subtopics=[];
+  h.ctx.tpl.sectionConfigs={Physics:{name:'Physics',count:25,mark:2}};
+  h.seedLegacy(h.scan('Physics',20,10,15,''));h.store.set(h.marksPath,{Physics:80});
+  const rows=await h.ctx.loadReportsFromFirestore(false);
+  assert.equal(rows[0].total,20);assert.equal(h.elements.get('reportMax').textContent,'50.00');
+});
+
+test('a descriptive scan is excluded while the archived MCQ scan is restored',async()=>{
+  const h=harness();h.select('Math 1');
+  const legacy=h.seedLegacy(h.scan('Math 1',20,20,20,'Descriptive'));
+  h.store.set(legacy.path+'/history/mcq',{...h.scan('Math 1',21,21,19),schemaVersion:5,studentId:'student1'});
+  h.store.set(h.marksPath,{'Math 1':51,__subs:{'Math 1':{OMR:21,Descriptive:20,Internal:10}}});
+  const rows=await h.ctx.loadReportsFromFirestore(false);
+  assert.equal(rows[0].total,21);assert.equal(rows[0].counts.correct,21);
+  assert.equal(rows[0].scans.length,1);
+  assert.equal(rows[0].scans[0].subtopicName,'OMR');
+  assert.equal(h.elements.get('reportMax').textContent,'40.00');
+});
+
+test('custom named MCQ components use their configured maximum',async()=>{
+  const h=harness();h.select('Physics');
+  h.ctx.examSubjects.find(s=>s.name==='Physics').subtopics=[{name:'Part A',max:60,entryMode:'manual'},{name:'Written',max:40,entryMode:'manual'}];
+  h.ctx.current.partBySubject.Physics='Part A';
+  h.seedLegacy(h.scan('Physics',30,30,30,'Part A'));
+  h.store.set(h.marksPath,{Physics:75});
+  const rows=await h.ctx.loadReportsFromFirestore(false);
+  assert.equal(rows[0].total,30);assert.equal(h.elements.get('reportMax').textContent,'60.00');
 });

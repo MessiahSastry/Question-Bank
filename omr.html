@@ -921,10 +921,10 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
     </header>
     <div class="content">
       <div class="report-summary-grid">
-        <div class="report-stat"><strong id="reportMax">0</strong><span>MAXIMUM MARKS</span></div>
+        <div class="report-stat"><strong id="reportMax">0</strong><span>MAXIMUM MCQ MARKS</span></div>
         <div class="report-stat"><strong id="reportCount">0</strong><span>REPORTS</span></div>
-        <div class="report-stat"><strong id="reportAverage">0</strong><span>CLASS AVERAGE</span></div>
-        <div class="report-stat"><strong id="reportHighest">0</strong><span>HIGHEST</span></div>
+        <div class="report-stat"><strong id="reportAverage">0</strong><span>MCQ CLASS AVERAGE</span></div>
+        <div class="report-stat"><strong id="reportHighest">0</strong><span>HIGHEST MCQ MARKS</span></div>
       </div>
       <div class="toolbar" style="justify-content:space-between;align-items:center;margin-bottom:10px;">
         <input id="reportSearch" class="select" placeholder="Search roll or student name" style="max-width:360px;" />
@@ -11328,8 +11328,34 @@ const reportState = {rows:[], filtered:[], subjects:[], detailIndex:0};
 function getReportMaximum(){
   return reportState.subjects.reduce((sum, name) => {
     const subject = getExamSubjectDefinition(name);
-    return sum + (subject && subject.excludeFromTotal === true ? 0 : (getSubjectMaximum(name) || 0));
+    return sum + (subject && subject.excludeFromTotal === true ? 0 : getReportSubjectMaximum(name));
   }, 0);
+}
+
+function omrReportSubjectParts(subjectName){
+  const parts = getSubjectParts(subjectName);
+  const omrParts = parts.filter(part => getPartMode(part) === 'omr');
+  if (omrParts.length) return omrParts;
+  // Custom component names can be explicitly mapped to scanning without an
+  // OMR/MCQ label. A descriptive/internal total is never the fallback maximum.
+  const mappedName = omrSubjectEntry(current.partBySubject, subjectName) ||
+    omrSubjectEntry(tpl.omrPartBySubject, subjectName);
+  const mapped = parts.find(part => omrNorm(part.name) === omrNorm(mappedName) && getPartMode(part) !== 'computed');
+  return mapped ? [mapped] : [];
+}
+
+function getReportSubjectMaximum(subjectName){
+  const parts = omrReportSubjectParts(subjectName);
+  if (parts.length && parts.every(part => part.max != null && part.max !== '' && Number.isFinite(Number(part.max)) && Number(part.max) >= 0)){
+    return roundMark(parts.reduce((sum,part) => sum + Number(part.max), 0));
+  }
+  const section = omrSubjectEntry(tpl.sectionConfigs, subjectName) ||
+    (Array.isArray(tpl.sections) ? tpl.sections : []).find(item => omrNorm(item.name) === omrNorm(subjectName));
+  const maximum = section ? Number(section.count) * Number(section.mark) : 0;
+  if (Number.isFinite(maximum) && maximum > 0) return roundMark(maximum);
+  // An unsplit custom paper can use its own maximum. A split subject must
+  // obtain its OMR maximum from a component or scanner question settings.
+  return getSubjectParts(subjectName).length ? 0 : (getSubjectMaximum(subjectName) || 0);
 }
 
 function reportSubjectNames(){
@@ -11380,13 +11406,27 @@ function omrScanBelongsToStudent(scan, student){
     : Number(scan.roll) === Number(student.roll);
 }
 
+function omrReportScanScope(scan, subjectName){
+  if (!omrKeySubjectNames(scan).has(omrNorm(subjectName))) return null;
+  const partName = omrScanPart(scan, subjectName);
+  if (partName === null) return null;
+  const parts = omrReportSubjectParts(subjectName);
+  if (parts.length && !parts.some(part => omrNorm(part.name) === omrNorm(partName))) return null;
+  return {subjectName,partName};
+}
+
+function omrReportHasSubjectScans(scans, subjectName){
+  const scopes = scans.map(scan => omrReportScanScope(scan, subjectName)).filter(Boolean);
+  const parts = omrReportSubjectParts(subjectName);
+  return parts.length ? parts.every(part => scopes.some(scope => omrNorm(scope.partName) === omrNorm(part.name))) : !!scopes.length;
+}
+
 function omrLatestSubjectScans(scans, subjects){
   const latest = new Map();
   scans.forEach(scan => subjects.forEach(subjectName => {
-    if (!omrKeySubjectNames(scan).has(omrNorm(subjectName))) return;
-    const partName = omrScanPart(scan, subjectName);
-    if (partName === null) return;
-    const key = omrScopeKey(subjectName, partName);
+    const scope = omrReportScanScope(scan, subjectName);
+    if (!scope) return;
+    const key = omrScopeKey(subjectName, scope.partName);
     const previous = latest.get(key);
     if (omrPreferScan(scan, previous)) latest.set(key, scan);
   }));
@@ -11397,10 +11437,6 @@ function omrLatestSubjectScans(scans, subjects){
       const subjectName = subjects.find(name => omrNorm(name) === normalized);
       return omrProjectScan(scan, {subjectName, partName:omrScanPart(scan, subjectName) || partName});
     });
-}
-
-function omrKnownMark(value){
-  return value !== undefined && value !== null && value !== '' && Number.isFinite(Number(value));
 }
 
 function omrSumScanCounts(scans){
@@ -11419,23 +11455,20 @@ function omrReportRow(student, marks, scans, subjects){
   let total = 0;
   subjects.forEach(subjectName => {
     const subjectScans = selectedScans.filter(scan => omrNorm(scan.subjectName) === omrNorm(subjectName));
-    const parts = {...(omrSubjectEntry(marks.__subs, subjectName) || {})};
-    const mark = omrSubjectEntry(marks, subjectName);
-    const hasMarks = omrKnownMark(mark) || Object.values(parts).some(omrKnownMark);
-    const subjectTotal = omrKnownMark(mark) ? roundMark(mark)
-      : (hasMarks ? sumSubjectParts(subjectName, parts)
-        : roundMark(subjectScans.reduce((sum,scan) => sum + scan.score.total, 0)));
+    // Use the saved/reviewed scan score. The marks document also contains
+    // descriptive/internal components and the full 100-mark subject total.
+    const subjectTotal = roundMark(subjectScans.reduce((sum,scan) => sum + scan.score.total, 0));
+    const parts = Object.fromEntries(subjectScans.map(scan => [scan.subtopicName || 'OMR',scan.score.total]));
     breakdown[subjectName] = {
-      // A stored mark can be descriptive/internal or a legacy placeholder.
-      // It is not proof that this student's OMR paper has been scanned.
       total:subjectScans.length ? subjectTotal : null,
-      parts, hasMarks, hasData:!!subjectScans.length,
+      parts, hasData:!!subjectScans.length,
+      isComplete:omrReportHasSubjectScans(subjectScans, subjectName),
       scans:subjectScans, counts:omrSumScanCounts(subjectScans)
     };
     const cfg = getExamSubjectDefinition(subjectName);
     if (subjectScans.length && (!cfg || cfg.excludeFromTotal !== true)) total += subjectTotal;
   });
-  const isComplete = subjects.length > 0 && Object.values(breakdown).every(item => item.hasData);
+  const isComplete = subjects.length > 0 && Object.values(breakdown).every(item => item.isComplete);
   return {
     student, marks, scans:selectedScans, breakdown,
     total:isComplete ? roundMark(total) : null, isComplete,
@@ -11478,7 +11511,7 @@ async function loadReportsFromFirestore(showDialog=true){
     students.some(student => {
       if (!omrScanBelongsToStudent(scan,student)) return false;
       const own = scans.filter(item => omrScanBelongsToStudent(item,student));
-      return subjects.some(name => !own.some(item => omrKeySubjectNames(item).has(omrNorm(name))));
+      return subjects.some(name => !omrReportHasSubjectScans(own, name));
     }));
   let historyUnavailable = false;
   for (let index=0; index<legacy.length; index+=8){
@@ -11529,14 +11562,14 @@ function renderReportTable(){
   const exam = selectedEffectiveExam();
   const multiple = subjects.length > 1;
   el('reportTitle').textContent = exam && exam.name ? exam.name : 'OMR Reports';
-  el('reportSubtitle').textContent = `${current.className || ''} ${current.sectionName || ''} · ${subjects.join(' + ')}`;
+  el('reportSubtitle').textContent = `${current.className || ''} ${current.sectionName || ''} · ${subjects.join(' + ')} · MCQ / OMR`;
   el('reportMax').textContent = roundMark(maximum).toFixed(2);
   el('reportCount').textContent = String(savedRows.length);
   el('reportAverage').textContent = savedRows.length ? roundMark(average).toFixed(2) : '—';
   el('reportHighest').textContent = savedRows.length ? roundMark(highest).toFixed(2) : '—';
   const countHeaders = name => `<th>${escapeHtml(name)} ✓</th><th>${escapeHtml(name)} ✕</th><th>${escapeHtml(name)} Blank</th>`;
   const countCells = counts => `<td style="color:#15803d">${omrCountText(counts,'correct')}</td><td style="color:#b91c1c">${omrCountText(counts,'wrong')}</td><td>${omrCountText(counts,'unanswered')}</td>`;
-  el('reportHead').innerHTML = `<tr><th>Rank</th><th>Roll</th><th>Student</th>${subjects.map(name => `<th>${escapeHtml(name)}</th>${multiple ? countHeaders(name) : ''}`).join('')}<th>Total</th>${multiple ? '' : countHeaders('')}</tr>`;
+  el('reportHead').innerHTML = `<tr><th>Rank</th><th>Roll</th><th>Student</th>${subjects.map(name => `<th>${escapeHtml(name)} (MCQ)</th>${multiple ? countHeaders(name) : ''}`).join('')}<th>MCQ Total</th>${multiple ? '' : countHeaders('')}</tr>`;
   el('reportBody').innerHTML = rows.map(row => {
     const originalIndex = reportState.rows.indexOf(row);
     return `<tr class="report-row-link" data-report-index="${originalIndex}">
@@ -11575,13 +11608,13 @@ function openReportDetail(index, scanIndex=0){
 
   const subjectRows = reportState.subjects.map(subjectName => {
     const item = row.breakdown[subjectName];
-    const max = getSubjectMaximum(subjectName) || 0;
+    const max = getReportSubjectMaximum(subjectName);
     const partRows = Object.entries(item.parts || {}).map(([name,value]) =>
       `<tr><td>${escapeHtml(name)}</td><td>${roundMark(value).toFixed(2)}</td><td>${escapeHtml(getPartMode(getSubjectParts(subjectName).find(part => omrNorm(part.name) === omrNorm(name))))}</td></tr>`
     ).join('');
     const status = item.scans.length
-      ? `Scanned · ✓ ${omrCountText(item.counts,'correct')} · ✕ ${omrCountText(item.counts,'wrong')} · Blank ${omrCountText(item.counts,'unanswered')}`
-      : (item.hasMarks ? 'Marks entered; OMR not scanned' : 'Not scanned');
+      ? `${item.isComplete ? 'Scanned' : 'Partially scanned'} · ✓ ${omrCountText(item.counts,'correct')} · ✕ ${omrCountText(item.counts,'wrong')} · Blank ${omrCountText(item.counts,'unanswered')}`
+      : 'Not scanned';
     return `<section class="detail-card"><h3>${escapeHtml(subjectName)} — ${item.hasData ? `${item.total.toFixed(2)} / ${roundMark(max).toFixed(2)}` : 'Not scanned'}</h3>
       <div class="status">${status}</div>${partRows ? `<table class="report-table"><thead><tr><th>Part</th><th>Marks</th><th>Entry</th></tr></thead><tbody>${partRows}</tbody></table>` : ''}</section>`;
   }).join('');
@@ -11691,12 +11724,14 @@ function exportReportsXlsx(){
       Roll:row.student.roll || '',
       Student:row.student.name || ''
     };
+    record['Result Type'] = 'MCQ / OMR';
     reportState.subjects.forEach(subjectName => {
       const item = row.breakdown[subjectName] || {total:0,parts:{}};
       Object.entries(item.parts || {}).forEach(([part,value]) => {
         record[`${subjectName} - ${part}`] = roundMark(value);
       });
       record[`${subjectName} Total`] = item.hasData ? roundMark(item.total) : 'Not scanned';
+      record[`${subjectName} Maximum`] = getReportSubjectMaximum(subjectName);
       record[`${subjectName} Scan`] = item.scans.length ? 'Scanned' : 'Not scanned';
       record[`${subjectName} Correct`] = item.counts ? item.counts.correct : '';
       record[`${subjectName} Wrong`] = item.counts ? item.counts.wrong : '';
