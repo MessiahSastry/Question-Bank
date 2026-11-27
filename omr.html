@@ -1111,6 +1111,8 @@ let tpl = {
 let examSubjects = [];   // subjects for the currently selected exam
 let examCommonSubtopics = []; // exam-level subtopics shared by "common" subjects
 let answerKey = { /* sectionName -> { qIndex: ["A","C"] } */ };
+let omrLoadedKeyContext = '';
+let omrSavedKeys = {};
 let btnES; // single global handle for the Exam Settings button
 let lastBubbleRecognitionMeta = {uncertainCount:0, uncertain:[]};
 
@@ -1585,35 +1587,134 @@ function currentExamRef(){
   return schoolExamsRef().doc(current.examId);
 }
 
-// A saved answer key is section-scoped. The old global key is a read-only
-// fallback for legacy exams. Keep scoped keys on the existing exam document
-// to preserve Firestore rules and not change existing result paths.
-function omrSectionKeyId(sectionId){
-  return [currentSchoolId || 'school',academicYear,current.classId,sectionId]
+// Legacy keys stay read-only on the original exam. New keys have one small
+// document per school/year/exam/class/section/subject, in the same permitted
+// collection as their exam. No results, marks or physical templates are moved.
+function omrSectionKeyId(sectionId,context){
+  return [context ? context.schoolId : (currentSchoolId || 'school'),
+    context ? context.year : academicYear,context ? context.classId : current.classId,sectionId]
     .map(safeResultIdPart).join('__');
 }
-function readOmrSectionKey(data,sectionId){
+function readOmrSectionKey(data,sectionId,context){
   data=data && typeof data==='object' ? data : {};
   const keys=data.answerKeysBySection && typeof data.answerKeysBySection==='object'
     ? data.answerKeysBySection : {};
-  const id=omrSectionKeyId(sectionId);
+  const id=omrSectionKeyId(sectionId,context);
   const key=Object.prototype.hasOwnProperty.call(keys,id) ? keys[id] : data.answerKey;
   return cloneOmrData(key && typeof key==='object' ? key : {});
 }
-function omrScopedKeyWrite(sectionId,key){
-  const id=omrSectionKeyId(sectionId);
-  return {
-    values:{
-      answerKeysBySection:{[id]:cloneOmrData(key)},
-      answerKeyVersionsBySection:{[id]:firebase.firestore.FieldValue.increment(1)},
-      updatedAt:firebase.firestore.FieldValue.serverTimestamp()
-    },
-    options:{mergeFields:[
-      new firebase.firestore.FieldPath('answerKeysBySection',id),
-      new firebase.firestore.FieldPath('answerKeyVersionsBySection',id),
-      'updatedAt'
-    ]}
-  };
+function omrPaperKeyContext(sectionId=current.sectionId){
+  if (!current.classId || !sectionId || !current.examId) throw Error('Choose Class, Section and Exam first.');
+  return {schoolId:currentSchoolId,year:academicYear,classId:current.classId,sectionId,
+    examId:current.examId,teacherId:currentTeacherId,examRef:currentExamRef()};
+}
+function omrPaperKeyContextId(context){
+  return JSON.stringify([context.examRef.path,context.schoolId,context.year,context.classId,context.sectionId]);
+}
+function omrPaperKeyContextIsCurrent(context){
+  try { return omrPaperKeyContextId(context) === omrPaperKeyContextId(omrPaperKeyContext()); }
+  catch (_) { return false; }
+}
+function omrPaperKeySubjects(names){
+  const seen=new Set();
+  return names.filter(name=>{
+    const id=omrNorm(name);
+    if(!id||seen.has(id))return false;
+    seen.add(id);return true;
+  });
+}
+function omrPaperKeyRef(context,subjectName){
+  const id='__omr_key_v2__'+encodeURIComponent(JSON.stringify([
+    context.examRef.id,context.schoolId,context.year,context.classId,context.sectionId,omrNorm(subjectName)
+  ]));
+  return context.examRef.parent.doc(id);
+}
+function isOmrPaperKeyRecord(doc){
+  return String(doc.id||'').startsWith('__omr_key_v2__') || (doc.data()||{}).recordType==='omr-answer-key';
+}
+function omrDecodePaperKey(data,context,subjectName){
+  if(data.recordType!=='omr-answer-key' || data.examPath!==context.examRef.path ||
+      String(data.schoolId)!==String(context.schoolId) || String(data.academicYear)!==String(context.year) ||
+      String(data.classId)!==String(context.classId) || String(data.sectionId)!==String(context.sectionId) ||
+      omrNorm(data.subjectName)!==omrNorm(subjectName)){
+    throw Error('Saved answer-key record has a different class, section or subject. Reload before continuing.');
+  }
+  let key;
+  try { key=JSON.parse(data.keyJson); }
+  catch (_) { throw Error('Saved answer key could not be read for '+subjectName+'.'); }
+  if(!key||typeof key!=='object'||Array.isArray(key))throw Error('Invalid saved answer key for '+subjectName+'.');
+  return key;
+}
+async function readOmrPaperKeys(context,subjectNames,{transaction=null,legacyData=undefined}={}){
+  const names=omrPaperKeySubjects(subjectNames);
+  const get=ref=>transaction?transaction.get(ref):ref.get();
+  const [legacySnap,snaps]=await Promise.all([
+    legacyData===undefined?get(context.examRef):Promise.resolve(null),
+    Promise.all(names.map(name=>get(omrPaperKeyRef(context,name))))
+  ]);
+  const data=legacyData!==undefined?legacyData:(legacySnap.exists?legacySnap.data()||{}:{});
+  const legacy=readOmrSectionKey(data,context.sectionId,context);
+  const keys={},records={};
+  names.forEach((name,index)=>{
+    const snap=snaps[index];records[name]=snap;
+    const oldName=Object.keys(legacy).find(candidate=>omrNorm(candidate)===omrNorm(name));
+    keys[name]=snap.exists?omrDecodePaperKey(snap.data()||{},context,name)
+      : cloneOmrData(oldName!==undefined?legacy[oldName]:{});
+  });
+  return {keys,records};
+}
+function applyLoadedOmrPaperKeys(context,keys){
+  if(!omrPaperKeyContextIsCurrent(context))return false;
+  const id=omrPaperKeyContextId(context);
+  if(omrLoadedKeyContext!==id){answerKey={};omrSavedKeys={};}
+  answerKey={...answerKey,...cloneOmrData(keys)};
+  omrSavedKeys={...omrSavedKeys,...cloneOmrData(keys)};
+  omrLoadedKeyContext=id;
+  return true;
+}
+function omrUnsavedKeySubjects(context,names){
+  if(omrLoadedKeyContext!==omrPaperKeyContextId(context))return [];
+  return names.filter(name=>Object.prototype.hasOwnProperty.call(omrSavedKeys,name)&&
+    omrCanonicalKey(answerKey[name])!==omrCanonicalKey(omrSavedKeys[name]));
+}
+async function writeOmrPaperKeys(context,patch,previous,{selectionContext=context,sourceGuard=null}={}){
+  const names=omrPaperKeySubjects(Object.keys(patch));
+  if(!names.length)return {keys:{},savedSubjects:[]};
+  names.forEach(name=>{
+    if(!patch[name]||typeof patch[name]!=='object'||Array.isArray(patch[name]))throw Error('Invalid answer key for '+name+'.');
+  });
+  const changed=changedOmrKeySubjects(previous.keys,patch);
+  if(changed.length){
+    const results=await context.examRef.collection('results').where('classId','==',context.classId).get();
+    const locked=await omrLockedKeySubjects(results.docs,context.sectionId,context.year,changed);
+    if(locked.length)throw Error('Answer key locked for '+locked.join(', ')+': this subject already has saved scans. Existing marks are protected.');
+  }
+  if(!omrPaperKeyContextIsCurrent(selectionContext))throw Error('Selection changed. Reopen the answer key.');
+  return db.runTransaction(async transaction=>{
+    const [latest,source]=await Promise.all([
+      readOmrPaperKeys(context,names,{transaction}),
+      sourceGuard?readOmrPaperKeys(sourceGuard.context,Object.keys(sourceGuard.keys),{transaction}):Promise.resolve(null)
+    ]);
+    if(names.some(name=>omrCanonicalKey(latest.keys[name])!==omrCanonicalKey(previous.keys[name])))throw Error('Another teacher changed this subject key. Reload and review it.');
+    if(source && Object.keys(sourceGuard.keys).some(name=>omrCanonicalKey(source.keys[name])!==omrCanonicalKey(sourceGuard.keys[name])))throw Error('The source key changed. Reopen Copy Key and try again.');
+    if(!omrPaperKeyContextIsCurrent(selectionContext))throw Error('Selection changed. Reopen the answer key.');
+    const savedSubjects=[];
+    names.forEach(name=>{
+      const snap=latest.records[name];
+      if(snap.exists && omrCanonicalKey(latest.keys[name])===omrCanonicalKey(patch[name]))return;
+      // JSON keeps question maps/option arrays from multiplying automatic
+      // indexes. A key update never writes the overloaded legacy exam record.
+      transaction.set(snap.ref,{
+        recordType:'omr-answer-key',schemaVersion:2,examPath:context.examRef.path,examId:context.examId,
+        schoolId:context.schoolId,academicYear:context.year,classId:context.classId,sectionId:context.sectionId,
+        subjectName:name,keyJson:JSON.stringify(patch[name]),ownerTeacherId:context.teacherId,
+        revision:Number(snap.exists?(snap.data()||{}).revision||0:0)+1,
+        updatedAt:firebase.firestore.FieldValue.serverTimestamp()
+      },{merge:false});
+      savedSubjects.push(name);
+    });
+    return {keys:cloneOmrData(patch),savedSubjects};
+  });
 }
 
 // One common physical OMR template per school + academic year + class + school exam.
@@ -2147,6 +2248,7 @@ async function fetchEffectiveExamsWrapper(
       const customSnap = await teacherCustomExamsRef().get();
       customSnap.forEach(doc => {
         const data = doc.data() || {};
+        if (isOmrPaperKeyRecord(doc)) return;
         if (String(data.academicYear || '') !== String(academicYear)) return;
         if (String(data.classId || '') !== String(classId)) return;
         if (String(data.sectionId || '') !== String(current.sectionId)) return;
@@ -2922,7 +3024,12 @@ el('header-exam').textContent = `Exam: ${examName}`;
 el('pickStatus').innerHTML =
   `Exam selected: <span class="kbd">${examName}</span>`;
     await loadSubjectsFromExam(current.examId);
-    await loadTemplate();
+    try { await loadTemplate(); }
+    catch(error){
+      console.error('Could not load saved OMR setup:',error);
+      el('pickStatus').textContent='Saved answer keys could not be loaded. Reopen Set Answer Key to retry.';
+      alert('Could not load saved OMR setup safely: '+(error.message||error));
+    }
     if (btnES) btnES.disabled = false;
     syncExamModeUi();
     } else {
@@ -3176,8 +3283,13 @@ el('subtopicSel').addEventListener('change', (e)=>{
     }
 
     async function loadTemplate(){
-      const doc = await currentExamRef().get();
+      const keyContext=omrPaperKeyContext();
+      const keySubjects=examSubjects.map(subject=>subject.name);
+      answerKey={};omrSavedKeys={};omrLoadedKeyContext='';
+      const doc = await keyContext.examRef.get();
       const d = doc.exists ? (doc.data() || {}) : {};
+      const savedKeys=await readOmrPaperKeys(keyContext,keySubjects,{legacyData:d});
+      if(!applyLoadedOmrPaperKeys(keyContext,savedKeys.keys))return;
 
       tpl.rollDigits = d.rollDigits || 4;
       tpl.bubbleSizeMm = d.bubbleSizeMm || 5.5;
@@ -3198,7 +3310,6 @@ el('subtopicSel').addEventListener('change', (e)=>{
         }
       });
 
-      answerKey = readOmrSectionKey(d,current.sectionId);
       tpl.commonMasterRois = null;
       commonTemplateLegacySubject = null;
       commonTemplateReadError = '';
@@ -3272,8 +3383,16 @@ function ensureKeyEntry(secName, q){
 
 el('btnKey').onclick = async ()=>{
   if(!current.examId){ alert('Pick Class / Section / Exam first'); return; }
-  await buildKeyUI();
-  el('dlgKey').showModal();
+  try{
+    const context=omrPaperKeyContext();
+    const names=(current.selectedSubjects||[]).slice();
+    if(omrLoadedKeyContext!==omrPaperKeyContextId(context)||names.some(name=>!Object.prototype.hasOwnProperty.call(omrSavedKeys,name))){
+      const loaded=await readOmrPaperKeys(context,names);
+      if(!applyLoadedOmrPaperKeys(context,loaded.keys))return;
+    }
+    await buildKeyUI();
+    el('dlgKey').showModal();
+  }catch(error){alert('Could not load answer key safely: '+(error.message||error));}
 };
 
 async function buildKeyUI(){
@@ -3702,32 +3821,14 @@ el('btnKeySave').onclick = async ()=>{
   const button=el('btnKeySave');
   button.disabled=true;
   try{
-    const ref=currentExamRef(),sectionId=current.sectionId,classId=current.classId,year=academicYear,examId=current.examId;
+    const context=omrPaperKeyContext();
     const patch=omrSelectedKeyPatch(tpl.sections,answerKey);
-    const snap=await ref.get();
-    const previous=readOmrSectionKey(snap.exists?snap.data():{},sectionId);
-    const changed=changedOmrKeySubjects(previous,patch);
-    if(!changed.length){alert('Answer key is already saved. No changes needed.');return;}
-    const savedResults=await ref.collection('results').where('classId','==',classId).get();
-    const locked=await omrLockedKeySubjects(savedResults.docs,sectionId,year,changed);
-    if(locked.length){
-      alert('Answer key locked for '+locked.join(', ')+': this subject already has saved scans. Existing marks are protected. Other subjects can still be saved. Do not delete scans to change the key.');
-      return;
-    }
-    if(current.examId!==examId || current.classId!==classId || current.sectionId!==sectionId || academicYear!==year)throw Error('Selection changed. Reopen the answer key.');
-    // Read the latest section key inside a transaction so saving one subject
-    // cannot overwrite a different teacher's subject key.
-    const merged=await db.runTransaction(async transaction=>{
-      const latest=await transaction.get(ref);
-      const latestKey=readOmrSectionKey(latest.exists?latest.data():{},sectionId);
-      if(changed.some(name=>omrCanonicalKey(latestKey[name])!==omrCanonicalKey(previous[name])))throw Error('Another teacher changed this subject key. Reopen and review it.');
-      const next=mergeOmrKeyPatch(latestKey,Object.fromEntries(changed.map(name=>[name,patch[name]])));
-      const save=omrScopedKeyWrite(sectionId,next);
-      transaction.set(ref,save.values,save.options);
-      return next;
-    });
-    answerKey=merged;
-    alert('Answer key saved for '+changed.join(', ')+'. Other subjects and existing marks are unchanged.');
+    const previous=await readOmrPaperKeys(context,Object.keys(patch));
+    const saved=await writeOmrPaperKeys(context,patch,previous);
+    if(!applyLoadedOmrPaperKeys(context,saved.keys))return;
+    alert(saved.savedSubjects.length
+      ? 'Answer key saved for '+saved.savedSubjects.join(', ')+'. Other subjects and existing marks are unchanged.'
+      : 'Answer key is already saved. No changes needed.');
   }catch(err){
     console.error('OMR subject key save failed:',err);
     alert('Could not save answer key safely: '+(err.message||err));
@@ -3771,9 +3872,9 @@ el('btnKeyCopyConfirm').onclick=async()=>{
   const button=el('btnKeyCopyConfirm');button.disabled=true;
   const completed=[];
   try{
-    const ref=currentExamRef(),snap=await ref.get();
-    if(!snap.exists)throw Error('Save the source answer key first.');
-    const data=snap.data()||{},source=readOmrSectionKey(data,current.sectionId);
+    const context=omrPaperKeyContext();
+    const loadedSource=await readOmrPaperKeys(context,tpl.sections.map(section=>section.name));
+    const source=loadedSource.keys;
     const selected={};
     for(const section of tpl.sections){
       const key=source[section.name];
@@ -3791,28 +3892,25 @@ el('btnKeyCopyConfirm').onclick=async()=>{
       selected[section.name]=cloneOmrData(key);
     }
     if(!Object.keys(selected).length)throw Error('No subject keys available.');
-    const classId=current.classId,year=academicYear,examId=current.examId,sourceSection=current.sectionId;
-    const results=await ref.collection('results').where('classId','==',classId).get();
+    const results=await context.examRef.collection('results').where('classId','==',context.classId).get();
     const plans=[],blocked=[];
     for(const target of targets){
-      const previous=readOmrSectionKey(data,target.id);
-      const changed=changedOmrKeySubjects(previous,selected);
-      const locked=await omrLockedKeySubjects(results.docs,target.id,year,changed);
-      const allowed=changed.filter(name=>!locked.includes(name));
+      const targetContext={...context,sectionId:target.id};
+      const previous=await readOmrPaperKeys(targetContext,Object.keys(selected));
+      const changed=changedOmrKeySubjects(previous.keys,selected);
+      const locked=await omrLockedKeySubjects(results.docs,target.id,context.year,changed);
+      const allowed=Object.keys(selected).filter(name=>!locked.includes(name)&&
+        (changed.includes(name)||!previous.records[name].exists));
       if(locked.length)blocked.push(target.name+': '+locked.join(', '));
-      if(allowed.length)plans.push({target,previous,allowed});
+      if(allowed.length)plans.push({target,targetContext,previous,changed,allowed});
     }
-    const overwrite=plans.filter(plan=>plan.allowed.some(name=>Object.keys(plan.previous[name]||{}).length));
+    const overwrite=plans.filter(plan=>plan.allowed.some(name=>plan.changed.includes(name)&&Object.keys(plan.previous.keys[name]||{}).length));
     if(overwrite.length&&!confirm('Replace existing subject keys in: '+overwrite.map(plan=>plan.target.name).join(', ')+'?'))return;
-    if(current.classId!==classId||academicYear!==year||current.examId!==examId||current.sectionId!==sourceSection)throw Error('Selection changed. Reopen the answer key.');
+    if(!omrPaperKeyContextIsCurrent(context))throw Error('Selection changed. Reopen the answer key.');
     for(const plan of plans){
-      await db.runTransaction(async transaction=>{
-        const latest=await transaction.get(ref);
-        const key=readOmrSectionKey(latest.exists?latest.data():{},plan.target.id);
-        if(plan.allowed.some(name=>omrCanonicalKey(key[name])!==omrCanonicalKey(plan.previous[name])))throw Error('A destination subject key changed. Reopen and try again.');
-        const patch=Object.fromEntries(plan.allowed.map(name=>[name,selected[name]]));
-        const write=omrScopedKeyWrite(plan.target.id,mergeOmrKeyPatch(key,patch));
-        transaction.set(ref,write.values,write.options);
+      const patch=Object.fromEntries(plan.allowed.map(name=>[name,selected[name]]));
+      await writeOmrPaperKeys(plan.targetContext,patch,plan.previous,{
+        selectionContext:context,sourceGuard:{context,keys:selected}
       });
       completed.push(plan.target.name+' ('+plan.allowed.join(', ')+')');
     }
@@ -10353,6 +10451,16 @@ el('btnScan').onclick = async event => {
       showScannerStartMessage('Select the Test Type for every selected subject before scanning.');
       return;
     }
+    const keyContext=omrPaperKeyContext();
+    const keySubjects=current.selectedSubjects.slice();
+    if(omrUnsavedKeySubjects(keyContext,keySubjects).length){
+      showScannerStartMessage('Save the answer key before scanning. The current edits have not been saved.');
+      return;
+    }
+    el('pickStatus').textContent='Checking saved answer key…';
+    try { prepareOmrScanSound(); } catch (_) {}
+    const savedKeys=await readOmrPaperKeys(keyContext,keySubjects);
+    if(current.selectedSubjects.join('|')!==keySubjects.join('|')||!applyLoadedOmrPaperKeys(keyContext,savedKeys.keys))return;
     const missingKey = [];
     (Array.isArray(tpl.sections) ? tpl.sections : []).forEach(section => {
       const sectionKey = (answerKey && answerKey[section.name]) || {};

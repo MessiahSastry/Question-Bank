@@ -1,0 +1,279 @@
+// Run: node --test tests/omr-*.test.cjs
+// Real answer-key readers, writers and UI handlers; in-memory Firestore only.
+const test=require('node:test');
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const path=require('node:path');
+const vm=require('node:vm');
+const html=fs.readFileSync(path.join(__dirname,'../omr.html'),'utf8');
+const clone=value=>value===undefined?undefined:JSON.parse(JSON.stringify(value));
+function section(a,b){
+  const start=html.indexOf(a),end=html.indexOf(b,start);
+  assert.ok(start>=0&&end>start,'Source section: '+a);
+  return html.slice(start,end);
+}
+const code=[
+  section('function omrNorm(value){','function selectedEffectiveExam(){'),
+  section('function cloneOmrData(value){','// Convert the one common physical answer grid'),
+  section('function omrSectionKeyId(sectionId,context){','// One common physical OMR template'),
+  section('function getOmrKeyDetails(entry){','// EvalBee-style result overlay:'),
+  section('function omrKeySubjectNames(scan){','// CSV import:'),
+  section('function ensureKeyEntry(secName, q){','async function buildKeyUI(){'),
+  section('function scoreAnswers(answers, key, sections) {','function buildQuestionDetails(out){'),
+  section("el('btnScan').onclick = async event => {",'// ===== SCORING')
+].join('\n');
+
+function harness(){
+  const store=new Map(),elements=new Map(),alerts=[],writes=[],loggedErrors=[];
+  let sequence=0,clock=0,beforeTransaction=null,readFailure=null;
+  const root='omrExams/SA1';
+  function ref(p){return {path:p,id:p.split('/').at(-1),parent:collection(p.slice(0,p.lastIndexOf('/'))),
+    get:async()=>{if(readFailure&&readFailure(p))throw Error('permission-denied');return snap(p);},
+    collection:name=>collection(p+'/'+name)};}
+  function snap(p){const data=clone(store.get(p));return {exists:store.has(p),id:p.split('/').at(-1),ref:ref(p),data:()=>clone(data)};}
+  function collection(p,filters=[]){return {path:p,doc:id=>ref(p+'/'+(id||'auto'+(++sequence))),
+    where:(field,op,value)=>{assert.equal(op,'==');return collection(p,[...filters,[field,value]]);},
+    get:async()=>{
+      const docs=[...store.keys()].filter(key=>key.startsWith(p+'/')&&!key.slice(p.length+1).includes('/'))
+        .filter(key=>filters.every(([field,value])=>store.get(key)[field]===value)).map(snap);
+      return {docs,empty:!docs.length,forEach:fn=>docs.forEach(fn)};
+    }};}
+  const ctx={console:{...console,error:(...args)=>loggedErrors.push(args)},academicYear:'2026-27',currentSchoolId:'school',currentTeacherId:'teacher',
+    current:{classId:'class7',sectionId:'A',examId:'SA1',selectedSubjects:['Physics'],isCustomExam:false},
+    answerKey:{},omrSavedKeys:{},omrLoadedKeyContext:'',
+    tpl:{sections:[{name:'Physics',count:2,options:4}],rois:{ready:true}},
+    currentExamRef:()=>ref(ctx.current.isCustomExam?'users/teacher/omrCustomExams/custom1':'omrExams/'+ctx.current.examId),
+    firebase:{firestore:{FieldValue:{serverTimestamp:()=>({seconds:1800000000+(++clock)})}}},
+    alert:message=>alerts.push(String(message)),confirm:()=>true,
+    document:{createElement:()=>{throw Error('Unexpected DOM creation in storage test');}},
+    el:id=>{
+      if(!elements.has(id))elements.set(id,{disabled:false,open:false,textContent:'',innerHTML:'',
+        selectedOptions:[{textContent:'SA1'}],querySelectorAll:()=>[],
+        showModal(){this.open=true;},close(){this.open=false;}});
+      return elements.get(id);
+    },
+    buildKeyUI:async()=>{ctx.builtKey=clone(ctx.answerKey);},
+    refreshScannerReadiness:()=>true,areOmrPartsReady:()=>true,prepareOmrScanSound:()=>{},
+    showScannerStartMessage:message=>alerts.push(String(message)),
+    startCameraAutoScan:async()=>{ctx.cameraStarts++;},stopCameraStream:()=>{},cameraStarts:0,
+    db:{runTransaction:async callback=>{
+      if(beforeTransaction){const hook=beforeTransaction;beforeTransaction=null;hook();}
+      const staged=[];
+      const result=await callback({
+        get:async r=>{assert.equal(staged.length,0,'All transaction reads precede writes');return snap(r.path);},
+        set:(r,data)=>staged.push([r.path,clone(data)])
+      });
+      // Reproduce the failing parent record: any direct write is rejected.
+      for(const [p] of staged)if(p===root)throw Error('too many index entries for entity /'+root);
+      for(const [p,data] of staged){store.set(p,data);writes.push(p);}
+      return result;
+    }}
+  };
+  vm.createContext(ctx);vm.runInContext(code,ctx);
+  function legacy(sectionId,keys){
+    const p=ctx.currentExamRef().path,data=store.get(p)||{};
+    const id=ctx.omrSectionKeyId(sectionId);
+    store.set(p,{...data,answerKeysBySection:{...(data.answerKeysBySection||{}),[id]:clone(keys)}});
+  }
+  function context(sectionId){return ctx.omrPaperKeyContext(sectionId);}
+  async function save(patch,options={}){
+    const c=context(),previous=await ctx.readOmrPaperKeys(c,Object.keys(patch));
+    return ctx.writeOmrPaperKeys(c,patch,previous,options);
+  }
+  return {ctx,store,alerts,writes,elements,ref,snap,legacy,context,save,root,
+    keyPath:(name,sectionId)=>ctx.omrPaperKeyRef(context(sectionId),name).path,
+    beforeTransaction:hook=>{beforeTransaction=hook;},
+    failReads:predicate=>{readFailure=predicate;},
+    copyTargets:ids=>{ctx.el('keyCopySections').querySelectorAll=()=>ids.map(id=>({value:id,dataset:{name:id+' Section'}}));}};
+}
+const key=(option='A')=>({1:{options:[option],either:false,multiple:false,addScore:false},2:['B']});
+
+test('Save Key works without writing the parent exam that rejects index-heavy saves',async()=>{
+  const h=harness();h.legacy('A',{'Math 1':key('C')});
+  const rootBefore=clone(h.store.get(h.root));
+  h.ctx.answerKey={Physics:key()};
+  await h.ctx.el('btnKeySave').onclick();
+  assert.match(h.alerts.at(-1),/Answer key saved for Physics/);
+  assert.deepEqual(h.store.get(h.root),rootBefore);
+  assert.equal(h.writes.length,1);assert.equal(h.writes[0],h.keyPath('Physics'));
+  const saved=h.store.get(h.keyPath('Physics'));
+  assert.equal(typeof saved.keyJson,'string');assert.equal(saved.recordType,'omr-answer-key');
+  assert.equal(saved.answerKeysBySection,undefined);
+  assert.equal(h.ctx.omrCanonicalKey(JSON.parse(saved.keyJson)),h.ctx.omrCanonicalKey(key()));
+});
+
+test('old scoped keys and global fallback remain readable, without data migration on read',async()=>{
+  const h=harness();h.store.set(h.root,{answerKey:{Physics:key('D')}});
+  assert.equal((await h.ctx.readOmrPaperKeys(h.context(),['Physics'])).keys.Physics[1].options[0],'D');
+  h.legacy('A',{Physics:key('C')});
+  assert.equal((await h.ctx.readOmrPaperKeys(h.context(),['Physics'])).keys.Physics[1].options[0],'C');
+  assert.equal((await h.ctx.readOmrPaperKeys(h.context('B'),['Physics'])).keys.Physics[1].options[0],'D');
+  assert.equal(h.writes.length,0);
+});
+
+test('a new subject record takes precedence while unconverted subjects keep their legacy keys',async()=>{
+  const h=harness();h.legacy('A',{Physics:key('A'),'Math 1':key('C')});
+  await h.save({Physics:key('D')});
+  const loaded=await h.ctx.readOmrPaperKeys(h.context(),['Physics','Math 1']);
+  assert.equal(loaded.keys.Physics[1].options[0],'D');assert.equal(loaded.keys['Math 1'][1].options[0],'C');
+});
+
+test('Math 1/2 and English 1/2 get independent records',async()=>{
+  const h=harness();const names=['Math 1','Math 2','English 1','English 2'];
+  await h.save(Object.fromEntries(names.map((name,i)=>[name,key('ABCD'[i])])));
+  const loaded=await h.ctx.readOmrPaperKeys(h.context(),names);
+  assert.equal(new Set(names.map(name=>h.keyPath(name))).size,4);
+  names.forEach((name,i)=>assert.equal(loaded.keys[name][1].options[0],'ABCD'[i]));
+});
+
+test('school, year, class, section, exam and Unicode subject names are part of identity',()=>{
+  const h=harness(),c=h.context(),name='తెలుగు 1';
+  const ids=[h.ctx.omrPaperKeyRef(c,name).path];
+  for(const field of ['schoolId','year','classId','sectionId'])ids.push(h.ctx.omrPaperKeyRef({...c,[field]:c[field]+'other'},name).path);
+  ids.push(h.ctx.omrPaperKeyRef({...c,examRef:h.ref('omrExams/SA2')},name).path);
+  ids.push(h.ctx.omrPaperKeyRef(c,'తెలుగు 2').path,h.ctx.omrPaperKeyRef(c,'English/A').path,h.ctx.omrPaperKeyRef(c,'English A').path);
+  assert.equal(new Set(ids).size,ids.length);
+});
+
+test('single/multiple, either-option and grace rules survive 60-question serialization',async()=>{
+  const h=harness(),paper={};
+  for(let q=1;q<=60;q++)paper[q]={options:['A'],either:false,multiple:false,addScore:false};
+  paper[2]={options:['B','D'],either:false,multiple:true,addScore:false};
+  paper[3]={options:['A','C'],either:true,multiple:false,addScore:false};
+  paper[4]={options:[],either:false,multiple:false,addScore:true};
+  await h.save({Physics:paper});
+  const loaded=await h.ctx.readOmrPaperKeys(h.context(),['Physics']);
+  assert.deepEqual(clone(loaded.keys.Physics),paper);
+  const stored=h.store.get(h.keyPath('Physics'));
+  assert.ok(Object.keys(stored).length<20);assert.equal(stored.keyJson.includes('addScore'),true);
+});
+
+test('unchanged legacy keys with scans can be copied intact to their independent records',async()=>{
+  const h=harness();h.legacy('A',{Physics:key()});
+  h.store.set(h.root+'/results/one',{classId:'class7',sectionId:'A',academicYear:'2026-27',subjectName:'Physics'});
+  const before=clone([...h.store]);await h.save({Physics:key()});
+  assert.ok(h.store.has(h.keyPath('Physics')));
+  for(const [p,data] of before)assert.deepEqual(h.store.get(p),data);
+});
+
+test('key changes remain blocked for scanned subjects including archived scans',async()=>{
+  const h=harness();h.legacy('A',{Physics:key(),'Math 1':key()});
+  const scan=h.root+'/results/one';
+  h.store.set(scan,{classId:'class7',sectionId:'A',academicYear:'2026-27',subjectName:'Math 1'});
+  h.store.set(scan+'/history/physics',{classId:'class7',sectionId:'A',academicYear:'2026-27',subjectName:'Physics'});
+  const before=clone([...h.store]);
+  await assert.rejects(()=>h.save({Physics:key('D')}),/locked for Physics/);
+  assert.deepEqual([...h.store],before);
+  await h.save({'English 2':key('D')});assert.ok(h.store.has(h.keyPath('English 2')));
+});
+
+test('concurrent updates of the same subject abort without overwriting the newer key',async()=>{
+  const h=harness();await h.save({Physics:key()});
+  const c=h.context(),previous=await h.ctx.readOmrPaperKeys(c,['Physics']);
+  h.beforeTransaction(()=>{
+    const p=h.keyPath('Physics');h.store.set(p,{...h.store.get(p),keyJson:JSON.stringify(key('C')),revision:2});
+  });
+  await assert.rejects(()=>h.ctx.writeOmrPaperKeys(c,{Physics:key('D')},previous),/Another teacher changed/);
+  assert.equal(JSON.parse(h.store.get(h.keyPath('Physics')).keyJson)[1].options[0],'C');
+});
+
+test('a selection change while a key save is pending prevents all writes',async()=>{
+  const h=harness();
+  h.beforeTransaction(()=>{h.ctx.current.sectionId='B';});
+  await assert.rejects(()=>h.save({Physics:key()}),/Selection changed/);
+  assert.equal(h.writes.length,0);
+});
+
+test('copy uses saved source keys and writes separate destination records only',async()=>{
+  const h=harness();await h.save({Physics:key('A')});
+  h.ctx.answerKey={Physics:key('D')};h.copyTargets(['B','C']);
+  await h.ctx.el('btnKeyCopyConfirm').onclick();
+  assert.match(h.alerts.at(-1),/copied to B Section.*C Section/);
+  for(const id of ['B','C'])assert.equal(JSON.parse(h.store.get(h.keyPath('Physics',id)).keyJson)[1].options[0],'A');
+  assert.equal(JSON.parse(h.store.get(h.keyPath('Physics')).keyJson)[1].options[0],'A');
+  assert.ok(!h.writes.includes(h.root));
+});
+
+test('copy skips locked destination subjects and preserves their marks and keys',async()=>{
+  const h=harness();h.ctx.tpl.sections=[{name:'Physics',count:2,options:4},{name:'Math 1',count:2,options:4}];
+  h.legacy('A',{Physics:key('A'),'Math 1':key('A')});
+  h.legacy('B',{Physics:key('D'),'Math 1':key('D')});
+  const resultPath=h.root+'/results/one',marksPath='years/2026-27/classes/class7/sections/B/students/one/marks/SA1';
+  h.store.set(resultPath,{classId:'class7',sectionId:'B',academicYear:'2026-27',subjectName:'Physics'});
+  h.store.set(marksPath,{Physics:55,__subs:{Physics:{OMR:21,Descriptive:20,Internal:14}}});
+  const beforeResult=clone(h.store.get(resultPath)),beforeMarks=clone(h.store.get(marksPath));
+  h.copyTargets(['B']);await h.ctx.el('btnKeyCopyConfirm').onclick();
+  assert.match(h.alerts.at(-1),/Protected subjects skipped: B Section: Physics/);
+  assert.equal(h.store.has(h.keyPath('Physics','B')),false);
+  assert.equal(JSON.parse(h.store.get(h.keyPath('Math 1','B')).keyJson)[1].options[0],'A');
+  assert.deepEqual(h.store.get(resultPath),beforeResult);assert.deepEqual(h.store.get(marksPath),beforeMarks);
+});
+
+test('copy detects source changes before writing a destination',async()=>{
+  const h=harness();await h.save({Physics:key()});
+  const source=h.context(),loaded=await h.ctx.readOmrPaperKeys(source,['Physics']);
+  const target={...source,sectionId:'B'},previous=await h.ctx.readOmrPaperKeys(target,['Physics']);
+  h.beforeTransaction(()=>{const p=h.keyPath('Physics');h.store.set(p,{...h.store.get(p),keyJson:JSON.stringify(key('D'))});});
+  await assert.rejects(()=>h.ctx.writeOmrPaperKeys(target,{Physics:key()},previous,{selectionContext:source,sourceGuard:{context:source,keys:loaded.keys}}),/source key changed/);
+  assert.equal(h.store.has(h.keyPath('Physics','B')),false);
+});
+
+test('custom exam keys stay under the teacher and do not appear as custom exams',async()=>{
+  const h=harness();h.ctx.current.isCustomExam=true;h.ctx.current.examId='custom__custom1';
+  await h.save({Physics:key()});
+  const p=h.keyPath('Physics');assert.match(p,/^users\/teacher\/omrCustomExams\/__omr_key_v2__/);
+  assert.equal(h.ctx.isOmrPaperKeyRecord(h.snap(p)),true);
+  assert.equal(h.ctx.isOmrPaperKeyRecord(h.snap('users/teacher/omrCustomExams/custom1')),false);
+  assert.match(html,/if \(isOmrPaperKeyRecord\(doc\)\) return;/);
+});
+
+test('corrupt or mismatched new records fail safely instead of silently using an old key',async()=>{
+  const h=harness();h.legacy('A',{Physics:key()});await h.save({Physics:key('D')});
+  const p=h.keyPath('Physics'),good=clone(h.store.get(p));
+  h.store.set(p,{...good,keyJson:'broken'});
+  await assert.rejects(()=>h.ctx.readOmrPaperKeys(h.context(),['Physics']),/could not be read/);
+  h.store.set(p,{...good,classId:'class8'});
+  await assert.rejects(()=>h.ctx.readOmrPaperKeys(h.context(),['Physics']),/different class/);
+});
+
+test('fresh key loading ignores results from a selection that has changed',async()=>{
+  const h=harness();const old=h.context();h.ctx.current.sectionId='B';
+  assert.equal(h.ctx.applyLoadedOmrPaperKeys(old,{Physics:key('D')}),false);
+  assert.deepEqual(h.ctx.answerKey,{});
+});
+
+test('opening Set Answer Key reads the independent subject key',async()=>{
+  const h=harness();await h.save({Physics:key('C')});
+  await h.ctx.el('btnKey').onclick();
+  assert.equal(h.ctx.builtKey.Physics[1].options[0],'C');assert.equal(h.ctx.el('dlgKey').open,true);
+});
+
+test('scanning loads the saved subject key from its independent record',async()=>{
+  const h=harness();await h.save({Physics:key('C')});
+  await h.ctx.el('btnScan').onclick({preventDefault(){}});
+  assert.equal(h.ctx.cameraStarts,1);assert.equal(h.ctx.answerKey.Physics[1].options[0],'C');
+});
+
+test('scanning rejects unsaved edits and a failed answer-key read',async()=>{
+  const h=harness();await h.save({Physics:key('A')});
+  const c=h.context(),saved=await h.ctx.readOmrPaperKeys(c,['Physics']);h.ctx.applyLoadedOmrPaperKeys(c,saved.keys);
+  h.ctx.answerKey.Physics=key('D');
+  await h.ctx.el('btnScan').onclick({preventDefault(){}});
+  assert.equal(h.ctx.cameraStarts,0);assert.match(h.alerts.at(-1),/current edits have not been saved/);
+  h.ctx.answerKey.Physics=key('A');h.failReads(p=>p===h.keyPath('Physics'));
+  await h.ctx.el('btnScan').onclick({preventDefault(){}});
+  assert.equal(h.ctx.cameraStarts,0);assert.match(h.alerts.at(-1),/permission-denied/);
+});
+
+test('loading the new format retains scoring for single, multiple, either and grace answers',async()=>{
+  const h=harness();
+  const paper={1:['A'],2:{options:['A','C'],multiple:true},3:{options:['B','D'],either:true},4:{options:[],addScore:true}};
+  const answers={Physics:{1:['A'],2:['A','C'],3:['D'],4:[]}};
+  const sections=[{name:'Physics',count:4,mark:2,negative:-0.5}];
+  const original=h.ctx.scoreAnswers(answers,{Physics:paper},sections);
+  assert.equal(original.total,8);
+  await h.save({Physics:paper});
+  const loaded=await h.ctx.readOmrPaperKeys(h.context(),['Physics']);
+  const scored=h.ctx.scoreAnswers(answers,loaded.keys,sections);
+  assert.deepEqual(clone(scored),clone(original));
+});
