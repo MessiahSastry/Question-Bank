@@ -5,6 +5,8 @@ on:
     paths:
       - 'zoom-functions/**'
       - 'online-class-teacher.html'
+      - 'online-class.html'
+      - 'scripts/check-online-class.js'
       - 'firebase-site/online-class-teacher.html'
       - 'firebase-site/online-class.html'
       - 'firebase.json'
@@ -22,41 +24,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Check Zoom backend JavaScript
-        run: node --check zoom-functions/index.js
-      - name: Check teacher and student inline JavaScript
-        run: |
-          node <<'NODE'
-          const fs = require('node:fs');
-          for (const path of ['firebase-site/online-class-teacher.html',
-                              'firebase-site/online-class.html']) {
-            const html = fs.readFileSync(path, 'utf8');
-            const regex = new RegExp('<script[^>]*>(.*?)</script>', 'gis');
-            let match, count = 0;
-            while ((match = regex.exec(html))) {
-              if (!match[1].trim()) continue;
-              new Function(match[1]);
-              count++;
-            }
-            if (!count) throw new Error('No inline JavaScript found in ' + path);
-            console.log(path + ': ' + count + ' script(s) passed');
-          }
-          NODE
-      - name: Check Hosting files and OAuth rewrite configuration
-        run: |
-          node <<'NODE'
-          const fs = require('node:fs');
-          const config = JSON.parse(fs.readFileSync('firebase.json', 'utf8'));
-          if (config.hosting.public !== 'firebase-site') throw new Error('Unexpected Hosting public folder');
-          const paths = ['404.html','index.html','quiz.html',
-                         'online-class-teacher.html','online-class.html'];
-          for (const path of paths) if (!fs.existsSync('firebase-site/' + path)) {
-            throw new Error('Missing Hosting file: ' + path);
-          }
-          for (const name of ['zoomOAuthStart','zoomOAuthCallback']) {
-            if (!config.hosting.rewrites.some(r=>r.function?.functionId===name
-              &&r.function.region==='asia-south1'))throw new Error('Missing rewrite: '+name);
-          }
-          if (!config.functions.some(x=>x.codebase==='zoom' && x.source==='zoom-functions'))
-            throw new Error('Missing isolated Zoom codebase');
-          NODE
+      - name: Check all Zoom modules, both pages and Hosting configuration
+        run: npm --prefix zoom-functions run check
+      - name: Install locked Zoom dependencies
+        run: npm --prefix zoom-functions ci --ignore-scripts --no-audit --no-fund
+      - name: Verify Firebase SDK compatibility without production access
+        run: npm --prefix zoom-functions run smoke
+      - name: Test attendance, authorization, SDK access and reconnect handling
+        run: npm --prefix zoom-functions test

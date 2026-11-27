@@ -1,14 +1,16 @@
 'use strict';
 
-// Test-only Meeting SDK participant authorisation for the existing school class.
+// Meeting SDK participant authorisation for the existing school class.
 // Zoom Client Secret is never sent to students; only a short-lived SDK JWT is issued.
 const crypto = require('node:crypto');
-const admin = require('firebase-admin');
+const {getApps, initializeApp} = require('firebase-admin/app');
+const {getFirestore, FieldValue} = require('firebase-admin/firestore');
+const {getAuth} = require('firebase-admin/auth');
 const {onRequest} = require('firebase-functions/v2/https');
 const {defineSecret} = require('firebase-functions/params');
-if (!admin.apps.length) admin.initializeApp();
+if (!getApps().length) initializeApp();
 
-const db = admin.firestore();
+const db = getFirestore();
 const CLIENT_ID = defineSecret('ZOOM_CLIENT_ID');
 const CLIENT_SECRET = defineSecret('ZOOM_CLIENT_SECRET');
 const ORIGINS = new Set([
@@ -64,7 +66,7 @@ exports.zoomSdkParticipantSignature = onRequest({
   const bearer = /^Bearer (.+)$/i.exec(String(req.headers.authorization || ''));
   if (!bearer || bearer[1].length > 8192) return deny(res, 401, 'AUTH', 'School access expired.');
   let authUser;
-  try {authUser = await admin.auth().verifyIdToken(bearer[1], true);}
+  try {authUser = await getAuth().verifyIdToken(bearer[1], true);}
   catch (_) {return deny(res, 401, 'AUTH', 'Please reload the class page.');}
   if (!authUser.uid) return deny(res, 401, 'AUTH', 'School access is required.');
 
@@ -80,16 +82,18 @@ exports.zoomSdkParticipantSignature = onRequest({
     const end = meeting.endAt?.toMillis?.() ||
       start + Number(meeting.durationMinutes || 40) * 60000;
     if (meeting.status !== 'scheduled' || !Number.isFinite(start) ||
-        !Number.isFinite(end) || Date.now() < start - 10 * 60000 ||
-        Date.now() >= end) {
+        !Number.isFinite(end) || end <= start || end - start > 240 * 60000 ||
+        meeting.zoomActualEndedAt || Date.now() < start - 10 * 60000 || Date.now() >= end) {
       return deny(res, 403, 'WINDOW', 'This class is not open for joining.');
     }
-    if (Number(meeting.zoomProvisionedRevision) !== Number(meeting.revision) ||
+    if (!Number.isSafeInteger(meeting.revision) || meeting.revision < 1 ||
+        meeting.zoomProvisionedRevision !== meeting.revision ||
         !/^\d{9,13}$/.test(String(meeting.zoomMeetingId || ''))) {
       return deny(res, 409, 'MEETING', 'The teacher has not prepared this Zoom meeting.');
     }
     const year = meeting.academicYear || meeting.year;
     if (!/^\d{4}-\d{2}$/.test(String(year)) ||
+        Number(year.slice(5)) !== (Number(year.slice(0, 4)) + 1) % 100 ||
         !validDocId(meeting.classId) || !validDocId(meeting.sectionId)) {
       return deny(res, 409, 'SECTION', 'Class registration needs to be checked by your teacher.');
     }
@@ -114,7 +118,7 @@ exports.zoomSdkParticipantSignature = onRequest({
     await db.collection('meetings').doc(meetingId)
       .collection('zoomStudentCodes').doc(attendanceTag).set({
         studentId, studentName:name, rollNo:roll,
-        createdAt:admin.firestore.FieldValue.serverTimestamp()
+        createdAt:FieldValue.serverTimestamp()
       });
     // The passcode is captured from Zoom's create-meeting response for new classes.
     // Older meetings may lack it; do not misrepresent a failed SDK join as attendance.

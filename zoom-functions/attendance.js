@@ -1,14 +1,15 @@
 'use strict';
 
-// Signed Zoom webhook intake. This module is deliberately not exported from
-// index.js until the Zoom event secret has been stored in Secret Manager.
+// Signed Zoom webhook intake. The verification secret must exist before deployment.
 // No student browser may claim to have attended a meeting.
 const crypto = require('node:crypto');
-const admin = require('firebase-admin');
+const {getApps, initializeApp} = require('firebase-admin/app');
+const {getFirestore, Timestamp, FieldValue} = require('firebase-admin/firestore');
 const {onRequest} = require('firebase-functions/v2/https');
 const {defineSecret} = require('firebase-functions/params');
-if (!admin.apps.length) admin.initializeApp();
-const db = admin.firestore();
+const {reconcileEvents} = require('./attendance-model');
+if (!getApps().length) initializeApp();
+const db = getFirestore();
 const WEBHOOK_TOKEN = defineSecret('ZOOM_WEBHOOK_SECRET_TOKEN');
 const REGION = 'asia-south1';
 
@@ -40,48 +41,9 @@ function studentCode(name) {
   const match = String(name || '').match(/\[SP-([A-Za-z0-9_-]{12})\]\s*$/);
   return match ? match[1] : '';
 }
-function eventId(kind, uuid, zoomUserId, when, code) {
-  return digest([kind, uuid, zoomUserId, when, code].join('|'));
-}
-async function rebuildStudent(meetingRef, studentId) {
-  const eventSnap = await meetingRef.collection('zoomAttendanceEvents')
-    .where('studentId', '==', studentId).get();
-  const timeline = eventSnap.docs.map(d => d.data()).filter(d =>
-    (d.kind === 'join' || d.kind === 'leave') && Number.isFinite(d.atMs)
-  ).sort((a, b) => a.atMs - b.atMs ||
-    (a.kind === 'join' ? -1 : 1) - (b.kind === 'join' ? -1 : 1));
-  const active = new Map(), intervals = [];
-  let unmatchedExits = 0;
-  for (const e of timeline) {
-    const k = String(e.instanceKey || '');
-    if (!k) continue;
-    if (e.kind === 'join') {
-      // A duplicate join is not a second presence period.
-      if (!active.has(k)) active.set(k, e);
-    } else {
-      const entered = active.get(k);
-      if (!entered || e.atMs < entered.atMs) {
-        unmatchedExits++;
-        continue;
-      }
-      intervals.push({
-        joinedAt: new Date(entered.atMs).toISOString(),
-        leftAt: new Date(e.atMs).toISOString(),
-        reason: String(e.reason || '').slice(0, 140)
-      });
-      active.delete(k);
-    }
-  }
-  for (const e of active.values()) {
-    intervals.push({joinedAt:new Date(e.atMs).toISOString(), leftAt:null, reason:'Awaiting verified exit'});
-  }
-  intervals.sort((a, b) => a.joinedAt.localeCompare(b.joinedAt));
-  await meetingRef.collection('attendance').doc(studentId).set({
-    zoomSource: 'signed_zoom_webhook',
-    zoomIntervals: intervals.slice(0, 200),
-    zoomUnmatchedExits: unmatchedExits,
-    zoomUpdatedAt: admin.firestore.FieldValue.serverTimestamp()
-  }, {merge:true});
+function eventId(kind, uuid, zoomUserId, when) {
+  // A retry or a name change must not turn one Zoom event into two events.
+  return digest([kind, uuid, zoomUserId, when].join('|'));
 }
 async function handleParticipant(meetingRef, body, kind, at) {
   const obj = body.payload && body.payload.object || {};
@@ -89,38 +51,59 @@ async function handleParticipant(meetingRef, body, kind, at) {
   const meetingUuid = String(obj.uuid || '');
   const zoomUserId = String(participant.user_id || '');
   const code = studentCode(participant.user_name);
-  if (!zoomUserId || !/^[A-Za-z0-9_-]{3,128}$/.test(zoomUserId)) return;
-  const binding = meetingRef.collection('zoomParticipantBindings')
-    .doc(userKey(meetingUuid, zoomUserId));
-  let studentId = '';
-  if (code) {
-    const mapped = await meetingRef.collection('zoomStudentCodes').doc(code).get();
-    if (mapped.exists) {
-      studentId = String(mapped.data().studentId || '');
-      await binding.set({studentId, code, meetingUuid, zoomUserId,
-        updatedAt:admin.firestore.FieldValue.serverTimestamp()}, {merge:true});
-    }
-  }
-  if (!studentId) {
-    const bound = await binding.get();
-    if (bound.exists) studentId = String(bound.data().studentId || '');
-  }
-  if (!studentId || studentId.length > 160 || studentId.includes('/')) return;
+  if (!zoomUserId || zoomUserId.length > 128 || /[\x00-\x1f]/.test(zoomUserId)) return;
   const instanceKey = userKey(meetingUuid, zoomUserId);
-  const unique = eventId(kind, meetingUuid, zoomUserId, at, code);
-  const recordRef = meetingRef.collection('zoomAttendanceEvents').doc(unique);
-  try {
-    await recordRef.create({
-      studentId, kind, atMs:at, instanceKey,
-      zoomUserId, meetingUuid,
-      reason:kind==='leave'?String(participant.leave_reason || '').slice(0,140):'',
-      recordedAt:admin.firestore.FieldValue.serverTimestamp()
-    });
-  } catch (e) {
-    if (Number(e.code) === 6 || e.code === 'already-exists') return;
-    throw e;
-  }
-  await rebuildStudent(meetingRef, studentId);
+  const binding = meetingRef.collection('zoomParticipantBindings')
+    .doc(instanceKey);
+  const events = meetingRef.collection('zoomAttendanceEvents');
+  const recordRef = events.doc(eventId(kind, meetingUuid, zoomUserId, at));
+  // Raw event, orphan repair and projection commit together. A failed commit
+  // leaves nothing half-saved; retries also repair projections from older code.
+  await db.runTransaction(async tx => {
+    const bound = await tx.get(binding);
+    const existing = await tx.get(recordRef);
+    const mapped = code ? await tx.get(meetingRef.collection('zoomStudentCodes').doc(code)) : null;
+    const mappedId = mapped?.exists ? String(mapped.get('studentId') || '') : '';
+    const boundId = bound.exists ? String(bound.get('studentId') || '') : '';
+    if (mappedId && boundId && mappedId !== boundId) {
+      tx.set(meetingRef, {zoomAttendanceIssue: 'conflicting_student_binding'}, {merge: true});
+      return;
+    }
+    const studentId = mappedId || boundId;
+    if (studentId && (studentId.length > 160 || studentId === '.' || studentId === '..' || /[\/\x00-\x1f]/.test(studentId))) return;
+    const record = {studentId, kind, atMs: at, instanceKey, zoomUserId, meetingUuid,
+      reason: kind === 'leave' ? String(participant.leave_reason || '').slice(0, 140) : '',
+      recordedAt: FieldValue.serverTimestamp()};
+    let attendanceRef, projection, orphanDocs = [];
+    if (studentId) {
+      attendanceRef = meetingRef.collection('attendance').doc(studentId);
+      // This shared row serializes concurrent updates for the same student.
+      await tx.get(attendanceRef);
+      const history = await tx.get(events.where('studentId', '==', studentId));
+      const instance = await tx.get(events.where('instanceKey', '==', instanceKey));
+      orphanDocs = instance.docs.filter(doc => !doc.get('studentId'));
+      const combined = new Map(history.docs.map(doc => [doc.id, doc.data()]));
+      for (const doc of orphanDocs) combined.set(doc.id, {...doc.data(), studentId});
+      combined.set(recordRef.id, existing.exists ? {...existing.data(), studentId} : record);
+      projection = reconcileEvents([...combined.values()]);
+    }
+    if (!existing.exists) tx.create(recordRef, record);
+    else if (studentId && !existing.get('studentId')) tx.update(recordRef, {studentId});
+    for (const doc of orphanDocs) {
+      if (doc.id !== recordRef.id) tx.update(doc.ref, {studentId});
+    }
+    if (studentId) {
+      tx.set(binding, {studentId, meetingUuid, zoomUserId,
+        updatedAt: FieldValue.serverTimestamp()}, {merge: true});
+      tx.set(attendanceRef, {...projection, zoomSource: 'signed_zoom_webhook',
+        zoomUpdatedAt: FieldValue.serverTimestamp()}, {merge: true});
+    }
+    if (!existing.exists || orphanDocs.length || (studentId && !existing.get('studentId'))) {
+      // Late records invalidate a teacher's earlier final-absence confirmation.
+      tx.set(meetingRef, {zoomAttendanceRevision: FieldValue.increment(1),
+        zoomWebhookSeenAt: FieldValue.serverTimestamp()}, {merge: true});
+    }
+  });
 }
 exports.zoomAttendanceWebhook = onRequest({
   region:REGION, invoker:'public', maxInstances:5,
@@ -146,7 +129,8 @@ exports.zoomAttendanceWebhook = onRequest({
   if (!supported.has(body.event)) return res.status(204).end();
   const obj = body.payload && body.payload.object || {};
   const zoomMeetingId = String(obj.id || '');
-  if (!/^\d{9,13}$/.test(zoomMeetingId)) return res.status(204).end();
+  const uuid = String(obj.uuid || '');
+  if (!/^\d{9,13}$/.test(zoomMeetingId) || !uuid || uuid.length > 200 || /[\x00-\x1f]/.test(uuid)) return res.status(204).end();
   const at = eventTime(
     body.event === 'meeting.participant_joined' ? obj.participant?.join_time :
     body.event === 'meeting.participant_left' ? obj.participant?.leave_time :
@@ -162,12 +146,12 @@ exports.zoomAttendanceWebhook = onRequest({
     const meetingRef=found.docs[0].ref, meeting=found.docs[0].data();
     if (meeting.status === 'cancelled') return res.status(204).end();
     const update = {
-      zoomWebhookSeenAt:admin.firestore.FieldValue.serverTimestamp()
+      zoomWebhookSeenAt:FieldValue.serverTimestamp()
     };
     if (body.event === 'meeting.started') {
-      update.zoomActualStartedAt = admin.firestore.Timestamp.fromMillis(at);
+      update.zoomActualStartedAt = Timestamp.fromMillis(at);
     } else if (body.event === 'meeting.ended') {
-      update.zoomActualEndedAt = admin.firestore.Timestamp.fromMillis(at);
+      update.zoomActualEndedAt = Timestamp.fromMillis(at);
     }
     if (body.event === 'meeting.started' || body.event === 'meeting.ended') {
       // Duplicate/reordered events may occur; preserve the earliest start,
@@ -176,18 +160,27 @@ exports.zoomAttendanceWebhook = onRequest({
         const snap=await tx.get(meetingRef);
         if (!snap.exists) return;
         const d=snap.data(), patch={zoomWebhookSeenAt:update.zoomWebhookSeenAt};
+        if (d.zoomMeetingUuid && d.zoomMeetingUuid !== uuid) {
+          // Reusing a Zoom number must never combine two separate sessions
+          // into one long class. Keep the evidence for manual review.
+          tx.set(meetingRef, {...patch, zoomAttendanceIssue:'multiple_meeting_instances'}, {merge:true});
+          return;
+        }
+        patch.zoomMeetingUuid = uuid;
         if (body.event === 'meeting.started') {
           if (!d.zoomActualStartedAt || at < d.zoomActualStartedAt.toMillis())
-            patch.zoomActualStartedAt = admin.firestore.Timestamp.fromMillis(at);
+            patch.zoomActualStartedAt = Timestamp.fromMillis(at);
         } else {
           if (!d.zoomActualEndedAt || at > d.zoomActualEndedAt.toMillis())
-            patch.zoomActualEndedAt = admin.firestore.Timestamp.fromMillis(at);
+            patch.zoomActualEndedAt = Timestamp.fromMillis(at);
         }
         tx.set(meetingRef,patch,{merge:true});
       });
     } else {
+      if (meeting.zoomMeetingUuid && meeting.zoomMeetingUuid !== uuid) {
+        await meetingRef.set({zoomAttendanceIssue:'multiple_meeting_instances'}, {merge:true});
+      }
       await handleParticipant(meetingRef,body,body.event.endsWith('joined')?'join':'leave',at);
-      await meetingRef.set(update,{merge:true});
     }
     return res.status(204).end();
   } catch (e) {
