@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         St Patricks LEAP Automation
 // @namespace    stpatricks-leap
-// @version      1.2.8
+// @version      1.2.9
 // @description  FA and school-awarded SA1 marks entry with actual-SA1 priority
 // @match        https://messiahsastry.github.io/Question-Bank/excel.html*
 // @match        https://cse.ap.gov.in/loadccemarksentry*
@@ -19,6 +19,7 @@
   'use strict';
 
   const KEY = 'stpatricks-leap-packet-v1';
+  const LAST_FILLED_KEY = 'stpatricks-leap-last-filled-v1';
   const MAX_AGE = 4 * 60 * 60 * 1000;
   const school =
     location.hostname === 'messiahsastry.github.io';
@@ -83,6 +84,8 @@
             throw Error('Invalid or expired data');
 
           await GM_setValue(KEY, packet);
+          // A new transfer starts its own progress history.
+          try { await GM_deleteValue(LAST_FILLED_KEY); } catch (_) {}
 
           el.dataset.received = packet.nonce;
 
@@ -103,10 +106,15 @@
 
   if (!valid(packet)) {
     GM_deleteValue(KEY);
+    GM_deleteValue(LAST_FILLED_KEY);
     return;
   }
 
   const box = document.createElement('div');
+  // Keep the established large-button layout on phones and tablets.
+  const desktop = !/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) &&
+    !(/Macintosh/i.test(navigator.userAgent) && navigator.maxTouchPoints > 1) &&
+    window.matchMedia('(hover: hover) and (pointer: fine)').matches;
 
       box.style.cssText =
     'position:fixed!important;' +
@@ -120,6 +128,16 @@
     'max-height:55vh;overflow-y:auto;' +
     'box-sizing:border-box;';
 
+  if (desktop) {
+    box.style.setProperty('left', 'auto', 'important');
+    box.style.setProperty('right', '12px', 'important');
+    box.style.width = 'min(380px, calc(100vw - 24px))';
+    box.style.padding = '12px';
+    box.style.borderRadius = '12px';
+    box.style.maxHeight = '55vh';
+    box.style.fontSize = '13px';
+  }
+
   const title = document.createElement('b');
   title.textContent = 'School marks received';
   title.style.cssText = 'display:block;font-size:18px;line-height:1.3;';
@@ -130,12 +148,54 @@
     `${packet.className} - ${packet.sectionName} - ` +
     `${packet.records.length} students.`;
 
+  // Store only an index and packet identifier; names remain in the active packet.
+  const lastFilled = document.createElement('div');
+  lastFilled.style.cssText =
+    'margin:6px 0;padding:7px 9px;background:#eaf4ed;' +
+    'border:1px solid #c4dfcd;border-radius:8px;' +
+    'font-weight:600;overflow-wrap:anywhere;';
+  lastFilled.setAttribute('aria-live', 'polite');
+  function renderLastFilled(progress) {
+    const previous = progress && progress.nonce === packet.nonce &&
+      Number.isInteger(progress.index) && progress.index >= 0
+      ? packet.records[progress.index] : null;
+    lastFilled.textContent = previous
+      ? 'Last filled: ' + previous.name +
+        (previous.roll != null && String(previous.roll).trim() !== ''
+          ? ' (Roll: ' + previous.roll + ')' : '') +
+        ' — verify Save separately.'
+      : 'Last filled: None in this transfer.';
+  }
+  function rememberLastFilled(record) {
+    const index = packet.records.indexOf(record);
+    if (index < 0) return;
+    const progress = { nonce: packet.nonce, index };
+    renderLastFilled(progress);
+    try {
+      const active = GM_getValue(KEY, null);
+      if (active && active.nonce === packet.nonce) {
+        GM_setValue(LAST_FILLED_KEY, progress);
+      }
+    } catch (_) {
+      // A progress-display failure must not interfere with a successful fill.
+    }
+  }
+  try { renderLastFilled(GM_getValue(LAST_FILLED_KEY, null)); }
+  catch (_) { renderLastFilled(null); }
+
+  if (desktop) {
+    title.style.fontSize = '16px';
+    info.style.margin = '4px 0';
+    lastFilled.style.fontSize = '13px';
+  }
+
   const clear = document.createElement('button');
 
   clear.textContent = 'Clear transferred data';
 
   clear.onclick = () => {
     GM_deleteValue(KEY);
+    GM_deleteValue(LAST_FILLED_KEY);
     box.remove();
   };
 
@@ -607,6 +667,7 @@ fillBtn.onclick = async () => {
 
     if (packet.exam === 'SA1') {
       await fillActualSA1(record);
+      rememberLastFilled(record);
       return;
     }
 
@@ -739,6 +800,7 @@ fillBtn.onclick = async () => {
     fillStatus.textContent = '✓ ' +
       packet.exam.replace(/^(FA|SA)([1-4])$/, '$1-$2') +
       ' marks filled for ' + record.name + '.';
+    rememberLastFilled(record);
 
   } catch (error) {
     fillStatus.textContent =
@@ -746,7 +808,7 @@ fillBtn.onclick = async () => {
   }
 };
 
-box.append(title, info, fillBtn, clear, fillStatus);
+box.append(title, info, lastFilled, fillBtn, clear, fillStatus);
   document.body.appendChild(box);
 
 // ---------- AUTO SELECT LEAP DETAILS ----------
@@ -913,6 +975,7 @@ backToAppBtn.onclick = () => {
   )) return;
 
   GM_deleteValue(KEY);
+  GM_deleteValue(LAST_FILLED_KEY);
 
   window.location.replace(
     'https://messiahsastry.github.io/Question-Bank/excel.html'
@@ -948,6 +1011,22 @@ styleLargeAction(clear, '#e5e7eb', '#111827');
 
 actionGrid.append(detailsBtn, fillBtn, backToAppBtn, clear);
 box.insertBefore(actionGrid, fillStatus);
+
+if (desktop) {
+  actionGrid.style.gap = '8px';
+  actionGrid.style.margin = '9px 0 4px';
+  for (const button of [detailsBtn, fillBtn, backToAppBtn, clear]) {
+    button.style.minHeight = '46px';
+    button.style.padding = '8px 7px';
+    button.style.borderRadius = '8px';
+    button.style.font = '700 13px/1.25 system-ui,Arial,sans-serif';
+    button.style.boxShadow = 'none';
+  }
+  fillStatus.style.marginTop = '5px';
+  fillStatus.style.fontSize = '13px';
+  autoStatus.style.marginTop = '5px';
+  autoStatus.style.fontSize = '13px';
+}
 
 function getLEAPFields() {
   return Array.from(
