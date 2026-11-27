@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         St Patricks LEAP Automation
 // @namespace    stpatricks-leap
-// @version      1.2.7
+// @version      1.2.8
 // @description  FA and school-awarded SA1 marks entry with actual-SA1 priority
 // @match        https://messiahsastry.github.io/Question-Bank/excel.html*
 // @match        https://cse.ap.gov.in/loadccemarksentry*
@@ -22,6 +22,21 @@
   const MAX_AGE = 4 * 60 * 60 * 1000;
   const school =
     location.hostname === 'messiahsastry.github.io';
+
+  // Map school sections to LEAP without changing the source section.
+  function leapSectionFor(grade, sectionName) {
+    const raw = String(sectionName || '').trim().toUpperCase();
+    // Standalone A is D only for Classes 8-10; A Section remains A.
+    if ([8, 9, 10].includes(Number(grade)) && raw === 'A') return 'D';
+
+    const houseMap = {
+      GREENHOUSE: 'A',
+      YELLOWHOUSE: 'B',
+      REDHOUSE: 'C'
+    };
+    const normalized = raw.replace(/[^A-Z]/g, '');
+    return houseMap[normalized] || normalized.charAt(0);
+  }
 
   function valid(p) {
     return p && p.schema === 1 &&
@@ -541,18 +556,7 @@ fillBtn.onclick = async () => {
       normal(s.selectedOptions[0]?.textContent)
     );
 
-    const houseMap = {
-  GREENHOUSE: 'A',
-  YELLOWHOUSE: 'B',
-  REDHOUSE: 'C'
-};
-
-const sectionName = String(packet.sectionName || '')
-  .toUpperCase()
-  .replace(/[^A-Z]/g, '');
-
-const section = houseMap[sectionName] ||
-  sectionName.charAt(0);
+    const section = leapSectionFor(packet.grade, packet.sectionName);
 
     const classCode = String(packet.grade) + section;
 
@@ -762,18 +766,7 @@ const autoDelay = ms =>
 
 async function autoSelectLEAP() {
 
-  const houseMap = {
-  GREENHOUSE: 'A',
-  YELLOWHOUSE: 'B',
-  REDHOUSE: 'C'
-};
-
-const sectionName = String(packet.sectionName || '')
-  .toUpperCase()
-  .replace(/[^A-Z]/g, '');
-
-const section = houseMap[sectionName] ||
-  sectionName.charAt(0);
+  const section = leapSectionFor(packet.grade, packet.sectionName);
 
   const grade = Number(packet.grade);
 
@@ -1052,15 +1045,7 @@ detailsBtn.onclick = async () => {
 
     const grade = Number(packet.grade);
 
-    const houseMap = {
-      GREENHOUSE: 'A',
-      YELLOWHOUSE: 'B',
-      REDHOUSE: 'C'
-    };
-    const sectionName = String(packet.sectionName || '')
-      .toUpperCase()
-      .replace(/[^A-Z]/g, '');
-    const section = houseMap[sectionName] || sectionName.charAt(0);
+    const section = leapSectionFor(packet.grade, packet.sectionName);
 
     const exam = autoNorm(packet.exam);
 
