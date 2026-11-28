@@ -550,3 +550,39 @@ test('custom named MCQ components use their configured maximum',async()=>{
   const rows=await h.ctx.loadReportsFromFirestore(false);
   assert.equal(rows[0].total,30);assert.equal(h.elements.get('reportMax').textContent,'60.00');
 });
+
+test('a corrected roll saves to the new student without replacing the mistakenly bubbled roll',async()=>{
+  const h=harness();h.select('English 2');
+  const original=h.seedLegacy(h.scan('English 2',18,18,22));
+  const originalData=clone(h.store.get(original.path));
+  h.store.set(h.marksPath,{'English 2':18});
+  const secondPath=h.marksPath.split('/marks/')[0].replace('student1','student2');
+  h.ctx.findStudentByRoll=async roll=>Number(roll)===2
+    ? {id:'student2',ref:h.ref(secondPath),roll:2,name:'Student Two'}
+    : {id:'student1',ref:h.ref(h.marksPath.split('/marks/')[0]),roll:1,name:'Student One'};
+  const out=h.scan('English 2',21,21,19);
+  assert.equal((await h.ctx.findExistingOmrScan(out)).duplicates.length,1);
+  out.roll='2';
+  await h.ctx.saveScanToFirestore(out);
+  assert.equal(h.prompts.length,0);
+  assert.deepEqual(h.store.get(original.path),originalData);
+  assert.equal(h.store.get(h.marksPath)['English 2'],18);
+  assert.equal(h.store.get(secondPath+'/marks/SA1')['English 2'],21);
+  const record=h.store.get(h.ctx.omrSubjectResultRef(out,{subjectName:'English 2',partName:'OMR'}).path);
+  assert.equal(record.studentId,'student2');assert.equal(record.roll,'2');
+});
+
+test('unclear answers cannot be saved until explicitly reviewed and confirmed',async()=>{
+  const h=harness();h.select('Math 1');
+  const out=h.scan('Math 1');
+  out.recognitionMeta={uncertain:[{section:'Math 1',question:31,option:'C',reason:'damaged-outline'}]};
+  const before=clone([...h.store]);
+  await assert.rejects(()=>h.ctx.saveScanToFirestore(out),/Check and confirm/);
+  assert.deepEqual([...h.store],before);
+  out.recognitionReviewConfirmed=true;
+  out.reviewedQuestions=[{subject:'Math 1',question:31,selected:['A','D']}];
+  await h.ctx.saveScanToFirestore(out);
+  const record=h.store.get(h.resultRef('Math 1').path);
+  assert.equal(record.recognitionReviewConfirmed,true);
+  assert.deepEqual(record.reviewedQuestions,out.reviewedQuestions);
+});

@@ -882,6 +882,7 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
       </div>
       <div id="scanReviewSections"
            style="display:none; margin-top:10px;"></div>
+      <div id="scanReviewQuestions" style="display:none;margin-top:12px;"></div>
       <div id="scanReviewLegend"
            style="display:flex; flex-wrap:wrap; justify-content:center; gap:8px 14px; margin-top:10px; font-size:12px; font-weight:700;">
         <span style="color:#16a34a;">● Correctly marked</span>
@@ -8227,6 +8228,7 @@ function omrRingEvidence(sample,x,y,r){
 }
 function calibrateOmrBubbleCenters(ctx,rois,anchors,defaultRollDigits){
   if(!rois || !anchors || !Array.isArray(rois.sections)) return {ok:false,reason:'OMR layout is missing.'};
+  delete anchors.bubbleCenters;
   const w=ctx.canvas.width,h=ctx.canvas.height;
   const pixels=ctx.getImageData(0,0,w,h).data;
   const sample=(x,y)=>{
@@ -8254,7 +8256,10 @@ function calibrateOmrBubbleCenters(ctx,rois,anchors,defaultRollDigits){
       if(!rows.has(b.q))rows.set(b.q,[]);
       rows.get(b.q).push(p);
     }
-    groups.push(...rows.values());
+    rows.forEach((row,question)=>{
+      row.kind='answer';row.section=section.name;row.question=Number(question);
+      groups.push(row);
+    });
   }
   const roll=rois.roll;
   if(roll){
@@ -8269,11 +8274,14 @@ function calibrateOmrBubbleCenters(ctx,rois,anchors,defaultRollDigits){
         column.push(p);
       }
       // Small groups allow for local curvature in the roll-number grid.
-      groups.push(column.slice(0,5),column.slice(5));
+      const first=column.slice(0,5),last=column.slice(5);
+      first.kind='roll';last.kind='roll';
+      groups.push(first,last);
     }
   }
   if(!groups.length)return {ok:false,reason:'No bubbles in saved layout.'};
   const centers=new Map();
+  const measuredGroups=[];
   let total=0,verifiedTotal=0;
   for(const group of groups){
     const minR=Math.min(...group.map(p=>p.r));
@@ -8324,14 +8332,37 @@ function calibrateOmrBubbleCenters(ctx,rois,anchors,defaultRollDigits){
       centers.set(p.key,{...chosen,verified:evidence.verified});
       if(evidence.verified)groupVerified++;
     }
-    if(groupVerified<Math.ceil(group.length*.70)){
-      return {ok:false,reason:'Printed bubble positions are unclear or do not match the saved OMR layout.'};
-    }
+    measuredGroups.push({group,dx:best.dx,dy:best.dy,verified:groupVerified,
+      strong:groupVerified>=Math.ceil(group.length*.70),
+      x:group.reduce((sum,p)=>sum+p.x,0)/group.length,
+      y:group.reduce((sum,p)=>sum+p.y,0)/group.length,minR});
     total+=group.length;verifiedTotal+=groupVerified;
   }
   if(verifiedTotal/total<.85)return {ok:false,reason:'Too many unclear printed bubbles. Flatten the paper and improve lighting.'};
+  const answerGroups=measuredGroups.filter(row=>row.group.kind==='answer');
+  const weakAnswers=answerGroups.filter(row=>!row.strong);
+  if(weakAnswers.length>Math.max(2,Math.floor(answerGroups.length*.10))){
+    return {ok:false,reason:'Too many answer rows do not match the printed layout.'};
+  }
+  for(const row of weakAnswers){
+    // A few whitened circles must not reject an otherwise verified sheet.
+    // Position those circles from intact nearby rows in the SAME column.
+    const neighbours=answerGroups.filter(other=>other!==row&&other.strong&&
+      Math.abs(other.x-row.x)<row.minR*4&&Math.abs(other.y-row.y)<row.minR*14)
+      .sort((a,b)=>Math.abs(a.y-row.y)-Math.abs(b.y-row.y)).slice(0,4);
+    if(neighbours.length<2)return {ok:false,reason:'Damaged answer row has too few clear neighbouring rows. Flatten the sheet and try again.'};
+    const dx=medianNumber(neighbours.map(other=>other.dx));
+    const dy=medianNumber(neighbours.map(other=>other.dy));
+    for(const p of row.group){
+      const chosen={x:p.x+dx,y:p.y+dy};
+      const evidence=omrRingEvidence(sample,chosen.x,chosen.y,p.r);
+      centers.set(p.key,{...chosen,verified:evidence.verified});
+    }
+  }
+  const finalCoverage=[...centers.values()].filter(point=>point.verified).length/total;
+  if(finalCoverage<.85)return {ok:false,reason:'Too many unclear printed bubbles. Flatten the paper and improve lighting.'};
   anchors.bubbleCenters=centers;
-  return {ok:true,coverage:verifiedTotal/total};
+  return {ok:true,coverage:finalCoverage,damagedAnswerRows:weakAnswers.length};
 }
 
 function registerVerifiedOmrRead(history,candidate,frameTime,now){
@@ -8342,6 +8373,17 @@ function registerVerifiedOmrRead(history,candidate,frameTime,now){
   if(history.length<3)return false;
   history.length=0;
   return true;
+}
+
+function mergeOmrUncertainBubbles(groups){
+  const entries=new Map();
+  groups.flat().forEach(entry=>{
+    if(!entry||!entry.section||!Number.isInteger(Number(entry.question)))return;
+    const key=JSON.stringify([entry.section,Number(entry.question),entry.option]);
+    const previous=entries.get(key);
+    if(!previous||entry.reason==='damaged-outline')entries.set(key,{...entry});
+  });
+  return [...entries.values()];
 }
 
 function getBubbleFillMetrics(ctx, cx, cy, r){
@@ -9307,17 +9349,17 @@ function decodeAnswersFromFrame(
       }
 
       classifyQuestionBubbles(measured).forEach(result => {
-        if (result.filled && !result.alignmentVerified){
-          alignmentUncertain++;
-        }
-        else if (result.filled){
+        if (result.filled && result.alignmentVerified){
           chosen.push(result.opt);
         }
-        else if (result.uncertain){
+        if (!result.alignmentVerified || result.uncertain){
+          if(result.filled&&!result.alignmentVerified)alignmentUncertain++;
           uncertain.push({
             section:secName,
             question:Number(qNo),
             option:String(result.opt),
+            reason:result.alignmentVerified?'light-mark':'damaged-outline',
+            detectedFilled:!!result.filled,
             fillRatio:Number(result.fillRatio.toFixed(3)),
             centerFillRatio:Number(result.centerFillRatio.toFixed(3)),
             contrast:Number(result.contrast.toFixed(1)),
@@ -9536,7 +9578,7 @@ async function analyzeNormalizedOmr(
 
   if (lastBubbleRecognitionMeta.uncertainCount > 0){
     recognitionWarnings.push(
-      `${lastBubbleRecognitionMeta.uncertainCount} light or unclear bubble(s) were not awarded marks. Review the sheet before saving.`
+      `${lastBubbleRecognitionMeta.uncertainCount} corrected or unclear bubble(s) need teacher review. Check the listed questions before saving.`
     );
   }
 
@@ -10017,11 +10059,8 @@ const {
   recognitionMeta,
   recognitionWarnings
 } = analysis;
-if(recognitionMeta && recognitionMeta.alignmentUncertain){
-  verifiedReads.length=0;
-  el('cameraHint').textContent='Possible mark at an unclear bubble position. Hold the sheet flat and steady.';
-  return;
-}
+// Individual damaged/unclear bubbles are reviewed below. The complete-page
+// calibration and three matching reads still protect against a wrong layout.
 
     // We have a roll – reset "no OMR" timer
     noRollStartTime = null;
@@ -10037,9 +10076,16 @@ const sheetFingerprint =
 
 
 // Accept only three consecutive, separately captured, calibrated reads.
-if(!registerVerifiedOmrRead(verifiedReads,{fingerprint:sheetFingerprint,total:Number(score.total||0)},frameTime,Date.now())){
+const earlierUncertain=verifiedReads.filter(read=>read.fingerprint===sheetFingerprint)
+  .map(read=>read.uncertain||[]);
+if(!registerVerifiedOmrRead(verifiedReads,{fingerprint:sheetFingerprint,total:Number(score.total||0),uncertain:recognitionMeta.uncertain||[]},frameTime,Date.now())){
   el('cameraHint').textContent='Verifying answers — '+verifiedReads.length+'/3 matching reads. Hold steady.';
   return;
+}
+recognitionMeta.uncertain=mergeOmrUncertainBubbles([...earlierUncertain,recognitionMeta.uncertain||[]]);
+recognitionMeta.uncertainCount=recognitionMeta.uncertain.length;
+if(recognitionMeta.uncertainCount&&!recognitionWarnings.some(message=>message.includes('teacher review'))){
+  recognitionWarnings.push('Corrected or unclear bubbles were seen during capture. Check the listed questions before saving.');
 }
 const stable = {
 
@@ -10188,7 +10234,8 @@ catch (err){
     out._previewDataUrl = previewDataUrl;
     out.questionDetails = buildQuestionDetails(out);
 
-    // Check saved results before opening the review; save checks again for safety.
+    // Report a possible duplicate in review so a wrongly bubbled roll can be
+    // corrected FIRST. Only Save can request replacement for the final roll.
     if (!out.rollNeedsEdit && Number(out.roll) > 0){
       let lookup = null;
       try {
@@ -10198,23 +10245,8 @@ catch (err){
       }
       if (!isCameraOpen){ isScanBusy = false; return; }
       if (lookup && lookup.duplicates.length){
-        if (dlg.open) dlg.close();
-        const replace = await appConfirm({
-          title:'OMR Already Scanned',
-          subtitle:`Roll ${out.roll} · ${omrDuplicateNames(lookup)}`,
-          message:'A scan is already saved for this paper and OMR part. Replace it with the new scan?',
-          confirmText:'Yes, Replace',
-          cancelText:'No, Keep Existing'
-        });
-        if (!replace){
-          lastDeclinedSheetFingerprint = sheetFingerprint;
-          detectionHistory = [];
-          el('cameraHint').textContent = 'Existing scan kept. Remove this sheet and place the next OMR.';
-          if (isCameraOpen && !dlg.open) dlg.showModal();
-          isScanBusy = false;
-          return;
-        }
-        scanReplacementApprovals.set(out, omrDuplicateToken(lookup));
+        out.duplicateRollDetected=true;
+        out.recognitionWarnings.push('A saved scan exists for this roll and paper. Check or edit the Roll Number before saving.');
       }
     }
     showScanReview(out, previewDataUrl);
@@ -10940,12 +10972,71 @@ async function findExistingOmrScan(out){
   return {plans, duplicates:plans.filter(plan => plan.duplicateSnap)};
 }
 
+function omrRecognitionReviewQuestions(out){
+  const entries=out&&out.recognitionMeta&&Array.isArray(out.recognitionMeta.uncertain)
+    ? out.recognitionMeta.uncertain : [];
+  const questions=new Map();
+  const subjects=Array.isArray(out&&out.selectedSubjects)&&out.selectedSubjects.length
+    ? out.selectedSubjects : [out&&out.subjectName].filter(Boolean);
+  entries.forEach(entry=>{
+    let section=String(entry.section||'');
+    const question=Number(entry.question);
+    if(!section||!Number.isInteger(question)||question<=0)return;
+    if(subjects.length&&!subjects.some(subject=>omrNorm(subject)===omrNorm(section)))return;
+    section=subjects.find(subject=>omrNorm(subject)===omrNorm(section))||section;
+    const id=JSON.stringify([section,question]);
+    if(!questions.has(id))questions.set(id,{section,question,uncertainOptions:[]});
+    const item=questions.get(id);
+    if(entry.option&&!item.uncertainOptions.includes(String(entry.option)))item.uncertainOptions.push(String(entry.option));
+  });
+  return [...questions.values()];
+}
+
+function applyOmrQuestionReview(out,question,selected){
+  const section=(tpl.sections||[]).find(item=>item.name===question.section);
+  if(!section||question.question>Number(section.count))throw Error('The review question does not match the selected paper.');
+  const allowed='ABCDEF'.slice(0,Number(section.options)||4).split('');
+  const choices=[...new Set(selected.map(String))].sort();
+  if(choices.some(option=>!allowed.includes(option)))throw Error('Invalid reviewed answer option.');
+  if(!out.answers)out.answers={};
+  if(!out.answers[question.section])out.answers[question.section]={};
+  const previous=out.answers[question.section][question.question]||[];
+  out.manualAnswerCorrection=!!out.manualAnswerCorrection||JSON.stringify(previous)!==JSON.stringify(choices);
+  out.answers[question.section][question.question]=choices;
+  const selectedSubjects=Array.isArray(out.selectedSubjects)&&out.selectedSubjects.length?out.selectedSubjects:[out.subjectName].filter(Boolean);
+  const sections=tpl.sections.filter(item=>!selectedSubjects.length||selectedSubjects.some(name=>omrNorm(name)===omrNorm(item.name)));
+  out.score=scoreAnswers(out.answers,answerKey,sections);
+  out.questionDetails=buildQuestionDetails(out).filter(item=>!selectedSubjects.length||selectedSubjects.some(name=>omrNorm(name)===omrNorm(item.subject)));
+  out.recognitionReviewConfirmed=false;
+}
+
+async function confirmOmrScanReplacement(out,lookup){
+  const review=el('dlgScanReview');
+  const restore=review&&review.open&&typeof lastScanPending!=='undefined'&&lastScanPending===out;
+  if(restore)review.close();
+  try{
+    return await appConfirm({
+      title:'OMR Already Scanned',subtitle:`Roll ${out.roll} · ${omrDuplicateNames(lookup)}`,
+      message:'A scan is already saved for this paper and OMR part. Replace it? The previous scan will be kept in history. Choose Keep Existing to return and edit the Roll Number.',
+      confirmText:'Yes, Replace',cancelText:'Keep Existing / Edit Roll'
+    });
+  }finally{
+    // Android must not stack a confirmation dialog over the scan review.
+    if(restore&&lastScanPending===out&&!review.open){
+      try { review.showModal(); } catch (_) { review.setAttribute('open',''); }
+    }
+  }
+}
+
 async function saveScanToFirestore(out) {
   if (!out || !Number.isInteger(Number(out.roll)) || Number(out.roll) <= 0) {
     throw new Error('Enter a Roll Number greater than 0 before saving.');
   }
   if (!out.classId || !out.sectionId || !out.examId) {
     throw new Error('Class, section, or exam information is missing.');
+  }
+  if(omrRecognitionReviewQuestions(out).length&&!out.recognitionReviewConfirmed){
+    throw new Error('Check and confirm the corrected or unclear questions before saving.');
   }
   if (out.academicYear && String(out.academicYear) !== String(academicYear)){
     throw new Error(`This queued scan belongs to academic year ${out.academicYear}, not ${academicYear}.`);
@@ -10968,14 +11059,9 @@ async function saveScanToFirestore(out) {
     const approved = scanReplacementApprovals.get(out);
     const sameApprovedScan = approved === omrDuplicateToken(lookup);
     if (!sameApprovedScan){
-      const replace = await appConfirm({
-        title:'OMR Already Scanned',
-        subtitle:`Roll ${out.roll} · ${omrDuplicateNames(lookup)}`,
-        message:'A scan is already saved for this paper and OMR part. Replace it? The previous scan will be kept in history.',
-        confirmText:'Yes, Replace',
-        cancelText:'No, Keep Existing'
-      });
+      const replace = await confirmOmrScanReplacement(out,lookup);
       if (!replace) return {saved:false, cancelled:true};
+      scanReplacementApprovals.set(out,omrDuplicateToken(lookup));
     }
   }
 
@@ -11020,6 +11106,10 @@ async function saveScanToFirestore(out) {
       recognitionMeta:out.recognitionMeta || {uncertainCount:0, uncertain:[]},
       recognitionWarnings:Array.isArray(out.recognitionWarnings) ? out.recognitionWarnings : [],
       manualScoreAdjustment:!!out.manualScoreAdjustment,
+      manualAnswerCorrection:!!out.manualAnswerCorrection,
+      recognitionReviewConfirmed:!!out.recognitionReviewConfirmed,
+      reviewedQuestions:(Array.isArray(out.reviewedQuestions)?out.reviewedQuestions:[])
+        .filter(item=>omrNorm(item.subject)===omrNorm(paper.subjectName)),
       answerKeyHash:out.answerKeyHash || simpleHash(JSON.stringify(omrSubjectEntry(answerKey, paper.subjectName) || {})),
       imageUrl:uploaded.imageUrl || out.imageUrl || previous.imageUrl || null,
       imagePath:uploaded.imagePath || out.imagePath || previous.imagePath || null,
@@ -11083,6 +11173,65 @@ async function saveScanToFirestore(out) {
 }
 
 // ===== SCAN REVIEW (Cancel / Edit / Save) =====
+function renderOmrQuestionReview(out,onScoreChanged,onReadyChanged){
+  const host=el('scanReviewQuestions');
+  if(!host)return;
+  host.replaceChildren();
+  const questions=omrRecognitionReviewQuestions(out);
+  host.style.display=questions.length?'block':'none';
+  if(!questions.length)return;
+  const intro=document.createElement('div');
+  intro.className='warning-box';
+  intro.textContent='Check these corrected or unclear questions against the sheet. Choose the intended options, then confirm below. Marks are recalculated from your selections.';
+  host.appendChild(intro);
+  const original=questions.map(item=>({subject:item.section,question:item.question,
+    detected:[...((out.answers&&out.answers[item.section]&&out.answers[item.section][item.question])||[])]}));
+  const confirmation=document.createElement('input');
+  confirmation.type='checkbox';confirmation.id='scanReviewConfirmAnswers';
+  confirmation.checked=!!out.recognitionReviewConfirmed;
+  for(const question of questions){
+    const section=(tpl.sections||[]).find(item=>item.name===question.section);
+    if(!section)continue;
+    const row=document.createElement('fieldset');
+    row.style.cssText='border:1px solid #f59e0b;border-radius:10px;margin:10px 0;padding:10px;';
+    const title=document.createElement('legend');
+    title.textContent=`${question.section} — Q${question.question}`;
+    row.appendChild(title);
+    const inputs=[];
+    const selected=(out.answers&&out.answers[question.section]&&out.answers[question.section][question.question])||[];
+    for(const option of 'ABCDEF'.slice(0,Number(section.options)||4)){
+      const label=document.createElement('label');
+      label.style.cssText='display:inline-flex;align-items:center;gap:5px;padding:6px 10px;font-weight:700;';
+      const box=document.createElement('input');
+      box.type='checkbox';box.checked=selected.includes(option);box.value=option;
+      box.className='scan-review-answer';
+      box.dataset.section=question.section;box.dataset.question=String(question.question);
+      const text=document.createElement('span');text.textContent=option;
+      label.append(box,text);row.appendChild(label);inputs.push(box);
+    }
+    const changed=()=>{
+      applyOmrQuestionReview(out,question,inputs.filter(input=>input.checked).map(input=>input.value));
+      confirmation.checked=false;
+      onScoreChanged();onReadyChanged();
+    };
+    inputs.forEach(input=>input.addEventListener('change',changed));
+    const clear=document.createElement('button');
+    clear.type='button';clear.className='btn';clear.textContent='No answer';
+    clear.onclick=()=>{inputs.forEach(input=>{input.checked=false;});changed();};
+    row.appendChild(clear);host.appendChild(row);
+  }
+  const label=document.createElement('label');
+  label.style.cssText='display:flex;align-items:center;gap:9px;margin:12px 0;font-weight:700;';
+  const text=document.createElement('span');text.textContent='I checked these questions against the sheet.';
+  label.append(confirmation,text);host.appendChild(label);
+  confirmation.addEventListener('change',()=>{
+    out.recognitionReviewConfirmed=confirmation.checked;
+    out.reviewedQuestions=confirmation.checked?original.map(item=>({...item,
+      selected:[...((out.answers[item.subject]||{})[item.question]||[])],confirmedAt:new Date().toISOString()})):[];
+    onReadyChanged();
+  });
+}
+
 function showScanReview(out, previewDataUrl) {
   lastScanPending = out;
 
@@ -11104,6 +11253,7 @@ function showScanReview(out, previewDataUrl) {
   const studentTextEl = el('scanReviewStudentText');
   const cameraDlg = el('dlgCamera');
   const reviewContentEl = dlg && dlg.querySelector('.content');
+  let reviewSaving=false;
 
   if (
     !dlg ||
@@ -11163,6 +11313,10 @@ function showScanReview(out, previewDataUrl) {
   rollI.oninput = () => {
     rollTextEl.textContent = rollI.value || '0';
     refreshReviewStudent(rollI.value);
+    const visibleWarnings=String(rollI.value)===String(out.roll)?warnings:
+      warnings.filter(message=>!message.startsWith('A saved scan exists for this roll'));
+    warningEl.textContent=visibleWarnings.join(' ');
+    warningEl.style.display=visibleWarnings.length?'block':'none';
   };
 
   const warnings = Array.isArray(out.recognitionWarnings)
@@ -11233,6 +11387,17 @@ function showScanReview(out, previewDataUrl) {
   sectionsEl.querySelectorAll('.scan-section-input').forEach(input => {
     input.addEventListener('input', updateReviewTotal);
   });
+  const needsQuestionReview=omrRecognitionReviewQuestions(out).length>0;
+  const refreshSaveReady=()=>{
+    btnSave.disabled=reviewSaving||(needsQuestionReview&&!out.recognitionReviewConfirmed);
+  };
+  renderOmrQuestionReview(out,()=>{
+    sectionsEl.querySelectorAll('.scan-section-input').forEach(input=>{
+      input.value=roundMark(out.score.perSection[input.dataset.subject]).toFixed(2);
+    });
+    updateReviewTotal();
+  },refreshSaveReady);
+  refreshSaveReady();
 
   btnCancel.onclick = null;
   btnEdit.onclick   = null;
@@ -11256,6 +11421,7 @@ function showScanReview(out, previewDataUrl) {
   };
 
   const cancelReview = () => {
+    if(out.scanFingerprint)lastDeclinedSheetFingerprint=out.scanFingerprint;
     lastScanPending = null;
     dlg.close();
     isScanBusy = false;
@@ -11290,6 +11456,10 @@ function showScanReview(out, previewDataUrl) {
       resumeCameraDialog();
       return;
     }
+    if(needsQuestionReview&&!lastScanPending.recognitionReviewConfirmed){
+      alert('Check the corrected or unclear questions and tick the confirmation before saving.');
+      return;
+    }
 
     const newRoll  = (rollI.value || '').trim();
     if (!newRoll || Number(newRoll) <= 0 || !Number.isInteger(Number(newRoll))) {
@@ -11320,12 +11490,15 @@ function showScanReview(out, previewDataUrl) {
       Object.values(changedSections).reduce((sum, value) => sum + Number(value || 0), 0)
     );
 
+    if(String(lastScanPending.roll)!==newRoll)scanReplacementApprovals.delete(lastScanPending);
     lastScanPending.roll = newRoll;
+    lastScanPending.rollNeedsEdit=false;
     if (!lastScanPending.score) lastScanPending.score = { total: 0, perSection: {} };
     lastScanPending.score.perSection = changedSections;
     lastScanPending.score.total = newMarks;
     lastScanPending.manualScoreAdjustment = !!lastScanPending.manualScoreAdjustment || wasAdjusted;
 
+    reviewSaving=true;
     btnSave.disabled = true;
     btnSave.innerHTML = '<i class="fa fa-spinner fa-spin"></i> Saving…';
     try {
@@ -11338,7 +11511,8 @@ function showScanReview(out, previewDataUrl) {
       }
     }
     finally {
-      btnSave.disabled = false;
+      reviewSaving=false;
+      refreshSaveReady();
       btnSave.innerHTML = '<i class="fa fa-floppy-disk"></i> Save';
     }
   };
@@ -11367,6 +11541,10 @@ function showScanReview(out, previewDataUrl) {
     dlg.scrollTop = 0;
     if (reviewContentEl) reviewContentEl.scrollTop = 0;
   });
+  if(out.rollNeedsEdit||out.duplicateRollDetected){
+    editFieldsEl.style.display='grid';rollI.disabled=false;
+    if(out.rollNeedsEdit)rollI.focus();
+  }
 }
 
 async function finalizeScanSave(out) {
@@ -12133,6 +12311,7 @@ el('reportSearch').oninput = event => {
   </script>
 </body>
 </html>
+
 
 
 
