@@ -3932,7 +3932,25 @@ function downloadAnswerKeyPdf(){
     doc.text(`CampusConnect Scanner v5 · Page ${page} of ${pages}`, pageW / 2, 291, {align:'center'});
   }
 
-  doc.save(`${safeResultIdPart(examName)}_${safeResultIdPart(current.className)}_${safeResultIdPart(current.sectionName)}_Answer_Key.pdf`);
+  // Keep download filenames readable without changing the PDF or stored keys.
+  const cleanKeyName = value => String(value ?? '')
+    .replace(/[\u0000-\u001f\u007f<>:"/\\|?*_-]+/g, ' ')
+    .replace(/\s+/g, ' ').trim().replace(/\.+$/, '').trim();
+  const cleanExamName = cleanKeyName(examName);
+  const summative = cleanExamName.match(/\b(?:summative(?:\s+assessment)?|S\s*A)\s*\.?\s*([1-9]\d*)\b/i);
+  const formative = cleanExamName.match(/\b(?:formative(?:\s+assessment)?|F\s*A|F)\s*\.?\s*([1-9]\d*)\b/i);
+  const examLabel = !current.isCustomExam && summative ? 'SA' + summative[1]
+    : !current.isCustomExam && formative ? 'F' + formative[1]
+    : cleanExamName || 'Exam';
+  const rawClass = cleanKeyName(current.className || current.classId)
+    .replace(/^class\s*/i, '').replace(/\b(\d+)(?:st|nd|rd|th)\b/i, '$1').trim();
+  const romanClasses = ['I','II','III','IV','V','VI','VII','VIII','IX','X','XI','XII'];
+  const romanIndex = romanClasses.indexOf(rawClass.toUpperCase());
+  const classLabel = 'Class ' + (romanIndex >= 0 ? String(romanIndex + 1) : rawClass || 'Unknown');
+  const subjectLabel = tpl.sections.map(section => cleanKeyName(section.name)
+    .replace(/^maths?(?=\s|$)/i, 'Mathematics'))
+    .filter(Boolean).join(' and ') || 'Subject';
+  doc.save([examLabel, classLabel, subjectLabel, 'Objective Key'].join(' ') + '.pdf');
 }
 
 el('btnKeyDownload').onclick = downloadAnswerKeyPdf;
