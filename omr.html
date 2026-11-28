@@ -929,6 +929,7 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
       <div class="toolbar" style="justify-content:space-between;align-items:center;margin-bottom:10px;">
         <input id="reportSearch" class="select" placeholder="Search roll or student name" style="max-width:360px;" />
         <button class="btn" id="btnReportExcel" type="button"><i class="fa fa-file-excel"></i> Download Excel</button>
+        <button class="btn" id="btnReportPdf" type="button"><i class="fa fa-file-pdf" style="color:#b91c1c"></i> Download PDF</button>
       </div>
       <div id="reportStatus" class="status">Loading reports…</div>
       <div class="report-table-wrap" id="reportTableWrap" style="display:none;">
@@ -11822,6 +11823,109 @@ async function deleteCurrentReportScan(){
   await loadReportsFromFirestore(false);
 }
 
+// Subject-wise class roster PDF. Uses saved OMR marks, not descriptive/internal marks.
+function exportReportsPdf(){
+  if (!window.jspdf || !window.jspdf.jsPDF) throw new Error('PDF library did not load. Check your connection.');
+  if (reportState.selectionKey !== omrReportSelectionKey()) throw new Error('Selection changed. Open reports again.');
+  if (!reportState.rows.length || !reportState.subjects.length) throw new Error('No reports are available to export.');
+  const doc = new window.jspdf.jsPDF({unit:'mm',format:'a4',orientation:'portrait'});
+  const W=doc.internal.pageSize.getWidth(), H=doc.internal.pageSize.getHeight(), m=12.5, width=W-2*m;
+  const navy=[20,50,76], ink=[30,41,59], muted=[80,99,120], green=[0,117,49], red=[190,0,0],
+    blue=[0,78,190], violet=[112,37,157], pale=[239,244,249], border=[194,207,221], white=[255,255,255];
+  const exam=selectedEffectiveExam(), examName=String(exam && exam.name || current.examId || 'OMR Reports');
+  const school=String(currentSchoolName || 'School'), fmt=n=>String(roundMark(n));
+  const safe=v=>String(v==null?'':v).replace(/[\r\n\t]+/g,' ');
+  function font(size,color,bold=false){
+    doc.setFont('helvetica',bold?'bold':'normal'); doc.setFontSize(size); doc.setTextColor(...color);
+  }
+  function text(v,x,y,size,color,bold=false,align='left',maxWidth=width){
+    font(size,color,bold); const s=safe(v);
+    while(doc.getTextWidth(s)>maxWidth && size>5) doc.setFontSize(--size);
+    doc.text(s,x,y,{align});
+  }
+  const cols=[16,57,17,16,22,24,16,17].map(n=>n*width/185);
+  const lefts=cols.map((_,i)=>m+cols.slice(0,i).reduce((a,b)=>a+b,0));
+  let y=0, subjectPage=0, first=true;
+  function startPage(subject,maximum,stats){
+    if(!first) doc.addPage(); first=false; subjectPage++;
+    text(school.toUpperCase(),W/2,18,19,navy,true,'center');
+    text(examName.toUpperCase(),W/2,25,12,ink,true,'center');
+    text('OMR / MCQ Examination Report',W/2,31,10,ink,false,'center');
+    doc.setDrawColor(...navy); doc.setLineWidth(.25); doc.line(m,36,W-m,36);
+    text('Academic Year: '+academicYear,m,43,9,ink,false,'left',width/2-2);
+    text('Class: '+safe(current.className)+'  |  Section: '+safe(current.sectionName),W-m,43,9,ink,false,'right',width/2-2);
+    text('Subject: '+subject,m,49,9,ink,false,'left',width*.59);
+    text('MCQ Maximum: '+(maximum>0?fmt(maximum)+' marks':'Not configured'),W-m,49,9,ink,false,'right',width*.40);
+    const cards=[['ENROLLED',stats.enrolled],['SCANNED',stats.scanned],['ABSENT',stats.absent],['AVERAGE',stats.average],['HIGHEST',stats.highest]];
+    const gap=2,cw=(width-4*gap)/5;
+    cards.forEach(([label,value],i)=>{
+      const x=m+i*(cw+gap); doc.setFillColor(...pale); doc.setDrawColor(...border); doc.setLineWidth(.2);
+      doc.roundedRect(x,56,cw,18,2,2,'FD');
+      text(label,x+cw/2,61.5,7.3,muted,true,'center',cw-2);
+      text(value,x+cw/2,69,12,i===2?red:navy,true,'center',cw-2);
+    });
+    y=82;
+    if(stats.partial){text('Partially scanned: '+stats.partial+' (excluded from ranks and average)',m,y,8,muted);y+=5;}
+    text(subjectPage>1?'Student-wise results (continued)':'Student-wise results',m,y,10,navy,true); y+=4;
+    const headers=['Roll No.','Student Name','Correct','Wrong','Not\nAttempted','Total Marks\n/ '+(maximum>0?fmt(maximum):'-'),'Rank','%'];
+    doc.setFillColor(...navy); doc.rect(m,y,width,11,'F');
+    headers.forEach((label,i)=>{
+      const parts=label.split('\n');
+      parts.forEach((part,j)=>text(part,i===1?lefts[i]+2:lefts[i]+cols[i]/2,
+        y+(parts.length===1?6.7:4.4+j*3.6),7.5,white,true,i===1?'left':'center',cols[i]-3));
+    }); y+=11;
+  }
+  function signatures(){
+    ['Subject Teacher','Academic In-charge','Headmaster'].forEach((label,i)=>{
+      const x=m+i*(width-42)/2; doc.setDrawColor(...muted);doc.setLineWidth(.2);doc.line(x,H-35,x+42,H-35);
+      text(label,x+21,H-30.5,8,ink,false,'center',42);
+    });
+  }
+  reportState.subjects.forEach(subject=>{
+    subjectPage=0;
+    const maximum=getReportSubjectMaximum(subject);
+    const entries=reportState.rows.map(row=>({student:row.student,item:row.breakdown[subject]||{hasData:false,isComplete:false,counts:null,total:null}}));
+    const completed=entries.filter(e=>e.item.isComplete);
+    const scores=[...new Set(completed.map(e=>e.item.total))].sort((a,b)=>b-a);
+    const average=completed.length?completed.reduce((sum,e)=>sum+e.item.total,0)/completed.length:null;
+    const scoreText=n=>n==null?'-':fmt(n)+(maximum>0?' / '+fmt(maximum):'');
+    const stats={enrolled:entries.length,scanned:completed.length,absent:entries.filter(e=>!e.item.hasData).length,
+      partial:entries.filter(e=>e.item.hasData&&!e.item.isComplete).length,average:scoreText(average),highest:scoreText(scores.length?scores[0]:null)};
+    startPage(subject,maximum,stats);
+    entries.forEach(({student,item},index)=>{
+      font(8.2,ink); let names=doc.splitTextToSize(safe(student.name)||'-',cols[1]-4);
+      if(names.length>30) names=names.slice(0,29).concat('...');
+      const rowH=Math.max(8.7,names.length*3.6+4);
+      if(y+rowH>H-60) startPage(subject,maximum,stats);
+      const absent=!item.hasData, complete=item.isComplete;
+      const mark=complete?fmt(item.total):absent?'Absent':'Incomplete';
+      const rank=complete?String(scores.indexOf(item.total)+1):'-';
+      const pct=complete&&maximum>0?(item.total/maximum*100).toFixed(1)+'%':'-';
+      const count=k=>item.hasData&&item.counts?String(Number(item.counts[k]||0)):'-';
+      const cells=[safe(student.roll),names,count('correct'),count('wrong'),count('unanswered'),mark,rank,pct];
+      const colors=[ink,ink,green,red,blue,absent?red:complete?green:muted,violet,ink];
+      doc.setFillColor(...(index%2?pale:white));doc.rect(m,y,width,rowH,'F');
+      doc.setDrawColor(...border);doc.setLineWidth(.15);doc.rect(m,y,width,rowH,'S');
+      cells.forEach((v,i)=>{
+        if(i===1) names.forEach((name,j)=>text(name,lefts[i]+2,y+rowH/2+1-(names.length-1)*1.8+j*3.6,8.2,ink,false,'left',cols[i]-4));
+        else text(v,lefts[i]+cols[i]/2,y+rowH/2+1,8.2,v==='-'?muted:colors[i],i>=2&&i<=6,'center',cols[i]-2);
+      });y+=rowH;
+    });
+    text('Note: MCQ marks only. Unscanned students are displayed as Absent in this report.',m,y+4.5,7.5,muted);
+    text('Absent and incomplete students are excluded from ranking and average.',m,y+9,7.5,muted);
+    if(reportState.historyUnavailable) text('Some older scan details could not be loaded.',m,y+13.5,7.5,red);
+    signatures();
+  });
+  const pages=doc.getNumberOfPages();
+  for(let p=1;p<=pages;p++){
+    doc.setPage(p);doc.setDrawColor(...border);doc.setLineWidth(.2);doc.line(m,H-20,W-m,H-20);
+    text('Question-Bank OMR Scanner',m,H-15,7.5,muted);
+    text('Page '+p+' of '+pages,W-m,H-15,7.5,muted,false,'right');
+  }
+  const filename=[examName,current.className,current.sectionName,reportState.subjects.join('_'),'OMR_Report'].map(safeResultIdPart).join('_')+'.pdf';
+  doc.save(filename);
+}
+
 function exportReportsXlsx(){
   if (!window.XLSX){ alert('The Excel library did not load. Check the internet connection and try again.'); return; }
   if (!reportState.rows.length){ alert('No reports are available to export.'); return; }
@@ -11899,6 +12003,12 @@ el('btnDownloadExcel').onclick = async () => {
   catch (error){ alert('Could not prepare Excel: ' + error.message); }
 };
 el('btnReportExcel').onclick = exportReportsXlsx;
+el('btnReportPdf').onclick = async () => {
+  const btn=el('btnReportPdf'); btn.disabled=true;
+  try { await loadReportsFromFirestore(false); exportReportsPdf(); }
+  catch(error){ console.error(error); alert('Could not prepare PDF: '+error.message); }
+  finally { btn.disabled=false; }
+};
 el('btnReportsClose').onclick = () => el('dlgReports').close();
 el('btnDetailClose').onclick = () => el('dlgReportDetail').close();
 el('btnDetailPrev').onclick = () => openReportDetail(reportState.detailIndex - 1);
