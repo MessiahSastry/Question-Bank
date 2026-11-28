@@ -1632,7 +1632,8 @@ function omrPaperKeyRef(context,subjectName){
   return context.examRef.parent.doc(id);
 }
 function isOmrPaperKeyRecord(doc){
-  return String(doc.id||'').startsWith('__omr_key_v2__') || (doc.data()||{}).recordType==='omr-answer-key';
+  return /^__omr_key_(v2|history)__/.test(String(doc.id||'')) ||
+    ['omr-answer-key','omr-answer-key-history'].includes((doc.data()||{}).recordType);
 }
 function omrDecodePaperKey(data,context,subjectName){
   if(data.recordType!=='omr-answer-key' || data.examPath!==context.examRef.path ||
@@ -1649,7 +1650,7 @@ function omrDecodePaperKey(data,context,subjectName){
 }
 async function readOmrPaperKeys(context,subjectNames,{transaction=null,legacyData=undefined}={}){
   const names=omrPaperKeySubjects(subjectNames);
-  const get=ref=>transaction?transaction.get(ref):ref.get();
+  const get=ref=>transaction?transaction.get(ref):ref.get({source:'server'});
   const [legacySnap,snaps]=await Promise.all([
     legacyData===undefined?get(context.examRef):Promise.resolve(null),
     Promise.all(names.map(name=>get(omrPaperKeyRef(context,name))))
@@ -1679,44 +1680,246 @@ function omrUnsavedKeySubjects(context,names){
   return names.filter(name=>Object.prototype.hasOwnProperty.call(omrSavedKeys,name)&&
     omrCanonicalKey(answerKey[name])!==omrCanonicalKey(omrSavedKeys[name]));
 }
-async function writeOmrPaperKeys(context,patch,previous,{selectionContext=context,sourceGuard=null}={}){
+async function writeOmrPaperKeys(context,patch,previous,{selectionContext=context,sourceGuard=null,regradePlan=null,confirmed=false}={}){
   const names=omrPaperKeySubjects(Object.keys(patch));
-  if(!names.length)return {keys:{},savedSubjects:[]};
+  if(!names.length)return {keys:{},savedSubjects:[],regraded:0};
   names.forEach(name=>{
     if(!patch[name]||typeof patch[name]!=='object'||Array.isArray(patch[name]))throw Error('Invalid answer key for '+name+'.');
   });
   const changed=changedOmrKeySubjects(previous.keys,patch);
-  if(changed.length){
-    const results=await context.examRef.collection('results').where('classId','==',context.classId).get();
-    const locked=await omrLockedKeySubjects(results.docs,context.sectionId,context.year,changed);
-    if(locked.length)throw Error('Answer key locked for '+locked.join(', ')+': this subject already has saved scans. Existing marks are protected.');
+  if(!omrPaperKeyContextIsCurrent(selectionContext))throw Error('Selection changed. Reopen the answer key.');
+  const plan=regradePlan||await prepareOmrKeyRegrade(context,patch,changed);
+  if(plan.papers.length&&!confirmed){
+    const accepted=await confirmOmrKeyRegrade('Apply the revised key for '+changed.join(', ')+' and re-evaluate '+
+      plan.papers.length+' saved paper(s)? MCQ scores, totals and ranks will be recalculated. Student answers, scan images, descriptive and internal marks will be kept.');
+    if(!accepted)return {keys:cloneOmrData(previous.keys),savedSubjects:[],regraded:0,cancelled:true};
   }
   if(!omrPaperKeyContextIsCurrent(selectionContext))throw Error('Selection changed. Reopen the answer key.');
   return db.runTransaction(async transaction=>{
-    const [latest,source]=await Promise.all([
+    const guards=[...plan.guards.values()];
+    const marksRefs=[...new Map(plan.papers.map(paper=>[paper.marksRef.path,paper.marksRef])).values()];
+    const [latest,source,live,marks]=await Promise.all([
       readOmrPaperKeys(context,names,{transaction}),
-      sourceGuard?readOmrPaperKeys(sourceGuard.context,Object.keys(sourceGuard.keys),{transaction}):Promise.resolve(null)
+      sourceGuard?readOmrPaperKeys(sourceGuard.context,Object.keys(sourceGuard.keys),{transaction}):Promise.resolve(null),
+      Promise.all(guards.map(snap=>transaction.get(snap.ref))),
+      Promise.all(marksRefs.map(ref=>transaction.get(ref)))
     ]);
     if(names.some(name=>omrCanonicalKey(latest.keys[name])!==omrCanonicalKey(previous.keys[name])))throw Error('Another teacher changed this subject key. Reload and review it.');
+    if(changed.some(name=>omrKeyScanVersion(latest.records[name])!==omrKeyScanVersion(previous.records[name])))throw Error('New scans were saved while the revised key was being prepared. Tap Save Key again to include them.');
     if(source && Object.keys(sourceGuard.keys).some(name=>omrCanonicalKey(source.keys[name])!==omrCanonicalKey(sourceGuard.keys[name])))throw Error('The source key changed. Reopen Copy Key and try again.');
+    live.forEach((snap,index)=>{
+      if(omrSnapshotVersion(snap)!==omrSnapshotVersion(guards[index]))throw Error('A saved paper changed during re-evaluation. Tap Save Key again to include the latest answers.');
+    });
     if(!omrPaperKeyContextIsCurrent(selectionContext))throw Error('Selection changed. Reopen the answer key.');
+    // Validate every new total before staging any writes. The key, all affected
+    // papers and their marks commit together, or none of them do.
+    const markUpdates=new Map(marks.map(snap=>[snap.ref.path,{ref:snap.ref,data:snap.exists?snap.data():{}}]));
+    plan.papers.forEach(paper=>{
+      const update=markUpdates.get(paper.marksRef.path);
+      const previousTotal=omrSubjectEntry(update.data,paper.subjectName);
+      const previousParts=omrSubjectEntry(update.data.__subs,paper.subjectName)||{};
+      if(getSubjectParts(paper.subjectName).length&&previousTotal!==undefined&&
+          Number(previousTotal)>sumSubjectParts(paper.subjectName,previousParts)+0.001){
+        throw Error(paper.subjectName+', Roll '+paper.student.roll+': the stored total includes marks without a component breakdown. Check the descriptive/internal entries before revising the key. No keys or marks changed.');
+      }
+      const merged=mergeOmrIntoMarksData(update.data,paper.graded);
+      update.data={...update.data,...merged.subjectTotals,__subs:merged.nextSubs};
+    });
     const savedSubjects=[];
     names.forEach(name=>{
       const snap=latest.records[name];
       if(snap.exists && omrCanonicalKey(latest.keys[name])===omrCanonicalKey(patch[name]))return;
+      const revision=Number(snap.exists?(snap.data()||{}).revision||0:0)+1;
+      if(changed.includes(name)&&omrCanonicalKey(latest.keys[name])!=='[]'){
+        const historyRef=context.examRef.parent.doc('__omr_key_history__'+snap.ref.id+'__'+context.examRef.parent.doc().id);
+        transaction.set(historyRef,{
+          recordType:'omr-answer-key-history',schemaVersion:2,examPath:context.examRef.path,
+          schoolId:context.schoolId,academicYear:context.year,classId:context.classId,sectionId:context.sectionId,
+          subjectName:name,keyJson:JSON.stringify(latest.keys[name]),revision:revision-1,revisedTo:revision,
+          revisedBy:context.teacherId,revisedAt:firebase.firestore.FieldValue.serverTimestamp()
+        });
+      }
       // JSON keeps question maps/option arrays from multiplying automatic
       // indexes. A key update never writes the overloaded legacy exam record.
       transaction.set(snap.ref,{
         recordType:'omr-answer-key',schemaVersion:2,examPath:context.examRef.path,examId:context.examId,
         schoolId:context.schoolId,academicYear:context.year,classId:context.classId,sectionId:context.sectionId,
         subjectName:name,keyJson:JSON.stringify(patch[name]),ownerTeacherId:context.teacherId,
-        revision:Number(snap.exists?(snap.data()||{}).revision||0:0)+1,
+        revision,scanVersion:omrKeyScanVersion(snap),
         updatedAt:firebase.firestore.FieldValue.serverTimestamp()
       },{merge:false});
       savedSubjects.push(name);
     });
-    return {keys:cloneOmrData(patch),savedSubjects};
+    markUpdates.forEach(update=>{
+      transaction.set(update.ref,{...update.data,__meta:{...(update.data.__meta||{}),
+        lastOmrRegradeAt:new Date().toISOString(),lastOmrTeacherId:context.teacherId}},{merge:true});
+    });
+    plan.papers.forEach(paper=>{
+      const oldTarget=plan.guards.get(paper.resultRef.path);
+      const revision=Number(latest.records[paper.subjectName].exists?(latest.records[paper.subjectName].data()||{}).revision||0:0)+1;
+      transaction.set(paper.historyRef,{...omrStoredScanData(paper.original),
+        replacedAt:firebase.firestore.FieldValue.serverTimestamp(),replacedBy:context.teacherId,replacementReason:'answer-key-revision'});
+      transaction.set(paper.resultRef,{...omrStoredScanData(paper.graded),
+        schemaVersion:6,schoolId:context.schoolId,academicYear:context.year,examId:context.examId,
+        classId:context.classId,sectionId:context.sectionId,studentId:paper.student.id,studentName:paper.student.name||'',roll:String(paper.student.roll),
+        keyRevision:revision,revision:Number(oldTarget.exists?(oldTarget.data()||{}).revision||0:0)+1,
+        regradedAt:new Date().toISOString(),regradedBy:context.teacherId,
+        updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:false});
+    });
+    return {keys:cloneOmrData(patch),savedSubjects,regraded:plan.papers.length};
   });
+}
+
+function omrKeyScanVersion(snap){
+  return Number(snap&&snap.exists?(snap.data()||{}).scanVersion||0:0);
+}
+
+function omrStoredScanData(scan){
+  return Object.fromEntries(Object.entries(scan).filter(([name,value])=>!name.startsWith('_')&&value!==undefined));
+}
+
+async function confirmOmrKeyRegrade(message){
+  const dialogs=['dlgKeyCopy','dlgKey'].map(el).filter(dialog=>dialog&&dialog.open);
+  dialogs.forEach(dialog=>dialog.close());
+  try{
+    return await appConfirm({title:'Revise Answer Key',message,
+      confirmText:'Apply Key & Re-evaluate',cancelText:'Cancel'});
+  }finally{
+    dialogs.reverse().forEach(dialog=>{if(!dialog.open)dialog.showModal();});
+  }
+}
+
+function omrGradingSection(scan,subjectName){
+  const saved=omrSubjectEntry(scan.scoringSettings,subjectName);
+  const configured=(tpl.sections||[]).find(section=>omrNorm(section.name)===omrNorm(subjectName));
+  const section=saved||configured;
+  if(!section)throw Error('Open the exam settings for '+subjectName+' before re-evaluating.');
+  const settings={name:subjectName,count:Number(section.count),options:Number(section.options)||4,
+    mark:Number(section.mark??1),negative:Number(section.negative??0)};
+  if(!Number.isInteger(settings.count)||settings.count<1||!Number.isFinite(settings.mark)||settings.mark<=0||
+      !Number.isFinite(settings.negative)||settings.negative>0||!Number.isInteger(settings.options)||settings.options<2||settings.options>6){
+    throw Error('Invalid question count or marking settings for '+subjectName+'.');
+  }
+  return settings;
+}
+
+function regradeOmrPaper(scan,subjectName,key){
+  const section=omrGradingSection(scan,subjectName);
+  const allowed='ABCDEF'.slice(0,section.options).split('');
+  const raw=scan._sourceData||scan;
+  const answers=omrSubjectEntry(raw.answers,subjectName);
+  const details=(scan.questionDetails||[]).filter(row=>omrNorm(row.subject)===omrNorm(subjectName));
+  const knownQuestions=[...Object.keys(answers||{}).map(Number),...details.map(row=>Number(row.question))];
+  if(knownQuestions.some(q=>q>section.count))throw Error(subjectName+': saved paper has more questions than the selected settings. Check the question count first.');
+  const recovered={};
+  for(let q=1;q<=section.count;q++){
+    const entry=getOmrKeyDetails(key[q]);
+    if((!entry.options.length&&!entry.addScore)||entry.options.some(option=>!allowed.includes(option))||
+        ((entry.either||(key[q]&&key[q].multiple))&&entry.options.length<2)){
+      throw Error(subjectName+', Q'+q+': complete the revised answer key before re-evaluating saved papers.');
+    }
+    const row=details.find(item=>Number(item.question)===q);
+    let choices=answers&&Object.prototype.hasOwnProperty.call(answers,q)?answers[q]:undefined;
+    if(choices===undefined&&row&&Object.prototype.hasOwnProperty.call(row,'attempted')){
+      choices=String(row.attempted||'').split(/[,;\s]+/).filter(Boolean);
+    }
+    if(!Array.isArray(choices)||choices.some(option=>!allowed.includes(String(option).toUpperCase()))){
+      throw Error('Cannot re-evaluate '+subjectName+', Roll '+scan.roll+', Q'+q+': saved answer choices are missing or invalid. The key and marks have not been changed.');
+    }
+    recovered[q]=[...new Set(choices.map(option=>String(option).toUpperCase()))].sort();
+  }
+  const graded={...scan,answers:{[subjectName]:recovered}};
+  const score=scoreAnswers(graded.answers,{[subjectName]:key},[section]);
+  graded.questionDetails=buildOmrQuestionDetails({...graded,score},[section],{[subjectName]:key});
+  graded.counts=getResultCounts(graded.questionDetails);
+  graded.score={total:score.total,perSection:score.perSection};
+  graded.totalMarks=score.total;
+  graded.scoringSettings={[subjectName]:section};
+  graded.gradingKeySignatures={[subjectName]:omrCanonicalKey(key)};
+  graded.answerKeyHash=simpleHash(omrCanonicalKey(key));
+  graded.manualScoreAdjustment=false;
+  return graded;
+}
+
+async function prepareOmrKeyRegrade(context,patch,changed){
+  const plan={papers:[],guards:new Map()};
+  if(!changed.length)return plan;
+  const inContext=scan=>String(scan.classId)===String(context.classId)&&String(scan.sectionId)===String(context.sectionId)&&
+    (!scan.schoolId||String(scan.schoolId)===String(context.schoolId))&&(!scan.academicYear||String(scan.academicYear)===String(context.year));
+  const results=await context.examRef.collection('results').where('classId','==',context.classId).get({source:'server'});
+  const active=results.docs.filter(doc=>inContext(doc.data()||{}));
+  const scans=active.map(doc=>omrReportScan(doc));
+  const legacy=active.filter(doc=>Number((doc.data()||{}).schemaVersion||0)<6);
+  for(let i=0;i<legacy.length;i+=8){
+    const histories=await Promise.all(legacy.slice(i,i+8).map(async doc=>{
+      const history=await doc.ref.collection('history').get({source:'server'});
+      return history.docs.filter(item=>inContext(item.data()||{})).map(item=>omrReportScan(item,true));
+    }));
+    scans.push(...histories.flat());
+  }
+  if(!scans.some(scan=>changed.some(name=>omrKeySubjectNames(scan).has(omrNorm(name)))))return plan;
+  const roster=await studentsCollectionRef(context.classId,context.sectionId).get({source:'server'});
+  const students=roster.docs.map(doc=>({...doc.data(),id:doc.id,ref:doc.ref})).filter(student=>!student.isDeleted);
+  const matching=scans.filter(scan=>!scan.isDeleted&&changed.some(name=>omrKeySubjectNames(scan).has(omrNorm(name))));
+  matching.forEach(scan=>{
+    if(!students.some(student=>omrScanBelongsToStudent(scan,student)))throw Error('Cannot locate the student for saved '+(scan.subjectName||'OMR')+' paper, Roll '+scan.roll+'. No keys or marks changed.');
+  });
+  for(const student of students){
+    const own=scans.filter(scan=>omrScanBelongsToStudent(scan,student));
+    const selected=omrLatestSubjectScans(own,changed);
+    for(const scan of selected){
+      const subjectName=scan.subjectName;
+      const graded=regradeOmrPaper(scan,subjectName,patch[subjectName]);
+      const resultRef=omrSubjectResultRef({...scan,roll:student.roll},scan._scope,context);
+      const expected=await resultRef.get({source:'server'});
+      if(expected.exists&&resultRef.path!==scan._ref.path)throw Error('A newer saved paper was found during re-evaluation. Tap Save Key again to include it.');
+      plan.guards.set(resultRef.path,expected);
+      plan.guards.set(scan._ref.path,{ref:scan._ref,exists:true,data:()=>scan._sourceData});
+      plan.papers.push({subjectName,student,original:scan,graded,resultRef,
+        marksRef:student.ref.collection('marks').doc(context.examId),historyRef:resultRef.collection('history').doc()});
+    }
+  }
+  // Leaves room for key histories and Firestore's 500-write transaction limit.
+  if(plan.papers.length*3+Object.keys(patch).length*2>450)throw Error('Too many saved papers for one revision. Select one subject and section at a time.');
+  return plan;
+}
+
+function captureOmrGradingContext(out,sections,key){
+  out.scoringSettings=Object.fromEntries(sections.map(section=>[section.name,{
+    name:section.name,count:Number(section.count),options:Number(section.options)||4,
+    mark:Number(section.mark??1),negative:Number(section.negative??0)
+  }]));
+  out.gradingKeySignatures=Object.fromEntries(sections.map(section=>[section.name,omrCanonicalKey(key[section.name])]));
+}
+
+async function prepareOmrScanKeyGuard(out){
+  const context=omrPaperKeyContext();
+  if(String(out.classId)!==String(context.classId)||String(out.sectionId)!==String(context.sectionId)||String(out.examId)!==String(context.examId)){
+    throw Error('Selection changed. Choose the original class, section and exam before saving this scan.');
+  }
+  const scopes=omrScanScopes(out);
+  const names=scopes.map(scope=>scope.subjectName);
+  const latest=await readOmrPaperKeys(context,names);
+  if(!omrPaperKeyContextIsCurrent(context))throw Error('Selection changed. Reopen the scan.');
+  const changed=names.some(name=>{
+    const signature=omrSubjectEntry(out.gradingKeySignatures,name);
+    return (signature===undefined?omrCanonicalKey(omrSubjectEntry(answerKey,name)):signature)!==omrCanonicalKey(latest.keys[name]);
+  });
+  if(changed){
+    const papers=scopes.map(scope=>regradeOmrPaper(omrProjectScan(out,scope),scope.subjectName,latest.keys[scope.subjectName]));
+    out.answers=Object.assign({},...papers.map(paper=>paper.answers));
+    out.score={total:roundMark(papers.reduce((sum,paper)=>sum+paper.score.total,0)),
+      perSection:Object.assign({},...papers.map(paper=>paper.score.perSection))};
+    out.questionDetails=papers.flatMap(paper=>paper.questionDetails);
+    out.counts=getResultCounts(out.questionDetails);
+    out.manualScoreAdjustment=false;
+    out.recognitionWarnings=[...(out.recognitionWarnings||[]),
+      'The answer key was revised. These marks have been recalculated with the latest saved key. Review the new total and tap Save again.'];
+  }
+  const sections=names.map(name=>omrGradingSection(out,name));
+  captureOmrGradingContext(out,sections,latest.keys);
+  applyLoadedOmrPaperKeys(context,latest.keys);
+  return {context,...latest,needsReview:changed};
 }
 
 // One common physical OMR template per school + academic year + class + school exam.
@@ -3765,28 +3968,6 @@ function omrCanonicalKey(key){
 function changedOmrKeySubjects(previous,selected){
   return Object.keys(selected).filter(name=>omrCanonicalKey(previous[name])!==omrCanonicalKey(selected[name]));
 }
-async function omrLockedKeySubjects(resultDocs,sectionId,year,changed){
-  if(!changed.length)return [];
-  const scoped=resultDocs.filter(doc=>{
-    const scan=doc.data()||{};
-    return String(scan.sectionId)===String(sectionId)&&(!scan.academicYear||String(scan.academicYear)===String(year));
-  });
-  const locked=new Set();
-  const check=scan=>changed.forEach(name=>{
-    if(omrScanAffectsSubjects(scan,[name],sectionId,year))locked.add(name);
-  });
-  scoped.forEach(doc=>check(doc.data()||{}));
-  // Older saves reused one result document per student/exam, archiving the
-  // previous subject in history. Check those records as well before changing
-  // an existing key; otherwise an earlier subject's marks may be missed.
-  if(locked.size<changed.length){
-    for(let i=0;i<scoped.length&&locked.size<changed.length;i+=8){
-      const histories=await Promise.all(scoped.slice(i,i+8).map(doc=>doc.ref.collection('history').get()));
-      histories.forEach(history=>history.docs.forEach(doc=>check(doc.data()||{})));
-    }
-  }
-  return [...locked];
-}
 function omrSelectedKeyPatch(sections,key){
   const patch={};
   sections.forEach(section=>{
@@ -3827,9 +4008,12 @@ el('btnKeySave').onclick = async ()=>{
     const patch=omrSelectedKeyPatch(tpl.sections,answerKey);
     const previous=await readOmrPaperKeys(context,Object.keys(patch));
     const saved=await writeOmrPaperKeys(context,patch,previous);
+    if(saved.cancelled)return;
     if(!applyLoadedOmrPaperKeys(context,saved.keys))return;
     alert(saved.savedSubjects.length
-      ? 'Answer key saved for '+saved.savedSubjects.join(', ')+'. Other subjects and existing marks are unchanged.'
+      ? 'Answer key saved for '+saved.savedSubjects.join(', ')+'. '+(saved.regraded
+        ? saved.regraded+' saved paper(s) re-evaluated. MCQ reports and ranks will use the revised marks. Descriptive and internal marks are kept.'
+        : 'No saved papers needed re-evaluation.')
       : 'Answer key is already saved. No changes needed.');
   }catch(err){
     console.error('OMR subject key save failed:',err);
@@ -3894,32 +4078,34 @@ el('btnKeyCopyConfirm').onclick=async()=>{
       selected[section.name]=cloneOmrData(key);
     }
     if(!Object.keys(selected).length)throw Error('No subject keys available.');
-    const results=await context.examRef.collection('results').where('classId','==',context.classId).get();
-    const plans=[],blocked=[];
+    const plans=[];
     for(const target of targets){
       const targetContext={...context,sectionId:target.id};
       const previous=await readOmrPaperKeys(targetContext,Object.keys(selected));
       const changed=changedOmrKeySubjects(previous.keys,selected);
-      const locked=await omrLockedKeySubjects(results.docs,target.id,context.year,changed);
-      const allowed=Object.keys(selected).filter(name=>!locked.includes(name)&&
+      const allowed=Object.keys(selected).filter(name=>
         (changed.includes(name)||!previous.records[name].exists));
-      if(locked.length)blocked.push(target.name+': '+locked.join(', '));
-      if(allowed.length)plans.push({target,targetContext,previous,changed,allowed});
+      if(allowed.length){
+        const patch=Object.fromEntries(allowed.map(name=>[name,selected[name]]));
+        const regradePlan=await prepareOmrKeyRegrade(targetContext,patch,changed);
+        plans.push({target,targetContext,previous,changed,allowed,patch,regradePlan});
+      }
     }
     const overwrite=plans.filter(plan=>plan.allowed.some(name=>plan.changed.includes(name)&&Object.keys(plan.previous.keys[name]||{}).length));
-    if(overwrite.length&&!confirm('Replace existing subject keys in: '+overwrite.map(plan=>plan.target.name).join(', ')+'?'))return;
+    const regraded=plans.reduce((sum,plan)=>sum+plan.regradePlan.papers.length,0);
+    if((overwrite.length||regraded)&&!await confirmOmrKeyRegrade('Copy the saved key to '+plans.map(plan=>plan.target.name).join(', ')+
+      '? '+regraded+' saved paper(s) will be re-evaluated using this key. Existing answers, scan images, descriptive and internal marks will be kept.'))return;
     if(!omrPaperKeyContextIsCurrent(context))throw Error('Selection changed. Reopen the answer key.');
     for(const plan of plans){
-      const patch=Object.fromEntries(plan.allowed.map(name=>[name,selected[name]]));
-      await writeOmrPaperKeys(plan.targetContext,patch,plan.previous,{
-        selectionContext:context,sourceGuard:{context,keys:selected}
+      await writeOmrPaperKeys(plan.targetContext,plan.patch,plan.previous,{
+        selectionContext:context,sourceGuard:{context,keys:selected},regradePlan:plan.regradePlan,confirmed:true
       });
       completed.push(plan.target.name+' ('+plan.allowed.join(', ')+')');
     }
     el('dlgKeyCopy').close();
     alert((completed.length?'Answer key copied to '+completed.join('; ')+'. ':'No new keys copied. ')+
-      (blocked.length?'Protected subjects skipped: '+blocked.join('; ')+'. ':'')+
-      'Existing student marks and scans are unchanged.');
+      (regraded?regraded+' saved paper(s) re-evaluated. ':'')+
+      'Descriptive and internal marks are kept.');
   }catch(err){
     console.error('OMR key copy failed:',err);
     alert('Copy failed: '+(err.message||String(err))+
@@ -10219,6 +10405,7 @@ catch (err){
         new Date().toISOString()
     };
 
+    captureOmrGradingContext(out,tpl.sections,answerKey);
     let previewDataUrl = null;
 
     try {
@@ -10622,8 +10809,12 @@ function roundMark(value){
 }
 
 function buildQuestionDetails(out){
+  return buildOmrQuestionDetails(out,tpl.sections,answerKey);
+}
+
+function buildOmrQuestionDetails(out,configuredSections,key){
   const rows = [];
-  const sections = Array.isArray(tpl.sections) ? tpl.sections : [];
+  const sections = Array.isArray(configuredSections) ? configuredSections : [];
   const scannedAnswers = out && out.answers ? out.answers : {};
   const perQuestion = out && out.score && out.score.perQuestionStatus
     ? out.score.perQuestionStatus
@@ -10631,7 +10822,7 @@ function buildQuestionDetails(out){
 
   sections.forEach(section => {
     const sectionAnswers = scannedAnswers[section.name] || {};
-    const sectionKey = answerKey[section.name] || {};
+    const sectionKey = key[section.name] || {};
     const sectionStatus = perQuestion[section.name] || {};
 
     for (let question = 1; question <= Number(section.count || 0); question++){
@@ -10857,17 +11048,17 @@ function omrScopeKey(subjectName, partName){
   return JSON.stringify([omrNorm(subjectName), omrNorm(partName)]);
 }
 
-function omrLegacyResultId(out){
-  return [currentSchoolId, academicYear, out.classId, out.sectionId, String(Number(out.roll))]
+function omrLegacyResultId(out,context){
+  return [context?context.schoolId:currentSchoolId, context?context.year:academicYear, out.classId, out.sectionId, String(Number(out.roll))]
     .map(safeResultIdPart).join('__');
 }
 
-function omrSubjectResultRef(out, scope){
+function omrSubjectResultRef(out, scope,context){
   // URI encoding preserves Unicode and punctuation without collapsing paper
   // names. English 1, English 2 and each OMR part have different identities.
-  const id = 'v6__' + omrLegacyResultId(out) + '__' +
+  const id = 'v6__' + omrLegacyResultId(out,context) + '__' +
     encodeURIComponent(omrScopeKey(scope.subjectName, scope.partName));
-  return currentExamRef().collection('results').doc(id);
+  return (context?context.examRef:currentExamRef()).collection('results').doc(id);
 }
 
 function omrSameContext(scan, out){
@@ -10922,7 +11113,19 @@ function omrProjectScan(scan, scope){
 }
 
 function omrSnapshotVersion(snap){
-  return JSON.stringify(snap && snap.exists ? snap.data() : null);
+  // Firestore may return map fields in a different order, and a local pending
+  // server timestamp can settle between reads. Neither changes a paper's
+  // answers or marks. Compare stable content, retaining genuine revisions.
+  const canonical=value=>{
+    if(value===null||typeof value!=='object')return value;
+    if(typeof value.toMillis==='function')return value.toMillis();
+    if(Array.isArray(value))return value.map(canonical);
+    return Object.fromEntries(Object.keys(value).sort().map(key=>[key,canonical(value[key])]));
+  };
+  if(!snap||!snap.exists)return 'null';
+  const data={...snap.data()};
+  delete data.updatedAt;
+  return JSON.stringify(canonical(data));
 }
 
 function omrDuplicateToken(lookup){
@@ -10945,15 +11148,15 @@ async function findExistingOmrScan(out){
     .map(id => collection.doc(id));
   const resultRefs = scopes.map(scope => omrSubjectResultRef(out, scope));
   const [existingSnaps, legacySnaps] = await Promise.all([
-    Promise.all(resultRefs.map(ref => ref.get())),
-    Promise.all(legacyRefs.map(ref => ref.get()))
+    Promise.all(resultRefs.map(ref => ref.get({source:'server'}))),
+    Promise.all(legacyRefs.map(ref => ref.get({source:'server'})))
   ]);
   const legacy = legacySnaps.filter(snap => snap.exists && omrSameContext(snap.data(), out));
   // Old versions replaced the previous paper's result. Its archived scan is
   // still a real scan for that paper, and remains readable without migration.
   const needsHistory = scopes.some((scope, index) => !existingSnaps[index].exists &&
     !legacy.some(snap => omrMatchesScope(snap.data(), scope)));
-  const histories = needsHistory ? (await Promise.all(legacy.map(snap => snap.ref.collection('history').get())))
+  const histories = needsHistory ? (await Promise.all(legacy.map(snap => snap.ref.collection('history').get({source:'server'}))))
     .flatMap(snap => snap.docs).filter(snap => omrSameContext(snap.data(), out)) : [];
   const plans = scopes.map((scope, index) => {
     const expectedSnap = existingSnaps[index];
@@ -11006,6 +11209,7 @@ function applyOmrQuestionReview(out,question,selected){
   const selectedSubjects=Array.isArray(out.selectedSubjects)&&out.selectedSubjects.length?out.selectedSubjects:[out.subjectName].filter(Boolean);
   const sections=tpl.sections.filter(item=>!selectedSubjects.length||selectedSubjects.some(name=>omrNorm(name)===omrNorm(item.name)));
   out.score=scoreAnswers(out.answers,answerKey,sections);
+  captureOmrGradingContext(out,sections,answerKey);
   out.questionDetails=buildQuestionDetails(out).filter(item=>!selectedSubjects.length||selectedSubjects.some(name=>omrNorm(name)===omrNorm(item.subject)));
   out.recognitionReviewConfirmed=false;
 }
@@ -11053,6 +11257,8 @@ async function saveScanToFirestore(out) {
   }
 
   const marksRef = student.ref.collection('marks').doc(out.examId);
+  const keyGuard=await prepareOmrScanKeyGuard(out);
+  if(keyGuard&&keyGuard.needsReview)return {saved:false,needsReview:true};
   const lookup = await findExistingOmrScan(out);
 
   if (lookup.duplicates.length){
@@ -11110,7 +11316,10 @@ async function saveScanToFirestore(out) {
       recognitionReviewConfirmed:!!out.recognitionReviewConfirmed,
       reviewedQuestions:(Array.isArray(out.reviewedQuestions)?out.reviewedQuestions:[])
         .filter(item=>omrNorm(item.subject)===omrNorm(paper.subjectName)),
+      scoringSettings:{[paper.subjectName]:omrSubjectEntry(out.scoringSettings,paper.subjectName)||{}},
+      gradingKeySignatures:{[paper.subjectName]:omrSubjectEntry(out.gradingKeySignatures,paper.subjectName)||''},
       answerKeyHash:out.answerKeyHash || simpleHash(JSON.stringify(omrSubjectEntry(answerKey, paper.subjectName) || {})),
+      revision:Number(plan.expectedSnap.exists?(plan.expectedSnap.data()||{}).revision||0:0)+1,
       imageUrl:uploaded.imageUrl || out.imageUrl || previous.imageUrl || null,
       imagePath:uploaded.imagePath || out.imagePath || previous.imagePath || null,
       capturedAt:out.capturedAt || new Date().toISOString(),
@@ -11123,13 +11332,19 @@ async function saveScanToFirestore(out) {
     await db.runTransaction(async transaction => {
       const refs = new Map(lookup.plans.flatMap(plan => [plan.expectedSnap, plan.duplicateSnap])
         .filter(Boolean).map(snap => [snap.ref.path, snap]));
-      const [marksSnap, liveSnaps] = await Promise.all([
+      const [marksSnap, liveSnaps,liveKeys] = await Promise.all([
         transaction.get(marksRef),
-        Promise.all([...refs.values()].map(snap => transaction.get(snap.ref)))
+        Promise.all([...refs.values()].map(snap => transaction.get(snap.ref))),
+        keyGuard?readOmrPaperKeys(keyGuard.context,Object.keys(keyGuard.keys),{transaction}):Promise.resolve(null)
       ]);
+      if(liveKeys&&Object.keys(keyGuard.keys).some(name=>omrCanonicalKey(liveKeys.keys[name])!==omrCanonicalKey(keyGuard.keys[name]))){
+        const error=Error('The answer key changed while saving. Review the recalculated marks and Save again.');
+        error.code='omr/key-changed';throw error;
+      }
+      if(keyGuard&&!omrPaperKeyContextIsCurrent(keyGuard.context))throw Error('Selection changed. Reopen the scan.');
       liveSnaps.forEach(snap => {
         if (omrSnapshotVersion(snap) !== omrSnapshotVersion(refs.get(snap.ref.path))){
-          throw new Error('Another device changed this paper while you were reviewing it. Try Save again to review the latest scan.');
+          throw new Error('The saved paper changed while you were reviewing it. Your new scan is still here. Tap Save again to review the latest saved version before replacing it.');
         }
       });
       const merged = mergeOmrIntoMarksData(marksSnap.exists ? marksSnap.data() : {}, out);
@@ -11146,7 +11361,24 @@ async function saveScanToFirestore(out) {
       });
 
       transaction.set(marksRef, updateData, {merge:true});
+      // Every scan touches its small key record. A key revision can then detect
+      // scans that arrived after its result query and retry the complete set.
+      if(liveKeys)Object.keys(liveKeys.keys).forEach(name=>{
+        const snap=liveKeys.records[name],context=keyGuard.context;
+        transaction.set(snap.ref,snap.exists?{
+          scanVersion:omrKeyScanVersion(snap)+1,lastScanAt:firebase.firestore.FieldValue.serverTimestamp()
+        }:{
+          recordType:'omr-answer-key',schemaVersion:2,examPath:context.examRef.path,examId:context.examId,
+          schoolId:context.schoolId,academicYear:context.year,classId:context.classId,sectionId:context.sectionId,
+          subjectName:name,keyJson:JSON.stringify(liveKeys.keys[name]),ownerTeacherId:context.teacherId,
+          revision:1,scanVersion:1,updatedAt:firebase.firestore.FieldValue.serverTimestamp()
+        },{merge:true});
+      });
       lookup.plans.forEach((plan, index) => {
+        if(liveKeys){
+          const keySnap=liveKeys.records[plan.scope.subjectName];
+          savedResults[index].keyRevision=Number(keySnap.exists?(keySnap.data()||{}).revision||0:1);
+        }
         if (historyRefs[index]){
           const archived = omrProjectScan(plan.duplicateSnap.data(), plan.scope);
           delete archived._scope;
@@ -11165,6 +11397,10 @@ async function saveScanToFirestore(out) {
   catch (error){
     if (uploaded.imagePath){
       storage.ref().child(uploaded.imagePath).delete().catch(() => {});
+    }
+    if(error.code==='omr/key-changed'){
+      await prepareOmrScanKeyGuard(out);
+      return {saved:false,needsReview:true};
     }
     throw error;
   }
@@ -11551,6 +11787,10 @@ async function finalizeScanSave(out) {
   try {
     const result = await saveScanToFirestore(out);
     if (!result || !result.saved){
+      if(result&&result.needsReview){
+        alert('The answer key was revised. Review the recalculated marks, then tap Save again.');
+        showScanReview(out,out._previewDataUrl||out.imageUrl||null);
+      }
       if (result && result.cancelled){
         el('pickStatus').innerHTML = '<span class="pill bad">Existing scan kept. New scan was not saved.</span>';
       }
@@ -12311,6 +12551,7 @@ el('reportSearch').oninput = event => {
   </script>
 </body>
 </html>
+
 
 
 

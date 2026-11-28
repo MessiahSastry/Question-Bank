@@ -96,6 +96,9 @@ function harness(){
     },
     showScanReview:(out,image)=>{ctx.lastReview={out,image};}
   };
+  // This fixture isolates already-graded scan persistence. Key refresh and its
+  // transaction fence are exercised with the real implementation in key tests.
+  ctx.prepareOmrScanKeyGuard=async()=>null;
   ctx.window.XLSX=ctx.XLSX={utils:{
     book_new:()=>({sheets:[]}),json_to_sheet:rows=>({rows:clone(rows)}),
     book_append_sheet:(book,sheet,name)=>book.sheets.push({name,...sheet})
@@ -285,9 +288,29 @@ test('concurrent same-paper changes abort the whole save and retain other papers
   const h=harness();h.select('English 2');
   const result=h.resultRef('English 2');
   h.beforeTransaction(()=>h.store.set(result.path,{...h.scan('English 2',18,18,22),schemaVersion:6}));
-  await assert.rejects(()=>h.ctx.saveScanToFirestore(h.scan('English 2')),/Another device changed this paper/);
+  await assert.rejects(()=>h.ctx.saveScanToFirestore(h.scan('English 2')),/The saved paper changed/);
   assert.equal(h.store.has(h.marksPath),false);
   assert.equal(h.store.get(result.path).score.total,18);
+});
+
+test('Firestore map order and a settled server timestamp do not cause false scan conflicts',async()=>{
+  const h=harness();h.select('Math 1');await h.ctx.saveScanToFirestore(h.scan('Math 1'));
+  const result=h.resultRef('Math 1');
+  h.beforeTransaction(()=>{
+    const reverse=value=>value&&typeof value==='object'?Array.isArray(value)?value.map(reverse):
+      Object.fromEntries(Object.entries(value).reverse().map(([key,item])=>[key,reverse(item)])):value;
+    h.store.set(result.path,{...reverse(h.store.get(result.path)),updatedAt:{seconds:9999999999}});
+  });
+  assert.equal((await h.ctx.saveScanToFirestore(h.scan('Math 1',18,18,22))).saved,true);
+  assert.equal(h.store.get(result.path).score.total,18);
+});
+
+test('a real answer change still conflicts even if the stored total is unchanged',async()=>{
+  const h=harness();h.select('Math 1');await h.ctx.saveScanToFirestore(h.scan('Math 1'));
+  const result=h.resultRef('Math 1');
+  h.beforeTransaction(()=>{h.store.get(result.path).answers['Math 1'][1]=['D'];});
+  await assert.rejects(()=>h.ctx.saveScanToFirestore(h.scan('Math 1')),/The saved paper changed/);
+  assert.deepEqual(h.store.get(result.path).answers['Math 1'][1],['D']);
 });
 
 test('offline queue sends each paper to its own record and keeps unmatched exams queued',async()=>{

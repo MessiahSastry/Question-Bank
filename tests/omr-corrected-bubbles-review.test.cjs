@@ -10,6 +10,8 @@ const source=[
   section('const OMR_RING_DIRECTIONS =','// Average brightness in a patch'),
   section('function decodeAnswersFromFrame(','function getOmrKeyDetails(entry){'),
   section('function getOmrKeyDetails(entry){','// EvalBee-style result overlay:'),
+  section('function omrCanonicalKey(key){','function changedOmrKeySubjects(previous,selected){'),
+  section('function captureOmrGradingContext(out,sections,key){','async function prepareOmrScanKeyGuard(out){'),
   section('function scoreAnswers(answers, key, sections) {','function configuredPartNames(subjectName){'),
   section('function omrRecognitionReviewQuestions(out){','async function saveScanToFirestore(out) {'),
   section('function renderOmrQuestionReview(out,onScoreChanged,onReadyChanged){','async function finalizeScanSave(out) {')
