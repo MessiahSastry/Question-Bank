@@ -449,7 +449,7 @@ test('a pending review graded with an old key is recalculated and needs review b
   await h.save({Physics:key('D')});
   const before=clone([...h.store]);const result=await h.ctx.saveScanToFirestore(pending);
   assert.equal(result.needsReview,true);assert.equal(result.saved,false);assert.equal(pending.score.total,1);
-  assert.deepEqual([...h.store],before);assert.match(pending.recognitionWarnings.at(-1),/answer key was revised/);
+  assert.deepEqual([...h.store],before);assert.match(pending.recognitionWarnings.at(-1),/latest saved answer key has been applied/);
   assert.equal((await h.ctx.saveScanToFirestore(pending)).saved,true);
   assert.equal(h.store.get(paper.resultRef.path).score.total,1);
   assert.equal(h.store.get(h.keyPath('Physics')).scanVersion,1);
@@ -467,6 +467,14 @@ test('a key revised during the scan transaction refreshes review and never saves
   assert.equal(h.store.has(paper.resultRef.path),false);assert.equal(h.store.has(paper.marksPath),false);
   assert.equal((await h.ctx.saveScanToFirestore(pending)).saved,true);
   assert.equal(h.store.get(paper.resultRef.path).keyRevision,2);
+});
+
+test('legacy queued scores without a grading signature are refreshed even if the new key is already loaded',async()=>{
+  const h=harness();await h.save({Physics:key()});const paper=h.seedPaper();
+  const pending=clone(paper.out);await h.save({Physics:key('D')});
+  h.ctx.answerKey={Physics:key('D')};
+  const before=clone([...h.store]);const saved=await h.ctx.saveScanToFirestore(pending);
+  assert.equal(saved.needsReview,true);assert.equal(pending.score.total,1);assert.deepEqual([...h.store],before);
 });
 
 test('old key histories are excluded from the teacher custom exam list',async()=>{

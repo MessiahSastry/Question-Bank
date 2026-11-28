@@ -1903,7 +1903,9 @@ async function prepareOmrScanKeyGuard(out){
   if(!omrPaperKeyContextIsCurrent(context))throw Error('Selection changed. Reopen the scan.');
   const changed=names.some(name=>{
     const signature=omrSubjectEntry(out.gradingKeySignatures,name);
-    return (signature===undefined?omrCanonicalKey(omrSubjectEntry(answerKey,name)):signature)!==omrCanonicalKey(latest.keys[name]);
+    // Older queued/reviewed scans did not record their grading key. Refresh
+    // them once rather than assuming the currently loaded key graded them.
+    return signature===undefined||signature!==omrCanonicalKey(latest.keys[name]);
   });
   if(changed){
     const papers=scopes.map(scope=>regradeOmrPaper(omrProjectScan(out,scope),scope.subjectName,latest.keys[scope.subjectName]));
@@ -1914,7 +1916,7 @@ async function prepareOmrScanKeyGuard(out){
     out.counts=getResultCounts(out.questionDetails);
     out.manualScoreAdjustment=false;
     out.recognitionWarnings=[...(out.recognitionWarnings||[]),
-      'The answer key was revised. These marks have been recalculated with the latest saved key. Review the new total and tap Save again.'];
+      'The latest saved answer key has been applied. Review the recalculated marks and tap Save again.'];
   }
   const sections=names.map(name=>omrGradingSection(out,name));
   captureOmrGradingContext(out,sections,latest.keys);
@@ -11788,7 +11790,7 @@ async function finalizeScanSave(out) {
     const result = await saveScanToFirestore(out);
     if (!result || !result.saved){
       if(result&&result.needsReview){
-        alert('The answer key was revised. Review the recalculated marks, then tap Save again.');
+        alert('The latest saved answer key has been applied. Review the recalculated marks, then tap Save again.');
         showScanReview(out,out._previewDataUrl||out.imageUrl||null);
       }
       if (result && result.cancelled){
