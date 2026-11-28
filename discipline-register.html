@@ -1288,46 +1288,27 @@ disciplineSnapshot.forEach(doc => {
 
        function getStudentDisciplineCounts(studentId, currentEntry) {
   const counts = {
-    late: 0,
-    noUniform: 0,
-    noSign: 0
+    late: { month: 0, year: 0 },
+    noUniform: { month: 0, year: 0 }
   };
-
   const currentDate = loadedDate || registerDate.value;
-
+  const currentMonth = currentDate.slice(0, 7);
+  const seenDates = new Set([currentDate]);
+  function add(date, entry) {
+    for (const field of ["late", "noUniform"]) {
+      if (entry[field] !== true) continue;
+      counts[field].year += 1;
+      if (date.slice(0, 7) === currentMonth) counts[field].month += 1;
+    }
+  }
   for (const registerDocument of disciplineHistory) {
-    if (registerDocument.id === currentDate) {
-      continue;
-    }
-
-    const documentData = registerDocument.data || {};
-    const savedEntry = documentData[studentId] || {};
-
-    if (savedEntry.late === true) {
-      counts.late += 1;
-    }
-
-    if (savedEntry.noUniform === true) {
-      counts.noUniform += 1;
-    }
-
-    if (savedEntry.noSign === true) {
-      counts.noSign += 1;
-    }
+    const date = registerDocument.id;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date > currentDate || seenDates.has(date)) continue;
+    seenDates.add(date);
+    add(date, registerDocument.data?.[studentId] || {});
   }
-
-  if (currentEntry.late === true) {
-    counts.late += 1;
-  }
-
-  if (currentEntry.noUniform === true) {
-    counts.noUniform += 1;
-  }
-
-  if (currentEntry.noSign === true) {
-    counts.noSign += 1;
-  }
-
+  // The current form replaces the saved entry for this date, even before Save.
+  add(currentDate, currentEntry);
   return counts;
 }
 
@@ -1341,93 +1322,71 @@ function getTeluguTimesText(count) {
 
 function buildDisciplineWhatsAppMessage(student, entry, counts) {
   const studentName = student.name || "Student";
-
-  const classSection = [
-    currentClassName,
-    currentSectionName
-  ].filter(Boolean).join(" – ");
-
-  const selectedDate = formatRegisterDate(
-    loadedDate || registerDate.value
-  );
-
-     const issueCount = [
-    entry.late,
-    entry.noUniform,
-    entry.noSign
-  ].filter(Boolean).length;
-
-  /*
-    Message when only the Late option is selected.
-  */
-  if (issueCount === 1 && entry.late) {
-    return `Dear Parent,
-
-This is to inform you that your child, ${studentName} of ${classSection}, arrived at school ${entry.lateMinutes} minutes late on ${selectedDate}.
-
-Kindly ensure that your child reaches school on time in the future.
-
-ప్రియమైన తల్లిదండ్రులకు,
-
-${studentName}, ${classSection}, ${selectedDate} తేదీన పాఠశాలకు ${entry.lateMinutes} నిమిషాలు ఆలస్యంగా వచ్చారని తెలియజేస్తున్నాము.
-
-దయచేసి ఇకపై సమయానికి పాఠశాలకు వచ్చేలా చుడండి.
-
-St. Patrick's School`;
-  }
+  const classSection = [currentClassName, currentSectionName].filter(Boolean).join(" – ");
+  const selectedDate = formatRegisterDate(loadedDate || registerDate.value);
+  const minutesText = `${entry.lateMinutes} ${entry.lateMinutes === 1 ? "minute" : "minutes"}`;
+  const teluguMinutesText = `${entry.lateMinutes} ${entry.lateMinutes === 1 ? "నిమిషం" : "నిమిషాలు"}`;
 
   const englishIssues = [];
   const teluguIssues = [];
+  const englishRecords = [];
+  const teluguRecords = [];
+  const englishAdvice = [];
+  const teluguAdvice = [];
+
+  function addRecord(field, englishLabel, teluguLabel) {
+    const record = counts[field];
+    englishRecords.push(`*${englishLabel}:*\n• This month: ${getEnglishTimesText(record.month)}\n• This academic year: ${getEnglishTimesText(record.year)}`);
+    teluguRecords.push(`*${teluguLabel}:*\n• ఈ నెలలో: ${getTeluguTimesText(record.month)}\n• ఈ విద్యా సంవత్సరంలో: ${getTeluguTimesText(record.year)}`);
+  }
 
   if (entry.late) {
-    englishIssues.push(
-      `• Arrived ${entry.lateMinutes} minutes late.`
-    );
-
-    teluguIssues.push(
-      `• పాఠశాలకు ${entry.lateMinutes} నిమిషాలు ఆలస్యంగా వచ్చారు.`
-    );
+    englishIssues.push(`• Arrived at school *${minutesText} late*.`);
+    teluguIssues.push(`• పాఠశాలకు *${teluguMinutesText} ఆలస్యంగా* వచ్చారు.`);
+    addRecord("late", "Late Arrival Record", "ఆలస్యంగా వచ్చిన వివరాలు");
+    englishAdvice.push("reaches school on time");
+    teluguAdvice.push("సమయానికి పాఠశాలకు వచ్చేలా");
   }
-
   if (entry.noUniform) {
-    englishIssues.push(
-      "• Came without the complete uniform."
-    );
-
-    teluguIssues.push(
-      "• పూర్తి యూనిఫాం ధరించలేదు."
-    );
+    englishIssues.push("• Came without the complete school uniform.");
+    teluguIssues.push("• పూర్తి పాఠశాల యూనిఫాం ధరించకుండా వచ్చారు.");
+    addRecord("noUniform", "Incomplete Uniform Record", "పూర్తి యూనిఫాం ధరించని వివరాలు");
+    englishAdvice.push("wears the complete school uniform every day");
+    teluguAdvice.push("ప్రతిరోజూ పూర్తి పాఠశాల యూనిఫాం ధరించి వచ్చేలా");
   }
-
   if (entry.noSign) {
-    englishIssues.push(
-      `• The required parent's signature was not found in the diary.`
-    );
-
-    teluguIssues.push(
-      `• డైరీలో తల్లిదండ్రుల సంతకం లేదు.`
-    );
+    englishIssues.push("• The required parent's signature was not found in the diary.");
+    teluguIssues.push("• డైరీలో తల్లిదండ్రుల సంతకం లేదు.");
+    englishAdvice.push("has the required parent's signature in the diary");
+    teluguAdvice.push("డైరీలో అవసరమైన తల్లిదండ్రుల సంతకం ఉండేలా");
   }
 
-  return `Dear Parent,
+  let englishBody = `This is to inform you that your child, *${studentName}* of *${classSection}*, was noted for the following on ${selectedDate}:\n\n${englishIssues.join("\n")}`;
+  let teluguBody = `మీ పిల్లలు *${studentName}*, *${classSection}*, ${selectedDate} తేదీన:\n\n${teluguIssues.join("\n")}`;
+  if (entry.late && !entry.noUniform && !entry.noSign) {
+    englishBody = `This is to inform you that your child, *${studentName}* of *${classSection}*, arrived at school *${minutesText} late* on ${selectedDate}.`;
+    teluguBody = `మీ పిల్లలు *${studentName}*, *${classSection}*, ${selectedDate} తేదీన పాఠశాలకు *${teluguMinutesText} ఆలస్యంగా* వచ్చారని తెలియజేస్తున్నాము.`;
+  } else if (entry.noUniform && !entry.late && !entry.noSign) {
+    englishBody = `This is to inform you that your child, *${studentName}* of *${classSection}*, came to school without the complete school uniform on ${selectedDate}.`;
+    teluguBody = `మీ పిల్లలు *${studentName}*, *${classSection}*, ${selectedDate} తేదీన పూర్తి పాఠశాల యూనిఫాం ధరించకుండా వచ్చారని తెలియజేస్తున్నాము.`;
+  }
 
-This is to inform you that your child, ${studentName} of ${classSection}, was noted for the following on ${selectedDate}:
+  const adviceEn = englishAdvice.length > 1
+    ? englishAdvice.slice(0, -1).join(", ") + " and " + englishAdvice[englishAdvice.length - 1]
+    : englishAdvice[0];
+  return `*Dear Parent,*
 
-Issues Observed:
-${englishIssues.join("\n")}
+${englishBody}${englishRecords.length ? "\n\n" + englishRecords.join("\n\n") : ""}
 
-Kindly take note and ensure that these issues are not repeated.
+Kindly ensure that your child ${adviceEn}.
 
-ప్రియమైన తల్లిదండ్రులకు,
+*ప్రియమైన తల్లిదండ్రులకు,*
 
-${studentName}, ${classSection}, ${selectedDate} తేదీన క్రింది విషయాలు నమోదు చేయబడ్డాయి:
+${teluguBody}${teluguRecords.length ? "\n\n" + teluguRecords.join("\n\n") : ""}
 
-గమనించిన అంశాలు:
-${teluguIssues.join("\n")}
+దయచేసి మీ పిల్లలు ${teluguAdvice.join(", ")} చూడండి.
 
-దయచేసి ఈ విషయాలను గమనించి, భవిష్యత్తులో పునరావృతం కాకుండా చూసుకోగలరు.
-
-St. Patrick's School`;
+*St. Patrick's School*`;
 }
 
 /*
@@ -1582,6 +1541,11 @@ function launchWhatsApp(phoneNumber, message) {
 }
 
 function openStudentWhatsApp(studentId) {
+  if (!loadedDate || loadedDate !== registerDate.value) {
+    showToast("Load the selected date before opening WhatsApp.", "error");
+    return;
+  }
+
   const student = students.find(
     item => item.id === studentId
   );
